@@ -122,9 +122,10 @@ export function CanvasPanel({
             key={previewUrl.slice(0, 48)}
             initial={{ opacity: generating ? 0.85 : 0, scale: 0.98 }}
             animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: generating ? 0.15 : 0.35 }}
+            transition={{ duration: generating ? 0.12 : 0.28 }}
             src={previewUrl}
             alt={generating ? "Live generation preview" : "Active generation"}
+            decoding="async"
             className="max-h-full max-w-full rounded-xl border border-dfui-border/50 object-contain shadow-glass"
           />
         ) : generating ? (

@@ -102,6 +102,10 @@ export type GenerationFinishedPayload = StructuredError & {
   code?: number | DreamForgeErrorCode | string;
   log_path?: string;
   log_tail?: string;
+  /** Final frame inlined by the shell when generation succeeds. */
+  data_url?: string;
+  preview_path?: string;
+  asset_url?: string;
   result?: {
     images?: Array<{ path: string }>;
   };
@@ -115,7 +119,12 @@ export type GenerationPreviewPayload = {
   job_id?: string;
   data_url?: string;
   preview_path?: string;
+  asset_url?: string;
   has_preview?: boolean;
+  /** Step preview during sampling (smaller, frequent updates). */
+  live?: boolean;
+  /** Final high-res frame (emitted before generation-finished). */
+  final?: boolean;
   percentage?: number;
   title?: string;
 };
@@ -366,13 +375,22 @@ export async function generationStatus() {
   return invoke<{ running: boolean; job_id?: string }>("generation_status");
 }
 
-export async function readImagePreview(path: string) {
-  return invoke<{ data_url: string; mime: string; path: string }>(
-    "read_image_preview",
-    {
-      path,
-    },
-  );
+export type ImagePreviewResponse = {
+  data_url?: string;
+  asset_url?: string;
+  mime: string;
+  path: string;
+  quality?: string;
+};
+
+export async function readImagePreview(
+  path: string,
+  opts?: { quality?: "live" | "final" },
+) {
+  return invoke<ImagePreviewResponse>("read_image_preview", {
+    path,
+    quality: opts?.quality ?? "final",
+  });
 }
 
 export async function pickImageFile() {
@@ -380,9 +398,7 @@ export async function pickImageFile() {
 }
 
 export async function readLivePreview() {
-  return invoke<{ data_url: string; mime: string; path?: string }>(
-    "read_live_preview",
-  );
+  return invoke<ImagePreviewResponse>("read_live_preview");
 }
 
 export async function windowDrag() {

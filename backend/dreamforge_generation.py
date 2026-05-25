@@ -274,10 +274,14 @@ def _preview_stream_payload(product) -> dict:
         for _ in range(8):
             try:
                 if path.is_file() and path.stat().st_size > 128:
-                    raw = path.read_bytes()
-                    payload["image_mime"] = "image/jpeg"
-                    payload["image_b64"] = base64.b64encode(raw).decode("ascii")
                     payload["preview_path"] = str(path)
+                    payload["has_preview"] = True
+                    payload["live"] = True
+                    # Inline only small step previews; large JPEGs are mmap'd by the shell.
+                    if path.stat().st_size < 400_000:
+                        raw = path.read_bytes()
+                        payload["image_mime"] = "image/jpeg"
+                        payload["image_b64"] = base64.b64encode(raw).decode("ascii")
                     break
             except OSError:
                 time.sleep(0.03)

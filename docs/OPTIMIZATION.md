@@ -158,7 +158,19 @@ A warning never blocks generation — but ignoring one often leads to a hard err
 
 ---
 
-## 7. Reporting hardware issues
+## 7. Canvas preview pipeline (desktop)
+
+During generation the desktop shell uses a **three-layer preview path** so the canvas updates quickly without blocking on full PNG reads:
+
+1. **Live steps** — Python emits `preview` events with `preview_path` (and only embeds base64 when the JPEG is under 400 KB). Tauri watches `preview.jpg` in the job folder (~80 ms) and emits `generation-preview` with `quality: "live"` (max edge 512).
+2. **Final frame** — On success, Rust emits a final `generation-preview` (`quality: "final"`, max edge 2048) *before* `generation-finished`, using a short stable-file retry so the last write is complete.
+3. **UI display** — The React hook prefers event payloads, then `convertFileSrc` asset URLs for finals (no giant base64 round-trips). Disk polling is a fallback only if no event arrives for ~900 ms.
+
+If the canvas looks stuck on an old step, restart the app after upgrading — stale workers skip the mmap loader and the new preview events.
+
+---
+
+## 8. Reporting hardware issues
 
 If your hardware works in Fooocus / RuinedFooocus / SD.Next but fails in DreamForge, please open an issue at <https://github.com/mohammednabarawy/DreamForge/issues> with:
 

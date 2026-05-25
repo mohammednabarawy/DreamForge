@@ -1,4 +1,5 @@
-import { readImagePreview } from "./tauri-api";
+import { pathToAssetUrl } from "./preview-display";
+import { readImagePreview, type ImagePreviewResponse } from "./tauri-api";
 
 const MAX_CONCURRENT = 4;
 let active = 0;
@@ -11,11 +12,13 @@ function drain() {
   }
 }
 
-/** Limits concurrent image decode IPC so the UI stays responsive after boot. */
-export function readImagePreviewQueued(path: string) {
-  return new Promise<Awaited<ReturnType<typeof readImagePreview>>>((resolve, reject) => {
+function runQueued<T>(priority: "normal" | "final", fn: () => Promise<T>): Promise<T> {
+  if (priority === "final") {
+    return fn();
+  }
+  return new Promise<T>((resolve, reject) => {
     const run = () => {
-      void readImagePreview(path)
+      void fn()
         .then(resolve, reject)
         .finally(() => {
           active -= 1;
@@ -29,4 +32,21 @@ export function readImagePreviewQueued(path: string) {
       waiters.push(run);
     }
   });
+}
+
+function withDisplayUrl(r: ImagePreviewResponse): ImagePreviewResponse & { data_url: string } {
+  const data_url = r.data_url ?? pathToAssetUrl(r.path) ?? "";
+  return { ...r, data_url };
+}
+
+/** Limits concurrent image decode IPC so the UI stays responsive after boot. */
+export function readImagePreviewQueued(
+  path: string,
+  opts?: { quality?: "live" | "final" },
+): Promise<ImagePreviewResponse & { data_url: string }> {
+  const quality = opts?.quality ?? "final";
+  const priority = quality === "final" ? "final" : "normal";
+  return runQueued(priority, () =>
+    readImagePreview(path, { quality }).then(withDisplayUrl),
+  );
 }

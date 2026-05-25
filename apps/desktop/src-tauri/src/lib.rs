@@ -23,7 +23,10 @@ use std::os::windows::process::CommandExt;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 const PREVIEW_MAX_BYTES: u64 = 12 * 1024 * 1024;
-const PREVIEW_MAX_EDGE: u32 = 1280;
+/// Live step previews (frequent updates) — keep IPC + decode small.
+const PREVIEW_LIVE_MAX_EDGE: u32 = 512;
+/// Final canvas / gallery quality.
+const PREVIEW_FINAL_MAX_EDGE: u32 = 2048;
 const LOG_TAIL_CHARS: usize = 4000;
 const LOG_FULL_CHARS: usize = 100_000;
 /// Max wait for PyTorch / pipeline boot (first launch can take several minutes).
@@ -352,6 +355,8 @@ fn spawn_worker_exit_watcher(
 
 struct AppState {
     watcher: Mutex<Option<RecommendedWatcher>>,
+    /// Watches preview.jpg during an active generation (immediate canvas updates).
+    preview_watcher: Mutex<Option<RecommendedWatcher>>,
     generation: Arc<Mutex<Option<ActiveGeneration>>>,
     worker: Mutex<Option<GpuWorker>>,
     sidecar: Mutex<Option<PythonSidecar>>,
@@ -554,10 +559,10 @@ fn resolve_image_file(path_str: &str) -> Option<PathBuf> {
     None
 }
 
-fn preview_bytes_with_retry(path: &Path, attempts: u32) -> Option<Vec<u8>> {
+fn preview_bytes_with_retry(path: &Path, attempts: u32, max_edge: u32) -> Option<Vec<u8>> {
     for attempt in 0..attempts {
         if path.is_file() {
-            if let Some(bytes) = preview_bytes_from_path(path, PREVIEW_MAX_EDGE) {
+            if let Some(bytes) = preview_bytes_from_path(path, max_edge) {
                 return Some(bytes);
             }
         }
@@ -566,6 +571,148 @@ fn preview_bytes_with_retry(path: &Path, attempts: u32) -> Option<Vec<u8>> {
         }
     }
     None
+}
+
+/// Wait until the file exists and size is stable (flush complete).
+fn preview_bytes_with_retry_stable(path: &Path, max_edge: u32, max_attempts: u32) -> Option<Vec<u8>> {
+    let mut last_size: u64 = 0;
+    let mut stable = 0u32;
+    for _ in 0..max_attempts {
+        if path.is_file() {
+            if let Ok(meta) = fs::metadata(path) {
+                let size = meta.len();
+                if size > 128 {
+                    if size == last_size {
+                        stable += 1;
+                        if stable >= 2 {
+                            if let Some(bytes) = preview_bytes_from_path(path, max_edge) {
+                                return Some(bytes);
+                            }
+                        }
+                    } else {
+                        stable = 0;
+                    }
+                    last_size = size;
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    preview_bytes_with_retry(path, 6, max_edge)
+}
+
+fn attach_resolved_paths(payload: &mut Value, path: &Path) {
+    if let Some(obj) = payload.as_object_mut() {
+        obj.insert(
+            "preview_path".into(),
+            json!(path.to_string_lossy()),
+        );
+    }
+}
+
+fn attach_preview_bytes(payload: &mut Value, path: &Path, bytes: &[u8]) {
+    attach_resolved_paths(payload, path);
+    if let Some(obj) = payload.as_object_mut() {
+        obj.insert(
+            "data_url".into(),
+            json!(format!("data:image/png;base64,{}", STANDARD.encode(bytes))),
+        );
+        obj.insert("mime".into(), json!("image/png"));
+    }
+}
+
+fn emit_live_preview_from_disk(app: &AppHandle, job_id: Option<&str>) {
+    for candidate in live_preview_candidates() {
+        if !candidate.is_file() {
+            continue;
+        }
+        let Some(bytes) = preview_bytes_with_retry(&candidate, 3, PREVIEW_LIVE_MAX_EDGE) else {
+            continue;
+        };
+        let mut payload = json!({
+            "type": "preview",
+            "has_preview": true,
+            "live": true,
+            "final_preview": false,
+        });
+        if let Some(id) = job_id {
+            payload["job_id"] = json!(id);
+        }
+        attach_preview_bytes(&mut payload, &candidate, &bytes);
+        let _ = app.emit("generation-preview", payload);
+        return;
+    }
+}
+
+fn stop_live_preview_watch(state: &AppState) {
+    if let Ok(mut guard) = state.preview_watcher.lock() {
+        *guard = None;
+    }
+}
+
+fn start_live_preview_watch(app: &AppHandle, state: &Arc<AppState>, job_id: &str) {
+    stop_live_preview_watch(state);
+    let app_handle = app.clone();
+    let job = job_id.to_string();
+    let Ok(mut watcher) = RecommendedWatcher::new(
+        move |res: notify::Result<notify::Event>| {
+            let Ok(event) = res else {
+                return;
+            };
+            let is_preview = event.paths.iter().any(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n.eq_ignore_ascii_case("preview.jpg"))
+                    .unwrap_or(false)
+            });
+            if !is_preview {
+                return;
+            }
+            emit_live_preview_from_disk(&app_handle, Some(&job));
+        },
+        Config::default().with_poll_interval(Duration::from_millis(80)),
+    ) else {
+        return;
+    };
+
+    let root = agent_root();
+    let outputs = outputs_root(&root);
+    let _ = fs::create_dir_all(&outputs);
+    let _ = watcher.watch(&outputs, RecursiveMode::Recursive);
+    let legacy = root.join("outputs");
+    let _ = fs::create_dir_all(&legacy);
+    let _ = watcher.watch(&legacy, RecursiveMode::Recursive);
+
+    if let Ok(mut guard) = state.preview_watcher.lock() {
+        *guard = Some(watcher);
+    }
+}
+
+fn emit_final_preview_for_path(app: &AppHandle, path_str: &str, job_id: &str) {
+    let file = resolve_image_file(path_str)
+        .or_else(|| {
+            let p = PathBuf::from(path_str);
+            if p.is_file() {
+                Some(p)
+            } else {
+                None
+            }
+        });
+    let Some(file) = file else {
+        return;
+    };
+    let Some(bytes) = preview_bytes_with_retry_stable(&file, PREVIEW_FINAL_MAX_EDGE, 40) else {
+        return;
+    };
+    let mut payload = json!({
+        "type": "preview",
+        "job_id": job_id,
+        "live": false,
+        "final_preview": true,
+        "has_preview": true,
+    });
+    attach_preview_bytes(&mut payload, &file, &bytes);
+    let _ = app.emit("generation-preview", payload);
 }
 
 fn preview_bytes_from_path(path: &Path, max_edge: u32) -> Option<Vec<u8>> {
@@ -614,18 +761,42 @@ fn set_engine_health(app: &AppHandle, state: &AppState, health: &str) {
 
 fn emit_preview_from_event(app: &AppHandle, value: &Value) {
     let mut payload = value.clone();
+    let is_final = value.get("final_preview") == Some(&Value::Bool(true))
+        || value.get("final") == Some(&Value::Bool(true));
+    let is_live = !is_final
+        && (value.get("live") == Some(&Value::Bool(true))
+            || value.get("has_preview") == Some(&Value::Bool(true)));
+    let max_edge = if is_final {
+        PREVIEW_FINAL_MAX_EDGE
+    } else {
+        PREVIEW_LIVE_MAX_EDGE
+    };
+
+    if let Some(obj) = payload.as_object_mut() {
+        obj.insert("live".into(), json!(is_live && !is_final));
+        obj.insert("final_preview".into(), json!(is_final));
+    }
+
     if let Some(b64) = value.get("image_b64").and_then(|v| v.as_str()) {
         let mime = value
             .get("image_mime")
             .and_then(|v| v.as_str())
             .unwrap_or("image/jpeg");
         payload["data_url"] = json!(format!("data:{mime};base64,{b64}"));
+        if is_live {
+            if let Some(path_str) = value.get("preview_path").and_then(|v| v.as_str()) {
+                if let Some(path) = resolve_preview_file(path_str) {
+                    attach_resolved_paths(&mut payload, &path);
+                }
+            }
+        }
     } else if let Some(path_str) = value.get("preview_path").and_then(|v| v.as_str()) {
         if let Some(path) = resolve_preview_file(path_str) {
-            payload["preview_path"] = json!(path.to_string_lossy());
-            if let Some(bytes) = preview_bytes_with_retry(&path, 4) {
-                payload["data_url"] =
-                    json!(format!("data:image/png;base64,{}", STANDARD.encode(bytes)));
+            let attempts = if is_final { 20u32 } else { 4 };
+            if let Some(bytes) = preview_bytes_with_retry(&path, attempts, max_edge) {
+                attach_preview_bytes(&mut payload, &path, &bytes);
+            } else {
+                attach_resolved_paths(&mut payload, &path);
             }
         } else {
             payload["preview_path"] = json!(path_str);
@@ -633,10 +804,11 @@ fn emit_preview_from_event(app: &AppHandle, value: &Value) {
     } else if value.get("has_preview") == Some(&Value::Bool(true)) {
         for candidate in live_preview_candidates() {
             if candidate.is_file() {
-                payload["preview_path"] = json!(candidate.to_string_lossy());
-                if let Some(bytes) = preview_bytes_with_retry(&candidate, 4) {
-                    payload["data_url"] =
-                        json!(format!("data:image/png;base64,{}", STANDARD.encode(bytes)));
+                if let Some(bytes) = preview_bytes_with_retry(&candidate, 3, PREVIEW_LIVE_MAX_EDGE)
+                {
+                    attach_preview_bytes(&mut payload, &candidate, &bytes);
+                } else {
+                    attach_resolved_paths(&mut payload, &candidate);
                 }
                 break;
             }
@@ -798,6 +970,31 @@ fn handle_worker_event(app: &AppHandle, state: &AppState, value: &Value, emit_bo
                 json!(code.clone().unwrap_or_else(|| "generation_failed".to_string()))
             };
 
+            let mut finish_preview_path: Option<String> = None;
+            let mut finish_data_url: Option<String> = None;
+            if success {
+                if let Some(images) = result.and_then(|r| r.get("images")).and_then(|v| v.as_array()) {
+                    if let Some(first) = images.first().and_then(|i| i.get("path")).and_then(|p| p.as_str()) {
+                        if !job_id.is_empty() {
+                            emit_final_preview_for_path(app, first, &job_id);
+                        }
+                        if let Some(file) = resolve_image_file(first) {
+                            finish_preview_path = Some(file.to_string_lossy().to_string());
+                            if let Some(bytes) =
+                                preview_bytes_with_retry_stable(&file, PREVIEW_FINAL_MAX_EDGE, 40)
+                            {
+                                finish_data_url = Some(format!(
+                                    "data:image/png;base64,{}",
+                                    STANDARD.encode(bytes)
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+
+            stop_live_preview_watch(state);
+
             let payload = json!({
                 "job_id": job_id,
                 "success": success,
@@ -809,6 +1006,8 @@ fn handle_worker_event(app: &AppHandle, state: &AppState, value: &Value, emit_bo
                 "recoverable": if success { Value::Null } else { json!(recoverable) },
                 "log_tail": log_tail,
                 "result": result,
+                "preview_path": finish_preview_path,
+                "data_url": finish_data_url,
             });
             let _ = app.emit("generation-finished", payload);
             if success {
@@ -878,6 +1077,7 @@ fn handle_worker_event(app: &AppHandle, state: &AppState, value: &Value, emit_bo
             if let Ok(mut guard) = generation_arc.lock() {
                 *guard = None;
             }
+            stop_live_preview_watch(state);
             let _ = app.emit(
                 "generation-finished",
                 json!({
@@ -1376,11 +1576,6 @@ fn tail_file(path: &Path, max_chars: usize) -> String {
     buf
 }
 
-fn preview_bytes(path: &Path) -> Result<Vec<u8>, String> {
-    preview_bytes_from_path(path, PREVIEW_MAX_EDGE)
-        .ok_or_else(|| format!("Cannot read preview: {}", path.display()))
-}
-
 #[tauri::command]
 async fn get_paths(state: State<'_, Arc<AppState>>) -> Result<Value, String> {
     bridge_request_async(state.inner(), "get_paths", json!({})).await
@@ -1670,13 +1865,26 @@ fn pick_image_file() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-async fn read_image_preview(path: String) -> Result<Value, String> {
+async fn read_image_preview(path: String, quality: Option<String>) -> Result<Value, String> {
     tokio::task::spawn_blocking(move || {
         let file = resolve_image_file(&path).ok_or_else(|| format!("File not found: {path}"))?;
-        let bytes = preview_bytes(&file)?;
+        let live = quality.as_deref() == Some("live");
+        let max_edge = if live {
+            PREVIEW_LIVE_MAX_EDGE
+        } else {
+            PREVIEW_FINAL_MAX_EDGE
+        };
+        let attempts = if live { 4 } else { 20 };
+        let bytes = if live {
+            preview_bytes_with_retry(&file, attempts, max_edge)
+        } else {
+            preview_bytes_with_retry_stable(&file, max_edge, attempts)
+        }
+        .ok_or_else(|| format!("Cannot read preview: {}", file.display()))?;
         Ok(json!({
             "path": file.to_string_lossy(),
             "mime": "image/png",
+            "quality": if live { "live" } else { "final" },
             "data_url": format!("data:image/png;base64,{}", STANDARD.encode(bytes))
         }))
     })
@@ -1691,10 +1899,13 @@ async fn read_live_preview() -> Result<Value, String> {
             if !candidate.is_file() {
                 continue;
             }
-            if let Some(bytes) = preview_bytes_with_retry(&candidate, 2) {
+            if let Some(bytes) =
+                preview_bytes_with_retry(&candidate, 3, PREVIEW_LIVE_MAX_EDGE)
+            {
                 return Ok(json!({
                     "path": candidate.to_string_lossy(),
                     "mime": "image/png",
+                    "quality": "live",
                     "data_url": format!("data:image/png;base64,{}", STANDARD.encode(bytes))
                 }));
             }
@@ -1779,6 +1990,7 @@ fn read_job_log(job_id: String, state: State<'_, Arc<AppState>>) -> Result<Value
 
 #[tauri::command]
 fn cancel_generation(state: State<'_, Arc<AppState>>) -> Result<Value, String> {
+    stop_live_preview_watch(state.inner());
     let job_id = {
         let mut guard = state.generation.lock().map_err(|e| e.to_string())?;
         guard.take().map(|j| j.job_id)
@@ -1857,6 +2069,8 @@ async fn invoke_generation(
     stdin
         .flush()
         .map_err(|e| format!("Failed to flush GPU worker stdin: {e}"))?;
+
+    start_live_preview_watch(&app, state.inner(), &job_id);
 
     let _ = app.emit(
         "generation-started",
@@ -2186,6 +2400,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .manage(Arc::new(AppState {
             watcher: Mutex::new(None),
+            preview_watcher: Mutex::new(None),
             generation: Arc::new(Mutex::new(None)),
             worker: Mutex::new(None),
             sidecar: Mutex::new(None),

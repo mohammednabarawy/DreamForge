@@ -1,0 +1,74 @@
+# =============================================
+# DreamForge - Git Ignore
+# =============================================
+
+# --- LARGE BINARIES (never track) ---
+python_embeded/
+*.safetensors
+*.ckpt
+*.pth
+*.pt
+*.bin
+*.onnx
+*.gguf
+*.zip
+
+# --- Model directories (symlinked or downloaded) ---
+backend/models/*
+!backend/models/configs/
+backend/models_backup/
+
+# --- Generated outputs ---
+outputs/
+backend/outputs/
+*.png
+!apps/desktop/public/branding/*.png
+!apps/desktop/src-tauri/icons/*.png
+!backend/html/logo.png
+!backend/html/logo-icon.png
+!backend/html/logo-wordmark.png
+!backend/html/background.png
+!backend/html/init_image.png
+
+
+# --- Temp / cache ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.tmp
+*.log
+backend/temp/
+.cache/
+apps/desktop/dist/
+apps/desktop/node_modules/
+apps/desktop/src-tauri/target/
+apps/desktop/tsconfig.tsbuildinfo
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- OS ---
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# --- macOS app bundle (local launcher, not part of distribution) ---
+DreamForge.app/
+
+# --- Environment ---
+.env
+.antigravityignore
+venv/
+.setup/
+.dreamforge_setup_ok
+.dreamforge_comfy_deps_ok
+
+# --- Research clones ---
+.research/
+
+# --- Stray icon copies at repo root ---
+/icon.ico
+/icon.icns

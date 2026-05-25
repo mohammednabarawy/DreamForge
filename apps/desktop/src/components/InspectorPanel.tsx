@@ -12,7 +12,8 @@ import { StyleThumbnailGrid } from "./StyleThumbnailGrid";
 import { ThumbnailGallery, type GalleryTile } from "./ThumbnailGallery";
 import { MarketplaceTab } from "./MarketplaceTab";
 import { LoraStackPanel } from "./LoraStackPanel";
-import type { StudioSettings } from "../lib/studioBridge";
+import { aggregateLoraKeywords, type StudioSettings } from "../lib/studioBridge";
+import { DEFAULT_MAX_LORA_STACK } from "../lib/loraStack";
 
 type Tab = "discover" | "models" | "styles" | "settings";
 
@@ -306,8 +307,17 @@ export function InspectorPanel({
               </div>
               <LoraStackPanel
                 lora={activeLoras}
-                loraMin={studioSettings?.lora_min}
-                loraMax={studioSettings?.lora_max}
+                loraMin={studioSettings?.lora_min ?? 0}
+                loraMax={studioSettings?.lora_max ?? 2}
+                maxStack={DEFAULT_MAX_LORA_STACK}
+                loraKeywords={settings.lora_keywords ?? ""}
+                onLoraKeywordsChange={(lora_keywords) =>
+                  onChange({ lora_keywords })
+                }
+                onSyncKeywordsFromStack={async () => {
+                  const kw = await aggregateLoraKeywords(activeLoras);
+                  onChange({ lora_keywords: kw });
+                }}
                 onChange={(lora) => onChange({ lora })}
               />
               {activeLoras.length > 0 && (
@@ -420,6 +430,76 @@ export function InspectorPanel({
                 className="df-input mt-1 w-full px-2.5 py-1.5 font-mono text-xs"
               />
             </label>
+            {onSaveStudioSettings && studioSettings && (
+              <div className="grid grid-cols-2 gap-2">
+                <label className="block">
+                  <span className="text-[10px] text-dfui-tertiary">
+                    LoRA weight min
+                  </span>
+                  <input
+                    type="number"
+                    step={0.05}
+                    defaultValue={studioSettings.lora_min ?? 0}
+                    onBlur={(e) =>
+                      void onSaveStudioSettings({
+                        lora_min: Number(e.target.value),
+                      })
+                    }
+                    className="df-input mt-0.5 w-full font-mono text-[10px]"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[10px] text-dfui-tertiary">
+                    LoRA weight max
+                  </span>
+                  <input
+                    type="number"
+                    step={0.05}
+                    defaultValue={studioSettings.lora_max ?? 2}
+                    onBlur={(e) =>
+                      void onSaveStudioSettings({
+                        lora_max: Number(e.target.value),
+                      })
+                    }
+                    className="df-input mt-0.5 w-full font-mono text-[10px]"
+                  />
+                </label>
+              </div>
+            )}
+            {onSaveStudioSettings && studioSettings && (
+              <>
+                <label className="block">
+                  <span className="text-xs text-dfui-muted">
+                    Max images per run (config)
+                  </span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={50}
+                    defaultValue={studioSettings.image_number_max ?? imageNumberMax}
+                    onBlur={(e) =>
+                      void onSaveStudioSettings({
+                        image_number_max: Number(e.target.value),
+                      })
+                    }
+                    className="df-input mt-1 w-full px-2.5 py-1.5 font-mono text-xs"
+                  />
+                </label>
+                <label className="flex items-center gap-2 text-[11px] text-dfui-muted">
+                  <input
+                    type="checkbox"
+                    checked={studioSettings.seed_random ?? true}
+                    onChange={(e) =>
+                      void onSaveStudioSettings({
+                        seed_random: e.target.checked,
+                      })
+                    }
+                    className="accent-dfui-accent"
+                  />
+                  Random seed (web UI default)
+                </label>
+              </>
+            )}
             {onSaveStudioSettings && studioSettings && (
               <div className="space-y-2 rounded-lg border border-dfui-border/40 p-2">
                 <p className="text-[10px] font-medium uppercase tracking-wide text-dfui-muted">

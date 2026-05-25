@@ -82,3 +82,18 @@ export async function resolveCanvasPreviewUrl(
 export function cleanupCanvasPreviewUrls() {
   revokeObjectUrl();
 }
+
+/** Stable key for comparing whether the canvas already shows this file. */
+export function normalizePreviewPath(path: string | undefined): string {
+  if (!path?.trim()) return "";
+  return path.replace(/\\/g, "/").toLowerCase();
+}
+
+/** Prefer asset URL for finals — avoids data-url ↔ asset flicker. */
+export async function finalPreviewUrlForPath(
+  path: string,
+): Promise<string | null> {
+  const asset = pathToAssetUrl(path);
+  if (asset) return asset;
+  return resolveCanvasPreviewUrl({ preview_path: path, final: true });
+}

@@ -1,9 +1,7 @@
 import { motion } from "framer-motion";
 import { ExternalLink, Loader2, Maximize2, Paintbrush, Wand2 } from "lucide-react";
-import { useEffect, useState } from "react";
 import { BRAND } from "../lib/brand";
-import { readImagePreviewQueued } from "../lib/preview-queue";
-import { setImagePathDragData, type ReferenceImageMode } from "../lib/referenceImage";
+import type { ReferenceImageMode } from "../lib/referenceImage";
 import type { OutputItem } from "../lib/tauri-api";
 import { EngineBootBanner } from "./EngineBootBanner";
 import { EngineBootOverlay } from "./EngineBootOverlay";
@@ -16,7 +14,6 @@ type Mention = { kind: "model" | "style"; label: string; value: string };
 type Props = {
   previewUrl: string | null;
   liveProgress: { percentage: number; title: string } | null;
-  sessionGallery: string[];
   workerReady: boolean;
   canGenerate: boolean;
   generateBlockReason?: string;
@@ -39,7 +36,6 @@ type Props = {
   onDryRun: () => void;
   onGenerate: () => void;
   onCancel: () => void;
-  onGallerySelect: (path: string) => void;
   onUseSelectedImageFor: (mode: "edit" | "inpaint" | "upscale") => void;
   onAttachReferenceImage: (path: string, mode: ReferenceImageMode) => void;
   onClearReferenceImage: () => void;
@@ -51,7 +47,6 @@ type Props = {
 export function CanvasPanel({
   previewUrl,
   liveProgress,
-  sessionGallery,
   workerReady,
   canGenerate,
   generateBlockReason,
@@ -74,7 +69,6 @@ export function CanvasPanel({
   onDryRun,
   onGenerate,
   onCancel,
-  onGallerySelect,
   onUseSelectedImageFor,
   onAttachReferenceImage,
   onClearReferenceImage,
@@ -119,10 +113,9 @@ export function CanvasPanel({
         )}
         {previewUrl ? (
           <motion.img
-            key={previewUrl.slice(0, 48)}
-            initial={{ opacity: generating ? 0.85 : 0, scale: 0.98 }}
+            initial={false}
             animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: generating ? 0.12 : 0.28 }}
+            transition={{ duration: generating ? 0.12 : 0 }}
             src={previewUrl}
             alt={generating ? "Live generation preview" : "Active generation"}
             decoding="async"
@@ -207,18 +200,6 @@ export function CanvasPanel({
           </pre>
         )}
       </div>
-      {sessionGallery.length > 0 && (
-        <div className="flex shrink-0 gap-2 overflow-x-auto border-t border-dfui-border/50 bg-dfui-bg/50 px-3 py-2">
-          {sessionGallery.map((path) => (
-            <GalleryThumb
-              key={path}
-              path={path}
-              draggable
-              onClick={() => onGallerySelect(path)}
-            />
-          ))}
-        </div>
-      )}
       {(generating || generationLog) && (
         <div className="max-h-28 shrink-0 overflow-y-auto border-t border-dfui-border/50 bg-dfui-bg/60 px-3 py-2">
           <div className="mb-1 flex items-center justify-between">
@@ -260,44 +241,5 @@ export function CanvasPanel({
         activeModelLabel={activeModelLabel}
       />
     </section>
-  );
-}
-
-function GalleryThumb({
-  path,
-  onClick,
-  draggable = false,
-}: {
-  path: string;
-  onClick: () => void;
-  draggable?: boolean;
-}) {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    void readImagePreviewQueued(path)
-      .then((r) => { if (!cancelled) setUrl(r.data_url); })
-      .catch(() => { if (!cancelled) setUrl(null); });
-    return () => { cancelled = true; };
-  }, [path]);
-  return (
-    <button
-      type="button"
-      draggable={draggable}
-      onDragStart={(event) => {
-        setImagePathDragData(event.dataTransfer, path);
-      }}
-      className="h-14 w-14 shrink-0 overflow-hidden rounded-md border border-dfui-border/60 hover:border-dfui-forge transition-colors cursor-grab active:cursor-grabbing"
-      onClick={onClick}
-      title={`${path}\nDrag to prompt bar to attach`}
-    >
-      {url ? (
-        <img src={url} alt="" className="h-full w-full object-cover" loading="lazy" />
-      ) : (
-        <span className="flex h-full w-full items-center justify-center bg-dfui-bg/80 font-mono text-[8px] text-dfui-muted">
-          #
-        </span>
-      )}
-    </button>
   );
 }

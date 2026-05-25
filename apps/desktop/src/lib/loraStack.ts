@@ -4,6 +4,9 @@ export type LoraEntry = { name: string; weight: number };
 
 const DEFAULT_WEIGHT = 1;
 
+/** Matches Gradio `default_max_lora_number` in config_modification_tutorial.txt */
+export const DEFAULT_MAX_LORA_STACK = 5;
+
 export function parseLoraToken(token: string): LoraEntry | null {
   const trimmed = token.trim();
   if (!trimmed) return null;
@@ -64,4 +67,32 @@ export function loraWeightFromToken(
 ): number {
   const hit = parseLoraList(tokens).find((e) => e.name === name);
   return hit?.weight ?? fallback;
+}
+
+export function clampLoraWeight(
+  weight: number,
+  min: number,
+  max: number,
+): number {
+  const lo = Math.min(min, max);
+  const hi = Math.max(min, max);
+  const step = 0.05;
+  const clamped = Math.min(hi, Math.max(lo, weight));
+  return Math.round(clamped / step) * step;
+}
+
+/** Move active LoRA up/down in stack order (affects backend load order). */
+export function moveLoraInList(
+  tokens: string[],
+  name: string,
+  direction: "up" | "down",
+): string[] {
+  const entries = parseLoraList(tokens);
+  const idx = entries.findIndex((e) => e.name === name);
+  if (idx < 0) return tokens;
+  const swap = direction === "up" ? idx - 1 : idx + 1;
+  if (swap < 0 || swap >= entries.length) return tokens;
+  const next = [...entries];
+  [next[idx], next[swap]] = [next[swap], next[idx]];
+  return loraListToTokens(next);
 }

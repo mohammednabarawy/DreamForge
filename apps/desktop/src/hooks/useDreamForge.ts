@@ -21,7 +21,6 @@ import {
 } from "../lib/model-selection";
 import { excerptPrompt, HISTORY_PAGE_SIZE } from "../lib/historyUtils";
 import {
-  collectSessionImagePaths,
   DEFAULT_SESSION_ID,
   groupOutputsBySession,
   mergeSessionList,
@@ -83,7 +82,8 @@ import {
 } from "../lib/tauri-api";
 import {
   cleanupCanvasPreviewUrls,
-  pathToAssetUrl,
+  finalPreviewUrlForPath,
+  normalizePreviewPath,
   resolveCanvasPreviewUrl,
 } from "../lib/preview-display";
 import { prepareGenerationFromAgentPrompt } from "../lib/parseAgentPrompt";
@@ -93,7 +93,9 @@ import {
 } from "../lib/generationReadiness";
 import { useCompanionDownload } from "./useCompanionDownload";
 import {
+  DEFAULT_MAX_LORA_STACK,
   hasLora,
+  parseLoraList,
   removeLora,
   upsertLora,
 } from "../lib/loraStack";
@@ -164,7 +166,6 @@ export function useDreamForge() {
   );
   const [imageNumberMax, setImageNumberMax] = useState(8);
   const [inpaintMaskOpen, setInpaintMaskOpen] = useState(false);
-  const [sessionGallery, setSessionGallery] = useState<string[]>([]);
   const [activeSessionId, setActiveSessionId] = useState(() =>
     loadActiveSessionId(),
   );
@@ -207,6 +208,31 @@ export function useDreamForge() {
   const logPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastPreviewSigRef = useRef<string>("");
   const lastPreviewEventAtRef = useRef<number>(0);
+  const previewUrlRef = useRef<string | null>(null);
+  const canvasPreviewPathRef = useRef<string>("");
+
+  const setCanvasPreview = useCallback((url: string | null, path?: string) => {
+    if (url && url === previewUrlRef.current) return;
+    previewUrlRef.current = url;
+    if (path) {
+      canvasPreviewPathRef.current = normalizePreviewPath(path);
+    } else if (!url) {
+      canvasPreviewPathRef.current = "";
+    }
+    setPreviewUrl(url);
+  }, []);
+
+  const setCanvasPreviewFromPath = useCallback(
+    async (path: string) => {
+      const norm = normalizePreviewPath(path);
+      if (norm && norm === canvasPreviewPathRef.current && previewUrlRef.current) {
+        return;
+      }
+      const url = await finalPreviewUrlForPath(path);
+      if (url) setCanvasPreview(url, path);
+    },
+    [setCanvasPreview],
+  );
 
   const applyPreviewPayload = useCallback(
     async (p: {
@@ -220,13 +246,16 @@ export function useDreamForge() {
       percentage?: number;
       title?: string;
     }) => {
+      const isFinal = Boolean(p.final ?? p.final_preview);
+      if (!generatingRef.current && !isFinal) {
+        return;
+      }
       if (p.percentage != null || p.title) {
         setLiveProgress({
           percentage: p.percentage ?? 0,
           title: p.title ?? "",
         });
       }
-      const isFinal = Boolean(p.final ?? p.final_preview);
       const url = await resolveCanvasPreviewUrl({
         data_url: p.data_url,
         preview_path: p.preview_path,
@@ -237,7 +266,7 @@ export function useDreamForge() {
       if (url) {
         lastPreviewSigRef.current = url.slice(0, 96);
         lastPreviewEventAtRef.current = Date.now();
-        setPreviewUrl(url);
+        setCanvasPreview(url, p.preview_path);
         return;
       }
       if (p.has_preview && !isFinal) {
@@ -251,38 +280,15 @@ export function useDreamForge() {
           if (fallback) {
             lastPreviewSigRef.current = fallback.slice(0, 96);
             lastPreviewEventAtRef.current = Date.now();
-            setPreviewUrl(fallback);
+            setCanvasPreview(fallback, r.path);
           }
         } catch {
           /* preview file not ready yet */
         }
       }
     },
-    [],
+    [setCanvasPreview],
   );
-
-  const applyFinalPreviewPath = useCallback(async (path: string) => {
-    for (let attempt = 0; attempt < 16; attempt += 1) {
-      const asset = pathToAssetUrl(path);
-      if (asset) {
-        setPreviewUrl(asset);
-        return;
-      }
-      try {
-        const url = await resolveCanvasPreviewUrl({
-          preview_path: path,
-          final: true,
-        });
-        if (url) {
-          setPreviewUrl(url);
-          return;
-        }
-      } catch {
-        /* retry */
-      }
-      await new Promise((r) => setTimeout(r, 80));
-    }
-  }, []);
 
   const [settings, setSettings] = useState<GenerationSettings>({
     prompt: "Premium product hero shot, studio lighting, clean negative space",
@@ -648,7 +654,8 @@ export function useDreamForge() {
       setJobId(p.job_id ?? null);
       setGenerationLog("Sampling…\n");
       setLiveProgress({ percentage: 0, title: "Starting generation…" });
-      setSessionGallery([]);
+      canvasPreviewPathRef.current = "";
+      previewUrlRef.current = null;
       setLastError(null);
       setWarnings([]);
       lastPreviewEventAtRef.current = Date.now();
@@ -673,28 +680,19 @@ export function useDreamForge() {
           .result;
         const paths =
           result?.images?.map((i) => i.path).filter(Boolean) ?? [];
-        if (paths.length) {
-          setSessionGallery(paths);
+        const primary = paths[0] ?? p.preview_path;
+        if (primary) {
+          void setCanvasPreviewFromPath(primary);
+        } else {
+          void (async () => {
+            const url = await resolveCanvasPreviewUrl({
+              data_url: p.data_url,
+              preview_path: p.preview_path,
+              final: true,
+            });
+            if (url) setCanvasPreview(url, p.preview_path);
+          })();
         }
-        void (async () => {
-          const immediate = await resolveCanvasPreviewUrl({
-            data_url: p.data_url,
-            preview_path: p.preview_path,
-            final: true,
-          });
-          if (immediate) {
-            setPreviewUrl(immediate);
-          }
-          const primary = paths[0] ?? p.preview_path;
-          if (primary) {
-            const asset = pathToAssetUrl(primary);
-            if (asset) {
-              setPreviewUrl(asset);
-            } else if (!immediate) {
-              await applyFinalPreviewPath(primary);
-            }
-          }
-        })();
         void refreshOutputs({ selectNewest: true });
       } else {
         const friendly = describeError(p);
@@ -727,7 +725,7 @@ export function useDreamForge() {
     stopLogPoll,
     refreshWorkerLog,
     applyPreviewPayload,
-    applyFinalPreviewPath,
+    setCanvasPreviewFromPath,
   ]);
 
   useEffect(() => {
@@ -874,7 +872,7 @@ export function useDreamForge() {
           if (url && url.slice(0, 96) !== lastPreviewSigRef.current) {
             lastPreviewSigRef.current = url.slice(0, 96);
             lastPreviewEventAtRef.current = Date.now();
-            setPreviewUrl(url);
+            setCanvasPreview(url, r.path);
           }
         })
         .catch(() => {});
@@ -882,7 +880,7 @@ export function useDreamForge() {
     poll();
     const id = setInterval(poll, 800);
     return () => clearInterval(id);
-  }, [generating]);
+  }, [generating, setCanvasPreview]);
 
   useEffect(() => () => cleanupCanvasPreviewUrls(), []);
 
@@ -890,26 +888,15 @@ export function useDreamForge() {
     if (generating) return;
     const path = selected?.images?.[0];
     if (!path) {
-      setPreviewUrl(null);
+      if (!canvasPreviewPathRef.current) setCanvasPreview(null);
       return;
     }
-    let cancelled = false;
-    void (async () => {
-      const asset = pathToAssetUrl(path);
-      if (cancelled) return;
-      if (asset) {
-        setPreviewUrl(asset);
-        return;
-      }
-      const url = await resolveCanvasPreviewUrl({ preview_path: path, final: true });
-      if (!cancelled) setPreviewUrl(url);
-    })().catch(() => {
-      if (!cancelled) setPreviewUrl(null);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [selected, generating]);
+    const norm = normalizePreviewPath(path);
+    if (norm === canvasPreviewPathRef.current && previewUrlRef.current) {
+      return;
+    }
+    void setCanvasPreviewFromPath(path);
+  }, [selected, generating, setCanvasPreview, setCanvasPreviewFromPath]);
 
   const patchSettings = useCallback((patch: Partial<GenerationSettings>) => {
     if (patch.model !== undefined) {
@@ -944,17 +931,14 @@ export function useDreamForge() {
       setActiveSessionId(id);
       saveActiveSessionId(id);
       const session = sessions.find((s) => s.id === id);
-      setSessionGallery(collectSessionImagePaths(session));
       if (opts?.previewFirst) {
         const first = session?.items[0]?.images?.[0];
-        if (first) {
-          void applyFinalPreviewPath(first);
-        }
+        if (first) void setCanvasPreviewFromPath(first);
       }
       syncOutputPathForSession(id);
       setStatus(`Active session: ${session?.label ?? id}`);
     },
-    [sessions, syncOutputPathForSession, applyFinalPreviewPath],
+    [sessions, syncOutputPathForSession, setCanvasPreviewFromPath],
   );
 
   const createSession = useCallback(
@@ -993,18 +977,11 @@ export function useDreamForge() {
       if (sid && sid !== activeSessionIdRef.current) {
         setActiveSessionId(sid);
         saveActiveSessionId(sid);
-        const session = sessions.find((s) => s.id === sid);
-        setSessionGallery(collectSessionImagePaths(session));
         syncOutputPathForSession(sid);
       }
     },
     [sessions, syncOutputPathForSession],
   );
-
-  useEffect(() => {
-    const session = sessions.find((s) => s.id === activeSessionId);
-    setSessionGallery(collectSessionImagePaths(session));
-  }, [sessions, activeSessionId]);
 
   const reuseOutputPrompt = useCallback(
     (item: OutputItem) => {
@@ -1060,10 +1037,9 @@ export function useDreamForge() {
           })
           .filter((item): item is OutputItem => item !== null),
       );
-      setSessionGallery((prev) =>
-        imagePath ? prev.filter((p) => p !== imagePath) : [],
-      );
       if (manifestPath) {
+        canvasPreviewPathRef.current = "";
+        previewUrlRef.current = null;
         setPreviewUrl(null);
       }
     },
@@ -1195,6 +1171,12 @@ export function useDreamForge() {
         patchSettings({ lora: removeLora(prev, name) });
         return;
       }
+      if (parseLoraList(prev).length >= DEFAULT_MAX_LORA_STACK) {
+        setStatus(
+          `LoRA stack limit (${DEFAULT_MAX_LORA_STACK}) — remove one or adjust in web UI settings`,
+        );
+        return;
+      }
       let weight = 1;
       try {
         const info = await getLoraInfo(name);
@@ -1322,7 +1304,7 @@ export function useDreamForge() {
       output,
       validate_output: true,
     };
-    if (params.lora?.length) {
+    if (params.lora?.length && !params.lora_keywords?.trim()) {
       try {
         const kw = await aggregateLoraKeywords(params.lora);
         if (kw) params = { ...params, lora_keywords: kw };
@@ -1652,7 +1634,6 @@ export function useDreamForge() {
     galleryLoading,
     selectModelGallery,
     toggleLoraGallery,
-    sessionGallery,
     aspectPresets: uiDefaults?.aspect_ratios?.map((a) =>
       a.replace("×", "x"),
     ) ?? ASPECT_PRESETS,
@@ -1680,7 +1661,7 @@ export function useDreamForge() {
     deleteOutputSession,
     refreshStudioCatalog: () => loadStudioCatalog(true),
     selectGalleryImage: (path: string) => {
-      void applyFinalPreviewPath(path);
+      void setCanvasPreviewFromPath(path);
     },
     studioSettings,
     saveStudioSettings: saveStudioSettingsPatch,

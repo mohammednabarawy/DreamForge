@@ -96,7 +96,6 @@ export default function App() {
           <CanvasPanel
             previewUrl={mc.previewUrl}
             liveProgress={mc.liveProgress}
-            sessionGallery={mc.sessionGallery}
             workerReady={mc.workerReady}
             canGenerate={mc.canGenerate}
             generateBlockReason={mc.generateBlockReason}
@@ -119,7 +118,6 @@ export default function App() {
             onDryRun={() => void mc.runDryRun()}
             onGenerate={() => void mc.runGenerate()}
             onCancel={() => void mc.runCancel()}
-            onGallerySelect={mc.selectGalleryImage}
             onUseSelectedImageFor={mc.useSelectedImageFor}
             onAttachReferenceImage={mc.attachReferenceImage}
             onClearReferenceImage={mc.clearReferenceImage}

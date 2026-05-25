@@ -39,6 +39,7 @@ __all__ = [
     "model_file_unreadable",
     "unsupported_model_format",
     "disk_full",
+    "virtual_memory_low",
     "worker_crashed",
     "generation_cancelled",
     "generation_in_progress",
@@ -207,6 +208,23 @@ def unsupported_model_format(name: str, detail: str = "", *, job_id: str | None 
     )
 
 
+def virtual_memory_low(detail: str = "", *, job_id: str | None = None) -> dict:
+    return error(
+        "virtual_memory_low",
+        "Windows ran out of virtual memory while loading the model.",
+        suggestions=[
+            "Close browsers, games, and other heavy apps to free RAM.",
+            "Increase the Windows paging file: Settings → System → About → Advanced system settings → Performance Settings → Advanced → Virtual memory → Change (use a drive with free space).",
+            "In DreamForge, set VRAM profile to 8 GB or 5 GB in the inspector, then restart the GPU engine.",
+            "Use a smaller or fp8-quantized checkpoint; avoid loading full fp16 Flux Dev on 8 GB systems.",
+            "Reboot after changing the paging file so Windows applies the new limit.",
+        ],
+        details={"detail": detail} if detail else None,
+        recoverable=True,
+        job_id=job_id,
+    )
+
+
 def disk_full(detail: str = "", *, path: str | None = None, job_id: str | None = None) -> dict:
     return error(
         "disk_full",
@@ -281,6 +299,14 @@ def from_exception(exc: BaseException, *, job_id: str | None = None) -> dict:
         payload = out_of_memory(job_id=job_id)
         payload.setdefault("details", {}).update(details)
         return payload
+
+    winerror = getattr(exc, "winerror", None)
+    if (
+        winerror == 1455
+        or "paging file is too small" in msg.lower()
+        or "os error 1455" in msg.lower()
+    ):
+        return virtual_memory_low(f"{name}: {msg}", job_id=job_id)
 
     if isinstance(exc, OSError) and getattr(exc, "errno", None) in {28,}:
         # ENOSPC -> disk full

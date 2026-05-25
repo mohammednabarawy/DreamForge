@@ -392,14 +392,49 @@ class pipeline:
         self.xl_base_patched_hash = None
         self.conditions = None
         self.model_info = None
-        gc.collect(generation=2)
+        try:
+            from dreamforge_comfy_memory import (
+                enable_aimdo_mmap_loading,
+                prepare_for_large_model_load,
+            )
 
-        comfy.model_management.cleanup_models()
-        comfy.model_management.soft_empty_cache()
+            enable_aimdo_mmap_loading()
+            prepare_for_large_model_load()
+        except Exception:
+            gc.collect(generation=2)
+            comfy.model_management.cleanup_models()
+            comfy.model_management.soft_empty_cache()
 
         unet = None
 
         filename = str(filename) # FIXME use Path and suffix instead?
+
+        # Auto-route UNet-only families through the lighter loader.
+        #
+        # Comfy's all-in-one checkpoint path (``load_torch_file`` + AIO config
+        # guess) materializes the entire safetensors file into system RAM
+        # and then probes for CLIP/VAE candidates. For a 16 GB Flux fp8 file
+        # this peaks near 25 GB of CPU RAM and is the most common cause of
+        # WinError 1455 on Windows. ``load_diffusion_model`` streams weights
+        # through Comfy's offload-aware loader instead, which is what we want
+        # for Flux / Flux 2 / Flux Kontext / Qwen Image / HiDream I1 / Wan
+        # regardless of whether the file accidentally lives under
+        # ``checkpoints/`` or under ``diffusion_models/``.
+        if not unet_only and not filename.endswith(".gguf"):
+            lowered = Path(filename).name.lower()
+            unet_only_hints = (
+                "flux1", "flux-1", "flux_1", "flux2", "flux-2", "flux_2",
+                "flux-kontext", "flux_kontext",
+                "qwen_image", "qwen-image",
+                "hidream-i1", "hidream_i1",
+                "wan", "cosmos",
+            )
+            # Skip HiDream-O1, which is a true all-in-one checkpoint.
+            if "hidream_o1" not in lowered and "hidream-o1" not in lowered:
+                if any(tok in lowered for tok in unet_only_hints):
+                    print(f"[DreamForge] Routing {Path(filename).name} through diffusion_models loader (lighter RAM peak).")
+                    unet_only = True
+
         if filename.endswith(".gguf") or unet_only:
             with torch.torch.inference_mode():
                 try:
@@ -422,7 +457,31 @@ class pipeline:
                     else:
                         model_options = {}
                         model_options["dtype"] = torch.float8_e4m3fn # FIXME should be a setting
-                        unet = comfy.sd.load_diffusion_model(filename, model_options=model_options)
+                        from dreamforge_comfy_memory import load_diffusion_model_from_path
+
+                        try:
+                            unet = load_diffusion_model_from_path(
+                                filename, model_options=model_options
+                            )
+                        except OSError as exc:
+                            if getattr(exc, "winerror", None) == 1455 or "paging file" in str(exc).lower():
+                                print(
+                                    "[DreamForge] UNet load hit low virtual memory (WinError 1455). "
+                                    "Retrying with mmap loader after cache flush..."
+                                )
+                                from dreamforge_comfy_memory import (
+                                    enable_aimdo_mmap_loading,
+                                    load_diffusion_model_from_path,
+                                    prepare_for_large_model_load,
+                                )
+
+                                enable_aimdo_mmap_loading(force_retry=True)
+                                prepare_for_large_model_load()
+                                unet = load_diffusion_model_from_path(
+                                    filename, model_options=model_options
+                                )
+                            else:
+                                raise
 
                     # Get text-encoders (clip) and vae to match the unet
                     model_info = self.get_clip_and_vae(unet)

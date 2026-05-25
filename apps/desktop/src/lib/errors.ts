@@ -122,6 +122,53 @@ const COPY: Record<DreamForgeErrorCode, CopyEntry> = {
     ],
     recoverable: true,
   },
+  virtual_memory_low: {
+    title: "Windows virtual memory is low",
+    message:
+      "Windows could not commit enough memory while loading the model. " +
+      "This is usually fixable without changing hardware.",
+    suggestions: [
+      "Close other apps to free RAM.",
+      "Increase the Windows paging file, then reboot.",
+      "Use a GGUF Q5/Q4 Flux variant or switch to SDXL for this run.",
+    ],
+    recoverable: true,
+  },
+  low_system_ram: {
+    title: "Memory may be tight during load",
+    message:
+      "DreamForge estimates that loading this model may need more system " +
+      "memory than is currently free. Generation can still proceed.",
+    suggestions: [
+      "Close browsers and other heavy apps before generating.",
+      "Set VRAM profile to 8 GB or 5 GB in the Inspector.",
+      "Use t5xxl_fp8.safetensors instead of fp16 T5 if companions are missing.",
+    ],
+    recoverable: true,
+  },
+  low_disk_space: {
+    title: "Disk space is low",
+    message:
+      "The output drive has limited free space. Large images or batches " +
+      "may fail to save.",
+    suggestions: [
+      "Free space on the output drive.",
+      "Move the outputs/ folder to a larger disk.",
+    ],
+    recoverable: true,
+  },
+  vram_headroom_low: {
+    title: "VRAM may be tight for this resolution",
+    message:
+      "Free GPU memory looks lower than this model typically needs at " +
+      "full size. Try a lower resolution or a lower VRAM profile.",
+    suggestions: [
+      "Set VRAM profile to 8 GB or 5 GB in the Inspector.",
+      "Generate at 768×768 or 512×512 first.",
+      "Close other GPU apps.",
+    ],
+    recoverable: true,
+  },
   worker_crashed: {
     title: "GPU worker crashed",
     message:
@@ -187,6 +234,21 @@ function asCode(value: unknown): DreamForgeErrorCode | undefined {
   return undefined;
 }
 
+/** Preflight / advisory events from the worker (``type: "warning"``). */
+export function describeWarning(
+  payload?: StructuredError | string | null,
+): FriendlyError {
+  const friendly = describeError(payload);
+  // Never label advisories as a hard failure.
+  if (friendly.title === FALLBACK.title) {
+    return {
+      ...friendly,
+      title: "Heads up before generating",
+    };
+  }
+  return friendly;
+}
+
 export function describeError(
   payload?: StructuredError | string | null,
 ): FriendlyError {
@@ -216,9 +278,16 @@ export function describeError(
     payload.suggestions && payload.suggestions.length > 0
       ? payload.suggestions
       : entry.suggestions;
+  const isWarning =
+    (payload as { type?: string }).type === "warning" ||
+    code === "low_system_ram" ||
+    code === "vram_headroom_low" ||
+    code === "low_disk_space";
   return {
     code: code ?? String(payload.code ?? payload.error ?? "unknown"),
-    title: entry.title,
+    title: isWarning && entry.title === FALLBACK.title
+      ? "Heads up before generating"
+      : entry.title,
     message,
     suggestions,
     recoverable: payload.recoverable ?? entry.recoverable,

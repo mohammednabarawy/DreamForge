@@ -77,6 +77,16 @@ def test_from_exception_maps_oom_string_to_out_of_memory():
     assert "CUDA out of memory" in payload["details"]["exception"]
 
 
+def test_from_exception_maps_windows_paging_file_to_virtual_memory_low():
+    exc = OSError(1455, "The paging file is too small for this operation to complete.")
+    if sys.platform == "win32":
+        exc.winerror = 1455  # type: ignore[attr-defined]
+    payload = from_exception(exc)
+    _is_error(payload, "virtual_memory_low")
+    assert payload["recoverable"] is True
+    assert any("paging file" in s.lower() for s in payload["suggestions"])
+
+
 def test_from_exception_maps_enospc_to_disk_full():
     err = OSError(28, "No space left on device", "C:/outputs/x.png")
     payload = from_exception(err)

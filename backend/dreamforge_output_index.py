@@ -113,16 +113,19 @@ def _collect_manifest_entries(since=None, session=None):
     return entries
 
 
-def _summary_from_manifest_entry(item, data):
+def _summary_from_manifest_entry(item, data, *, max_prompt_chars=8000):
     model_info = data.get("model") or {}
     settings = data.get("settings") or {}
+    prompt = data.get("prompt", "") or ""
+    if max_prompt_chars > 0 and len(prompt) > max_prompt_chars:
+        prompt = prompt[:max_prompt_chars] + "…"
     return {
         "manifest_path": item["path"],
         "timestamp": datetime.fromtimestamp(item["mtime"]).isoformat(),
         "created_at": data.get("created_at"),
         "session": _session_from_manifest_path(item["path"]),
         "title": _title_from_manifest(data, item["path"]),
-        "prompt": data.get("prompt", ""),
+        "prompt": prompt,
         "model_family": model_info.get("family", "unknown"),
         "model_name": model_info.get("name", "unknown"),
         "model_stem": model_info.get("stem")

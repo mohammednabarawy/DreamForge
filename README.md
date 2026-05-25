@@ -11,6 +11,7 @@
 ## Why DreamForge?
 
 - **Private by default** — models and images stay on your machine.
+- **Runs on almost anything** — 24 GB workstations down to 4 GB GPUs, Apple Silicon, AMD/Intel via DirectML, and CPU-only fallback. See the [Optimization & Hardware Guide](docs/OPTIMIZATION.md).
 - **Multiple surfaces** — pick the desktop studio, classic web UI, CLI, or MCP for automation.
 - **Production-minded** — VRAM profiles, dry-runs, manifests, Arabic poster compositing, and agent recipes.
 

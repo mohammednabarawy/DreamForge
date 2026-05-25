@@ -166,6 +166,13 @@ def _load_generation_stack(progress=None):
         raise
 
     _report_boot(progress, "Loading ComfyUI and generation modules...")
+    try:
+        from dreamforge_comfy_memory import enable_aimdo_mmap_loading
+
+        if enable_aimdo_mmap_loading():
+            _report_boot(progress, "Large-model mmap loader enabled (comfy-aimdo)")
+    except Exception:
+        pass
     stop = threading.Event()
 
     def pulse() -> None:

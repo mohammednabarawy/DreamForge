@@ -69,25 +69,154 @@ def _normalize_vram_arg(value: str | None) -> str | None:
     return aliases.get(normalized)
 
 
+def _system_ram_gb() -> float | None:
+    """Total physical RAM in GB, or None if unknown."""
+    try:
+        import psutil  # type: ignore
+
+        return psutil.virtual_memory().total / (1024 ** 3)
+    except Exception:
+        pass
+    try:
+        import ctypes
+
+        class _MEMORYSTATUSEX(ctypes.Structure):  # Windows fallback
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("sullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+
+        info = _MEMORYSTATUSEX()
+        info.dwLength = ctypes.sizeof(_MEMORYSTATUSEX)
+        ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(info))  # type: ignore[attr-defined]
+        return info.ullTotalPhys / (1024 ** 3)
+    except Exception:
+        return None
+
+
+def _has_directml() -> bool:
+    try:
+        import torch_directml  # type: ignore  # noqa: F401
+
+        return True
+    except Exception:
+        return False
+
+
+def _gpu_vendor() -> str | None:
+    """Best-effort GPU vendor string when CUDA is available."""
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            return None
+        name = torch.cuda.get_device_name(0).lower()
+        if "nvidia" in name or "geforce" in name or "rtx" in name or "gtx" in name or "tesla" in name or "quadro" in name:
+            return "nvidia"
+        if "amd" in name or "radeon" in name:
+            return "amd"
+        if "intel" in name or "arc" in name:
+            return "intel"
+        return name
+    except Exception:
+        return None
+
+
 def _desktop_worker_argv() -> list[str]:
+    """Pick a sensible set of worker CLI flags from detected hardware.
+
+    Priority:
+      1. ``DREAMFORGE_DESKTOP_VRAM_MODE`` (forced profile from the UI).
+      2. ``DREAMFORGE_CPU_ONLY=1`` -> ``--cpu``.
+      3. Auto-detect CUDA / MPS / DirectML, with a system-RAM-aware fallback.
+
+    Additional helper flags such as ``--cpu-vae`` are appended on 6-8 GB
+    NVIDIA cards because Flux/SDXL VAE decode is a known OOM spike there.
+    Users can disable that via ``DREAMFORGE_NO_CPU_VAE=1``.
+
+    Power users can append arbitrary extra flags via
+    ``DREAMFORGE_EXTRA_WORKER_ARGS`` (space separated, e.g.
+    ``"--cache-none --reserve-vram 1"``).
+    """
+    extras: list[str] = []
+    raw_extra = os.environ.get("DREAMFORGE_EXTRA_WORKER_ARGS", "").strip()
+    if raw_extra:
+        extras.extend(raw_extra.split())
+
+    if os.environ.get("DREAMFORGE_CPU_ONLY") in {"1", "true", "yes"}:
+        return ["--cpu", *extras]
+
     forced = _normalize_vram_arg(os.environ.get("DREAMFORGE_DESKTOP_VRAM_MODE"))
     if forced:
-        return [forced]
+        argv = [forced]
+        # For aggressive low-VRAM modes, also push the VAE to CPU unless the
+        # user opted out. Tiny speed hit, but prevents the classic VAE OOM
+        # spike on 6-8 GB cards while decoding 1024px.
+        if forced in {"--lowvram", "--novram"} and os.environ.get("DREAMFORGE_NO_CPU_VAE") not in {"1", "true", "yes"}:
+            argv.append("--cpu-vae")
+        argv.extend(extras)
+        return argv
 
     try:
         import torch
-        if torch.cuda.is_available():
-            total_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
-            if total_gb >= 10:
-                return ["--normalvram"]
-            if total_gb >= 6:
-                return ["--lowvram"]
-            return ["--novram"]
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            return ["--normalvram"]
     except ImportError:
-        pass
-    return ["--cpu"]
+        return ["--cpu", *extras]
+
+    if torch.cuda.is_available():
+        try:
+            total_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+        except Exception:
+            total_gb = 0.0
+        sys_ram = _system_ram_gb()
+        # If the user has very little system RAM, even a healthy GPU will
+        # struggle to load Flux + T5 + VAE. Bias toward --lowvram / --cpu-vae.
+        ram_tight = sys_ram is not None and sys_ram < 16
+
+        # Reserve a sliver of VRAM for the OS / desktop compositor unless the
+        # user already provided their own --reserve-vram via extras.
+        reserve_args: list[str] = []
+        if not any(a == "--reserve-vram" for a in extras):
+            if total_gb < 6:
+                reserve_args = ["--reserve-vram", "0.3"]
+            elif total_gb < 12:
+                reserve_args = ["--reserve-vram", "0.6"]
+            else:
+                reserve_args = ["--reserve-vram", "1.0"]
+
+        if total_gb >= 14:
+            return ["--normalvram", *reserve_args, *extras]
+        if total_gb >= 10:
+            return ["--normalvram", *reserve_args, *extras]
+        if total_gb >= 8:
+            argv = ["--lowvram"]
+            if ram_tight or os.environ.get("DREAMFORGE_NO_CPU_VAE") not in {"1", "true", "yes"}:
+                argv.append("--cpu-vae")
+            argv.extend(reserve_args)
+            argv.extend(extras)
+            return argv
+        if total_gb >= 6:
+            argv = ["--lowvram", "--cpu-vae"]
+            argv.extend(reserve_args)
+            argv.extend(extras)
+            return argv
+        # < 6 GB VRAM: very aggressive offload.
+        return ["--novram", "--cpu-vae", *reserve_args, *extras]
+
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return ["--normalvram", *extras]
+
+    if os.name == "nt" and _has_directml():
+        # Falls back through Comfy's directml path; Comfy decides offload.
+        return ["--directml", *extras]
+
+    return ["--cpu", *extras]
 
 
 def _namespace_from_dict(data: dict) -> SimpleNamespace:
@@ -97,6 +226,12 @@ def _namespace_from_dict(data: dict) -> SimpleNamespace:
 def serve() -> None:
     configure_stdio()
     os.environ["DREAMFORGE_HEADLESS"] = "1"
+    try:
+        from dreamforge_comfy_memory import enable_aimdo_mmap_loading
+
+        enable_aimdo_mmap_loading()
+    except Exception:
+        pass
     import builtins
 
     _real_print = builtins.print

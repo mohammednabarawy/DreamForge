@@ -48,9 +48,19 @@ _force_utf8_io()
 
 def _emit(payload: dict) -> None:
     try:
-        sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        line = json.dumps(payload, ensure_ascii=False, default=str)
+    except (TypeError, ValueError) as exc:
+        line = json.dumps(
+            {
+                "ok": False,
+                "error": f"response_encode_failed: {exc}",
+            },
+            ensure_ascii=True,
+        )
+    try:
+        sys.stdout.write(line + "\n")
     except UnicodeEncodeError:
-        sys.stdout.write(json.dumps(payload, ensure_ascii=True) + "\n")
+        sys.stdout.write(json.dumps(payload, ensure_ascii=True, default=str) + "\n")
     sys.stdout.flush()
 
 

@@ -30,6 +30,8 @@ const LOG_FULL_CHARS: usize = 100_000;
 const WORKER_BOOT_TIMEOUT_MS: u64 = 300_000;
 const WORKER_BOOT_POLL_MS: u64 = 500;
 const MAX_WORKER_AUTO_RESTARTS: u8 = 2;
+/// Max single-line JSON payload from the Python bridge (list_outputs with long prompts).
+const SIDECAR_MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 
 struct ActiveGeneration {
     job_id: String,
@@ -106,8 +108,59 @@ impl PythonSidecar {
             .is_none()
     }
 
+    fn read_json_response(stdout: &mut BufReader<std::process::ChildStdout>) -> Result<Value, String> {
+        let mut accumulated = String::new();
+        for _ in 0..48 {
+            let mut line = String::new();
+            let n = stdout
+                .read_line(&mut line)
+                .map_err(|e| format!("Sidecar read failed: {e}"))?;
+            if n == 0 {
+                if accumulated.is_empty() {
+                    return Err("Sidecar closed stdout before sending a response".to_string());
+                }
+                break;
+            }
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                if !accumulated.is_empty() {
+                    break;
+                }
+                continue;
+            }
+            if accumulated.is_empty() {
+                match serde_json::from_str::<Value>(trimmed) {
+                    Ok(value) => return Ok(value),
+                    Err(_) if trimmed.starts_with('{') || trimmed.starts_with('[') => {
+                        accumulated.push_str(trimmed);
+                    }
+                    Err(err) => {
+                        return Err(format!(
+                            "Sidecar JSON parse failed: {err} (got: {}...)",
+                            &trimmed[..trimmed.len().min(160)]
+                        ));
+                    }
+                }
+            } else {
+                accumulated.push_str(trimmed);
+            }
+            if accumulated.len() > SIDECAR_MAX_RESPONSE_BYTES {
+                return Err("Sidecar response exceeded size limit".to_string());
+            }
+            if let Ok(value) = serde_json::from_str::<Value>(accumulated.trim()) {
+                return Ok(value);
+            }
+        }
+        if accumulated.is_empty() {
+            return Err("Sidecar returned no JSON response".to_string());
+        }
+        serde_json::from_str(accumulated.trim())
+            .map_err(|e| format!("Sidecar JSON parse failed: {e}"))
+    }
+
     fn request(&self, cmd: &str, params: Value) -> Result<Value, String> {
-        let request = json!({ "cmd": cmd, "params": params });
+        let request = serde_json::to_string(&json!({ "cmd": cmd, "params": params }))
+            .map_err(|e| format!("Sidecar request encode failed: {e}"))?;
         let mut stdin = self.stdin.lock().map_err(|e| e.to_string())?;
         writeln!(stdin, "{request}").map_err(|e| format!("Sidecar stdin write failed: {e}"))?;
         stdin
@@ -115,17 +168,12 @@ impl PythonSidecar {
             .map_err(|e| format!("Sidecar stdin flush failed: {e}"))?;
 
         let mut stdout = self.stdout.lock().map_err(|e| e.to_string())?;
-        let mut line = String::new();
-        stdout
-            .read_line(&mut line)
-            .map_err(|e| format!("Sidecar read failed: {e}"))?;
+        let response = Self::read_json_response(&mut stdout)?;
 
         if !self.alive() {
             return Err("Bridge sidecar exited unexpectedly".to_string());
         }
 
-        let response: Value =
-            serde_json::from_str(&line).map_err(|e| format!("Sidecar JSON parse failed: {e}"))?;
         if response.get("ok") == Some(&Value::Bool(false)) {
             return Err(response
                 .get("error")
@@ -135,6 +183,26 @@ impl PythonSidecar {
         }
         Ok(response)
     }
+}
+
+fn reset_bridge_sidecar(state: &Arc<AppState>) {
+    let mut guard = match state.sidecar.lock() {
+        Ok(g) => g,
+        Err(_) => return,
+    };
+    if let Some(sidecar) = guard.take() {
+        if let Ok(mut child) = sidecar.child.lock() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+fn is_sidecar_protocol_error(err: &str) -> bool {
+    err.contains("Sidecar JSON parse failed")
+        || err.contains("Sidecar closed stdout")
+        || err.contains("Sidecar returned no JSON")
+        || err.contains("Bridge sidecar exited unexpectedly")
 }
 
 fn start_bridge_sidecar(root: &Path, state: &Arc<AppState>) -> Result<(), String> {
@@ -1258,13 +1326,25 @@ fn start_gpu_worker(app: AppHandle, root: &Path, state: &Arc<AppState>) -> Resul
     Ok(())
 }
 
-fn bridge_request(state: &Arc<AppState>, cmd: &str, params: Value) -> Result<Value, String> {
-    ensure_bridge_sidecar(state)?;
+fn bridge_request_once(state: &Arc<AppState>, cmd: &str, params: Value) -> Result<Value, String> {
     let guard = state.sidecar.lock().map_err(|e| e.to_string())?;
     let sidecar = guard
         .as_ref()
         .ok_or_else(|| "Bridge sidecar not running".to_string())?;
     sidecar.request(cmd, params)
+}
+
+fn bridge_request(state: &Arc<AppState>, cmd: &str, params: Value) -> Result<Value, String> {
+    ensure_bridge_sidecar(state)?;
+    match bridge_request_once(state, cmd, params.clone()) {
+        Ok(value) => Ok(value),
+        Err(err) if is_sidecar_protocol_error(&err) => {
+            reset_bridge_sidecar(state);
+            ensure_bridge_sidecar(state)?;
+            bridge_request_once(state, cmd, params)
+        }
+        Err(err) => Err(err),
+    }
 }
 
 async fn bridge_request_async(

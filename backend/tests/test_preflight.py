@@ -61,6 +61,37 @@ def test_low_disk_emits_warning_but_not_error(tmp_path, monkeypatch):
     assert "low_disk_space" in codes
 
 
+def test_flux_fp8_16gb_gpu_no_false_vram_warning(tmp_path, monkeypatch):
+    """16 GB cards with ~15 GB free should run fp8 Flux without VRAM noise."""
+    models_dir = tmp_path / "models" / "checkpoints"
+    _write_fake_safetensors(models_dir / "flux1-schnell-fp8.safetensors")
+    monkeypatch.setattr(pf, "MODELS_ROOT", tmp_path / "models")
+    monkeypatch.setattr(pf, "DEFAULT_OUTPUT_ROOT", tmp_path / "outputs")
+    monkeypatch.setattr(pf, "_disk_free_gb", lambda _p: 50.0)
+    monkeypatch.setattr(pf, "_free_vram_gb", lambda: 14.8)
+    monkeypatch.setattr(
+        pf,
+        "_memory_status",
+        lambda: {
+            "total_phys_gb": 28.0,
+            "avail_phys_gb": 9.0,
+            "commit_limit_gb": 57.0,
+            "avail_commit_gb": 40.0,
+        },
+    )
+    model = {
+        "name": "flux1-schnell-fp8.safetensors",
+        "category": "checkpoints",
+        "family": "flux",
+        "size_mb": 16_400,
+    }
+    result = run_preflight(model)
+    assert not result.has_errors
+    codes = [w["code"] for w in result.warnings]
+    assert "vram_headroom_low" not in codes
+    assert "low_system_ram" not in codes
+
+
 def test_vram_warning_when_estimate_exceeds_free(tmp_path, monkeypatch):
     models_dir = tmp_path / "models" / "diffusion_models"
     _write_fake_safetensors(models_dir / "flux1-dev-fp8.safetensors")

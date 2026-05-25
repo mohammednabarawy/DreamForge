@@ -5,7 +5,12 @@ import {
   generationPhaseLabel,
   type EngineState,
 } from "../lib/engine";
-import { describeError, shortErrorLine, type FriendlyError } from "../lib/errors";
+import {
+  describeError,
+  describeWarning,
+  shortErrorLine,
+  type FriendlyError,
+} from "../lib/errors";
 import { parseInventoryResponse } from "../lib/inventory";
 import {
   findGalleryModel,
@@ -579,7 +584,7 @@ export function useDreamForge() {
       setStatus("Generation already in progress on the GPU worker");
     }).then((u) => unsubs.push(() => u()));
     void onGenerationWarning((p) => {
-      const friendly = describeError(p);
+      const friendly = describeWarning(p);
       setWarnings((prev) => {
         // De-dupe by code so spammy events don't pile up.
         const filtered = prev.filter((w) => w.code !== friendly.code);

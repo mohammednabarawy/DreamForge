@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { GenerationSettings, ModelGalleryItem } from "./tauri-api";
 
 export type StudioSettings = {
   path_checkpoints?: string;
@@ -29,6 +30,65 @@ export type ImageLibraryPage = {
   range_text?: string;
 };
 
+export type AgentProviderPreset = {
+  id: string;
+  label: string;
+  mode: "local" | "cloud" | "custom";
+  base_url: string;
+  default_model: string;
+  requires_api_key: boolean;
+  test_kind: string;
+};
+
+export type DreamForgeAppConfig = {
+  agent: {
+    provider: string;
+    base_url: string;
+    model: string;
+    api_key?: string;
+    api_key_configured?: boolean;
+    api_key_tail?: string;
+    custom_instructions: string;
+    approval_required: boolean;
+    auto_configure_workflows: boolean;
+    clear_api_key?: boolean;
+  };
+  privacy: {
+    cloud_confirmation_required: boolean;
+    allow_cloud_image_context: boolean;
+  };
+  ui: {
+    studio_mode: "generate" | "edit" | "inpaint" | "upscale" | "agent";
+    advanced_mode: boolean;
+  };
+};
+
+export type DreamForgeAppConfigPatch = {
+  agent?: Partial<DreamForgeAppConfig["agent"]>;
+  privacy?: Partial<DreamForgeAppConfig["privacy"]>;
+  ui?: Partial<DreamForgeAppConfig["ui"]>;
+};
+
+export type AgentProviderTestResult = {
+  ok: boolean;
+  provider: string;
+  model: string;
+  latency_ms: number;
+  detail: string;
+};
+
+export type AgentPlanResult = {
+  ok?: boolean;
+  source: "provider" | "local";
+  provider?: string;
+  provider_model?: string;
+  message: string;
+  mode: "generate" | "edit" | "inpaint" | "upscale" | "agent";
+  patch: Partial<GenerationSettings>;
+  actions: string[];
+  downloads: string[];
+};
+
 type BridgeOk<T> = { ok?: boolean; error?: string } & T;
 
 export async function bridgeInvoke<T>(
@@ -51,6 +111,43 @@ export async function getStudioSettings() {
 
 export async function saveStudioSettings(settings: StudioSettings) {
   return bridgeInvoke<{ ok: boolean }>("save_studio_settings", { settings });
+}
+
+export async function getAppConfig() {
+  const res = await bridgeInvoke<{ config: DreamForgeAppConfig }>(
+    "get_app_config",
+  );
+  return res.config;
+}
+
+export async function saveAppConfig(config: DreamForgeAppConfigPatch) {
+  const res = await bridgeInvoke<{ config: DreamForgeAppConfig }>(
+    "save_app_config",
+    { config },
+  );
+  return res.config;
+}
+
+export async function listAgentProviders() {
+  const res = await bridgeInvoke<{ providers: AgentProviderPreset[] }>(
+    "list_agent_providers",
+  );
+  return res.providers ?? [];
+}
+
+export async function testAgentProvider(config?: DreamForgeAppConfigPatch | DreamForgeAppConfig) {
+  return bridgeInvoke<AgentProviderTestResult>("test_agent_provider", {
+    config,
+  });
+}
+
+export async function planAgentInstruction(params: {
+  instruction: string;
+  settings: GenerationSettings;
+  selected_image?: string;
+  model_gallery?: ModelGalleryItem[];
+}) {
+  return bridgeInvoke<AgentPlanResult>("agent_plan", params);
 }
 
 export async function getLoraInfo(name: string) {

@@ -8,6 +8,7 @@ import { EngineBootOverlay } from "./EngineBootOverlay";
 import { PromptBar } from "./PromptBar";
 import type { EngineState } from "../lib/engine";
 import type { GenerationSettings } from "../lib/tauri-api";
+import type { StudioMode } from "../lib/model-selection";
 
 type Mention = { kind: "model" | "style"; label: string; value: string };
 
@@ -27,6 +28,9 @@ type Props = {
   restarting: boolean;
   onRestartEngine: () => void;
   selected: OutputItem | null;
+  studioMode: StudioMode;
+  agentPlannedMode?: StudioMode | null;
+  onStudioModeChange: (mode: StudioMode) => void;
   settings: GenerationSettings;
   onChange: (patch: Partial<GenerationSettings>) => void;
   mentions: Mention[];
@@ -60,6 +64,9 @@ export function CanvasPanel({
   restarting,
   onRestartEngine,
   selected,
+  studioMode,
+  agentPlannedMode,
+  onStudioModeChange,
   settings,
   onChange,
   mentions,
@@ -222,6 +229,9 @@ export function CanvasPanel({
       )}
       <PromptBar
         settings={settings}
+        studioMode={studioMode}
+        agentPlannedMode={agentPlannedMode}
+        onStudioModeChange={onStudioModeChange}
         onChange={onChange}
         mentions={mentions}
         generating={generating}

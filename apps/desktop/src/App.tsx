@@ -109,6 +109,9 @@ export default function App() {
             restarting={mc.restarting}
             onRestartEngine={() => void mc.runRestartEngine()}
             selected={mc.selected}
+            studioMode={mc.studioMode}
+            agentPlannedMode={mc.agentPlannedMode}
+            onStudioModeChange={(mode) => void mc.setStudioMode(mode)}
             settings={mc.settings}
             onChange={mc.patchSettings}
             mentions={mc.mentionTargets}
@@ -155,12 +158,22 @@ export default function App() {
             onRefreshModelDependencies={() => void mc.refreshModelDependencies()}
             studioSettings={mc.studioSettings}
             onSaveStudioSettings={(patch) => void mc.saveStudioSettings(patch)}
+            appConfig={mc.appConfig}
+            agentProviders={mc.agentProviders}
+            agentProviderTest={mc.agentProviderTest}
+            agentProviderBusy={mc.agentProviderBusy}
+            onSaveAppConfig={(patch) => void mc.saveAppConfig(patch)}
+            onTestAgentProvider={(patch) => void mc.testAgentProvider(patch)}
             imageNumberMax={mc.imageNumberMax}
           />
         </Panel>
       </PanelGroup>
     </motion.div>
-      <FullLogModal open={fullLogOpen} onClose={() => setFullLogOpen(false)} />
+      <FullLogModal
+        open={fullLogOpen}
+        jobId={mc.logJobId}
+        onClose={() => setFullLogOpen(false)}
+      />
       <InpaintMaskModal
         open={mc.inpaintMaskOpen}
         imagePath={mc.settings.input_image ?? ""}

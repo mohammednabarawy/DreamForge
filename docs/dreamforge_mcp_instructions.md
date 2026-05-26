@@ -16,7 +16,7 @@ Welcome to the DreamForge MCP Server! This server provides powerful, local AI im
 
 *   **Model Selection**: Use `recommend_model` if you aren't sure which model fits the user's request. Pass the `use_case` and it will return ranked options.
 *   **Active Context**: The server tracks the `last_generation`. Use `get_last_generation` to fetch the metadata and output paths of the most recent job. Other tools may default to these values if you omit them.
-*   **Image Editing**: Use `edit_image`. It supports `flux_kontext` (for high-fidelity edits), `inpaint`, and `qwen_edit` (experimental). Always provide an absolute path to the `input_image`.
+*   **Image Editing**: Use `edit_image` with `edit_type` (`kontext`, `qwen_edit`, `inpaint`, `img2img`, `auto`) and optional `inpaint_mask_path` for masked edits. Default global edits to **kontext**; use **qwen_edit** only for typography / exact text. See [AGENT_DIFFUSION_GUIDE.md](./AGENT_DIFFUSION_GUIDE.md).
 *   **Validation**: Generated images include automatic validation. If `validate_image` reports `very_low_contrast` or `image_appears_blank`, the generation likely failed (e.g., due to an incompatible VAE).
 *   **Finding Outputs**: Use `list_outputs` to find previous generations.
 

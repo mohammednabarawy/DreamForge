@@ -59,12 +59,22 @@ from dreamforge_errors import (
 )
 from dreamforge_preflight import run_preflight
 from dreamforge_progress import (
+    GEN_PREPARING,
+    GEN_SAMPLING,
     boot_label,
     boot_phase_from_message,
     generation_label,
     generation_phase_from_preview,
     gpu_telemetry,
 )
+
+
+def _clamp_float(value, default: float, low: float, high: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(low, min(high, parsed))
 
 
 def _report_boot(progress, message: str, **extra) -> None:
@@ -325,9 +335,14 @@ def run_generation(
 
     try:
         job, model, prompt, negative, width, height, _brand_kit = _compile_job(base_args, data)
-        settings = _apply_job_performance(
-            _auto_settings(model, job, width, height, negative),
+        model_family = str(model.get("family") or "").lower()
+        settings = _tune_edit_job_settings(
+            _apply_job_performance(
+                _auto_settings(model, job, width, height, negative),
+                job,
+            ),
             job,
+            model_family,
         )
         if getattr(job, "clip_skip", None) is not None:
             try:
@@ -357,7 +372,6 @@ def run_generation(
         cn_selection = getattr(job, "cn_selection", None) or "None"
         cn_type = getattr(job, "cn_type", None) or "None"
         edit_type = getattr(job, "edit_type", "auto")
-        model_family = str(model.get("family") or "").lower()
         use_case = str(getattr(job, "use_case", "none") or "none").lower()
 
         if not input_path:
@@ -410,6 +424,12 @@ def run_generation(
                 return {"status": "error", **err}
 
         streaming = stream_sink is not None
+        edit_strength = _clamp_float(
+            getattr(job, "edit_strength", None),
+            0.98 if edit_type == "kontext" or model_family == "flux_kontext" else 0.75,
+            0.0,
+            1.0,
+        )
         gen_data = {
             "task_type": "process",
             "image_total": int(getattr(job, "image_number", 1) or 1),
@@ -435,8 +455,9 @@ def run_generation(
             "cn_edge_high": 0.9,
             "cn_start": 0.0,
             "cn_stop": 1.0,
-            "cn_strength": 0.75,
+            "cn_strength": edit_strength,
             "cn_upscale": getattr(job, "upscale_method", "2x"),
+            "edit_strength": edit_strength,
             "seed": seed,
             "input_image": loaded_input_image,
         }
@@ -487,6 +508,8 @@ def run_generation(
         finished = False
         flag = None
         product = None
+        last_progress_emit = 0.0
+        last_sampling_pct = 0
 
         def _oom_payload() -> dict:
             free_gb = None
@@ -529,6 +552,22 @@ def run_generation(
                 return {"status": "error", **err}
 
             if flag is None:
+                now = time.time()
+                if streaming and now - last_progress_emit >= 15.0:
+                    emit_event(
+                        stream_sink,
+                        {
+                            "type": "progress",
+                            "job_id": job_id,
+                            "phase": GEN_SAMPLING if last_sampling_pct > 0 else GEN_PREPARING,
+                            "progress": last_sampling_pct,
+                            "message": (
+                                "Sampling in progress… Kontext edits can take several "
+                                "minutes on first run while GPU weights load."
+                            ),
+                        },
+                    )
+                    last_progress_emit = now
                 time.sleep(0.08)
                 continue
             if flag == "preview":
@@ -543,6 +582,9 @@ def run_generation(
                     str(title) if title else None,
                 )
                 progress_pct = max(0, min(100, int(pct))) if pct is not None and int(pct) >= 0 else 0
+                if progress_pct > 0:
+                    last_sampling_pct = progress_pct
+                last_progress_emit = time.time()
                 emit_event(
                     stream_sink,
                     {
@@ -636,6 +678,57 @@ def _coerce_performance_preset(requested: str | None, family_preset: str | None)
     return requested
 
 
+def _tune_edit_job_settings(settings: dict, job, model_family: str) -> dict:
+    """Lower latency defaults for reference / Kontext edits without overriding explicit Custom runs."""
+    out = dict(settings)
+    edit_type = str(getattr(job, "edit_type", "auto") or "auto").lower()
+    has_input = bool(
+        getattr(job, "input_image", None) or getattr(job, "upscale_image", None)
+    )
+    if not has_input or edit_type not in ("kontext", "inpaint", "img2img", "qwen_edit"):
+        return out
+
+    family = (model_family or "").lower()
+    perf = str(getattr(job, "performance", "") or "").strip()
+    custom_perf = perf in ("Custom...", "Custom")
+    explicit_sampling = any(
+        getattr(job, attr, None) is not None
+        for attr in ("steps", "cfg_scale", "sampler", "scheduler")
+    )
+
+    if family.startswith("flux") or edit_type == "kontext":
+        out["performance_selection"] = "Flux"
+        try:
+            from modules.performance import PerformanceSettings
+
+            opts = PerformanceSettings().get_perf_options("Flux")
+            if not custom_perf:
+                out["steps"] = int(opts.get("custom_steps", out.get("steps", 20)))
+                out["cfg"] = float(opts.get("cfg", out.get("cfg", 3.0)))
+                out["sampler_name"] = opts.get("sampler_name", out.get("sampler_name"))
+                out["scheduler"] = opts.get("scheduler", out.get("scheduler"))
+                out["clip_skip"] = int(opts.get("clip_skip", out.get("clip_skip", 1)))
+        except (KeyError, TypeError, ValueError):
+            pass
+
+    vram = os.environ.get("DREAMFORGE_DESKTOP_VRAM_MODE", "16gb")
+    step_cap = {"5gb": 12, "8gb": 16, "16gb": 24}.get(vram, 20)
+    if not custom_perf:
+        out["steps"] = min(int(out.get("steps", step_cap)), step_cap)
+    if explicit_sampling:
+        if getattr(job, "steps", None) is not None:
+            out["steps"] = int(job.steps)
+        if getattr(job, "cfg_scale", None) is not None:
+            out["cfg"] = float(job.cfg_scale)
+        if getattr(job, "sampler", None):
+            out["sampler_name"] = str(job.sampler)
+        if getattr(job, "scheduler", None):
+            out["scheduler"] = str(job.scheduler)
+        out["performance_selection"] = "Custom..."
+
+    return out
+
+
 def _apply_job_performance(settings: dict, job) -> dict:
     """Honor DreamForge performance dropdown (Speed, Quality, Flux, …)."""
     out = dict(settings)
@@ -659,6 +752,19 @@ def _apply_job_performance(settings: dict, job) -> dict:
         out["sampler_name"] = opts.get("sampler_name", out["sampler_name"])
         out["scheduler"] = opts.get("scheduler", out["scheduler"])
         out["clip_skip"] = int(opts.get("clip_skip", out.get("clip_skip", 1)))
+        if getattr(job, "steps", None) is not None:
+            out["steps"] = int(job.steps)
+        if getattr(job, "cfg_scale", None) is not None:
+            out["cfg"] = float(job.cfg_scale)
+        if getattr(job, "sampler", None):
+            out["sampler_name"] = str(job.sampler)
+        if getattr(job, "scheduler", None):
+            out["scheduler"] = str(job.scheduler)
+        if any(
+            getattr(job, attr, None) is not None
+            for attr in ("steps", "cfg_scale", "sampler", "scheduler")
+        ):
+            out["performance_selection"] = "Custom..."
     except (KeyError, TypeError, ValueError):
         pass
     return out

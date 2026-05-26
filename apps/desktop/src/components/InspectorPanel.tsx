@@ -1,4 +1,13 @@
-import { Boxes, Palette, SlidersHorizontal, Globe } from "lucide-react";
+import {
+  Bot,
+  Boxes,
+  CheckCircle2,
+  Globe,
+  Palette,
+  ShieldCheck,
+  SlidersHorizontal,
+  XCircle,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 import type { StyleGroup } from "../lib/inventory";
 import { modelMatches } from "../lib/model-selection";
@@ -12,7 +21,14 @@ import { StyleThumbnailGrid } from "./StyleThumbnailGrid";
 import { ThumbnailGallery, type GalleryTile } from "./ThumbnailGallery";
 import { MarketplaceTab } from "./MarketplaceTab";
 import { LoraStackPanel } from "./LoraStackPanel";
-import { aggregateLoraKeywords, type StudioSettings } from "../lib/studioBridge";
+import {
+  aggregateLoraKeywords,
+  type AgentProviderPreset,
+  type AgentProviderTestResult,
+  type DreamForgeAppConfig,
+  type DreamForgeAppConfigPatch,
+  type StudioSettings,
+} from "../lib/studioBridge";
 import { DEFAULT_MAX_LORA_STACK } from "../lib/loraStack";
 
 type Tab = "discover" | "models" | "styles" | "settings";
@@ -44,6 +60,12 @@ type Props = {
   onRefreshModelDependencies?: () => void;
   studioSettings?: StudioSettings | null;
   onSaveStudioSettings?: (patch: StudioSettings) => void | Promise<void>;
+  appConfig?: DreamForgeAppConfig | null;
+  agentProviders?: AgentProviderPreset[];
+  agentProviderTest?: AgentProviderTestResult | null;
+  agentProviderBusy?: boolean;
+  onSaveAppConfig?: (patch: DreamForgeAppConfigPatch) => void | Promise<void>;
+  onTestAgentProvider?: (patch?: DreamForgeAppConfigPatch) => void | Promise<void>;
   imageNumberMax?: number;
 };
 
@@ -76,6 +98,12 @@ export function InspectorPanel({
   onRefreshModelDependencies,
   studioSettings,
   onSaveStudioSettings,
+  appConfig,
+  agentProviders = [],
+  agentProviderTest,
+  agentProviderBusy,
+  onSaveAppConfig,
+  onTestAgentProvider,
   imageNumberMax = 8,
 }: Props) {
   const [tab, setTab] = useState<Tab>("models");
@@ -90,9 +118,15 @@ export function InspectorPanel({
   const isCustomPerf =
     (settings.performance ?? "Speed") === CUSTOM_PERF ||
     settings.performance === "Custom";
+  const showAdvancedSampling = Boolean(appConfig?.ui.advanced_mode) || isCustomPerf;
+  const showEditStrength = Boolean(settings.input_image) || ["kontext", "inpaint", "img2img", "qwen_edit"].includes(settings.edit_type ?? "");
 
   const selectedCount = (settings.styles ?? []).length;
   const activeLoras = settings.lora ?? [];
+  const activeProvider = agentProviders.find(
+    (p) => p.id === appConfig?.agent.provider,
+  );
+  const requiresAgentKey = Boolean(activeProvider?.requires_api_key);
 
   const modelTiles: GalleryTile[] = useMemo(
     () =>
@@ -346,6 +380,200 @@ export function InspectorPanel({
 
         {tab === "settings" && (
           <div className="space-y-3">
+            {appConfig && onSaveAppConfig && (
+              <div className="space-y-2 rounded-lg border border-dfui-accent/25 bg-dfui-accent/5 p-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Bot size={14} className="text-dfui-accent" />
+                    <div>
+                      <p className="text-[10px] font-medium uppercase tracking-wide text-dfui-muted">
+                        Agent provider
+                      </p>
+                      <p className="text-[10px] text-dfui-tertiary">
+                        Backend-owned config, keys redacted on read
+                      </p>
+                    </div>
+                  </div>
+                  {agentProviderTest && (
+                    <span
+                      className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-1 text-[9px] ${
+                        agentProviderTest.ok
+                          ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"
+                          : "border-amber-400/30 bg-amber-400/10 text-amber-200"
+                      }`}
+                    >
+                      {agentProviderTest.ok ? (
+                        <CheckCircle2 size={11} />
+                      ) : (
+                        <XCircle size={11} />
+                      )}
+                      {agentProviderTest.ok ? "Connected" : "Check failed"}
+                    </span>
+                  )}
+                </div>
+                <label className="block">
+                  <span className="text-[10px] text-dfui-tertiary">Provider</span>
+                  <select
+                    value={appConfig.agent.provider}
+                    onChange={(e) => {
+                      const preset = agentProviders.find(
+                        (p) => p.id === e.target.value,
+                      );
+                      void onSaveAppConfig({
+                        agent: {
+                          provider: e.target.value,
+                          base_url: preset?.base_url ?? appConfig.agent.base_url,
+                          model: preset?.default_model ?? appConfig.agent.model,
+                        },
+                      });
+                    }}
+                    className="df-select mt-0.5 w-full px-2.5 py-2 text-xs"
+                  >
+                    {agentProviders.map((provider) => (
+                      <option key={provider.id} value={provider.id}>
+                        {provider.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="block">
+                    <span className="text-[10px] text-dfui-tertiary">
+                      Base URL
+                    </span>
+                    <input
+                      defaultValue={appConfig.agent.base_url}
+                      onBlur={(e) =>
+                        void onSaveAppConfig({
+                          agent: { base_url: e.target.value },
+                        })
+                      }
+                      className="df-input mt-0.5 w-full px-2 py-1.5 font-mono text-[10px]"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-[10px] text-dfui-tertiary">Model</span>
+                    <input
+                      defaultValue={appConfig.agent.model}
+                      onBlur={(e) =>
+                        void onSaveAppConfig({
+                          agent: { model: e.target.value },
+                        })
+                      }
+                      className="df-input mt-0.5 w-full px-2 py-1.5 font-mono text-[10px]"
+                    />
+                  </label>
+                </div>
+                {requiresAgentKey && (
+                  <label className="block">
+                    <span className="text-[10px] text-dfui-tertiary">API key</span>
+                    <input
+                      type="password"
+                      placeholder={
+                        appConfig.agent.api_key_configured
+                          ? `Configured ****${appConfig.agent.api_key_tail ?? ""}`
+                          : "Paste provider key"
+                      }
+                      onBlur={(e) => {
+                        const apiKey = e.target.value.trim();
+                        if (!apiKey) return;
+                        void onSaveAppConfig({
+                          agent: { api_key: apiKey },
+                        });
+                        e.currentTarget.value = "";
+                      }}
+                      className="df-input mt-0.5 w-full px-2 py-1.5 font-mono text-[10px]"
+                    />
+                  </label>
+                )}
+                <label className="block">
+                  <span className="text-[10px] text-dfui-tertiary">
+                    Agent instructions
+                  </span>
+                  <textarea
+                    rows={2}
+                    defaultValue={appConfig.agent.custom_instructions}
+                    onBlur={(e) =>
+                      void onSaveAppConfig({
+                        agent: {
+                          custom_instructions: e.target.value,
+                        },
+                      })
+                    }
+                    className="df-input mt-0.5 w-full resize-none px-2 py-1.5 text-[10px]"
+                    placeholder="Prefer Arabic typography workflows, ask before cloud image context…"
+                  />
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="flex items-start gap-2 text-[10px] text-dfui-muted">
+                    <input
+                      type="checkbox"
+                      checked={appConfig.agent.approval_required}
+                      onChange={(e) =>
+                        void onSaveAppConfig({
+                          agent: {
+                            approval_required: e.target.checked,
+                          },
+                        })
+                      }
+                      className="mt-0.5 accent-dfui-accent"
+                    />
+                    Approve agent workflow changes
+                  </label>
+                  <label className="flex items-start gap-2 text-[10px] text-dfui-muted">
+                    <input
+                      type="checkbox"
+                      checked={appConfig.privacy.allow_cloud_image_context}
+                      onChange={(e) =>
+                        void onSaveAppConfig({
+                          privacy: {
+                            allow_cloud_image_context: e.target.checked,
+                          },
+                        })
+                      }
+                      className="mt-0.5 accent-dfui-accent"
+                    />
+                    Allow cloud image context
+                  </label>
+                  <label className="flex items-start gap-2 text-[10px] text-dfui-muted">
+                    <input
+                      type="checkbox"
+                      checked={appConfig.ui.advanced_mode}
+                      onChange={(e) =>
+                        void onSaveAppConfig({
+                          ui: { advanced_mode: e.target.checked },
+                        })
+                      }
+                      className="mt-0.5 accent-dfui-accent"
+                    />
+                    Advanced model overrides
+                  </label>
+                </div>
+                <div className="flex items-center justify-between gap-2 border-t border-dfui-border/30 pt-2">
+                  <span className="inline-flex items-center gap-1 text-[10px] text-dfui-tertiary">
+                    <ShieldCheck size={12} />
+                    {activeProvider?.mode === "cloud"
+                      ? "Cloud provider"
+                      : activeProvider?.mode === "local"
+                        ? "Local provider"
+                        : "Custom endpoint"}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={agentProviderBusy}
+                    onClick={() => void onTestAgentProvider?.()}
+                    className="rounded-md border border-dfui-accent/40 bg-dfui-accent/10 px-2 py-1 text-[10px] font-medium text-dfui-accent hover:bg-dfui-accent/20 disabled:opacity-50"
+                  >
+                    {agentProviderBusy ? "Testing…" : "Test connection"}
+                  </button>
+                </div>
+                {agentProviderTest?.detail && (
+                  <p className="break-words font-mono text-[9px] leading-snug text-dfui-tertiary">
+                    {agentProviderTest.detail}
+                  </p>
+                )}
+              </div>
+            )}
             <label className="block">
               <span className="text-xs text-dfui-muted">Performance (DreamForge)</span>
               <select
@@ -549,8 +777,31 @@ export function InspectorPanel({
                 className="df-input mt-1 w-full px-2.5 py-1.5 text-xs resize-none"
               />
             </label>
-            {isCustomPerf && (
+            {showEditStrength && (
+              <label className="block">
+                <span className="text-xs text-dfui-muted">
+                  Edit strength — {Math.round((settings.edit_strength ?? 0.98) * 100)}%
+                </span>
+                <input
+                  type="range"
+                  min={0.2}
+                  max={1}
+                  step={0.01}
+                  value={settings.edit_strength ?? 0.98}
+                  onChange={(e) =>
+                    onChange({ edit_strength: Number(e.target.value) })
+                  }
+                  className="mt-1 w-full accent-dfui-accent"
+                />
+              </label>
+            )}
+            {showAdvancedSampling && (
               <>
+                {!isCustomPerf && (
+                  <p className="rounded-md border border-dfui-border/40 bg-dfui-bg/40 px-2 py-1 text-[10px] leading-snug text-dfui-tertiary">
+                    Advanced overrides are active. Changing these values will run with custom sampling.
+                  </p>
+                )}
                 <label className="block">
                   <span className="text-xs text-dfui-muted">
                     Steps — {settings.steps ?? 20}
@@ -560,7 +811,9 @@ export function InspectorPanel({
                     min={4}
                     max={60}
                     value={settings.steps ?? 20}
-                    onChange={(e) => onChange({ steps: Number(e.target.value) })}
+                    onChange={(e) =>
+                      onChange({ performance: CUSTOM_PERF, steps: Number(e.target.value) })
+                    }
                     className="mt-1 w-full accent-dfui-accent"
                   />
                 </label>
@@ -575,7 +828,7 @@ export function InspectorPanel({
                     step={0.1}
                     value={settings.cfg_scale ?? 4}
                     onChange={(e) =>
-                      onChange({ cfg_scale: Number(e.target.value) })
+                      onChange({ performance: CUSTOM_PERF, cfg_scale: Number(e.target.value) })
                     }
                     className="mt-1 w-full accent-dfui-accent"
                   />
@@ -584,7 +837,9 @@ export function InspectorPanel({
                   <span className="text-xs text-dfui-muted">Sampler</span>
                   <select
                     value={settings.sampler ?? "dpmpp_2m_sde_gpu"}
-                    onChange={(e) => onChange({ sampler: e.target.value })}
+                    onChange={(e) =>
+                      onChange({ performance: CUSTOM_PERF, sampler: e.target.value })
+                    }
                     className="df-select mt-1 w-full px-2.5 py-2 text-xs"
                   >
                     {(uiDefaults?.samplers ?? ["dpmpp_2m_sde_gpu"]).map((s) => (
@@ -598,7 +853,9 @@ export function InspectorPanel({
                   <span className="text-xs text-dfui-muted">Scheduler</span>
                   <select
                     value={settings.scheduler ?? "karras"}
-                    onChange={(e) => onChange({ scheduler: e.target.value })}
+                    onChange={(e) =>
+                      onChange({ performance: CUSTOM_PERF, scheduler: e.target.value })
+                    }
                     className="df-select mt-1 w-full px-2.5 py-2 text-xs"
                   >
                     {(uiDefaults?.schedulers ?? ["karras"]).map((s) => (

@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { readFullWorkerLog } from "../lib/tauri-api";
+import { readJobLog } from "../lib/tauri-api";
 
 type Props = {
   open: boolean;
   onClose: () => void;
+  jobId?: string | null;
 };
 
-export function FullLogModal({ open, onClose }: Props) {
+export function FullLogModal({ open, onClose, jobId }: Props) {
   const [log, setLog] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
@@ -17,7 +19,9 @@ export function FullLogModal({ open, onClose }: Props) {
     setLog("");
     const poll = async () => {
       try {
-        const { tail } = await readFullWorkerLog();
+        const { tail } = jobId
+          ? await readJobLog(jobId)
+          : await readFullWorkerLog();
         setLog(tail);
       } catch {
         /* not ready */
@@ -26,7 +30,7 @@ export function FullLogModal({ open, onClose }: Props) {
     void poll();
     const id = setInterval(poll, 1000);
     return () => clearInterval(id);
-  }, [open]);
+  }, [open, jobId]);
 
   useEffect(() => {
     if (autoScrollRef.current) {
@@ -40,7 +44,9 @@ export function FullLogModal({ open, onClose }: Props) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="flex h-[80vh] w-[90vw] max-w-5xl flex-col rounded-xl border border-dfui-border bg-dfui-panel shadow-2xl">
         <div className="flex items-center justify-between border-b border-dfui-border/50 px-4 py-3">
-          <h2 className="text-sm font-semibold text-dfui-fg">Backend log</h2>
+          <h2 className="text-sm font-semibold text-dfui-fg">
+            {jobId ? "Generation log" : "Backend log"}
+          </h2>
           <button
             type="button"
             onClick={onClose}
@@ -62,7 +68,7 @@ export function FullLogModal({ open, onClose }: Props) {
             {log || (
               <span className="text-dfui-muted">Waiting for log output…</span>
             )}
-            <div ref={bottomRef} />
+            <span ref={bottomRef} />
           </pre>
         </div>
       </div>

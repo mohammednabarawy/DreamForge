@@ -128,8 +128,8 @@ class pipeline:
             "clip_qwen3_4b": "Qwen3-4B-Q4_K_M.gguf",
             "clip_qwen3_8b": "Qwen3-8B-Q8_0.gguf",
             "clip_qwen3_06b": "qwen_3_06b_base.safetensors",
-            "clip_oldt5": "t5xxl_fp8_e4m3fn.safetensors",
-            "clip_t5": "t5xxl_fp8_e4m3fn.safetensors",
+            "clip_oldt5": "t5xxl_fp8_e4m3fn_scaled.safetensors",
+            "clip_t5": "t5xxl_fp8_e4m3fn_scaled.safetensors",
         }
         return settings.default_settings.get(shortname, defaults[shortname] if shortname in defaults else None)
 
@@ -832,10 +832,18 @@ class pipeline:
             isinstance(self.xl_base.unet.model, Flux) and
             input_image is not None
         ):
+            edit_strength = float(gen_data.get("edit_strength", 0.98))
             controlnet["type"] = "kontext"
+            controlnet.setdefault("denoise", edit_strength)
+            controlnet.setdefault("strength", edit_strength)
             img2img_mode = True
 
-        if controlnet["type"] != "None" and input_images > 0:
+        cn_kind = controlnet.get("type", "None").lower()
+        if (
+            controlnet["type"] != "None"
+            and input_images > 0
+            and cn_kind not in ("kontext", "img2img", "upscale", "rembg", "faceswap")
+        ):
             if callback is not None:
                 _worker().add_result(
                     gen_data["task_id"],
@@ -992,7 +1000,14 @@ class pipeline:
             _worker().add_result(
                 gen_data["task_id"],
                 "preview",
-                (-1, f"Prepare models ...", None)
+                (0, f"Prepare models ...", None),
+            )
+
+        if callback is not None:
+            _worker().add_result(
+                gen_data["task_id"],
+                "preview",
+                (0, f"Loading GPU weights ...", None),
             )
 
         comfy.model_management.load_models_gpu(self.models)
@@ -1026,7 +1041,7 @@ class pipeline:
             _worker().add_result(
                 gen_data["task_id"],
                 "preview",
-                (-1, f"Start sampling ...", None)
+                (0, f"Start sampling ...", None),
             )
 
         samples = sampler.sample(

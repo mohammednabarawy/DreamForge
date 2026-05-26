@@ -39,6 +39,7 @@ const PASSTHROUGH_KEYS: (keyof GenerationSettings)[] = [
   "vram_profile",
   "use_case",
   "edit_type",
+  "edit_strength",
   "subject",
   "lighting",
   "camera",

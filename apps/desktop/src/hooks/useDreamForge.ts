@@ -17,6 +17,8 @@ import {
   modelBasename,
   modelMatches,
   resolveActiveModel,
+  selectCuratedModelForMode,
+  type StudioMode,
   type UseCaseRecipe,
 } from "../lib/model-selection";
 import { excerptPrompt, HISTORY_PAGE_SIZE } from "../lib/historyUtils";
@@ -101,9 +103,18 @@ import {
 } from "../lib/loraStack";
 import {
   aggregateLoraKeywords,
+  getAppConfig,
   getLoraInfo,
   getStudioSettings,
+  listAgentProviders,
+  planAgentInstruction,
+  saveAppConfig,
   saveStudioSettings,
+  testAgentProvider,
+  type AgentProviderPreset,
+  type AgentProviderTestResult,
+  type DreamForgeAppConfig,
+  type DreamForgeAppConfigPatch,
   type StudioSettings,
 } from "../lib/studioBridge";
 import {
@@ -143,6 +154,7 @@ export function useDreamForge() {
   } | null>(null);
   const [generating, setGenerating] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
+  const [lastJobId, setLastJobId] = useState<string | null>(null);
   const [generationLog, setGenerationLog] = useState<string>("");
   const [planPreview, setPlanPreview] = useState<string | null>(null);
   const [engineState, setEngineState] = useState<EngineState>("booting");
@@ -162,6 +174,16 @@ export function useDreamForge() {
   const [profileHints, setProfileHints] = useState<string[]>([]);
   const [galleryLoading, setGalleryLoading] = useState(false);
   const [studioSettings, setStudioSettings] = useState<StudioSettings | null>(
+    null,
+  );
+  const [appConfig, setAppConfig] = useState<DreamForgeAppConfig | null>(null);
+  const [agentProviders, setAgentProviders] = useState<AgentProviderPreset[]>(
+    [],
+  );
+  const [agentProviderTest, setAgentProviderTest] =
+    useState<AgentProviderTestResult | null>(null);
+  const [agentProviderBusy, setAgentProviderBusy] = useState(false);
+  const [agentPlannedMode, setAgentPlannedMode] = useState<StudioMode | null>(
     null,
   );
   const [imageNumberMax, setImageNumberMax] = useState(8);
@@ -236,6 +258,7 @@ export function useDreamForge() {
 
   const applyPreviewPayload = useCallback(
     async (p: {
+      job_id?: string;
       data_url?: string;
       preview_path?: string;
       asset_url?: string;
@@ -247,7 +270,11 @@ export function useDreamForge() {
       title?: string;
     }) => {
       const isFinal = Boolean(p.final ?? p.final_preview);
-      if (!generatingRef.current && !isFinal) {
+      const previewJobId = (p.job_id ?? "").trim();
+      const activeJob =
+        previewJobId &&
+        (jobId === previewJobId || lastJobId === previewJobId);
+      if (!generatingRef.current && !isFinal && !activeJob) {
         return;
       }
       if (p.percentage != null || p.title) {
@@ -287,7 +314,7 @@ export function useDreamForge() {
         }
       }
     },
-    [setCanvasPreview],
+    [setCanvasPreview, jobId, lastJobId],
   );
 
   const [settings, setSettings] = useState<GenerationSettings>({
@@ -440,13 +467,24 @@ export function useDreamForge() {
     }
     setGalleryLoading(true);
     try {
-      const [models, loras, raw, defaults, useCaseRes, studio] = await Promise.all([
+      const [
+        models,
+        loras,
+        raw,
+        defaults,
+        useCaseRes,
+        studio,
+        app,
+        providers,
+      ] = await Promise.all([
         getModelGallery(""),
         getLoraGallery(""),
         getInventory(),
         getUiDefaults(),
         listUseCases(),
         getStudioSettings().catch(() => null),
+        getAppConfig().catch(() => null),
+        listAgentProviders().catch(() => []),
       ]);
       const recipes = (useCaseRes.use_cases ?? []) as UseCaseRecipe[];
       useCasesRef.current = recipes;
@@ -483,6 +521,8 @@ export function useDreamForge() {
             studio.auto_negative_prompt ?? prev.auto_negative_prompt,
         }));
       }
+      if (app) setAppConfig(app);
+      setAgentProviders(providers);
       studioCatalogLoadedRef.current = true;
     } catch (e) {
       setStatus(`Studio catalog error: ${String(e)}`);
@@ -652,6 +692,7 @@ export function useDreamForge() {
     void onGenerationStarted((p) => {
       setEngineState("generating");
       setJobId(p.job_id ?? null);
+      if (p.job_id) setLastJobId(p.job_id);
       setGenerationLog("Sampling…\n");
       setLiveProgress({ percentage: 0, title: "Starting generation…" });
       canvasPreviewPathRef.current = "";
@@ -664,14 +705,25 @@ export function useDreamForge() {
     void onGenerationPreview((p) => {
       void applyPreviewPayload(p);
     }).then((u) => unsubs.push(() => u()));
-    void onGenerationFinished((p) => {
+    void onGenerationFinished(async (p) => {
+      const logJob = (p.job_id ?? jobId ?? lastJobId ?? "").trim();
+      if (!p.success && logJob) {
+        try {
+          const { tail } = await readJobLog(logJob);
+          if (tail) setGenerationLog(tail);
+          else if (p.log_tail) setGenerationLog(p.log_tail);
+        } catch {
+          if (p.log_tail) setGenerationLog(p.log_tail);
+        }
+      } else if (p.log_tail) {
+        setGenerationLog(p.log_tail);
+      }
       stopLogPoll();
       setGenerating(false);
       generatingRef.current = false;
       setJobId(null);
       setLiveProgress(null);
       setEngineState("ready");
-      if (p.log_tail) setGenerationLog(p.log_tail);
       if (p.success) {
         setStatus("Generation complete");
         setLastError(null);
@@ -1129,6 +1181,13 @@ export function useDreamForge() {
 
   const selectModelGallery = useCallback(
     async (item: ModelGalleryItem) => {
+      const mode = appConfig?.ui.studio_mode ?? "generate";
+      if (mode !== "generate" && !appConfig?.ui.advanced_mode) {
+        setStatus(
+          "Switch to Generate mode or enable advanced mode to override routed edit models",
+        );
+        return;
+      }
       userPickedModelRef.current = true;
       patchSettings({ model: item.engine_name });
       const profile = await applyModelProfile(item);
@@ -1136,7 +1195,7 @@ export function useDreamForge() {
         setStatus(profile.hints[0].replace(/<[^>]+>/g, "").slice(0, 160));
       }
     },
-    [applyModelProfile, patchSettings],
+    [appConfig?.ui.advanced_mode, appConfig?.ui.studio_mode, applyModelProfile, patchSettings],
   );
 
   const setUseCase = useCallback(
@@ -1209,7 +1268,140 @@ export function useDreamForge() {
     [studioSettings],
   );
 
+  const saveAppConfigPatch = useCallback(
+    async (patch: DreamForgeAppConfigPatch) => {
+      const merged = {
+        ...(appConfig ?? {}),
+        ...patch,
+        agent: {
+          ...(appConfig?.agent ?? {}),
+          ...(patch.agent ?? {}),
+        },
+        privacy: {
+          ...(appConfig?.privacy ?? {}),
+          ...(patch.privacy ?? {}),
+        },
+        ui: {
+          ...(appConfig?.ui ?? {}),
+          ...(patch.ui ?? {}),
+        },
+      } as DreamForgeAppConfigPatch;
+      const saved = await saveAppConfig(merged);
+      setAppConfig(saved);
+      setStatus("Agent settings saved");
+      return saved;
+    },
+    [appConfig],
+  );
+
+  const runAgentProviderTest = useCallback(
+    async (patch?: DreamForgeAppConfigPatch) => {
+      setAgentProviderBusy(true);
+      setAgentProviderTest(null);
+      try {
+        const config = patch ? await saveAppConfigPatch(patch) : appConfig ?? undefined;
+        const res = await testAgentProvider(config ? { ...config } : undefined);
+        setAgentProviderTest(res);
+        setStatus(
+          res.ok
+            ? `Agent provider connected (${res.latency_ms} ms)`
+            : `Agent provider test failed: ${res.detail}`,
+        );
+        return res;
+      } catch (e) {
+        const res = {
+          ok: false,
+          provider: appConfig?.agent.provider ?? "agent",
+          model: appConfig?.agent.model ?? "",
+          latency_ms: 0,
+          detail: String(e),
+        };
+        setAgentProviderTest(res);
+        setStatus(`Agent provider test failed: ${String(e)}`);
+        return res;
+      } finally {
+        setAgentProviderBusy(false);
+      }
+    },
+    [appConfig, saveAppConfigPatch],
+  );
+
+  const runAgentInstruction = useCallback(async (applyPlan: boolean) => {
+    const instruction = (settingsRef.current.prompt ?? "").trim();
+    if (!instruction) {
+      setStatus("Tell the agent what you want DreamForge to do");
+      return;
+    }
+    setStatus(applyPlan ? "Agent is applying the workflow..." : "Agent is planning the workflow...");
+    try {
+      const res = await planAgentInstruction({
+        instruction,
+        settings: settingsRef.current,
+        selected_image: selected?.images?.[0],
+        model_gallery: modelGalleryAll.map((m) => ({
+          category: m.category,
+          relative_path: m.relative_path,
+          caption: m.caption,
+          engine_name: m.engine_name,
+          family: m.family,
+          thumbnail_path: "",
+        })),
+      });
+      const patch = res.patch ?? {};
+      if (res.mode && res.mode !== "agent") {
+        setAgentPlannedMode(res.mode);
+      }
+      if (applyPlan && Object.keys(patch).length > 0) {
+        userPickedModelRef.current = false;
+        patchSettings(patch);
+        if (res.mode && res.mode !== "agent") {
+          await saveAppConfigPatch({ ui: { studio_mode: res.mode } });
+          setAgentPlannedMode(null);
+        }
+      }
+      setPlanPreview(
+        JSON.stringify(
+          {
+            source: res.source,
+            provider: res.provider_model
+              ? `${res.provider ?? "provider"} / ${res.provider_model}`
+              : res.source,
+            message: res.message,
+            mode: res.mode,
+            applied: applyPlan ? patch : {},
+            proposed: patch,
+            actions: res.actions,
+            downloads: res.downloads,
+            next: applyPlan
+              ? "Workflow settings were applied and the routed mode was opened. Review dependency prompts, then run."
+              : "Review this plan, then press Apply plan to update DreamForge settings.",
+          },
+          null,
+          2,
+        ),
+      );
+      setStatus(
+        applyPlan
+          ? res.mode && res.mode !== "agent"
+            ? `Agent configured ${res.mode} mode`
+            : res.message || "Agent configured the workflow"
+          : "Agent plan ready for review",
+      );
+    } catch (e) {
+      setStatus(`Agent planning failed: ${String(e)}`);
+    }
+  }, [
+    modelGalleryAll,
+    patchSettings,
+    saveAppConfigPatch,
+    selected,
+  ]);
+
   const runDryRun = useCallback(async () => {
+    if ((appConfig?.ui.studio_mode ?? "generate") === "agent") {
+      await runAgentInstruction(false);
+      return;
+    }
     setStatus("Planning…");
     try {
       const prepared = prepareGenerationFromAgentPrompt(settingsRef.current, {
@@ -1235,9 +1427,13 @@ export function useDreamForge() {
     } catch (e) {
       setStatus(`Dry-run failed: ${String(e)}`);
     }
-  }, [settings, selected, modelGalleryAll, patchSettings]);
+  }, [appConfig?.ui.studio_mode, runAgentInstruction, settings, selected, modelGalleryAll, patchSettings]);
 
   const runGenerate = useCallback(async () => {
+    if ((appConfig?.ui.studio_mode ?? "generate") === "agent") {
+      await runAgentInstruction(true);
+      return;
+    }
     const prepared = prepareGenerationFromAgentPrompt(settingsRef.current, {
       selectedImagePath: selected?.images?.[0],
       modelGallery: modelGalleryAll,
@@ -1333,6 +1529,7 @@ export function useDreamForge() {
       const resolvedParams = await resolveGenerationImagePaths(params);
       const res = await invokeGeneration(resolvedParams);
       setJobId(res.job_id);
+      setLastJobId(res.job_id);
       if (res.job_id) startLogPoll(res.job_id);
     } catch (e) {
       setGenerating(false);
@@ -1346,6 +1543,8 @@ export function useDreamForge() {
     }
   }, [
     settings,
+    appConfig?.ui.studio_mode,
+    runAgentInstruction,
     selected,
     modelGalleryAll,
     patchSettings,
@@ -1402,6 +1601,7 @@ export function useDreamForge() {
         missingCompanionCount: modelDependencies.missing.length,
         settings,
         modelGallery: modelGalleryAll,
+        studioMode: (appConfig?.ui.studio_mode ?? "generate") as StudioMode,
       }),
     [
       workerReady,
@@ -1411,6 +1611,7 @@ export function useDreamForge() {
       settings,
       modelDependencies,
       modelGalleryAll,
+      appConfig?.ui.studio_mode,
     ],
   );
 
@@ -1503,6 +1704,82 @@ export function useDreamForge() {
     }
   }, []);
 
+  const setStudioMode = useCallback(
+    async (mode: StudioMode) => {
+      await saveAppConfigPatch({ ui: { studio_mode: mode } });
+      setAgentPlannedMode(null);
+      if (mode === "generate") {
+        setStatus("Generation mode - model library selection is unlocked");
+        return;
+      }
+      if (mode === "agent") {
+        setStatus("Agent mode - describe the workflow and let the agent configure it");
+        return;
+      }
+
+      const routedModel = selectCuratedModelForMode(
+        mode,
+        modelGalleryAll,
+        settingsRef.current.model,
+      );
+      const patch: Partial<GenerationSettings> = {
+        model: routedModel,
+        use_case: "image_edit",
+        performance: "Flux",
+      };
+      if (mode === "edit") {
+        patch.edit_type = "kontext";
+        patch.edit_strength = settingsRef.current.edit_strength ?? 0.98;
+        patch.cn_selection = "None";
+        patch.cn_type = "None";
+        patch.steps = Math.min(settingsRef.current.steps ?? 20, 16);
+        patch.upscale_image = undefined;
+        const src =
+          selected?.images?.[0] ?? settingsRef.current.input_image ?? "";
+        if (src.trim()) patch.input_image = src.trim();
+      }
+      if (mode === "inpaint") {
+        patch.edit_type = "inpaint";
+        patch.edit_strength = settingsRef.current.edit_strength ?? 0.9;
+        patch.cn_selection = "Custom...";
+        patch.cn_type = "inpaint";
+        patch.steps = Math.min(settingsRef.current.steps ?? 20, 16);
+        patch.upscale_image = undefined;
+        const src =
+          selected?.images?.[0] ?? settingsRef.current.input_image ?? "";
+        if (src.trim()) patch.input_image = src.trim();
+      }
+      if (mode === "upscale") {
+        patch.use_case = "image_edit";
+        patch.edit_type = "auto";
+        patch.input_image = undefined;
+        patch.inpaint_mask_path = undefined;
+        patch.cn_selection = "Custom...";
+        patch.cn_type = "upscale";
+        patch.upscale_method = "2x";
+        const src =
+          selected?.images?.[0] ??
+          settingsRef.current.upscale_image ??
+          settingsRef.current.input_image ??
+          "";
+        if (src.trim()) patch.upscale_image = src.trim();
+      }
+      userPickedModelRef.current = false;
+      patchSettings(patch);
+      if (routedModel) void refreshModelDependencies(routedModel);
+      setStatus(
+        `${mode[0].toUpperCase()}${mode.slice(1)} mode - DreamForge will auto-route curated tools`,
+      );
+    },
+    [
+      modelGalleryAll,
+      patchSettings,
+      refreshModelDependencies,
+      saveAppConfigPatch,
+      selected,
+    ],
+  );
+
   const downloadMissingCompanions = useCallback(async () => {
     const model = (settingsRef.current.model ?? "").trim();
     if (!model) {
@@ -1593,6 +1870,7 @@ export function useDreamForge() {
     inventory,
     generating,
     jobId,
+    logJobId: jobId ?? lastJobId,
     generationLog,
     planPreview,
     status,
@@ -1665,6 +1943,15 @@ export function useDreamForge() {
     },
     studioSettings,
     saveStudioSettings: saveStudioSettingsPatch,
+    appConfig,
+    studioMode: (appConfig?.ui.studio_mode ?? "generate") as StudioMode,
+    agentPlannedMode,
+    setStudioMode,
+    agentProviders,
+    agentProviderTest,
+    agentProviderBusy,
+    saveAppConfig: saveAppConfigPatch,
+    testAgentProvider: runAgentProviderTest,
     imageNumberMax,
     inpaintMaskOpen,
     setInpaintMaskOpen,

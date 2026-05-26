@@ -237,26 +237,39 @@ def edit_image(
     prompt: str = "",
     model: Optional[str] = None,
     edit_type: str = "auto",
+    inpaint_mask_path: Optional[str] = None,
     vram_profile: str = "16gb",
-    output: Optional[str] = None
+    output: Optional[str] = None,
 ) -> str:
     """
     Edit an existing image using img2img, inpaint, Flux Kontext, or Qwen Image Edit.
     input_image must be an absolute path.
+    edit_type: auto | kontext | inpaint | img2img | qwen_edit
+    inpaint_mask_path: absolute path to mask image when edit_type is inpaint.
     """
-    args = ["--input-image", input_image, "--prompt", prompt, "--vram-profile", vram_profile]
+    args = [
+        "--input-image",
+        input_image,
+        "--prompt",
+        prompt,
+        "--vram-profile",
+        vram_profile,
+        "--use-case",
+        "image_edit",
+        "--edit-type",
+        edit_type,
+    ]
     if model:
         args.extend(["--model", model])
-    # Pass edit type as a style or via use-case mapping if implemented, currently handled implicitly via model selection
-    # For now, if edit_type == 'kontext', ensure we load a kontext model
-    if edit_type == "kontext" and not model:
+    elif edit_type == "kontext":
         args.extend(["--model", "flux1-dev-kontext_fp8_scaled"])
-    elif edit_type == "qwen_edit" and not model:
+    elif edit_type == "qwen_edit":
         args.extend(["--model", "Qwen_Image_Edit-Q5_1.gguf"])
-        
+    if inpaint_mask_path:
+        args.extend(["--inpaint-mask-path", inpaint_mask_path])
     if output:
         args.extend(["--output", output])
-        
+
     res = run_dreamforge_cli(args)
     return json.dumps(res, indent=2)
 

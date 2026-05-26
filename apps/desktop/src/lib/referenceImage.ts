@@ -69,14 +69,26 @@ export function buildReferenceImagePatch(
     };
   }
 
+  if (mode === "inpaint") {
+    return {
+      input_image: path,
+      upscale_image: undefined,
+      edit_type: "inpaint",
+      cn_selection: "Custom...",
+      cn_type: "inpaint",
+      use_case: "image_edit",
+      output: outputFor("inpaint"),
+    };
+  }
+
   return {
     input_image: path,
     upscale_image: undefined,
-    edit_type: mode === "inpaint" ? "inpaint" : "kontext",
-    cn_selection: "Custom...",
-    cn_type: mode === "inpaint" ? "inpaint" : "img2img",
+    edit_type: "kontext",
+    cn_selection: "None",
+    cn_type: "None",
     use_case: "image_edit",
-    output: outputFor(mode === "inpaint" ? "inpaint" : "edit"),
+    output: outputFor("edit"),
   };
 }
 

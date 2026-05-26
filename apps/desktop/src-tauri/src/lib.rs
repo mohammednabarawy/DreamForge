@@ -28,6 +28,8 @@ const PREVIEW_LIVE_MAX_EDGE: u32 = 512;
 /// Final canvas / gallery quality.
 const PREVIEW_FINAL_MAX_EDGE: u32 = 2048;
 const LOG_TAIL_CHARS: usize = 4000;
+/// Failure diagnostics: include enough of the per-job log for tracebacks.
+const JOB_LOG_TAIL_CHARS: usize = 24_000;
 const LOG_FULL_CHARS: usize = 100_000;
 /// Max wait for PyTorch / pipeline boot (first launch can take several minutes).
 const WORKER_BOOT_TIMEOUT_MS: u64 = 300_000;
@@ -259,6 +261,37 @@ fn tail_log_file(path: &Path, max_chars: usize) -> String {
         .chars()
         .skip(content.chars().count().saturating_sub(max_chars))
         .collect()
+}
+
+fn resolve_job_log_path(job_id: &str, state: &AppState) -> PathBuf {
+    if let Ok(guard) = state.generation.lock() {
+        if let Some(job) = guard.as_ref() {
+            if job.job_id == job_id {
+                return job.log_path.clone();
+            }
+        }
+    }
+    dreamforge_logs_dir(&agent_root()).join(format!("{job_id}.log"))
+}
+
+fn generation_failure_log_tail(job_id: &str, state: &AppState, fallback_message: &str) -> String {
+    let log_path = resolve_job_log_path(job_id, state);
+    let mut tail = tail_log_file(&log_path, JOB_LOG_TAIL_CHARS);
+    let fallback = fallback_message.trim();
+    if tail.trim().is_empty() {
+        tail = fallback.to_string();
+    } else if !fallback.is_empty() && !tail.contains(fallback) {
+        tail = format!("{fallback}\n\n--- job log ({}) ---\n{tail}", log_path.display());
+    }
+    if tail.len() < 800 {
+        let worker = worker_log_path(&agent_root());
+        let worker_tail = tail_log_file(&worker, LOG_TAIL_CHARS);
+        if !worker_tail.trim().is_empty() {
+            tail.push_str("\n\n--- worker.log ---\n");
+            tail.push_str(&worker_tail);
+        }
+    }
+    tail
 }
 
 fn spawn_worker_exit_watcher(
@@ -817,7 +850,43 @@ fn emit_preview_from_event(app: &AppHandle, value: &Value) {
     let _ = app.emit("generation-preview", payload);
 }
 
+fn append_generation_log(state: &AppState, value: &Value) {
+    let job_id = value.get("job_id").and_then(|v| v.as_str()).unwrap_or("");
+    if job_id.is_empty() {
+        return;
+    }
+    let log_path = {
+        let Ok(guard) = state.generation.lock() else {
+            return;
+        };
+        guard
+            .as_ref()
+            .filter(|job| job.job_id == job_id)
+            .map(|job| job.log_path.clone())
+            .unwrap_or_else(|| dreamforge_logs_dir(&agent_root()).join(format!("{job_id}.log")))
+    };
+    if let Some(parent) = log_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let event_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("event");
+    let message = value
+        .get("message")
+        .or_else(|| value.get("title"))
+        .or_else(|| value.get("error"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let line = if message.is_empty() {
+        format!("{event_type}: {value}\n")
+    } else {
+        format!("{event_type}: {message}\n")
+    };
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
 fn handle_worker_event(app: &AppHandle, state: &AppState, value: &Value, emit_boot_progress: bool) {
+    append_generation_log(state, value);
     let event_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
     let generation_arc = &state.generation;
     let worker_ready = &state.worker_ready;
@@ -942,6 +1011,13 @@ fn handle_worker_event(app: &AppHandle, state: &AppState, value: &Value, emit_bo
                 .and_then(|v| v.as_bool());
             let log_tail = if success {
                 String::new()
+            } else if !job_id.is_empty() {
+                let fallback = if !message.is_empty() {
+                    message.clone()
+                } else {
+                    code.clone().unwrap_or_else(|| "generation_failed".to_string())
+                };
+                generation_failure_log_tail(&job_id, state, &fallback)
             } else if !message.is_empty() {
                 message.clone()
             } else {
@@ -1078,6 +1154,16 @@ fn handle_worker_event(app: &AppHandle, state: &AppState, value: &Value, emit_bo
                 *guard = None;
             }
             stop_live_preview_watch(state);
+            let log_tail = if job_id.is_empty() {
+                String::new()
+            } else {
+                let fallback = if !message.is_empty() {
+                    message.clone()
+                } else {
+                    code.clone()
+                };
+                generation_failure_log_tail(job_id, state, &fallback)
+            };
             let _ = app.emit(
                 "generation-finished",
                 json!({
@@ -1089,6 +1175,7 @@ fn handle_worker_event(app: &AppHandle, state: &AppState, value: &Value, emit_bo
                     "suggestions": suggestions,
                     "details": details,
                     "recoverable": recoverable,
+                    "log_tail": log_tail,
                 }),
             );
         }
@@ -1984,7 +2071,7 @@ fn read_job_log(job_id: String, state: State<'_, Arc<AppState>>) -> Result<Value
     Ok(json!({
         "job_id": job_id,
         "log_path": log_path.to_string_lossy(),
-        "tail": tail_file(&log_path, LOG_TAIL_CHARS),
+        "tail": tail_file(&log_path, JOB_LOG_TAIL_CHARS),
     }))
 }
 

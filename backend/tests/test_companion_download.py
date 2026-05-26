@@ -19,11 +19,11 @@ def test_enrich_flux_vae():
 def test_enrich_flux_t5_fp8_url():
     entry = {
         "id": "clip_t5_flux_fp8",
-        "relative": "text_encoders/t5xxl_fp8_e4m3fn.safetensors",
+        "relative": "text_encoders/t5xxl_fp8_e4m3fn_scaled.safetensors",
     }
     out = enrich_missing_dependency(entry)
     assert "comfyanonymous/flux_text_encoders" in out["url"]
-    assert out["url"].endswith("t5xxl_fp8_e4m3fn.safetensors")
+    assert out["url"].endswith("t5xxl_fp8_e4m3fn_scaled.safetensors")
     assert out["category"] == "text_encoders"
     assert "Comfy-Org/flux1-dev" not in out["url"]
 
@@ -42,11 +42,11 @@ def test_companion_present_clip_folder_t5(tmp_path, monkeypatch):
     )
     clip_dir = tmp_path / "clip"
     clip_dir.mkdir(parents=True)
-    t5 = clip_dir / "t5xxl_fp8_e4m3fn.safetensors"
+    t5 = clip_dir / "t5xxl_fp8_e4m3fn_scaled.safetensors"
     t5.write_bytes(b"x" * (5 * 1024 * 1024))
     req = {
         "id": "clip_t5_flux_fp8",
-        "relative": "text_encoders/t5xxl_fp8_e4m3fn.safetensors",
+        "relative": "text_encoders/t5xxl_fp8_e4m3fn_scaled.safetensors",
     }
     assert companion_file_present(req, min_bytes=1024 * 1024)
 

@@ -5,6 +5,8 @@ export type UseCaseRecipe = {
   models?: string[];
 };
 
+export type StudioMode = "generate" | "edit" | "inpaint" | "upscale" | "agent";
+
 export function modelBasename(path: string): string {
   const normalized = path.replace(/\\/g, "/");
   const parts = normalized.split("/");
@@ -74,4 +76,27 @@ export function resolveActiveModel(
     return findGalleryModel(gallery, current)!.engine_name;
   }
   return gallery[0]?.engine_name ?? current ?? "";
+}
+
+export function selectCuratedModelForMode(
+  mode: StudioMode,
+  gallery: ModelGalleryItem[],
+  current?: string,
+): string {
+  if (mode === "generate" || mode === "agent") return current ?? "";
+  const candidates =
+    mode === "inpaint"
+      ? ["flux fill", "fill", "inpaint"]
+      : mode === "edit"
+        ? ["kontext", "flux kontext", "qwen image edit", "qwen_edit", "qwen edit"]
+        : ["upscale", "supir", "esrgan", "real-esrgan", "real esrgan"];
+  for (const needle of candidates) {
+    const hit = gallery.find((item) => {
+      const hay =
+        `${item.family} ${item.caption} ${item.engine_name} ${item.relative_path}`.toLowerCase();
+      return hay.includes(needle);
+    });
+    if (hit) return hit.engine_name;
+  }
+  return current ?? gallery[0]?.engine_name ?? "";
 }

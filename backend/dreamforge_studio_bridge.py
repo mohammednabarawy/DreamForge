@@ -167,6 +167,38 @@ def cmd_save_studio_settings(params: dict) -> dict:
     return {"ok": True}
 
 
+def cmd_get_app_config(_params: dict) -> dict:
+    from dreamforge_app_config import load_app_config
+
+    return {"ok": True, "config": load_app_config(redacted=True)}
+
+
+def cmd_save_app_config(params: dict) -> dict:
+    from dreamforge_app_config import save_app_config
+
+    config = params.get("config") or {}
+    return {"ok": True, "config": save_app_config(config)}
+
+
+def cmd_list_agent_providers(_params: dict) -> dict:
+    from dreamforge_app_config import list_agent_providers
+
+    return {"ok": True, "providers": list_agent_providers()}
+
+
+def cmd_test_agent_provider(params: dict) -> dict:
+    from dreamforge_app_config import test_agent_provider
+
+    config = params.get("config")
+    return test_agent_provider(config if isinstance(config, dict) else None)
+
+
+def cmd_agent_plan(params: dict) -> dict:
+    from dreamforge_app_config import plan_agent_instruction
+
+    return plan_agent_instruction(params)
+
+
 def _image_browser():
     from modules.imagebrowser import ImageBrowser
 
@@ -347,6 +379,11 @@ STUDIO_HANDLERS = {
     "match_wildcards": cmd_match_wildcards,
     "get_studio_settings": cmd_get_studio_settings,
     "save_studio_settings": cmd_save_studio_settings,
+    "get_app_config": cmd_get_app_config,
+    "save_app_config": cmd_save_app_config,
+    "list_agent_providers": cmd_list_agent_providers,
+    "test_agent_provider": cmd_test_agent_provider,
+    "agent_plan": cmd_agent_plan,
     "browse_images": cmd_browse_images,
     "image_browser_metadata": cmd_image_browser_metadata,
     "image_browser_reindex": cmd_image_browser_reindex,

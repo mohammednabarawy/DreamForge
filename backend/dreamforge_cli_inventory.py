@@ -362,8 +362,8 @@ MODEL_DEPENDENCIES = {
         },
         {
             "id": "clip_t5_flux_fp8",
-            "relative": "text_encoders/t5xxl_fp8_e4m3fn.safetensors",
-            "note": "Flux T5-XXL fp8 text encoder (VRAM-friendly).",
+            "relative": "text_encoders/t5xxl_fp8_e4m3fn_scaled.safetensors",
+            "note": "Flux T5-XXL scaled fp8 text encoder (VRAM-friendly, Kontext-compatible).",
         },
     ],
     "flux_kontext": [
@@ -379,8 +379,8 @@ MODEL_DEPENDENCIES = {
         },
         {
             "id": "clip_t5_flux_fp8",
-            "relative": "text_encoders/t5xxl_fp8_e4m3fn.safetensors",
-            "note": "Flux T5-XXL fp8 text encoder (VRAM-friendly).",
+            "relative": "text_encoders/t5xxl_fp8_e4m3fn_scaled.safetensors",
+            "note": "Flux T5-XXL scaled fp8 text encoder (VRAM-friendly, Kontext-compatible).",
         },
         {
             "id": "controlnet_flux_inpaint",
@@ -408,8 +408,9 @@ def _dependency_path(relative: str) -> Path:
 # Same weights often live under clip/ or alternate filenames from older installs.
 COMPANION_ALTERNATE_PATHS: dict[str, list[str]] = {
     "clip_t5_flux_fp8": [
+        "clip/t5xxl_fp8_e4m3fn_scaled.safetensors",
+        "text_encoders/t5xxl_fp8_e4m3fn.safetensors",
         "clip/t5xxl_fp8_e4m3fn.safetensors",
-        "text_encoders/t5xxl_fp8_e4m3fn_scaled.safetensors",
     ],
     "clip_l_flux": [
         "clip/clip_l.safetensors",

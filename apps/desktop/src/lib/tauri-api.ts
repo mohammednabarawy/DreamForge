@@ -40,6 +40,7 @@ export type GenerationSettings = {
   upscale_image?: string;
   upscale_method?: string;
   edit_type?: "auto" | "kontext" | "inpaint" | "img2img" | "qwen_edit";
+  edit_strength?: number;
   input_image?: string;
   inpaint_mask_path?: string;
   lora_keywords?: string;

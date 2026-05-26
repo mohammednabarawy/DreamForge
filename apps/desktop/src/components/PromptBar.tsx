@@ -2,6 +2,7 @@ import { AtSign, Download, Play, Sparkles, Square } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import type { GenerationSettings } from "../lib/tauri-api";
+import type { StudioMode } from "../lib/model-selection";
 import { detectAgentPromptHint } from "../lib/parseAgentPrompt";
 import {
   activeReferenceMode,
@@ -15,6 +16,9 @@ type Mention = { kind: "model" | "style"; label: string; value: string };
 
 type Props = {
   settings: GenerationSettings;
+  studioMode: StudioMode;
+  agentPlannedMode?: StudioMode | null;
+  onStudioModeChange: (mode: StudioMode) => void;
   onChange: (patch: Partial<GenerationSettings>) => void;
   mentions: Mention[];
   generating: boolean;
@@ -36,6 +40,9 @@ type Props = {
 
 export function PromptBar({
   settings,
+  studioMode,
+  agentPlannedMode,
+  onStudioModeChange,
   onChange,
   mentions,
   generating,
@@ -56,18 +63,23 @@ export function PromptBar({
 }: Props) {
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [promptDragOver, setPromptDragOver] = useState(false);
+  const isAgentMode = studioMode === "agent";
+  const canRunPrimary =
+    isAgentMode && !generating
+      ? Boolean((settings.prompt ?? "").trim())
+      : canGenerate;
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
         e.preventDefault();
         if (generating) onCancel();
-        else if (canGenerate) onGenerate();
+        else if (canRunPrimary) onGenerate();
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [generating, canGenerate, onGenerate, onCancel]);
+  }, [generating, canRunPrimary, onGenerate, onCancel]);
 
   const filtered = useMemo(() => {
     if (mentionQuery === null) return [];
@@ -81,6 +93,13 @@ export function PromptBar({
     () => detectAgentPromptHint(settings.prompt),
     [settings.prompt],
   );
+  const modes: Array<{ id: StudioMode; label: string }> = [
+    { id: "generate", label: "Generate" },
+    { id: "edit", label: "Edit" },
+    { id: "inpaint", label: "Inpaint" },
+    { id: "upscale", label: "Upscale" },
+    { id: "agent", label: "Agent" },
+  ];
 
   const onPromptChange = (value: string) => {
     onChange({ prompt: value });
@@ -150,13 +169,36 @@ export function PromptBar({
           ))}
         </ul>
       )}
-      <motion.div className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-dfui-border/50 bg-dfui-bg/40 px-2.5 py-1.5">
-        <p className="text-[10px] uppercase tracking-wide text-dfui-muted">
-          Model
-        </p>
-        <p className="truncate font-mono text-[11px] text-dfui-accent">
-          {activeModelLabel}
-        </p>
+      <motion.div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dfui-border/50 bg-dfui-bg/40 px-2.5 py-1.5">
+        <div className="flex gap-1">
+          {modes.map((mode) => (
+            <button
+              key={mode.id}
+              type="button"
+              onClick={() => onStudioModeChange(mode.id)}
+              disabled={generating}
+              className={`rounded-md px-2 py-1 text-[10px] font-medium transition-colors ${
+                studioMode === mode.id
+                  ? "bg-dfui-accent/20 text-dfui-accent"
+                  : "text-dfui-muted hover:bg-dfui-surface hover:text-dfui-fg"
+              } disabled:opacity-60`}
+            >
+              {mode.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex min-w-0 items-center gap-2">
+          <p className="shrink-0 text-[10px] uppercase tracking-wide text-dfui-muted">
+            {studioMode === "generate" ? "Model" : "Route"}
+          </p>
+          <p className="truncate font-mono text-[11px] text-dfui-accent">
+            {studioMode === "agent" && agentPlannedMode
+              ? `Planned ${agentPlannedMode}: ${activeModelLabel}`
+              : studioMode === "generate"
+                ? activeModelLabel
+                : `Auto: ${activeModelLabel}`}
+          </p>
+        </div>
       </motion.div>
       <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-stretch">
         <div className="sm:w-72 shrink-0">
@@ -172,7 +214,11 @@ export function PromptBar({
           value={settings.prompt ?? ""}
           onChange={(e) => onPromptChange(e.target.value)}
           rows={3}
-          placeholder="Describe the shot… Type @ to pick a model or style"
+          placeholder={
+            isAgentMode
+              ? "Tell the agent what you want. Example: edit this poster, preserve Arabic text, make it cinematic"
+              : "Describe the shot… Type @ to pick a model or style"
+          }
           className="df-textarea-glowing min-h-[84px] flex-1"
         />
       </div>
@@ -198,7 +244,7 @@ export function PromptBar({
             className="inline-flex items-center gap-1.5 rounded-lg border border-dfui-border px-3 py-1.5 text-xs text-dfui-fg hover:border-df-blue/40 disabled:opacity-50 transition-colors"
           >
             <Sparkles size={14} className="text-df-blue" />
-            Dry run
+            {isAgentMode ? "Ask agent" : "Dry run"}
           </motion.button>
           {generating ? (
             <motion.button
@@ -239,22 +285,24 @@ export function PromptBar({
                 </motion.button>
               )}
               <motion.button
-                whileHover={canGenerate ? { scale: 1.02, boxShadow: "0 0 15px rgba(247, 148, 30, 0.4)" } : {}}
-                whileTap={canGenerate ? { scale: 0.98 } : {}}
+                whileHover={canRunPrimary ? { scale: 1.02, boxShadow: "0 0 15px rgba(247, 148, 30, 0.4)" } : {}}
+                whileTap={canRunPrimary ? { scale: 0.98 } : {}}
                 type="button"
                 onClick={onGenerate}
-                disabled={!canGenerate}
+                disabled={!canRunPrimary}
                 title={
-                  canGenerate
+                  canRunPrimary
                     ? undefined
-                    : needsCompanionDownload
+                    : isAgentMode
+                      ? "Enter an instruction for the agent"
+                      : needsCompanionDownload
                       ? "Download companion files first, then generate"
                       : generateBlockReason || "Cannot generate yet"
                 }
                 className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-df-orange to-df-orange-deep px-4 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50 transition-all"
               >
                 <Play size={14} fill="currentColor" />
-                Generate
+                {isAgentMode ? "Apply & open route" : "Generate"}
               </motion.button>
             </>
           )}

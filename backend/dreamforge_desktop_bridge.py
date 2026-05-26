@@ -637,6 +637,8 @@ def _namespace_from_params(params: dict) -> SimpleNamespace:
         "upscale_image": "upscale_image",
         "upscale_method": "upscale_method",
         "edit_type": "edit_type",
+        "edit_strength": "edit_strength",
+        "inpaint_mask_path": "inpaint_mask_path",
         "vram_profile": "vram_profile",
         "use_case": "use_case",
         "brand_kit": "brand_kit",
@@ -704,6 +706,8 @@ def cmd_build_cli_argv(params: dict) -> dict:
     add("--upscale-image", params.get("upscale_image"))
     add("--upscale-method", params.get("upscale_method"))
     add("--edit-type", params.get("edit_type"))
+    add("--edit-strength", params.get("edit_strength"))
+    add("--inpaint-mask-path", params.get("inpaint_mask_path"))
     add("--vram-profile", params.get("vram_profile"))
     add("--use-case", params.get("use_case"))
     add("--brand-kit", params.get("brand_kit"))

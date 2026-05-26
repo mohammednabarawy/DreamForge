@@ -75,6 +75,10 @@ def generation_phase_from_preview(percentage: int | None, title: str | None) -> 
     t = (title or "").lower()
     if "load" in t and "model" in t:
         return GEN_LOADING_MODELS
+    if "sampling" in t or "vae decoding" in t or "prepare models" in t:
+        return GEN_SAMPLING
+    if "powering up" in t:
+        return GEN_PREPARING
     if pct < 0:
         return GEN_PREPARING
     if pct >= 100:

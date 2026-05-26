@@ -1,6 +1,7 @@
 import type { GenerationSettings } from "./tauri-api";
 import { generationNeedsReferenceImage } from "./parseAgentPrompt";
 import type { ModelGalleryItem } from "./tauri-api";
+import type { StudioMode } from "./model-selection";
 
 export function vramProfileFromHardware(
   vramGb: number | null,
@@ -31,6 +32,7 @@ export function computeGenerateReadiness(args: {
   missingCompanionCount: number;
   settings: GenerationSettings;
   modelGallery: ModelGalleryItem[];
+  studioMode?: StudioMode;
 }): GenerateReadiness {
   if (args.generating) {
     return { ok: false, reason: "Generation in progress", missingCompanions: false };
@@ -47,6 +49,29 @@ export function computeGenerateReadiness(args: {
   }
   if (!(args.model ?? "").trim()) {
     return { ok: false, reason: "Select a base model", missingCompanions: false };
+  }
+  const studio = args.studioMode ?? "generate";
+  if (
+    studio === "upscale" &&
+    !Boolean((args.settings.upscale_image ?? "").trim()) &&
+    !Boolean((args.settings.input_image ?? "").trim())
+  ) {
+    return {
+      ok: false,
+      reason: "Attach an image to upscale (canvas output or reference)",
+      missingCompanions: false,
+    };
+  }
+  if (
+    args.settings.edit_type === "inpaint" &&
+    Boolean((args.settings.input_image ?? "").trim()) &&
+    !Boolean((args.settings.inpaint_mask_path ?? "").trim())
+  ) {
+    return {
+      ok: false,
+      reason: "Create or attach an inpaint mask first",
+      missingCompanions: false,
+    };
   }
   if (!args.modelDependenciesReady) {
     const n = args.missingCompanionCount;

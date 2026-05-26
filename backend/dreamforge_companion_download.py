@@ -33,7 +33,7 @@ COMPANION_SOURCES: dict[str, dict[str, Any]] = {
         "min_bytes": 200 * 1024 * 1024,
     },
     "clip_t5_flux_fp8": {
-        "url": f"{HF_BASE_FLUX_TEXT}/t5xxl_fp8_e4m3fn.safetensors",
+        "url": f"{HF_BASE_FLUX_TEXT}/t5xxl_fp8_e4m3fn_scaled.safetensors",
         "min_bytes": 4 * 1024 * 1024 * 1024,
     },
     "clip_qwen25_vl_7b": {

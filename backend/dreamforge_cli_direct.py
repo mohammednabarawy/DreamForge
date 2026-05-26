@@ -40,6 +40,7 @@ from modules.model_ui_defaults import (  # noqa: E402
     MODERN_FAMILIES,
     auto_generation_settings,
     hidream_is_dev_variant as _hidream_is_dev_variant,
+    infer_model_family,
     performance_preset_name as _hidream_performance_preset,
 )
 
@@ -67,6 +68,8 @@ def build_parser():
     parser.add_argument("--upscale-image", default=None, help="Image path to upscale")
     parser.add_argument("--upscale-method", default="2x", help="Upscale method passed to DreamForge")
     parser.add_argument("--edit-type", default="auto", choices=["auto", "kontext", "inpaint", "img2img", "qwen_edit"], help="Type of image edit to perform")
+    parser.add_argument("--edit-strength", type=float, default=None, help="Image edit denoise/strength, 0.0 preserves more and 1.0 changes more")
+    parser.add_argument("--inpaint-mask-path", default=None, help="Mask image path for inpaint edits")
     parser.add_argument("--vram-profile", choices=["auto", "16gb", "8gb", "5gb", "mps"], default="auto",
                         help="Auto-tune model settings for this VRAM target (16gb=RTX 5060 Ti class, 8gb/5gb=low-VRAM, mps=Apple Silicon unified memory)")
     parser.add_argument(
@@ -289,6 +292,7 @@ def build_plan(base_args, data=None):
             "styles": settings["styles"],
             "performance_selection": settings.get("performance_selection", "Custom..."),
             "vram_profile": getattr(job, "vram_profile", "auto"),
+            "edit_strength": getattr(job, "edit_strength", None),
         },
         "input_image": input_path,
         "manifest_enabled": not getattr(job, "no_manifest", False),

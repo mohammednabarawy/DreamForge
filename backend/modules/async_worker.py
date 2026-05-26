@@ -139,10 +139,15 @@ def _process(gen_data):
         seed = random.randint(0, max_seed)
 
     all_steps = steps * max(image_number, 1)
-    with open('render.txt', 'r', encoding='utf-8') as f:
-        lines = f.readlines()
+    try:
+        render_path = Path(__file__).resolve().parent.parent / "render.txt"
+        with open(render_path, "r", encoding="utf-8") as f:
+            lines = [ln.strip() for ln in f.readlines() if ln.strip()]
+    except OSError:
+        lines = ["Rendering"]
+    if not lines:
+        lines = ["Rendering"]
     status = random.choice(lines)
-    status = f"{status}"
 
     class InterruptProcessingException(Exception):
         pass

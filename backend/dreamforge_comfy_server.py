@@ -125,6 +125,31 @@ def _is_port_open(port: int, host: str = "127.0.0.1") -> bool:
         return s.connect_ex((host, port)) == 0
 
 
+def parse_comfy_startup_url(line: str) -> str | None:
+    """Parse Comfy stdout line: 'To see the GUI go to: http://127.0.0.1:8188' (Krita-style)."""
+    text = (line or "").strip()
+    if not text.startswith("To see the GUI go to:"):
+        return None
+    url = text.split("http://", 1)[-1].strip()
+    if not url.startswith("http"):
+        url = f"http://{url}"
+    return url.rstrip("/")
+
+
+def _read_comfy_url_from_log(log_path: Path, *, tail_lines: int = 80) -> str | None:
+    if not log_path.is_file():
+        return None
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines[-tail_lines:]):
+        url = parse_comfy_startup_url(line)
+        if url:
+            return url
+    return None
+
+
 def _pick_free_port(start: int = 8188) -> int:
     if not _is_port_open(start):
         return start
@@ -232,6 +257,19 @@ class ManagedComfyServer:
         while time.time() < deadline:
             if self.proc and self.proc.poll() is not None:
                 raise RuntimeError(f"ComfyUI server exited early with code {self.proc.returncode}")
+            if log_path.is_file():
+                parsed = _read_comfy_url_from_log(log_path)
+                if parsed:
+                    try:
+                        from urllib.parse import urlparse
+
+                        hostport = urlparse(parsed).netloc
+                        if hostport and ":" in hostport:
+                            _host, _port = hostport.rsplit(":", 1)
+                            if _host in (self.config.host, self.config.listen, "127.0.0.1", "localhost"):
+                                self.config.port = int(_port)
+                    except ValueError:
+                        pass
             if _is_port_open(self.config.port, host=self.config.host):
                 return
             time.sleep(0.25)
@@ -283,6 +321,12 @@ def boot_managed_comfy_server(
 
     _emit("Configuring ComfyUI model paths…")
     ensure_dreamforge_extra_model_paths(COMFY_ROOT)
+    try:
+        from dreamforge_comfy_ws import ensure_websockets_available
+
+        ensure_websockets_available()
+    except ImportError as exc:
+        _emit(f"Warning: live preview disabled ({exc})", phase="starting_comfy")
     _emit("Starting managed ComfyUI server…", phase="starting_comfy")
     server = get_default_comfy_server()
     server.start(timeout_s=float(timeout_s))

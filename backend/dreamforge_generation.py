@@ -829,8 +829,27 @@ def run_generation(
                 ),
             },
         )
-        res = client.prompt(prompt_graph)
-        node = client.wait_for_outputs(res.prompt_id, timeout_s=60 * 30, poll_s=0.5)
+        sample_steps = int(settings.get("steps") or 20)
+
+        def _comfy_stream_event(payload: dict) -> None:
+            if not streaming:
+                return
+            payload = dict(payload)
+            payload.setdefault("job_id", job_id)
+            emit_event(stream_sink, payload)
+
+        if streaming:
+            _res, node = client.run_prompt_with_stream(
+                prompt_graph,
+                job_id=job_id or "",
+                sample_count=sample_steps,
+                node_count=1,
+                timeout_s=60 * 30,
+                on_event=_comfy_stream_event,
+            )
+        else:
+            _res = client.prompt(prompt_graph)
+            node = client.wait_for_outputs(_res.prompt_id, timeout_s=60 * 30, poll_s=0.5)
         outputs = node.get("outputs") or {}
         comfy_images: list[str] = []
         comfy_image_specs: list[tuple[str, str, str]] = []

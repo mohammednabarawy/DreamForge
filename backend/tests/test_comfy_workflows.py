@@ -146,10 +146,11 @@ def test_composite_inpaint_result_preserves_outside_mask():
 def test_managed_comfy_extra_model_paths_points_to_shared_models(tmp_path, monkeypatch):
     import dreamforge_comfy_server as server
 
-    monkeypatch.setattr(server, "MODELS_ROOT", tmp_path / "models")
+    models = (tmp_path / "models").resolve()
+    monkeypatch.setattr(server, "MODELS_ROOT", models)
     comfy = tmp_path / "ComfyUI"
     path = server.ensure_dreamforge_extra_model_paths(comfy)
     text = path.read_text(encoding="utf-8")
     assert "dreamforge-managed:" in text
-    assert "base_path: ../../models" in text
-    assert (tmp_path / "models" / "diffusion_models").is_dir()
+    assert models.as_posix() in text
+    assert (models / "diffusion_models").is_dir()

@@ -42,6 +42,8 @@ type Props = {
   onCancel: () => void;
   onUseSelectedImageFor: (mode: "edit" | "inpaint" | "upscale") => void;
   onAttachReferenceImage: (path: string, mode: ReferenceImageMode) => void;
+  onAttachExtraReferenceImage?: (path: string) => void;
+  onRemoveExtraReferenceImage?: (index: number) => void;
   onClearReferenceImage: () => void;
   onOpenInpaintMask?: () => void;
   onOpenFullLog: () => void;
@@ -78,6 +80,8 @@ export function CanvasPanel({
   onCancel,
   onUseSelectedImageFor,
   onAttachReferenceImage,
+  onAttachExtraReferenceImage,
+  onRemoveExtraReferenceImage,
   onClearReferenceImage,
   onOpenInpaintMask,
   onOpenFullLog,
@@ -239,6 +243,8 @@ export function CanvasPanel({
         onGenerate={onGenerate}
         onCancel={onCancel}
         onAttachReferenceImage={onAttachReferenceImage}
+        onAttachExtraReferenceImage={onAttachExtraReferenceImage}
+        onRemoveExtraReferenceImage={onRemoveExtraReferenceImage}
         onClearReferenceImage={onClearReferenceImage}
         onOpenInpaintMask={onOpenInpaintMask}
         workerReady={workerReady}

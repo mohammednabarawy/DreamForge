@@ -374,7 +374,7 @@ AGENT_ONLY_PARAM_KEYS = frozenset(
 def _sanitize_param_value(key: str, value: Any) -> Any:
     if key == "negative_prompt":
         return coerce_negative_prompt_value(value)
-    if key in ("styles", "lora"):
+    if key in ("styles", "lora", "reference_images", "control_images"):
         if isinstance(value, str):
             return [part.strip() for part in value.split(",") if part.strip()]
         if isinstance(value, list):

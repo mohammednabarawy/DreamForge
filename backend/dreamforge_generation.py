@@ -28,22 +28,6 @@ from _paths import BACKEND_ROOT, COMFY_ROOT, PROJECT_ROOT, REPOS_ROOT, extend_sy
 _RUNTIME_READY = False
 
 
-def _attach_inpaint_mask(gen_data: dict, image_path: str, mask_path: str) -> None:
-    """Build inpaint_view layers expected by modules/image_pipeline.py."""
-    from dreamforge_paths import resolve_image_path_or_raise
-
-    main_path = resolve_image_path_or_raise(image_path)
-    mask_resolved = resolve_image_path_or_raise(mask_path)
-    main = Image.open(main_path).convert("RGB")
-    mask_img = Image.open(mask_resolved).convert("L")
-    if mask_img.size != main.size:
-        mask_img = mask_img.resize(main.size, Image.Resampling.LANCZOS)
-    rgba = main.copy()
-    rgba.putalpha(mask_img)
-    gen_data["inpaint_toggle"] = True
-    gen_data["main_view"] = str(main_path)
-    gen_data["inpaint_view"] = {"layers": [np.asarray(rgba)]}
-
 # Encourage CUDA's caching allocator to release fragmented blocks back to the
 # driver: this is the single biggest knob for OOM resilience on Windows and is
 # the Fooocus/Forge recommendation.  Users can still override via env.
@@ -75,6 +59,14 @@ def _clamp_float(value, default: float, low: float, high: float) -> float:
     except (TypeError, ValueError):
         return default
     return max(low, min(high, parsed))
+
+
+def _pil_to_png_bytes(image: Image.Image) -> bytes:
+    from io import BytesIO
+
+    buf = BytesIO()
+    image.save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def _report_boot(progress, message: str, **extra) -> None:
@@ -298,6 +290,228 @@ def _preview_stream_payload(product) -> dict:
     return payload
 
 
+def _routing_model_blob(model: dict | None) -> str:
+    """Stable string for Flux/Kontext routing (matches Krita-style path + caption checks)."""
+    if not model:
+        return ""
+    parts = (
+        model.get("engine_name"),
+        model.get("name"),
+        model.get("relative_path"),
+        model.get("caption"),
+    )
+    return " ".join(str(p) for p in parts if p).lower()
+
+
+def _checkpoint_is_flux_kontext(model: dict | None, model_family: str) -> bool:
+    """True when weights are Flux.1 Kontext edit models (not base Flux img2img)."""
+    fam = (model_family or "").lower()
+    if fam == "flux_kontext":
+        return True
+    blob = _routing_model_blob(model)
+    if fam == "flux" and "kontext" in blob:
+        return True
+    # Split diffusion filenames / UI captions sometimes differ; keep explicit tokens.
+    hints = (
+        "flux-kontext",
+        "flux_kontext",
+        "flux1-kontext",
+        "flux.1-kontext",
+        "kontext-dev",
+        "flux.1 kontext",
+    )
+    return fam.startswith("flux") and any(h in blob for h in hints)
+
+
+def _coerce_reference_image_paths(job) -> list[str]:
+    from dreamforge_comfy_workflow_import import coerce_reference_image_paths
+
+    return coerce_reference_image_paths(job)
+
+
+def _comfy_workflow_mode(
+    *,
+    input_filename: str | None,
+    cn_type: str,
+    model: dict,
+    model_family: str,
+) -> str:
+    from dreamforge_comfy_workflow_import import comfy_workflow_mode
+
+    return comfy_workflow_mode(
+        input_filename=input_filename,
+        cn_type=str(cn_type or ""),
+        model=model,
+        model_family=model_family,
+        checkpoint_is_flux_kontext=_checkpoint_is_flux_kontext,
+    )
+
+
+def _build_comfy_prompt_graph(
+    *,
+    job,
+    mode: str,
+    model: dict,
+    model_family: str,
+    settings: dict,
+    prompt: str,
+    negative: str,
+    seed: int,
+    edit_strength: float,
+    cn_upscale: str,
+    input_filename: str | None,
+    mask_filename: str | None,
+    reference_stitch_filename: str | None,
+    grow_mask_by: int,
+    model_loader_args: dict | None = None,
+):
+    from dreamforge_comfy_workflow_import import (
+        build_prompt_from_template,
+        resolve_comfy_workflow_template,
+    )
+    from dreamforge_comfy_workflows import (
+        comfy_flux_dev_txt2img,
+        comfy_flux_kontext_edit,
+        comfy_img2img_basic,
+        comfy_inpaint_basic,
+        comfy_txt2img_basic,
+        comfy_upscale_basic,
+    )
+
+    explicit = getattr(job, "comfy_workflow_api", None) or getattr(
+        job, "comfy_workflow_path", None
+    )
+    template_path = resolve_comfy_workflow_template(mode=mode, explicit_path=explicit)
+    ckpt_name = model.get("name") or model.get("engine_name")
+    loader_args = {
+        "category": model.get("category") or "checkpoints",
+        "relative_path": model.get("relative_path") or model.get("name") or ckpt_name,
+        "family": model_family,
+        "ckpt_name": ckpt_name,
+    }
+    if model_loader_args:
+        loader_args.update(model_loader_args)
+    bindings = {
+        **loader_args,
+        "prompt": prompt,
+        "negative": negative,
+        "steps": settings["steps"],
+        "cfg": settings["cfg"],
+        "sampler_name": settings["sampler_name"],
+        "scheduler": settings["scheduler"],
+        "seed": seed,
+        "denoise": edit_strength,
+        "width": settings["width"],
+        "height": settings["height"],
+        "filename_prefix": "DreamForge",
+        "upscale_model": cn_upscale,
+        "grow_mask_by": grow_mask_by,
+    }
+    if input_filename:
+        bindings["image"] = input_filename
+    if mask_filename:
+        bindings["mask"] = mask_filename
+    if reference_stitch_filename:
+        bindings["reference_stitch"] = reference_stitch_filename
+    if template_path:
+        return build_prompt_from_template(template_path, bindings), str(template_path)
+
+    if input_filename:
+        if mode == "upscale":
+            graph = comfy_upscale_basic(
+                {
+                    "image": input_filename,
+                    "upscale_model": cn_upscale,
+                    "filename_prefix": "DreamForge",
+                }
+            )
+        elif mode == "inpaint" and mask_filename:
+            graph = comfy_inpaint_basic(
+                {
+                    **loader_args,
+                    "image": input_filename,
+                    "mask": mask_filename,
+                    "prompt": prompt,
+                    "negative": negative,
+                    "steps": settings["steps"],
+                    "cfg": settings["cfg"],
+                    "sampler_name": settings["sampler_name"],
+                    "scheduler": settings["scheduler"],
+                    "seed": seed,
+                    "denoise": edit_strength,
+                    "grow_mask_by": grow_mask_by,
+                    "filename_prefix": "DreamForge",
+                }
+            )
+        elif mode == "kontext":
+            graph = comfy_flux_kontext_edit(
+                {
+                    **loader_args,
+                    "image": input_filename,
+                    "reference_stitch": reference_stitch_filename or input_filename,
+                    "prompt": prompt,
+                    "negative": negative,
+                    "steps": settings["steps"],
+                    "guidance": settings["cfg"],
+                    "sampler_name": settings["sampler_name"],
+                    "scheduler": settings["scheduler"],
+                    "seed": seed,
+                    "denoise": edit_strength,
+                    "filename_prefix": "DreamForge",
+                }
+            )
+        else:
+            graph = comfy_img2img_basic(
+                {
+                    "ckpt_name": ckpt_name,
+                    **loader_args,
+                    "image": input_filename,
+                    "prompt": prompt,
+                    "negative": negative,
+                    "steps": settings["steps"],
+                    "cfg": settings["cfg"],
+                    "sampler_name": settings["sampler_name"],
+                    "scheduler": settings["scheduler"],
+                    "seed": seed,
+                    "denoise": edit_strength,
+                    "filename_prefix": "DreamForge",
+                }
+            )
+    elif (model_family or "").startswith("flux"):
+        graph = comfy_flux_dev_txt2img(
+            {
+                **loader_args,
+                "prompt": prompt,
+                "negative": negative,
+                "width": settings["width"],
+                "height": settings["height"],
+                "steps": settings["steps"],
+                "guidance": settings["cfg"],
+                "sampler_name": settings["sampler_name"],
+                "scheduler": settings["scheduler"],
+                "seed": seed,
+                "filename_prefix": "DreamForge",
+            }
+        )
+    else:
+        graph = comfy_txt2img_basic(
+            {
+                **loader_args,
+                "prompt": prompt,
+                "negative": negative,
+                "width": settings["width"],
+                "height": settings["height"],
+                "steps": settings["steps"],
+                "cfg": settings["cfg"],
+                "sampler_name": settings["sampler_name"],
+                "scheduler": settings["scheduler"],
+                "seed": seed,
+                "filename_prefix": "DreamForge",
+            }
+        )
+    return graph, None
+
+
 def emit_event(sink, payload: dict) -> None:
     if sink is None:
         return
@@ -319,19 +533,18 @@ def run_generation(
     job_id: str | None = None,
 ) -> dict:
     """Run one generation; stream_sink is filepath or callable for JSON events."""
-    boot_headless()
-    import modules.async_worker as worker
     from dreamforge_cli_direct import (
         _auto_settings,
         _compile_job,
-        _load_input_image,
-        _parse_loras,
         _resolve_output_paths,
         default_manifest_path,
         write_manifest,
         validate_image,
     )
     from dreamforge_cli_inventory import check_model_dependencies
+
+    extend_sys_path()
+    os.chdir(BACKEND_ROOT)
 
     try:
         job, model, prompt, negative, width, height, _brand_kit = _compile_job(base_args, data)
@@ -368,10 +581,16 @@ def run_generation(
             emit_event(stream_sink, first_err)
             return {"status": "error", **first_err}
 
-        input_path = getattr(job, "input_image", None) or getattr(job, "upscale_image", None)
+        explicit_input_path = getattr(job, "input_image", None)
+        upscale_input_path = getattr(job, "upscale_image", None)
         cn_selection = getattr(job, "cn_selection", None) or "None"
         cn_type = getattr(job, "cn_type", None) or "None"
         edit_type = getattr(job, "edit_type", "auto")
+        # Desktop state can briefly carry both input_image and a stale upscale_image
+        # when switching modes. An explicit edit input must win so Kontext/inpaint
+        # jobs do not silently become "upscale the original image".
+        is_upscale_job = bool(upscale_input_path) and not explicit_input_path
+        input_path = explicit_input_path or upscale_input_path
         use_case = str(getattr(job, "use_case", "none") or "none").lower()
 
         if not input_path:
@@ -385,37 +604,37 @@ def run_generation(
                 err = missing_input_image(job_id=job_id)
                 emit_event(stream_sink, err)
                 return {"status": "error", **err}
-        elif cn_selection == "None" and getattr(job, "upscale_image", None):
+        elif cn_selection == "None" and is_upscale_job:
             cn_selection = "Custom..."
             cn_type = "upscale"
         elif cn_selection == "None" and input_path:
-            if edit_type == "kontext" or model_family == "flux_kontext":
+            # Studio Edit tab uses edit_type "kontext" for generic contextual edit; force Comfy
+            # kontext/ReferenceLatent routing only for real Kontext checkpoints (Krita convention).
+            if _checkpoint_is_flux_kontext(model, model_family):
                 cn_selection = "None"
                 cn_type = "None"
             else:
                 cn_selection = "Custom..."
-                if edit_type != "auto":
+                if edit_type not in ("auto", "kontext", "None", None, ""):
                     cn_type = edit_type
                 else:
                     cn_type = "img2img"
         elif input_path and cn_selection == "Custom...":
-            if getattr(job, "upscale_image", None):
+            if is_upscale_job:
                 cn_type = "upscale"
-            elif edit_type == "kontext" or model_family == "flux_kontext":
-                # img2img blocks Flux Kontext auto-routing in the pipeline.
+            elif _checkpoint_is_flux_kontext(model, model_family):
+                # cn_type img2img would skip ReferenceLatent and break Flux Kontext UNets.
                 cn_selection = "None"
                 cn_type = "None"
             elif edit_type not in ("auto", "None", None, ""):
                 cn_type = edit_type
 
-        loaded_input_image = None
         if input_path:
             try:
                 from dreamforge_paths import resolve_image_path_or_raise
 
                 resolved_input_path = resolve_image_path_or_raise(input_path)
                 input_path = str(resolved_input_path)
-                loaded_input_image = _load_input_image(input_path)
             except (FileNotFoundError, ValueError, OSError) as exc:
                 err = invalid_input_image(
                     str(exc), path=str(input_path) if input_path else None, job_id=job_id
@@ -426,54 +645,144 @@ def run_generation(
         streaming = stream_sink is not None
         edit_strength = _clamp_float(
             getattr(job, "edit_strength", None),
-            0.98 if edit_type == "kontext" or model_family == "flux_kontext" else 0.75,
+            1.0 if _checkpoint_is_flux_kontext(model, model_family) else 0.75,
             0.0,
             1.0,
         )
-        gen_data = {
-            "task_type": "process",
-            "image_total": int(getattr(job, "image_number", 1) or 1),
-            "image_number": int(getattr(job, "image_number", 1) or 1),
-            "generate_forever": int(getattr(job, "image_number", 1) or 1) == 0,
-            "base_model_name": model["engine_name"],
-            "prompt": prompt,
-            "negative": settings["negative"],
-            "style_selection": settings["styles"],
-            "cfg": settings["cfg"],
-            "custom_steps": settings["steps"],
-            "performance_selection": settings.get("performance_selection", "Custom..."),
-            "aspect_ratios_selection": "Custom...",
-            "custom_width": settings["width"],
-            "custom_height": settings["height"],
-            "sampler_name": settings["sampler_name"],
-            "scheduler": settings["scheduler"],
-            "clip_skip": settings["clip_skip"],
-            "loras": _parse_loras(getattr(job, "lora", [])),
-            "cn_selection": cn_selection,
-            "cn_type": cn_type,
-            "cn_edge_low": 0.1,
-            "cn_edge_high": 0.9,
-            "cn_start": 0.0,
-            "cn_stop": 1.0,
-            "cn_strength": edit_strength,
-            "cn_upscale": getattr(job, "upscale_method", "2x"),
-            "edit_strength": edit_strength,
-            "seed": seed,
-            "input_image": loaded_input_image,
-        }
-        if not streaming:
-            gen_data["silent"] = True
+        try:
+            from dreamforge_krita_resources import resolve_upscaler
 
-        lora_keywords = getattr(job, "lora_keywords", None)
-        if lora_keywords:
-            gen_data["lora_keywords"] = str(lora_keywords)
-        if getattr(job, "auto_negative_prompt", None) or getattr(job, "auto_negative", None):
-            gen_data["auto_negative"] = True
-
+            upscale_info = resolve_upscaler(getattr(job, "upscale_method", None))
+            cn_upscale = upscale_info["filename"]
+        except ImportError:
+            cn_upscale = getattr(job, "upscale_method", "OmniSR_X2_DIV2K.safetensors")
         mask_path = getattr(job, "inpaint_mask_path", None)
-        if mask_path and cn_type == "inpaint" and input_path:
+
+        if streaming:
+            emit_event(
+                stream_sink,
+                {
+                    "type": "started",
+                    "job_id": job_id,
+                    "title": "Submitting to ComfyUI…",
+                    "percentage": 0,
+                },
+            )
+            emit_event(
+                stream_sink,
+                {
+                    "type": "progress",
+                    "job_id": job_id,
+                    "phase": "sampling",
+                    "progress": 0,
+                    "message": "Submitting workflow to ComfyUI…",
+                },
+            )
+
+        from dreamforge_comfy_server import ensure_comfy_running
+        from dreamforge_comfy_client import ComfyClient
+        from dreamforge_comfy_models import (
+            ComfyModelResolutionError,
+            resolve_comfy_model_loader_args,
+        )
+        from dreamforge_krita_resources import (
+            composite_inpaint_result,
+            inpaint_mask_recipe_values,
+            prepare_inpaint_mask_bytes,
+            stitch_kontext_reference_images,
+        )
+
+        server = ensure_comfy_running(timeout_s=60.0)
+        client = ComfyClient(server.base_url)
+
+        try:
+            resolved_loaders = resolve_comfy_model_loader_args(
+                client,
+                model=model,
+                model_family=model_family,
+            )
+        except ComfyModelResolutionError as exc:
+            err = {
+                "type": "error",
+                "code": "comfy_models_unavailable",
+                "message": str(exc),
+                "job_id": job_id,
+                "recoverable": True,
+                "suggestions": list(exc.suggestions),
+            }
+            emit_event(stream_sink, err)
+            return {"status": "error", **err}
+
+        inpaint_recipe = inpaint_mask_recipe_values(
+            str(getattr(job, "edit_type", "inpaint") or "inpaint")
+        )
+        grow_mask_by = int(inpaint_recipe["inpaint_mask_grow_by"])
+        inpaint_mask_img = None
+
+        input_filename = None
+        if input_path:
+            local_name = Path(str(input_path)).name
+            upload = client.upload_image(
+                image_bytes=Path(str(input_path)).read_bytes(),
+                filename=local_name,
+                folder_type="input",
+                overwrite=True,
+            )
+            input_filename = str(upload.get("name") or local_name)
+
+        reference_stitch_filename = None
+        extra_reference_paths = _coerce_reference_image_paths(job)
+        if extra_reference_paths and input_path:
             try:
-                _attach_inpaint_mask(gen_data, str(input_path), str(mask_path))
+                from dreamforge_paths import resolve_image_path_or_raise
+
+                main_img = Image.open(
+                    resolve_image_path_or_raise(str(input_path))
+                ).convert("RGB")
+                extras = [
+                    Image.open(resolve_image_path_or_raise(path)).convert("RGB")
+                    for path in extra_reference_paths
+                ]
+                stitched = stitch_kontext_reference_images([main_img, *extras])
+                stitch_name = f"{Path(str(input_path)).stem}_kontext_refs.png"
+                stitch_upload = client.upload_image(
+                    image_bytes=_pil_to_png_bytes(stitched),
+                    filename=stitch_name,
+                    folder_type="input",
+                    overwrite=True,
+                )
+                reference_stitch_filename = str(stitch_upload.get("name") or stitch_name)
+            except OSError as exc:
+                err = invalid_input_image(
+                    f"reference image: {exc}",
+                    path=str(extra_reference_paths),
+                    job_id=job_id,
+                )
+                emit_event(stream_sink, err)
+                return {"status": "error", **err}
+
+        mask_filename = None
+        if cn_type == "inpaint" and mask_path and input_path:
+            try:
+                from dreamforge_paths import resolve_image_path_or_raise
+
+                main_path = resolve_image_path_or_raise(str(input_path))
+                mask_resolved = resolve_image_path_or_raise(str(mask_path))
+                main_size = Image.open(main_path).size
+                mask_bytes, inpaint_mask_img = prepare_inpaint_mask_bytes(
+                    mask_resolved,
+                    image_size=main_size,
+                    grow=int(inpaint_recipe["inpaint_grow"]),
+                    feather=int(inpaint_recipe["inpaint_feather"]),
+                )
+                mask_name = f"{Path(str(mask_path)).stem}_df_inpaint.png"
+                mask_upload = client.upload_image(
+                    image_bytes=mask_bytes,
+                    filename=mask_name,
+                    folder_type="input",
+                    overwrite=True,
+                )
+                mask_filename = str(mask_upload.get("name") or mask_name)
             except OSError as exc:
                 err = invalid_input_image(
                     f"inpaint mask: {exc}",
@@ -483,136 +792,109 @@ def run_generation(
                 emit_event(stream_sink, err)
                 return {"status": "error", **err}
 
-        if streaming:
-            emit_event(
-                stream_sink,
-                {
-                    "type": "started",
-                    "job_id": job_id,
-                    "title": "Loading models…",
-                    "percentage": 0,
-                },
-            )
-            emit_event(
-                stream_sink,
-                {
-                    "type": "progress",
-                    "job_id": job_id,
-                    "phase": "loading_models",
-                    "progress": 0,
-                    "message": "Loading models…",
-                },
-            )
+        comfy_mode = _comfy_workflow_mode(
+            input_filename=input_filename,
+            cn_type=str(cn_type or ""),
+            model=model,
+            model_family=model_family,
+        )
+        prompt_graph, template_used = _build_comfy_prompt_graph(
+            job=job,
+            mode=comfy_mode,
+            model=model,
+            model_family=model_family,
+            settings=settings,
+            prompt=prompt,
+            negative=settings["negative"],
+            seed=seed,
+            edit_strength=edit_strength,
+            cn_upscale=cn_upscale,
+            input_filename=input_filename,
+            mask_filename=mask_filename,
+            reference_stitch_filename=reference_stitch_filename,
+            grow_mask_by=grow_mask_by,
+            model_loader_args=resolved_loaders,
+        )
 
-        task_id = worker.add_task(gen_data)
-        finished = False
-        flag = None
-        product = None
-        last_progress_emit = 0.0
-        last_sampling_pct = 0
-
-        def _oom_payload() -> dict:
-            free_gb = None
-            try:
-                import torch  # local import; torch is loaded by this point
-                if torch.cuda.is_available():
-                    free, _total = torch.cuda.mem_get_info()
-                    free_gb = free / (1024 ** 3)
-                    torch.cuda.empty_cache()
-            except Exception:
-                pass
-            return out_of_memory(
-                free_gb=free_gb,
-                vram_profile=os.environ.get("DREAMFORGE_DESKTOP_VRAM_MODE"),
-                job_id=job_id,
-            )
-
-        while not finished:
-            try:
-                flag, product = worker.task_result(task_id)
-            except MemoryError as exc:
-                err = _oom_payload()
-                err.setdefault("details", {})["exception"] = f"MemoryError: {exc}"
-                emit_event(stream_sink, err)
-                return {"status": "error", **err}
-            except OSError as exc:
-                if getattr(exc, "errno", None) == 28:  # ENOSPC
-                    err = disk_full(str(exc), path=getattr(exc, "filename", None), job_id=job_id)
-                else:
-                    err = from_exception(exc, job_id=job_id)
-                emit_event(stream_sink, err)
-                return {"status": "error", **err}
-            except Exception as exc:  # pragma: no cover - covered by from_exception logic
-                if "out of memory" in str(exc).lower() or "OutOfMemoryError" in type(exc).__name__:
-                    err = _oom_payload()
-                    err.setdefault("details", {})["exception"] = f"{type(exc).__name__}: {exc}"
-                else:
-                    err = from_exception(exc, job_id=job_id)
-                emit_event(stream_sink, err)
-                return {"status": "error", **err}
-
-            if flag is None:
-                now = time.time()
-                if streaming and now - last_progress_emit >= 15.0:
-                    emit_event(
-                        stream_sink,
-                        {
-                            "type": "progress",
-                            "job_id": job_id,
-                            "phase": GEN_SAMPLING if last_sampling_pct > 0 else GEN_PREPARING,
-                            "progress": last_sampling_pct,
-                            "message": (
-                                "Sampling in progress… Kontext edits can take several "
-                                "minutes on first run while GPU weights load."
-                            ),
-                        },
+        emit_event(
+            stream_sink,
+            {
+                "type": "progress",
+                "job_id": job_id,
+                "phase": "sampling",
+                "progress": 0,
+                "message": (
+                    f"Submitting workflow to ComfyUI"
+                    f"{f' ({Path(template_used).name})' if template_used else ''}…"
+                ),
+            },
+        )
+        res = client.prompt(prompt_graph)
+        node = client.wait_for_outputs(res.prompt_id, timeout_s=60 * 30, poll_s=0.5)
+        outputs = node.get("outputs") or {}
+        comfy_images: list[str] = []
+        comfy_image_specs: list[tuple[str, str, str]] = []
+        for _node_id, out in outputs.items():
+            imgs = (out or {}).get("images") or []
+            for img in imgs:
+                filename = img.get("filename")
+                subfolder = img.get("subfolder") or ""
+                folder_type = img.get("type") or "output"
+                if filename:
+                    comfy_images.append(
+                        str(Path(subfolder) / filename) if subfolder else str(filename)
                     )
-                    last_progress_emit = now
-                time.sleep(0.08)
-                continue
-            if flag == "preview":
-                evt = _preview_stream_payload(product)
-                if job_id:
-                    evt["job_id"] = job_id
-                emit_event(stream_sink, evt)
-                pct = evt.get("percentage")
-                title = evt.get("title")
-                phase = generation_phase_from_preview(
-                    int(pct) if pct is not None else None,
-                    str(title) if title else None,
-                )
-                progress_pct = max(0, min(100, int(pct))) if pct is not None and int(pct) >= 0 else 0
-                if progress_pct > 0:
-                    last_sampling_pct = progress_pct
-                last_progress_emit = time.time()
-                emit_event(
-                    stream_sink,
-                    {
-                        "type": "progress",
-                        "job_id": job_id,
-                        "phase": phase,
-                        "progress": progress_pct,
-                        "message": generation_label(phase, str(title) if title else None),
-                    },
-                )
-            elif flag == "results":
-                raw_images = [str(p) for p in (product or [])]
-                images = _resolve_output_paths(raw_images, getattr(job, "output", None))
-                done_evt = {
+                    comfy_image_specs.append((str(filename), str(subfolder), str(folder_type)))
+
+        if not comfy_images:
+            err = out_of_memory(job_id=job_id)
+            err["message"] = "ComfyUI returned no output images (likely OOM or workflow mismatch)."
+            emit_event(stream_sink, err)
+            return {"status": "error", **err}
+
+        comfy_out_dir = PROJECT_ROOT / "outputs" / "dreamforge" / "comfy"
+        comfy_out_dir.mkdir(parents=True, exist_ok=True)
+        saved_paths: list[str] = []
+        for filename, subfolder, folder_type in comfy_image_specs:
+            payload = client.view(filename=filename, subfolder=subfolder, folder_type=folder_type)
+            stem = Path(filename).stem
+            suffix = Path(filename).suffix or ".png"
+            target = comfy_out_dir / f"{stem}_{int(time.time() * 1000)}{suffix}"
+            target.write_bytes(payload)
+            saved_paths.append(str(target))
+
+        if cn_type == "inpaint" and input_path and inpaint_mask_img is not None and saved_paths:
+            try:
+                from dreamforge_paths import resolve_image_path_or_raise
+
+                original = Image.open(
+                    resolve_image_path_or_raise(str(input_path))
+                ).convert("RGB")
+                composited_paths: list[str] = []
+                for saved in saved_paths:
+                    generated = Image.open(saved).convert("RGB")
+                    merged = composite_inpaint_result(
+                        original, generated, inpaint_mask_img
+                    )
+                    merged_path = Path(saved).with_name(f"{Path(saved).stem}_composite.png")
+                    merged.save(merged_path, format="PNG")
+                    composited_paths.append(str(merged_path))
+                saved_paths = composited_paths
+            except OSError:
+                pass
+
+        images = saved_paths
+        raw_images = comfy_images
+        if streaming and images:
+            emit_event(
+                stream_sink,
+                {
                     "type": "results",
                     "job_id": job_id,
                     "paths": images,
                     "raw_paths": raw_images,
-                }
-                emit_event(stream_sink, done_evt)
-                finished = True
-            else:
-                err = from_exception(
-                    RuntimeError(f"Worker returned flag: {flag}"),
-                    job_id=job_id,
-                )
-                emit_event(stream_sink, err)
-                return {"status": "error", **err}
+                },
+            )
 
         validation = []
         if getattr(job, "validate_output", False):
@@ -643,6 +925,14 @@ def run_generation(
                     "seed": seed,
                     "model": model,
                     "settings": settings,
+                    "routing": {
+                        "input_image": str(input_path) if input_path else None,
+                        "upscale_image": str(upscale_input_path) if is_upscale_job else None,
+                        "edit_type": edit_type,
+                        "cn_selection": cn_selection,
+                        "cn_type": cn_type,
+                        "edit_strength": edit_strength,
+                    },
                     "images": images,
                     "raw_images": raw_images,
                     "validation": validation,
@@ -696,23 +986,44 @@ def _tune_edit_job_settings(settings: dict, job, model_family: str) -> dict:
         for attr in ("steps", "cfg_scale", "sampler", "scheduler")
     )
 
+    try:
+        from dreamforge_krita_recipes import edit_recipe
+
+        recipe = edit_recipe(family, edit_type)
+    except ImportError:
+        recipe = None
+
+    if recipe and not custom_perf:
+        out["steps"] = int(recipe.get("custom_steps", out.get("steps", 20)))
+        out["cfg"] = float(recipe.get("cfg", out.get("cfg", 3.5)))
+        out["sampler_name"] = recipe.get("sampler_name", out.get("sampler_name"))
+        out["scheduler"] = recipe.get("scheduler", out.get("scheduler"))
+        out["clip_skip"] = int(recipe.get("clip_skip", out.get("clip_skip", 1)))
+
     if family.startswith("flux") or edit_type == "kontext":
         out["performance_selection"] = "Flux"
-        try:
-            from modules.performance import PerformanceSettings
+        if recipe and not custom_perf:
+            out["steps"] = int(recipe.get("custom_steps", out.get("steps", 20)))
+            out["cfg"] = float(recipe.get("cfg", out.get("cfg", 3.5)))
+            out["sampler_name"] = recipe.get("sampler_name", out.get("sampler_name"))
+            out["scheduler"] = recipe.get("scheduler", out.get("scheduler"))
+            out["clip_skip"] = int(recipe.get("clip_skip", out.get("clip_skip", 1)))
+        else:
+            try:
+                from modules.performance import PerformanceSettings
 
-            opts = PerformanceSettings().get_perf_options("Flux")
-            if not custom_perf:
-                out["steps"] = int(opts.get("custom_steps", out.get("steps", 20)))
-                out["cfg"] = float(opts.get("cfg", out.get("cfg", 3.0)))
-                out["sampler_name"] = opts.get("sampler_name", out.get("sampler_name"))
-                out["scheduler"] = opts.get("scheduler", out.get("scheduler"))
-                out["clip_skip"] = int(opts.get("clip_skip", out.get("clip_skip", 1)))
-        except (KeyError, TypeError, ValueError):
-            pass
+                opts = PerformanceSettings().get_perf_options("Flux")
+                if not custom_perf:
+                    out["steps"] = int(opts.get("custom_steps", out.get("steps", 20)))
+                    out["cfg"] = float(opts.get("cfg", out.get("cfg", 3.0)))
+                    out["sampler_name"] = opts.get("sampler_name", out.get("sampler_name"))
+                    out["scheduler"] = opts.get("scheduler", out.get("scheduler"))
+                    out["clip_skip"] = int(opts.get("clip_skip", out.get("clip_skip", 1)))
+            except (KeyError, TypeError, ValueError):
+                pass
 
     vram = os.environ.get("DREAMFORGE_DESKTOP_VRAM_MODE", "16gb")
-    step_cap = {"5gb": 12, "8gb": 16, "16gb": 24}.get(vram, 20)
+    step_cap = {"5gb": 12, "8gb": 20, "16gb": 24}.get(vram, 20)
     if not custom_perf:
         out["steps"] = min(int(out.get("steps", step_cap)), step_cap)
     if explicit_sampling:
@@ -771,7 +1082,12 @@ def _apply_job_performance(settings: dict, job) -> dict:
 
 
 def request_stop() -> None:
-    boot_headless()
-    import modules.async_worker as worker
+    try:
+        from dreamforge_comfy_client import ComfyClient
+        from dreamforge_comfy_server import get_default_comfy_server
 
-    worker.interrupt_dreamforge_processing = True
+        server = get_default_comfy_server()
+        if server.is_running():
+            ComfyClient(server.base_url).interrupt()
+    except Exception:
+        pass

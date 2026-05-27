@@ -68,6 +68,7 @@ venv/
 
 # --- Research clones ---
 .research/
+.codex_upstream/
 
 # --- Stray icon copies at repo root ---
 /icon.ico

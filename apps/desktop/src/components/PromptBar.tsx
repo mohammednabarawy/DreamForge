@@ -33,6 +33,8 @@ type Props = {
   onGenerate: () => void;
   onCancel: () => void;
   onAttachReferenceImage: (path: string, mode: ReferenceImageMode) => void;
+  onAttachExtraReferenceImage?: (path: string) => void;
+  onRemoveExtraReferenceImage?: (index: number) => void;
   onClearReferenceImage: () => void;
   onOpenInpaintMask?: () => void;
   activeModelLabel: string;
@@ -57,6 +59,8 @@ export function PromptBar({
   onGenerate,
   onCancel,
   onAttachReferenceImage,
+  onAttachExtraReferenceImage,
+  onRemoveExtraReferenceImage,
   onClearReferenceImage,
   onOpenInpaintMask,
   activeModelLabel,
@@ -205,6 +209,8 @@ export function PromptBar({
           <ReferenceImageControl
             settings={settings}
             onAttach={onAttachReferenceImage}
+            onAttachExtra={onAttachExtraReferenceImage}
+            onRemoveExtra={onRemoveExtraReferenceImage}
             onClear={onClearReferenceImage}
             onOpenInpaintMask={onOpenInpaintMask}
             disabled={generating}

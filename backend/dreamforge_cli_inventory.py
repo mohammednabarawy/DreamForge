@@ -467,6 +467,26 @@ def check_model_dependencies(model):
     return [enrich_missing_dependency(item) for item in missing]
 
 
+def check_studio_resources(studio_mode: str, *, upscale_method: str | None = None) -> list[dict]:
+    """Missing upscaler/inpaint assets for studio tabs (Krita catalog)."""
+    try:
+        from dreamforge_krita_resources import check_studio_resources as _check
+        from dreamforge_companion_download import enrich_missing_dependency as enrich
+    except ImportError:
+        return []
+    missing = _check(studio_mode, upscale_method=upscale_method)
+    return [enrich(item) for item in missing]
+
+
+def download_studio_resources(studio_mode: str, *, upscale_method: str | None = None) -> dict:
+    from dreamforge_companion_download import download_missing_companions
+
+    missing = check_studio_resources(studio_mode, upscale_method=upscale_method)
+    if not missing:
+        return {"status": "ok", "results": [], "errors": [], "downloaded": 0, "skipped": 0}
+    return download_missing_companions(missing)
+
+
 def model_setup_warnings(model):
     """Non-fatal setup notes (placement, optional enhancers)."""
     warnings = []

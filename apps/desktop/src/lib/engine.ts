@@ -9,11 +9,9 @@ export type EngineState =
 export type EngineHealth = "alive" | "booting" | "dead" | "restarting" | "unknown";
 
 const BOOT_PHASE_LABELS: Record<string, string> = {
-  starting: "Starting GPU engine…",
-  loading_settings: "Loading DreamForge settings and paths…",
-  loading_pytorch: "Loading PyTorch and CUDA…",
-  loading_pipeline: "Loading generation pipeline…",
-  ready: "Engine ready",
+  starting: "Starting ComfyUI engine…",
+  starting_comfy: "Starting managed ComfyUI server…",
+  ready: "ComfyUI ready",
 };
 
 const GEN_PHASE_LABELS: Record<string, string> = {

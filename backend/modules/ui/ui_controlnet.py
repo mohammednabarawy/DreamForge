@@ -13,6 +13,21 @@ from PIL import Image
 
 t = translate
 
+
+def _upscaler_choices():
+    choices = ["None"] + list(path_manager.upscaler_filenames)
+    try:
+        from dreamforge_krita_resources import UPSCALER_CATALOG
+
+        for key, item in UPSCALER_CATALOG.items():
+            filename = item.get("filename")
+            for value in (key, filename):
+                if value and value not in choices:
+                    choices.append(value)
+    except Exception:
+        pass
+    return choices
+
 def add_controlnet_tab(main_view, inpaint_view, prompt, image_number, run_event):
     with gr.Tab(label=t("PowerUp")):
         with gr.Row():
@@ -96,7 +111,7 @@ def add_controlnet_tab(main_view, inpaint_view, prompt, image_number, run_event)
         cn_upscaler = gr.Dropdown(
             label=t("Upscaler"),
             show_label=False,
-            choices=["None"] + path_manager.upscaler_filenames,
+            choices=_upscaler_choices(),
             value="None",
             visible='hidden',
         )

@@ -42,7 +42,13 @@ export type GenerationSettings = {
   edit_type?: "auto" | "kontext" | "inpaint" | "img2img" | "qwen_edit";
   edit_strength?: number;
   input_image?: string;
+  /** Additional Kontext/control reference images (Krita-style multi-reference). */
+  reference_images?: string[];
   inpaint_mask_path?: string;
+  /** Optional Comfy Save (API Format) workflow template path. */
+  comfy_workflow_api?: string;
+  /** Route through the Krita-style managed ComfyUI server. */
+  use_comfy_server?: boolean;
   lora_keywords?: string;
   clip_skip?: number;
   auto_negative_prompt?: boolean;

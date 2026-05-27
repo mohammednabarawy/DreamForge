@@ -103,6 +103,7 @@ import {
 } from "../lib/loraStack";
 import {
   aggregateLoraKeywords,
+  checkStudioResources,
   getAppConfig,
   getLoraInfo,
   getStudioSettings,
@@ -118,9 +119,11 @@ import {
   type StudioSettings,
 } from "../lib/studioBridge";
 import {
+  appendExtraReferencePath,
   buildClearReferenceImagePatch,
   buildReferenceImagePatch,
   referenceStatusLabel,
+  removeExtraReferenceAt,
   resolveGenerationImagePaths,
   resolveReferenceImagePath,
   type ReferenceImageMode,
@@ -197,7 +200,7 @@ export function useDreamForge() {
   const activeSessionIdRef = useRef(activeSessionId);
   activeSessionIdRef.current = activeSessionId;
   const [bootMessage, setBootMessage] = useState<string>(
-    "Starting GPU engine…",
+    "Starting ComfyUI engine…",
   );
   const [bootPhase, setBootPhase] = useState<string>("starting");
   const [gpuName, setGpuName] = useState<string | null>(null);
@@ -206,6 +209,10 @@ export function useDreamForge() {
   const [lastError, setLastError] = useState<FriendlyError | null>(null);
   const [warnings, setWarnings] = useState<FriendlyError[]>([]);
   const [modelDependencies, setModelDependencies] = useState<{
+    missing: ModelDependencyItem[];
+    ready: boolean;
+  }>({ missing: [], ready: true });
+  const [studioResources, setStudioResources] = useState<{
     missing: ModelDependencyItem[];
     ready: boolean;
   }>({ missing: [], ready: true });
@@ -232,6 +239,11 @@ export function useDreamForge() {
   const lastPreviewEventAtRef = useRef<number>(0);
   const previewUrlRef = useRef<string | null>(null);
   const canvasPreviewPathRef = useRef<string>("");
+
+  const previewSignature = useCallback((url: string) => {
+    if (!url.startsWith("data:")) return url;
+    return `${url.length}:${url.slice(-256)}`;
+  }, []);
 
   const setCanvasPreview = useCallback((url: string | null, path?: string) => {
     if (url && url === previewUrlRef.current) return;
@@ -291,7 +303,7 @@ export function useDreamForge() {
         final: isFinal,
       });
       if (url) {
-        lastPreviewSigRef.current = url.slice(0, 96);
+        lastPreviewSigRef.current = previewSignature(url);
         lastPreviewEventAtRef.current = Date.now();
         setCanvasPreview(url, p.preview_path);
         return;
@@ -305,7 +317,7 @@ export function useDreamForge() {
             live: true,
           });
           if (fallback) {
-            lastPreviewSigRef.current = fallback.slice(0, 96);
+            lastPreviewSigRef.current = previewSignature(fallback);
             lastPreviewEventAtRef.current = Date.now();
             setCanvasPreview(fallback, r.path);
           }
@@ -314,7 +326,7 @@ export function useDreamForge() {
         }
       }
     },
-    [setCanvasPreview, jobId, lastJobId],
+    [setCanvasPreview, jobId, lastJobId, previewSignature],
   );
 
   const [settings, setSettings] = useState<GenerationSettings>({
@@ -921,8 +933,9 @@ export function useDreamForge() {
             preview_path: r.path,
             live: true,
           });
-          if (url && url.slice(0, 96) !== lastPreviewSigRef.current) {
-            lastPreviewSigRef.current = url.slice(0, 96);
+          const sig = url ? previewSignature(url) : "";
+          if (url && sig !== lastPreviewSigRef.current) {
+            lastPreviewSigRef.current = sig;
             lastPreviewEventAtRef.current = Date.now();
             setCanvasPreview(url, r.path);
           }
@@ -932,7 +945,7 @@ export function useDreamForge() {
     poll();
     const id = setInterval(poll, 800);
     return () => clearInterval(id);
-  }, [generating, setCanvasPreview]);
+  }, [generating, setCanvasPreview, previewSignature]);
 
   useEffect(() => () => cleanupCanvasPreviewUrls(), []);
 
@@ -1460,8 +1473,10 @@ export function useDreamForge() {
       model: prepared.settings.model ?? "",
       modelDependenciesReady: modelDependencies.ready,
       missingCompanionCount: modelDependencies.missing.length,
+      studioMissingAssetCount: studioResources.missing.length,
       settings: prepared.settings,
       modelGallery: modelGalleryAll,
+      studioMode: (appConfig?.ui.studio_mode ?? "generate") as StudioMode,
     });
     if (!readiness.ok) {
       setStatus(readiness.reason);
@@ -1500,6 +1515,7 @@ export function useDreamForge() {
       output,
       validate_output: true,
     };
+    params = { ...params, use_comfy_server: true };
     if (params.lora?.length && !params.lora_keywords?.trim()) {
       try {
         const kw = await aggregateLoraKeywords(params.lora);
@@ -1553,7 +1569,7 @@ export function useDreamForge() {
     engineState,
     bootMessage,
     modelDependencies,
-    modelGalleryAll,
+    studioResources.missing.length,
   ]);
 
   const runRestartEngine = useCallback(async () => {
@@ -1588,6 +1604,36 @@ export function useDreamForge() {
     void runRestartEngine();
   }, [settings.vram_profile, workerReady, restarting, runRestartEngine]);
 
+  useEffect(() => {
+    const mode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+    if (mode === "generate" || mode === "agent") {
+      setStudioResources({ ready: true, missing: [] });
+      return;
+    }
+    let cancelled = false;
+    void checkStudioResources(
+      mode,
+      mode === "upscale" ? settings.upscale_method ?? undefined : undefined,
+    )
+      .then((res) => {
+        if (cancelled) return;
+        setStudioResources({
+          ready: res.ready,
+          missing: (res.missing ?? []) as ModelDependencyItem[],
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setStudioResources({ ready: true, missing: [] });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    appConfig?.ui.studio_mode,
+    settings.upscale_method,
+    companionDownload.phase,
+  ]);
+
   const generateReadiness = useMemo(
     () =>
       computeGenerateReadiness({
@@ -1599,6 +1645,7 @@ export function useDreamForge() {
         model: settings.model ?? "",
         modelDependenciesReady: modelDependencies.ready,
         missingCompanionCount: modelDependencies.missing.length,
+        studioMissingAssetCount: studioResources.missing.length,
         settings,
         modelGallery: modelGalleryAll,
         studioMode: (appConfig?.ui.studio_mode ?? "generate") as StudioMode,
@@ -1610,10 +1657,13 @@ export function useDreamForge() {
       bootMessage,
       settings,
       modelDependencies,
+      studioResources.missing.length,
       modelGalleryAll,
       appConfig?.ui.studio_mode,
     ],
   );
+  const missingDownloadCount =
+    modelDependencies.missing.length + studioResources.missing.length;
 
   const runCancel = useCallback(async () => {
     setStatus("Cancelling…");
@@ -1682,6 +1732,29 @@ export function useDreamForge() {
     setStatus("Reference image cleared");
   }, [patchSettings]);
 
+  const attachExtraReferenceImage = useCallback(
+    async (path: string) => {
+      const resolved = await resolveReferenceImagePath(path);
+      const patch = appendExtraReferencePath(settingsRef.current, resolved);
+      if (!Object.keys(patch).length) {
+        setStatus("Control reference already attached");
+        return;
+      }
+      patchSettings(patch);
+      const count = (patch.reference_images ?? []).length;
+      setStatus(`Added control reference (${count} total)`);
+    },
+    [patchSettings],
+  );
+
+  const removeExtraReferenceImage = useCallback(
+    (index: number) => {
+      patchSettings(removeExtraReferenceAt(settingsRef.current, index));
+      setStatus("Removed control reference");
+    },
+    [patchSettings],
+  );
+
   const refreshModelDependencies = useCallback(async (modelName?: string) => {
     const model = (modelName ?? settingsRef.current.model ?? "").trim();
     if (!model) {
@@ -1732,8 +1805,11 @@ export function useDreamForge() {
         patch.edit_strength = settingsRef.current.edit_strength ?? 0.98;
         patch.cn_selection = "None";
         patch.cn_type = "None";
-        patch.steps = Math.min(settingsRef.current.steps ?? 20, 16);
+        // Match Krita Flux Kontext presets (Flux - Euler simple): avoid over-capping steps.
+        patch.steps = Math.min(Math.max(settingsRef.current.steps ?? 20, 20), 28);
         patch.upscale_image = undefined;
+        patch.upscale_method = undefined;
+        patch.inpaint_mask_path = undefined;
         const src =
           selected?.images?.[0] ?? settingsRef.current.input_image ?? "";
         if (src.trim()) patch.input_image = src.trim();
@@ -1743,8 +1819,9 @@ export function useDreamForge() {
         patch.edit_strength = settingsRef.current.edit_strength ?? 0.9;
         patch.cn_selection = "Custom...";
         patch.cn_type = "inpaint";
-        patch.steps = Math.min(settingsRef.current.steps ?? 20, 16);
+        patch.steps = Math.min(Math.max(settingsRef.current.steps ?? 20, 20), 28);
         patch.upscale_image = undefined;
+        patch.upscale_method = undefined;
         const src =
           selected?.images?.[0] ?? settingsRef.current.input_image ?? "";
         if (src.trim()) patch.input_image = src.trim();
@@ -1756,7 +1833,7 @@ export function useDreamForge() {
         patch.inpaint_mask_path = undefined;
         patch.cn_selection = "Custom...";
         patch.cn_type = "upscale";
-        patch.upscale_method = "2x";
+        patch.upscale_method = "fast_2x";
         const src =
           selected?.images?.[0] ??
           settingsRef.current.upscale_image ??
@@ -1767,9 +1844,8 @@ export function useDreamForge() {
       userPickedModelRef.current = false;
       patchSettings(patch);
       if (routedModel) void refreshModelDependencies(routedModel);
-      setStatus(
-        `${mode[0].toUpperCase()}${mode.slice(1)} mode - DreamForge will auto-route curated tools`,
-      );
+      const defaultStatus = `${mode[0].toUpperCase()}${mode.slice(1)} mode - DreamForge will auto-route curated tools`;
+      setStatus(defaultStatus);
     },
     [
       modelGalleryAll,
@@ -1789,15 +1865,25 @@ export function useDreamForge() {
     setStatus("Opening companion download…");
     try {
       const res = await checkModelDependencies(model);
+      const fromModel = res.missing ?? [];
+      const fromStudio = studioResources.missing;
+      const merged: ModelDependencyItem[] = [];
+      const keys = new Set<string>();
+      for (const item of [...fromModel, ...fromStudio]) {
+        const k = `${item.id ?? ""}|${item.url ?? ""}|${item.filename ?? ""}|${item.relative ?? ""}`;
+        if (keys.has(k)) continue;
+        keys.add(k);
+        merged.push(item);
+      }
       setModelDependencies({
-        missing: res.missing ?? [],
-        ready: res.ready ?? (res.missing?.length ?? 0) === 0,
+        missing: fromModel,
+        ready: res.ready ?? fromModel.length === 0,
       });
-      companionDownload.start(model, res.missing ?? []);
+      companionDownload.start(model, merged);
     } catch (e) {
       setStatus(`Could not list companions: ${String(e)}`);
     }
-  }, [companionDownload]);
+  }, [companionDownload, studioResources.missing]);
 
   useEffect(() => {
     const model = settings.model?.trim();
@@ -1891,6 +1977,8 @@ export function useDreamForge() {
       setWarnings((prev) => prev.filter((w) => w.code !== code)),
     dismissAllWarnings: () => setWarnings([]),
     modelDependencies,
+    studioResources,
+    missingDownloadCount,
     companionDownloadBusy,
     refreshModelDependencies,
     downloadMissingCompanions,
@@ -1921,6 +2009,8 @@ export function useDreamForge() {
     runCancel,
     useSelectedImageFor,
     attachReferenceImage,
+    attachExtraReferenceImage,
+    removeExtraReferenceImage,
     clearReferenceImage,
     refreshOutputs,
     loadMoreOutputs,

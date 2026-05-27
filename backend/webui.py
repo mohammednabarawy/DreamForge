@@ -109,6 +109,13 @@ import modules.ui.ui_settings as ui_settings
 
 from PIL import Image
 
+try:
+    from dreamforge_comfy_server import ensure_dreamforge_extra_model_paths
+
+    ensure_dreamforge_extra_model_paths()
+except Exception as exc:
+    print(f"[DreamForge] Could not configure Comfy model paths: {exc}")
+
 inpaint_toggle = None
 shared.shared_cache["browser"] = ImageBrowser()
 t = shared.translate

@@ -30,6 +30,8 @@ export function computeGenerateReadiness(args: {
   model: string;
   modelDependenciesReady: boolean;
   missingCompanionCount: number;
+  /** Upscalers, inpaint bundles, FLUX Kontext checkpoints (studio bridge). */
+  studioMissingAssetCount?: number;
   settings: GenerationSettings;
   modelGallery: ModelGalleryItem[];
   studioMode?: StudioMode;
@@ -49,6 +51,14 @@ export function computeGenerateReadiness(args: {
   }
   if (!(args.model ?? "").trim()) {
     return { ok: false, reason: "Select a base model", missingCompanions: false };
+  }
+  const studioMissing = args.studioMissingAssetCount ?? 0;
+  if (studioMissing > 0) {
+    return {
+      ok: false,
+      missingCompanions: true,
+      reason: `Missing ${studioMissing} studio asset(s) (models folder) — Download first`,
+    };
   }
   const studio = args.studioMode ?? "generate";
   if (

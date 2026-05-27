@@ -65,6 +65,22 @@ def build_parser():
     parser.add_argument("--style", dest="styles", action="append", help="DreamForge style name; can be repeated")
     parser.add_argument("--lora", action="append", default=[], help='LoRA as "filename:weight"')
     parser.add_argument("--input-image", default=None, help="Input image for img2img, Flux Kontext, or Qwen-Image-Edit")
+    parser.add_argument(
+        "--reference-images",
+        nargs="+",
+        default=None,
+        help="Additional Kontext/control reference images (Krita-style multi-reference)",
+    )
+    parser.add_argument(
+        "--comfy-workflow-api",
+        default=None,
+        help="Path to ComfyUI Save (API Format) workflow JSON template",
+    )
+    parser.add_argument(
+        "--use-comfy-server",
+        action="store_true",
+        help="Route generation through the Krita-style managed ComfyUI server",
+    )
     parser.add_argument("--upscale-image", default=None, help="Image path to upscale")
     parser.add_argument("--upscale-method", default="2x", help="Upscale method passed to DreamForge")
     parser.add_argument("--edit-type", default="auto", choices=["auto", "kontext", "inpaint", "img2img", "qwen_edit"], help="Type of image edit to perform")
@@ -268,9 +284,43 @@ def _auto_settings(model, job, width, height, negative_prompt):
     )
 
 
+def _apply_edit_recipe_settings(settings: dict, model: dict, job) -> dict:
+    """Keep dry-run plans aligned with the runtime edit recipe."""
+    edit_type = str(getattr(job, "edit_type", "auto") or "auto").lower()
+    has_input = bool(getattr(job, "input_image", None) or getattr(job, "upscale_image", None))
+    if not has_input or edit_type not in ("kontext", "inpaint", "img2img", "qwen_edit"):
+        return settings
+    explicit_sampling = any(
+        getattr(job, attr, None) is not None
+        for attr in ("steps", "cfg_scale", "sampler", "scheduler")
+    )
+    if explicit_sampling:
+        return settings
+    try:
+        from dreamforge_krita_recipes import edit_recipe
+    except ImportError:
+        return settings
+    recipe = edit_recipe(str(model.get("family") or ""), edit_type)
+    if not recipe:
+        return settings
+    out = dict(settings)
+    out["steps"] = int(recipe.get("custom_steps", out.get("steps", 20)))
+    out["cfg"] = float(recipe.get("cfg", out.get("cfg", 3.5)))
+    out["sampler_name"] = recipe.get("sampler_name", out.get("sampler_name"))
+    out["scheduler"] = recipe.get("scheduler", out.get("scheduler"))
+    out["clip_skip"] = int(recipe.get("clip_skip", out.get("clip_skip", 1)))
+    if str(model.get("family") or "").startswith("flux") or edit_type == "kontext":
+        out["performance_selection"] = "Flux"
+    return out
+
+
 def build_plan(base_args, data=None):
     job, model, prompt, negative, width, height, brand_kit = _compile_job(base_args, data)
-    settings = _auto_settings(model, job, width, height, negative)
+    settings = _apply_edit_recipe_settings(
+        _auto_settings(model, job, width, height, negative),
+        model,
+        job,
+    )
     input_path = getattr(job, "input_image", None) or getattr(job, "upscale_image", None)
     from dreamforge_cli_inventory import check_model_dependencies, model_setup_warnings
 
@@ -295,6 +345,8 @@ def build_plan(base_args, data=None):
             "edit_strength": getattr(job, "edit_strength", None),
         },
         "input_image": input_path,
+        "reference_images": getattr(job, "reference_images", None),
+        "comfy_workflow_api": getattr(job, "comfy_workflow_api", None),
         "manifest_enabled": not getattr(job, "no_manifest", False),
         "brand_kit": brand_kit.get("_path") if isinstance(brand_kit, dict) else None,
         "missing_dependencies": missing_deps,
@@ -316,12 +368,13 @@ def _load_input_image(path):
 
 
 def process_single(base_args, data=None):
-    from dreamforge_generation import boot_headless, run_generation
+    from dreamforge_comfy_server import boot_managed_comfy_server
+    from dreamforge_generation import run_generation
 
     job = _job_namespace(base_args, data or {})
     stream_file = getattr(job, "stream_file", None)
-    extra_argv = _dreamforge_argv_for_job(job)
-    boot_headless(extra_argv)
+    os.environ.setdefault("DREAMFORGE_USE_COMFY_SERVER", "1")
+    boot_managed_comfy_server()
     return run_generation(base_args, data, stream_sink=stream_file)
 
 
@@ -375,9 +428,10 @@ def main():
     if args.json:
         sys.stdout = sys.stderr
 
-    from dreamforge_generation import boot_headless
+    from dreamforge_comfy_server import boot_managed_comfy_server
 
-    boot_headless(_dreamforge_argv_for_job(args))
+    os.environ.setdefault("DREAMFORGE_USE_COMFY_SERVER", "1")
+    boot_managed_comfy_server()
 
     results = []
     if args.batch:

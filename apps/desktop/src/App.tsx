@@ -100,7 +100,7 @@ export default function App() {
             canGenerate={mc.canGenerate}
             generateBlockReason={mc.generateBlockReason}
             needsCompanionDownload={mc.needsCompanionDownload}
-            missingCompanionCount={mc.modelDependencies.missing.length}
+            missingCompanionCount={mc.missingDownloadCount}
             companionDownloadBusy={mc.companionDownloadBusy}
             onDownloadCompanions={() => void mc.downloadMissingCompanions()}
             engineState={mc.engineState}
@@ -123,6 +123,10 @@ export default function App() {
             onCancel={() => void mc.runCancel()}
             onUseSelectedImageFor={mc.useSelectedImageFor}
             onAttachReferenceImage={mc.attachReferenceImage}
+            onAttachExtraReferenceImage={(path) =>
+              void mc.attachExtraReferenceImage(path)
+            }
+            onRemoveExtraReferenceImage={mc.removeExtraReferenceImage}
             onClearReferenceImage={mc.clearReferenceImage}
             onOpenInpaintMask={() => mc.setInpaintMaskOpen(true)}
             onOpenFullLog={() => setFullLogOpen(true)}

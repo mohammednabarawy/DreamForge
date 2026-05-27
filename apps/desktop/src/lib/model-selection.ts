@@ -86,10 +86,18 @@ export function selectCuratedModelForMode(
   if (mode === "generate" || mode === "agent") return current ?? "";
   const candidates =
     mode === "inpaint"
-      ? ["flux fill", "fill", "inpaint"]
+      ? ["flux1-fill", "flux fill", "flux.1-fill", "flux1-dev", "fill", "inpaint"]
       : mode === "edit"
-        ? ["kontext", "flux kontext", "qwen image edit", "qwen_edit", "qwen edit"]
-        : ["upscale", "supir", "esrgan", "real-esrgan", "real esrgan"];
+        ? [
+            "flux1-dev-kontext_fp8_scaled",
+            "flux1-dev-kontext",
+            "kontext",
+            "flux kontext",
+            "qwen image edit",
+            "qwen_edit",
+            "qwen edit",
+          ]
+        : ["upscale", "omnisr", "nmkd", "supir", "esrgan", "real-esrgan", "real esrgan"];
   for (const needle of candidates) {
     const hit = gallery.find((item) => {
       const hay =

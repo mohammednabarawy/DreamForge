@@ -25,6 +25,12 @@ const INPUT_IMAGE_KEYS = [
   "input_image_path",
 ] as const;
 
+const EXTRA_REFERENCE_KEYS = [
+  "reference_images",
+  "control_images",
+  "extra_references",
+] as const;
+
 const PASSTHROUGH_KEYS: (keyof GenerationSettings)[] = [
   "model",
   "aspect_ratio",
@@ -46,6 +52,8 @@ const PASSTHROUGH_KEYS: (keyof GenerationSettings)[] = [
   "image_number",
   "cn_selection",
   "cn_type",
+  "reference_images",
+  "comfy_workflow_api",
 ];
 
 function coercePromptText(prompt: unknown): string {
@@ -145,6 +153,26 @@ function mergeAgentPromptDict(
     const value = parsed[key];
     if (typeof value === "string" && value.trim()) {
       patch.input_image = value.trim();
+      break;
+    }
+  }
+
+  for (const key of EXTRA_REFERENCE_KEYS) {
+    const value = parsed[key];
+    if (Array.isArray(value)) {
+      const paths = value
+        .map((item) => String(item).trim())
+        .filter(Boolean);
+      if (paths.length) {
+        patch.reference_images = paths;
+        break;
+      }
+    }
+    if (typeof value === "string" && value.trim()) {
+      patch.reference_images = value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
       break;
     }
   }

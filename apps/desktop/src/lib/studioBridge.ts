@@ -222,6 +222,44 @@ export async function interrogateImage(path: string, prompt?: string) {
   );
 }
 
+export type StudioResourceItem = {
+  id?: string;
+  relative?: string;
+  url?: string;
+  filename?: string;
+  category?: string;
+  expected_path?: string;
+  note?: string;
+};
+
+export async function checkStudioResources(
+  studioMode: string,
+  upscaleMethod?: string,
+) {
+  return bridgeInvoke<{
+    missing: StudioResourceItem[];
+    ready: boolean;
+    studio_mode: string;
+  }>("check_studio_resources", {
+    studio_mode: studioMode,
+    upscale_method: upscaleMethod ?? null,
+  });
+}
+
+export async function downloadStudioResources(
+  studioMode: string,
+  upscaleMethod?: string,
+) {
+  return bridgeInvoke<{
+    status?: string;
+    downloaded?: number;
+    errors?: Array<{ id?: string; error?: string }>;
+  }>("download_studio_resources", {
+    studio_mode: studioMode,
+    upscale_method: upscaleMethod ?? null,
+  });
+}
+
 export async function writeTempPng(dataUrl: string) {
   return invoke<string>("write_temp_png", { dataBase64: dataUrl });
 }

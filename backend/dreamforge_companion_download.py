@@ -8,6 +8,11 @@ from typing import Any
 
 from dreamforge_cli_inventory import MODELS_ROOT, companion_file_present
 
+try:
+    from dreamforge_krita_resources import STUDIO_RESOURCE_SOURCES
+except ImportError:
+    STUDIO_RESOURCE_SOURCES = {}
+
 # Comfy-Org/flux1-dev no longer hosts CLIP/T5/VAE; use upstream mirrors.
 HF_BASE_FLUX_TEXT = (
     "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main"
@@ -50,10 +55,28 @@ COMPANION_SOURCES: dict[str, dict[str, Any]] = {
     },
 }
 
+# Studio upscalers / inpaint assets (Krita AI Diffusion manifest URLs).
+for _resource_id, _src in STUDIO_RESOURCE_SOURCES.items():
+    rel = _src.get("relative", "")
+    if not rel or _resource_id in COMPANION_SOURCES:
+        continue
+    COMPANION_SOURCES[_resource_id] = {
+        "url": _src["url"],
+        "min_bytes": _src.get("min_bytes", 1024 * 1024),
+    }
+
 
 def companion_category(relative: str) -> str:
     folder = relative.split("/", 1)[0] if "/" in relative else ""
-    if folder in ("vae", "clip", "loras", "controlnet", "upscale_models", "checkpoints"):
+    if folder in (
+        "vae",
+        "clip",
+        "loras",
+        "controlnet",
+        "upscale_models",
+        "checkpoints",
+        "diffusion_models",
+    ):
         return folder
     if folder == "text_encoders":
         return "text_encoders"
@@ -69,11 +92,12 @@ def enrich_missing_dependency(entry: dict) -> dict:
     source = COMPANION_SOURCES.get(entry.get("id", ""), {})
     relative = entry.get("relative") or ""
     enriched = dict(entry)
-    if source.get("url"):
-        enriched["url"] = source["url"]
+    url = enriched.get("url") or source.get("url")
+    if url:
+        enriched["url"] = url
         enriched["category"] = companion_category(relative)
         enriched["filename"] = companion_filename(relative)
-        enriched["min_bytes"] = source.get("min_bytes", 1024 * 1024)
+        enriched["min_bytes"] = enriched.get("min_bytes") or source.get("min_bytes", 1024 * 1024)
         if source.get("requires_hf_token"):
             enriched["requires_hf_token"] = True
     return enriched

@@ -91,6 +91,23 @@ from comfyui_gguf.ops import GGMLOps
 #from calcuis_gguf.pig import load_gguf_sd, GGMLOps, GGUFModelPatcher
 #from calcuis_gguf.pig import DualClipLoaderGGUF as DualCLIPLoaderGGUF
 
+
+def _dreamforge_wants_flux_kontext(gen_data: dict) -> bool:
+    """True only for Flux.1 Kontext (or explicit edit_type), not base Flux + image.
+
+    Kontext uses reference_latents + random init latent and full denoise (Krita / Comfy convention).
+    Routing base Flux.dev through ReferenceLatent yields near-identity or broken edits.
+    """
+    fam = str(gen_data.get("model_family") or "").lower()
+    if fam == "flux_kontext":
+        return True
+    path = (gen_data.get("base_model_name") or "").replace("\\", "/").lower()
+    if "kontext" in path:
+        return True
+    hints = ("flux-kontext", "flux_kontext", "flux1-kontext", "flux.1-kontext", "kontext-dev")
+    return fam.startswith("flux") and any(h in path for h in hints)
+
+
 class pipeline:
     pipeline_type = ["sdxl", "ssd", "sd3", "flux", "flux2", "lumina2"]
 
@@ -827,22 +844,47 @@ class pipeline:
             controlnet["type"] = "None"
 
         # FIXME need a good way to check if we are using Flux.1 Kontext
+        inpaint_active = bool(gen_data.get("inpaint_toggle"))
         if (
             controlnet["type"] == "None" and
-            isinstance(self.xl_base.unet.model, Flux) and
-            input_image is not None
+            isinstance(self.xl_base_patched.unet.model, Flux) and
+            input_image is not None and
+            not inpaint_active
         ):
-            edit_strength = float(gen_data.get("edit_strength", 0.98))
-            controlnet["type"] = "kontext"
-            controlnet.setdefault("denoise", edit_strength)
-            controlnet.setdefault("strength", edit_strength)
-            img2img_mode = True
+            if _dreamforge_wants_flux_kontext(gen_data):
+                # Krita/Comfy Kontext: full diffusion schedule; strength is not img2img denoise.
+                edit_strength = float(gen_data.get("edit_strength", 1.0))
+                controlnet["type"] = "kontext"
+                controlnet.setdefault("denoise", 1.0)
+                controlnet.setdefault("strength", edit_strength)
+                img2img_mode = True
+            else:
+                # Base Flux + image: classic img2img (VAE encode + partial denoise).
+                controlnet["type"] = "img2img"
+                controlnet["denoise"] = float(gen_data.get("edit_strength", 0.62))
+                controlnet["strength"] = float(gen_data.get("edit_strength", 0.62))
+                img2img_mode = True
 
+        # Jobs can still arrive as Custom…/img2img from persisted UI state; Flux Kontext UNets must
+        # use ReferenceLatent (same as Acly/Krita comfy bundles), not VAE-encoded partial denoise.
+        cn_early = (controlnet.get("type") or "None").lower()
+        if (
+            cn_early == "img2img"
+            and isinstance(self.xl_base_patched.unet.model, Flux)
+            and input_image is not None
+            and not inpaint_active
+            and _dreamforge_wants_flux_kontext(gen_data)
+        ):
+            edit_strength_k = float(gen_data.get("edit_strength", 1.0))
+            controlnet["type"] = "kontext"
+            controlnet["denoise"] = 1.0
+            controlnet["strength"] = edit_strength_k
+            img2img_mode = True
         cn_kind = controlnet.get("type", "None").lower()
         if (
             controlnet["type"] != "None"
             and input_images > 0
-            and cn_kind not in ("kontext", "img2img", "upscale", "rembg", "faceswap")
+            and cn_kind not in ("kontext", "img2img", "upscale", "rembg", "faceswap", "inpaint")
         ):
             if callback is not None:
                 _worker().add_result(
@@ -887,20 +929,40 @@ class pipeline:
             if controlnet["type"].lower() == "img2img":
                 img2img_mode = True
 
+        # Explicit img2img from job (cn_selection Custom...) — CN handler skips type "img2img".
+        cn_eff = (controlnet.get("type") or "None").lower()
+        if not img2img_mode and cn_eff == "img2img" and input_images > 0:
+            img2img_mode = True
+
+        kontext_reference_latent = None
         if img2img_mode:
-            # If this isn't the first image, do "Loopback"
-            if "preview_count" in shared.state and shared.state["preview_count"] > 0:
+            # Loopback (sequential previews) — skip for Kontext; always use fresh reference image.
+            cn_for_loop = (controlnet.get("type") or "None").lower()
+            if cn_for_loop != "kontext" and "preview_count" in shared.state and shared.state["preview_count"] > 0:
                 input_image = Image.fromarray(shared.shared_cache["prev_image"]).convert("RGB")
                 input_image = np.array(input_image).astype(np.float32) / 255.0
                 input_image = torch.from_numpy(input_image)[None,]
             if controlnet["type"].lower() == "kontext":
                 input_image = FluxKontextImageScale().scale(input_image)[0]
-
-            latent = VAEEncode().encode(
-                vae=self.xl_base_patched.vae, pixels=input_image
-            )[0]
-            force_full_denoise = False
-            denoise = float(controlnet.get("denoise", controlnet.get("strength", 1)))
+                kontext_reference_latent = VAEEncode().encode(
+                    vae=self.xl_base_patched.vae, pixels=input_image
+                )[0]
+                latent = EmptySD3LatentImage().generate(
+                    width=int(input_image.shape[2]),
+                    height=int(input_image.shape[1]),
+                    batch_size=1,
+                )[0]
+                force_full_denoise = True
+                # KSampler: denoise must be ~1.0 for Kontext (see comfy.samplers KSampler.set_steps).
+                denoise = float(controlnet.get("denoise", 1.0))
+                if denoise < 0.999:
+                    denoise = 1.0
+            else:
+                latent = VAEEncode().encode(
+                    vae=self.xl_base_patched.vae, pixels=input_image
+                )[0]
+                force_full_denoise = False
+                denoise = float(controlnet.get("denoise", controlnet.get("strength", 1)))
         else:
             # Get the correct of latent image to start with
             latent_type = self.model_info.get('latent', None)
@@ -945,8 +1007,14 @@ class pipeline:
                 vae=self.xl_base_patched.vae,
                 pixels=image,
                 mask=mask,
-                grow_mask_by=20,
+                grow_mask_by=int(gen_data.get("inpaint_mask_grow_by", 20)),
             )[0]
+            img2img_mode = True
+            force_full_denoise = False
+            denoise = 1.0
+            if isinstance(self.xl_base.unet.model, Flux):
+                # Krita Flux fill/inpaint uses high guidance; normal Flux CFG fails here.
+                cfg = float(gen_data.get("inpaint_cfg", 30.0))
 
         if updated_conditions:
             conds = {
@@ -964,7 +1032,24 @@ class pipeline:
         positive_cond = switched_prompt if switched_prompt else self.conditions["+"]["cache"]
         if isinstance(self.xl_base.unet.model, Flux):
             if controlnet.get("type", "") == "kontext":
-                positive_cond = ReferenceLatent().execute(positive_cond, latent=latent)[0]
+                reference_latent = kontext_reference_latent or latent
+                positive_cond = ReferenceLatent().execute(
+                    positive_cond,
+                    latent=reference_latent,
+                )[0]
+                self.conditions["-"]["cache"] = ReferenceLatent().execute(
+                    self.conditions["-"]["cache"],
+                    latent=reference_latent,
+                )[0]
+                # Match ComfyUI's Kontext defaults: explicitly pin the reference method.
+                # Without this, some Flux Kontext UNets can regress to near-identity edits.
+                positive_cond = conditioning_set_values(
+                    positive_cond, {"reference_latents_method": "index_timestep_zero"}
+                )
+                self.conditions["-"]["cache"] = conditioning_set_values(
+                    self.conditions["-"]["cache"],
+                    {"reference_latents_method": "index_timestep_zero"},
+                )
             positive_cond = conditioning_set_values(positive_cond, {"guidance": cfg})
             cfg = 1.0
 

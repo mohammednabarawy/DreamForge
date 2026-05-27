@@ -16,6 +16,8 @@ import { pickImageFile } from "../lib/tauri-api";
 type Props = {
   settings: GenerationSettings;
   onAttach: (path: string, mode: ReferenceImageMode) => void;
+  onAttachExtra?: (path: string) => void;
+  onRemoveExtra?: (index: number) => void;
   onClear: () => void;
   onOpenInpaintMask?: () => void;
   disabled?: boolean;
@@ -24,6 +26,8 @@ type Props = {
 export function ReferenceImageControl({
   settings,
   onAttach,
+  onAttachExtra,
+  onRemoveExtra,
   onClear,
   onOpenInpaintMask,
   disabled = false,
@@ -36,9 +40,15 @@ export function ReferenceImageControl({
   );
   const rootRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const extraInputRef = useRef<HTMLInputElement>(null);
 
   const attachedPath = activeReferencePath(settings);
   const attachedMode = activeReferenceMode(settings);
+  const extraReferences = settings.reference_images ?? [];
+  const showExtraRefs =
+    Boolean(attachedPath) &&
+    attachedMode === "reference" &&
+    Boolean(onAttachExtra);
 
   useEffect(() => {
     if (attachedPath) {
@@ -103,6 +113,15 @@ export function ReferenceImageControl({
     }
   };
 
+  const onChooseExtraFile = async () => {
+    try {
+      const path = await pickImageFile();
+      if (path) onAttachExtra?.(path);
+    } catch {
+      extraInputRef.current?.click();
+    }
+  };
+
   const onFileInput = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -110,6 +129,16 @@ export function ReferenceImageControl({
     const tauriPath = (file as File & { path?: string }).path;
     if (tauriPath) {
       attachPath(tauriPath);
+    }
+  };
+
+  const onExtraFileInput = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const tauriPath = (file as File & { path?: string }).path;
+    if (tauriPath) {
+      onAttachExtra?.(tauriPath);
     }
   };
 
@@ -136,7 +165,7 @@ export function ReferenceImageControl({
         }
       }}
       onDrop={onDrop}
-      className={`relative flex items-center gap-2 rounded-lg border px-2 py-1.5 transition-colors ${
+      className={`relative flex flex-col gap-1.5 rounded-lg border px-2 py-1.5 transition-colors ${
         dragOver
           ? "border-df-blue/70 bg-df-blue/10 ring-1 ring-df-blue/30"
           : attachedPath
@@ -152,7 +181,15 @@ export function ReferenceImageControl({
         className="hidden"
         onChange={onFileInput}
       />
+      <input
+        ref={extraInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp,image/bmp,image/gif,image/tiff"
+        className="hidden"
+        onChange={onExtraFileInput}
+      />
 
+      <div className="flex items-center gap-2">
       {attachedPath ? (
         <>
           <div className="h-10 w-10 shrink-0 overflow-hidden rounded-md border border-dfui-border/60 bg-dfui-bg">
@@ -178,6 +215,9 @@ export function ReferenceImageControl({
                   ?.label
               }
               {settings.inpaint_mask_path ? " · mask set" : ""}
+              {extraReferences.length > 0
+                ? ` · +${extraReferences.length} ref`
+                : ""}
             </p>
           </div>
           {attachedMode === "inpaint" && onOpenInpaintMask && (
@@ -281,6 +321,41 @@ export function ReferenceImageControl({
           )}
         </AnimatePresence>
       </div>
+      </div>
+
+      {showExtraRefs && (
+        <div className="flex flex-wrap items-center gap-1 border-t border-dfui-border/40 pt-1.5">
+          {extraReferences.map((path, index) => (
+            <span
+              key={`${path}-${index}`}
+              className="inline-flex max-w-[140px] items-center gap-1 rounded border border-dfui-border/60 bg-dfui-bg/60 px-1.5 py-0.5 font-mono text-[9px] text-dfui-secondary"
+              title={path}
+            >
+              <span className="truncate">{basename(path)}</span>
+              {onRemoveExtra && (
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onRemoveExtra(index)}
+                  className="shrink-0 text-dfui-muted hover:text-red-300 disabled:opacity-50"
+                  title="Remove control reference"
+                >
+                  <X size={10} />
+                </button>
+              )}
+            </span>
+          ))}
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => void onChooseExtraFile()}
+            className="rounded border border-dashed border-dfui-border/70 px-1.5 py-0.5 text-[9px] text-dfui-accent hover:border-dfui-accent/50 disabled:opacity-50"
+            title="Add Kontext control reference (stitched with main image)"
+          >
+            + control ref
+          </button>
+        </div>
+      )}
     </motion.div>
   );
 }

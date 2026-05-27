@@ -613,6 +613,38 @@ def cmd_download_model_companions(params: dict) -> dict:
     return payload
 
 
+def cmd_check_studio_resources(params: dict) -> dict:
+    from dreamforge_cli_inventory import check_studio_resources
+
+    studio_mode = params.get("studio_mode") or params.get("mode")
+    if not studio_mode:
+        return _error("missing_studio_mode")
+    missing = check_studio_resources(
+        str(studio_mode),
+        upscale_method=params.get("upscale_method"),
+    )
+    return {
+        "ok": True,
+        "studio_mode": studio_mode,
+        "missing": missing,
+        "ready": len(missing) == 0,
+    }
+
+
+def cmd_download_studio_resources(params: dict) -> dict:
+    from dreamforge_cli_inventory import download_studio_resources
+
+    studio_mode = params.get("studio_mode") or params.get("mode")
+    if not studio_mode:
+        return _error("missing_studio_mode")
+    payload = download_studio_resources(
+        str(studio_mode),
+        upscale_method=params.get("upscale_method"),
+    )
+    payload["ok"] = payload.get("status") != "error" or bool(payload.get("results"))
+    return payload
+
+
 def _namespace_from_params(params: dict) -> SimpleNamespace:
     """Map generation request fields to CLI argparse namespace."""
     mapping = {
@@ -634,10 +666,13 @@ def _namespace_from_params(params: dict) -> SimpleNamespace:
         "styles": "styles",
         "lora": "lora",
         "input_image": "input_image",
+        "reference_images": "reference_images",
+        "control_images": "control_images",
         "upscale_image": "upscale_image",
         "upscale_method": "upscale_method",
         "edit_type": "edit_type",
         "edit_strength": "edit_strength",
+        "use_comfy_server": "use_comfy_server",
         "inpaint_mask_path": "inpaint_mask_path",
         "vram_profile": "vram_profile",
         "use_case": "use_case",
@@ -703,6 +738,10 @@ def cmd_build_cli_argv(params: dict) -> dict:
     add("--sampler", params.get("sampler"))
     add("--scheduler", params.get("scheduler"))
     add("--input-image", params.get("input_image"))
+    add("--reference-images", params.get("reference_images"))
+    add("--control-images", params.get("control_images"))
+    add("--comfy-workflow-api", params.get("comfy_workflow_api"))
+    add("--use-comfy-server", params.get("use_comfy_server"))
     add("--upscale-image", params.get("upscale_image"))
     add("--upscale-method", params.get("upscale_method"))
     add("--edit-type", params.get("edit_type"))
@@ -762,6 +801,8 @@ HANDLERS = {
     "organize_models": cmd_organize_models,
     "check_model_dependencies": cmd_check_model_dependencies,
     "download_model_companions": cmd_download_model_companions,
+    "check_studio_resources": cmd_check_studio_resources,
+    "download_studio_resources": cmd_download_studio_resources,
     **STUDIO_HANDLERS,
 }
 

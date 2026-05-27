@@ -1557,7 +1557,8 @@ fn start_gpu_worker(app: AppHandle, root: &Path, state: &Arc<AppState>) -> Resul
         .env("HF_HUB_OFFLINE", "1")
         .env("TRANSFORMERS_OFFLINE", "1")
         .env("TOKENIZERS_PARALLELISM", "false")
-        .env("DREAMFORGE_HEADLESS", "1");
+        .env("DREAMFORGE_HEADLESS", "1")
+        .env("DREAMFORGE_USE_COMFY_SERVER", "1");
     if let Ok(slot) = state.desktop_vram_profile.lock() {
         if let Some(mode) = map_vram_profile_to_desktop_mode(&slot) {
             cmd.env("DREAMFORGE_DESKTOP_VRAM_MODE", mode);
@@ -2232,7 +2233,7 @@ async fn download_model(
     let root = agent_root();
     let category = match category.as_str() {
         "checkpoints" | "loras" | "vae" | "controlnet" | "clip" | "text_encoders"
-        | "upscale_models" => category,
+        | "upscale_models" | "diffusion_models" => category,
         other => return Err(format!("Unsupported model category: {other}")),
     };
     let filename = safe_model_filename(&filename)?;

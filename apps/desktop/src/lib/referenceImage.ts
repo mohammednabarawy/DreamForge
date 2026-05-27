@@ -96,6 +96,7 @@ export function buildClearReferenceImagePatch(): Partial<GenerationSettings> {
   return {
     input_image: undefined,
     upscale_image: undefined,
+    reference_images: undefined,
     inpaint_mask_path: undefined,
     cn_selection: "None",
     cn_type: "None",
@@ -104,6 +105,30 @@ export function buildClearReferenceImagePatch(): Partial<GenerationSettings> {
     // Return to text-to-image defaults so a cleared reference does not keep edit routing.
     use_case: "none",
   };
+}
+
+/** Append a Kontext/control reference (Krita multi-reference; not the main edit image). */
+export function appendExtraReferencePath(
+  settings: GenerationSettings,
+  path: string,
+): Partial<GenerationSettings> {
+  const normalized = path.trim();
+  if (!normalized) return {};
+  const main = (settings.input_image ?? "").trim();
+  if (main && main === normalized) return {};
+  const current = [...(settings.reference_images ?? [])];
+  if (current.some((item) => item.trim() === normalized)) return {};
+  return { reference_images: [...current, normalized] };
+}
+
+export function removeExtraReferenceAt(
+  settings: GenerationSettings,
+  index: number,
+): Partial<GenerationSettings> {
+  const current = [...(settings.reference_images ?? [])];
+  if (index < 0 || index >= current.length) return {};
+  current.splice(index, 1);
+  return { reference_images: current.length ? current : undefined };
 }
 
 export function setImagePathDragData(dataTransfer: DataTransfer, path: string) {
@@ -160,6 +185,11 @@ export async function resolveGenerationImagePaths(
   if (next.inpaint_mask_path?.trim()) {
     next.inpaint_mask_path = await resolveReferenceImagePath(
       next.inpaint_mask_path,
+    );
+  }
+  if (next.reference_images?.length) {
+    next.reference_images = await Promise.all(
+      next.reference_images.map((path) => resolveReferenceImagePath(path)),
     );
   }
   return next;

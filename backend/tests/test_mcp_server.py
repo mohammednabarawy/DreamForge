@@ -49,6 +49,28 @@ def test_mcp_execute_capability_can_be_disabled(monkeypatch):
     assert payload["code"] == "mcp_capability_denied"
 
 
+def test_mcp_plan_capability_can_be_disabled(monkeypatch):
+    import dreamforge_mcp_server as mcp_server
+
+    monkeypatch.setenv("DREAMFORGE_MCP_CAPABILITIES", "read,execute")
+
+    payload = json.loads(mcp_server.plan_workflow("cinematic portrait"))
+
+    assert payload["status"] == "error"
+    assert payload["code"] == "mcp_capability_denied"
+
+
+def test_mcp_read_capability_can_be_disabled(monkeypatch):
+    import dreamforge_mcp_server as mcp_server
+
+    monkeypatch.setenv("DREAMFORGE_MCP_CAPABILITIES", "plan,execute")
+
+    payload = json.loads(mcp_server.list_models())
+
+    assert payload["status"] == "error"
+    assert payload["code"] == "mcp_capability_denied"
+
+
 def test_mcp_capabilities_report_no_arbitrary_shell_or_filesystem():
     import dreamforge_mcp_server as mcp_server
 

@@ -14,7 +14,8 @@ Welcome to the DreamForge MCP Server. This server provides **local** AI image ge
 
 ## Capabilities and security
 
-- Call **`get_mcp_capabilities`** to see enabled tool groups (`execute`, planning, inventory, …).
+- Call **`get_mcp_capabilities`** to see enabled tool groups (`read`, `plan`, `execute`).
+- Restrict tools with `DREAMFORGE_MCP_CAPABILITIES=read,plan` (omit `execute` to block GPU jobs).
 - MCP does **not** expose arbitrary shell, filesystem write, or remote code execution.
 - Workflow **`create_workflow`** returns a first-party **blueprint** (operations + readiness), not an imported third-party Comfy graph.
 - Companion downloads and custom-node installs require **user approval** in the desktop UI when triggered from failure reports.

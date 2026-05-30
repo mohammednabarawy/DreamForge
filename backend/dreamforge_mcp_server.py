@@ -37,6 +37,20 @@ def _mcp_capabilities() -> set[str]:
     return {item.strip().lower() for item in raw.split(",") if item.strip()}
 
 
+def _require_mcp_capability(required: str, tool: str) -> str | None:
+    if required in _mcp_capabilities():
+        return None
+    return json.dumps(
+        {
+            "status": "error",
+            "code": "mcp_capability_denied",
+            "message": f"MCP tool '{tool}' requires the '{required}' capability.",
+            "capabilities": sorted(_mcp_capabilities()),
+        },
+        indent=2,
+    )
+
+
 def _mcp_status() -> dict:
     caps = sorted(_mcp_capabilities())
     return {
@@ -179,6 +193,9 @@ def get_last_generation() -> str:
     Get the active context (the last successful generation).
     Returns the full generation bundle including output paths, manifest, and settings.
     """
+    denied = _require_mcp_capability("read", "get_last_generation")
+    if denied:
+        return denied
     state = get_last_generation_state()
     if not state:
         return json.dumps({"status": "error", "message": "No active generation context found."})
@@ -189,6 +206,9 @@ def list_outputs(since: Optional[int] = None, model: Optional[str] = None, use_c
     """
     List recent outputs, optionally filtered by timestamp (unix ms), model name, or use_case.
     """
+    denied = _require_mcp_capability("read", "list_outputs")
+    if denied:
+        return denied
     res = DreamForgeEngine.list_outputs(limit=limit, since=since, model=model, use_case=use_case)
     return json.dumps(res, indent=2)
 
@@ -197,6 +217,9 @@ def search_outputs(query: str, limit: int = 20) -> str:
     """
     Search recent generation manifests for a literal substring in the prompt or negative prompt.
     """
+    denied = _require_mcp_capability("read", "search_outputs")
+    if denied:
+        return denied
     import dreamforge_output_index
     results, total = dreamforge_output_index.search_outputs(query, limit=limit)
     return json.dumps(
@@ -208,6 +231,9 @@ def get_generation_bundle(manifest_path: str) -> str:
     """
     Return the full generation metadata bundle for a given manifest JSON path.
     """
+    denied = _require_mcp_capability("read", "get_generation_bundle")
+    if denied:
+        return denied
     import dreamforge_output_index
     bundle = dreamforge_output_index.get_generation_bundle(manifest_path)
     return json.dumps(bundle, indent=2)
@@ -227,6 +253,9 @@ def plan_workflow(
     Plan local DreamForge operations for an agent without executing generation.
     Image execution stays local-only; optional providers are decision-brain runtimes.
     """
+    denied = _require_mcp_capability("plan", "plan_workflow")
+    if denied:
+        return denied
     decision = DreamForgeEngine.plan(
         instruction,
         selected_image=selected_image,
@@ -391,6 +420,9 @@ def dry_run(
     """
     Preview generation plan without loading GPU models. Checks dependencies and resolves parameters.
     """
+    denied = _require_mcp_capability("plan", "dry_run")
+    if denied:
+        return denied
     params = {
         "prompt": prompt,
         "model": model,
@@ -412,6 +444,9 @@ def dry_run(
 @mcp.tool()
 def list_models() -> str:
     """Return a summary of installed models across all categories."""
+    denied = _require_mcp_capability("read", "list_models")
+    if denied:
+        return denied
     models = DreamForgeEngine.list_models()
     summary = {}
     for cat, items in models.items():
@@ -424,6 +459,9 @@ def resolve_model(query: str) -> str:
     """
     Resolve a model by substring or filename and return its metadata and family.
     """
+    denied = _require_mcp_capability("read", "resolve_model")
+    if denied:
+        return denied
     model = resolve_generation_model(query)
     if not model:
         return json.dumps({"status": "error", "message": f"Model not found matching: {query}"})
@@ -434,6 +472,9 @@ def recommend_model(vram_profile: str = "16gb", limit: int = 5) -> str:
     """
     Get ranked recommendations for generation models based on VRAM profile.
     """
+    denied = _require_mcp_capability("read", "recommend_model")
+    if denied:
+        return denied
     models = recommended_generation_models(profile=vram_profile)
     return json.dumps({"status": "success", "recommendations": models[:limit]}, indent=2)
 
@@ -442,6 +483,9 @@ def check_dependencies(model_name: str) -> str:
     """
     Check if a modern model (Qwen, HiDream, etc) has its required companion files.
     """
+    denied = _require_mcp_capability("read", "check_dependencies")
+    if denied:
+        return denied
     model = resolve_generation_model(model_name)
     if not model:
         return json.dumps({"status": "error", "message": "Model not found."})
@@ -623,6 +667,9 @@ def create_workflow(
     Create a first-party DreamForge workflow blueprint without executing it.
     mode: generate | edit | inpaint | upscale | area_composition | ipadapter | hires
     """
+    denied = _require_mcp_capability("plan", "create_workflow")
+    if denied:
+        return denied
     try:
         from dreamforge_workflow_planner import build_live_workflow_blueprint, resolve_operations_from_intent
 

@@ -28,6 +28,7 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RESEARCH_ROOT = PROJECT_ROOT / ".research" / "comfy_workflow_research"
+ALLOWED_RESEARCH_ROOT = (PROJECT_ROOT / ".research").resolve()
 USER_AGENT = "DreamForge-ComfyWorkflowResearch/0.1"
 
 SEED_PAGES = [
@@ -46,6 +47,19 @@ GITHUB_REPOS = [
     ("Comfy-Org", "workflow_templates"),
     ("comfyanonymous", "ComfyUI_examples"),
     ("aimpowerment", "comfyui-workflows"),
+    ("ltdrdata", "ComfyUI-Inspire-Pack"),
+    ("cubiq", "ComfyUI_essentials"),
+]
+
+SOURCE_CATALOG: list[tuple[str, str, str]] = [
+    ("comfyanonymous.github.io", "official_examples", "Upstream ComfyUI examples; verify license on the ComfyUI repository."),
+    ("docs.comfy.org", "official_docs", "ComfyUI documentation; pattern evidence only."),
+    ("github.com/Comfy-Org", "github_repo", "Check the repository LICENSE before copying patterns."),
+    ("github.com/comfyanonymous", "github_repo", "Check the ComfyUI repository LICENSE before copying patterns."),
+    ("github.com/", "github_repo", "Third-party GitHub artifact; review repository LICENSE and attribution."),
+    ("huggingface.co", "huggingface_repo", "Review Hugging Face model/card license before reuse."),
+    ("comfyvault.app", "public_gallery", "Public gallery artifact; verify uploader terms and workflow license."),
+    ("comfyui-wiki.com", "tutorial_evidence", "Tutorial/gallery evidence only; do not copy prose or assets verbatim."),
 ]
 
 ARTIFACT_EXTENSIONS = {".json", ".png", ".webp"}
@@ -126,11 +140,23 @@ class Artifact:
     path: str
     kind: str
     source: str
+    source_class: str = ""
+    license_note: str = ""
     workflow_count: int = 0
     tasks: list[str] = field(default_factory=list)
     top_nodes: list[tuple[str, int]] = field(default_factory=list)
     custom_nodes: list[str] = field(default_factory=list)
     error: str = ""
+
+
+def source_metadata(url: str, source: str) -> tuple[str, str]:
+    haystack = f"{url} {source}".lower()
+    for needle, source_class, license_note in SOURCE_CATALOG:
+        if needle in haystack:
+            return source_class, license_note
+    if source == "public-web":
+        return "public_web", "Unknown public source; verify license before reuse."
+    return "unknown", "Review source license before copying any workflow pattern."
 
 
 def fetch_bytes(url: str, timeout: float = 30.0) -> bytes:
@@ -315,7 +341,15 @@ def likely_custom_nodes(node_types: list[str]) -> list[str]:
 
 
 def analyze_artifact(path: Path, url: str, source: str) -> Artifact:
-    artifact = Artifact(url=url, path=str(path), kind=path.suffix.lower().lstrip("."), source=source)
+    source_class, license_note = source_metadata(url, source)
+    artifact = Artifact(
+        url=url,
+        path=str(path),
+        kind=path.suffix.lower().lstrip("."),
+        source=source,
+        source_class=source_class,
+        license_note=license_note,
+    )
     try:
         payloads = parse_workflow_payload(path)
         all_nodes: list[str] = []
@@ -376,6 +410,18 @@ def write_report(artifacts: list[Artifact], out_dir: Path) -> None:
         f"- Artifacts analyzed: {len(artifacts)}",
         f"- Artifacts with workflow metadata: {sum(1 for a in artifacts if a.workflow_count > 0)}",
         "",
+        "## Source classes",
+        "",
+    ]
+    class_counts = Counter(a.source_class or "unknown" for a in artifacts)
+    for source_class, count in class_counts.most_common():
+        lines.append(f"- `{source_class}`: {count} artifact(s)")
+    lines += [
+        "",
+        "## License reminder",
+        "",
+        "- Patterns may be copied into DreamForge builders only after source/license review.",
+        "",
         "## Common User Needs",
         "",
     ]
@@ -408,8 +454,26 @@ def write_report(artifacts: list[Artifact], out_dir: Path) -> None:
     lines += ["", "## Source Artifacts", ""]
     for artifact in artifacts:
         task_text = ", ".join(artifact.tasks)
-        lines.append(f"- `{task_text}` - [{Path(artifact.path).name}]({artifact.url})")
+        lines.append(
+            f"- `{task_text}` - [{Path(artifact.path).name}]({artifact.url}) "
+            f"({artifact.source_class}: {artifact.license_note})"
+        )
     (out_dir / "ANALYSIS.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def validate_research_output_dir(out_dir: Path, *, force: bool = False) -> Path:
+    """Keep research artifacts under gitignored .research/ unless explicitly overridden."""
+    resolved = out_dir.resolve()
+    if force:
+        return resolved
+    try:
+        resolved.relative_to(ALLOWED_RESEARCH_ROOT)
+    except ValueError as exc:
+        raise SystemExit(
+            f"Refusing to write research output outside {ALLOWED_RESEARCH_ROOT}. "
+            "Pass --force-out to override."
+        ) from exc
+    return resolved
 
 
 def collect_urls(max_downloads: int) -> list[str]:
@@ -434,9 +498,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", default=str(RESEARCH_ROOT), help="Research output directory")
     parser.add_argument("--max-downloads", type=int, default=80, help="Maximum artifacts to download")
     parser.add_argument("--no-network", action="store_true", help="Analyze existing downloaded artifacts only")
+    parser.add_argument(
+        "--force-out",
+        action="store_true",
+        help="Allow writing reports outside .research/ (not recommended)",
+    )
     args = parser.parse_args(argv)
 
-    out_dir = Path(args.out)
+    out_dir = validate_research_output_dir(Path(args.out), force=bool(args.force_out))
     artifacts_dir = out_dir / "artifacts"
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 

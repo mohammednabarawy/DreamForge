@@ -625,7 +625,17 @@ def main():
     if getattr(args, "reference_mode", "") and not getattr(args, "workflow_mode", None):
         args.workflow_mode = args.reference_mode
 
-    if args.json and (args.list_models or args.list_fonts or args.list_inventory or args.list_styles):
+    if args.json and (
+        args.list_models
+        or args.list_fonts
+        or args.list_inventory
+        or args.list_styles
+        or getattr(args, "recommend_models", False)
+        or getattr(args, "check_model_deps", None)
+        or getattr(args, "classify_models", False)
+        or getattr(args, "organize", False)
+        or getattr(args, "organize_apply", False)
+    ):
         args.inventory_json = True
     if handle_inventory_arguments(args):
         raise SystemExit(0)
@@ -645,7 +655,7 @@ def main():
             brain_model=args.brain_model,
             brain_api_key=args.brain_api_key,
         )
-        print(json.dumps(payload, ensure_ascii=False, indent=2) if args.json else payload)
+        print(json.dumps(payload, ensure_ascii=False, indent=2 if args.json else None))
         raise SystemExit(0)
 
     if args.dry_run:

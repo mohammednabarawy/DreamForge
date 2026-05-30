@@ -20,18 +20,34 @@ import gradio as gr
 from dreamforge_plan_execution import build_execution_params_from_brain_decision
 
 
-def _request_plan(instruction: str) -> str:
+def _preset_hint(decision: dict) -> str:
+    preset = decision.get("dynamic_preset") if isinstance(decision, dict) else None
+    if not isinstance(preset, dict):
+        return ""
+    applied = preset.get("applied") if isinstance(preset.get("applied"), dict) else {}
+    if not applied:
+        return ""
+    sources = preset.get("source") if isinstance(preset.get("source"), list) else []
+    parts = [f"**{key}:** `{value}`" for key, value in applied.items()]
+    hint = "Style preset hints: " + " · ".join(parts)
+    if sources:
+        hint += f" _(sources: {', '.join(str(s) for s in sources)})_"
+    return hint
+
+
+def _request_plan(instruction: str) -> tuple[str, str]:
     """Call the engine to get a structured plan for the instruction."""
     if not instruction or not instruction.strip():
-        return json.dumps({"status": "error", "message": "Please enter an instruction."}, indent=2)
+        empty = json.dumps({"status": "error", "message": "Please enter an instruction."}, indent=2)
+        return empty, ""
     try:
         from dreamforge_engine import DreamForgeEngine
 
         decision = DreamForgeEngine.plan(instruction)
-        return json.dumps(decision, indent=2, ensure_ascii=False)
+        return json.dumps(decision, indent=2, ensure_ascii=False), _preset_hint(decision)
     except Exception as exc:
         traceback.print_exc()
-        return json.dumps({"status": "error", "message": str(exc)}, indent=2)
+        return json.dumps({"status": "error", "message": str(exc)}, indent=2), ""
 
 
 def _approve_and_run(plan_json_str: str) -> str:
@@ -75,6 +91,7 @@ def create_agent_plan_accordion() -> gr.Accordion:
             placeholder="e.g. Edit the last image: make the sky more dramatic and add film grain",
             lines=2,
         )
+        preset_hint = gr.Markdown(value="")
         plan_btn = gr.Button(value="🔍 Plan", variant="secondary")
         plan_output = gr.Code(
             label="Proposed plan",
@@ -93,7 +110,7 @@ def create_agent_plan_accordion() -> gr.Accordion:
         plan_btn.click(
             fn=_request_plan,
             inputs=[agent_instruction],
-            outputs=[plan_output],
+            outputs=[plan_output, preset_hint],
         )
         run_btn.click(
             fn=_approve_and_run,

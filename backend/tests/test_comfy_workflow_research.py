@@ -23,6 +23,17 @@ def _png_chunk(kind: bytes, payload: bytes) -> bytes:
     return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF)
 
 
+def test_source_metadata_tags_official_examples():
+    from research_comfy_workflows import source_metadata
+
+    source_class, license_note = source_metadata(
+        "https://comfyanonymous.github.io/ComfyUI_examples/flux/workflow.json",
+        "public-web",
+    )
+    assert source_class == "official_examples"
+    assert "license" in license_note.lower()
+
+
 def test_classifies_api_format_txt2img_and_flux():
     payload = {
         "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "flux.safetensors"}},
@@ -73,3 +84,49 @@ def test_extracts_png_workflow_metadata(tmp_path):
     assert "workflow" in chunks
     assert any("prompt" in payload for payload in payloads)
     assert "upscale" in classify_node_types(["LoadUpscaleModel"])
+
+
+def test_research_output_dir_must_live_under_dot_research(tmp_path):
+    from research_comfy_workflows import RESEARCH_ROOT, validate_research_output_dir
+
+    allowed = validate_research_output_dir(RESEARCH_ROOT)
+    assert str(allowed).endswith("comfy_workflow_research")
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    try:
+        validate_research_output_dir(outside, force=False)
+        assert False, "expected refusal for path outside .research"
+    except SystemExit:
+        pass
+
+    forced = validate_research_output_dir(outside, force=True)
+    assert forced == outside.resolve()
+
+
+def test_research_main_writes_only_to_output_dir(tmp_path, monkeypatch):
+    from research_comfy_workflows import main
+
+    out_dir = tmp_path / "comfy_workflow_research"
+    artifacts = out_dir / "artifacts"
+    artifacts.mkdir(parents=True)
+    sample = artifacts / "sample.json"
+    sample.write_text('{"1": {"class_type": "KSampler", "inputs": {}}}', encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+    code = main(["--no-network", "--out", str(out_dir), "--force-out"])
+    assert code == 0
+    assert (out_dir / "workflow_index.json").is_file()
+    assert (out_dir / "ANALYSIS.md").is_file()
+    index = json.loads((out_dir / "workflow_index.json").read_text(encoding="utf-8"))
+    assert index[0]["source_class"]
+    assert index[0]["license_note"]
+
+
+def test_research_module_does_not_execute_workflows():
+    import research_comfy_workflows as research
+
+    source = Path(research.__file__).read_text(encoding="utf-8").lower()
+    assert "dreamforge_generation" not in source
+    assert "subprocess" not in source
+    assert "execute_job" not in source

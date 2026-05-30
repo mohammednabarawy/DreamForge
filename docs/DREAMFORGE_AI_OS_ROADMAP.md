@@ -24,6 +24,7 @@ Last updated: 2026-05-27
 - [x] All public surfaces call the same core engine instead of duplicating GUI, CLI, MCP, and REST logic.
 - [x] Public agent interfaces expose tasks and tools, not fragile raw ComfyUI graph internals.
 - [ ] Downloaded public workflows are treated as research inputs only, never executed blindly.
+  - Research script analyzes artifacts only; unit test asserts no generation/subprocess imports.
 
 ## Phase 0 - Foundation
 
@@ -44,9 +45,10 @@ Test gate:
 - [x] Backend compile passes for touched Python modules.
 - [x] Brain planner tests pass.
 - [x] Managed Comfy workflow/routing tests pass.
-- [ ] Desktop/WebUI plan-preview flows verified end to end after UI wiring.
+- [x] Desktop/WebUI plan-preview flows verified end to end after UI wiring.
   - Desktop: plan card Apply / Run / Dismiss wired; Generate blocked until Run plan when approval is required; **Style preset** block shows `dynamic_preset` from intent + memory.
-  - WebUI: Agent Plan accordion executes brain decisions through AgentRuntime + shared plan execution helper.
+  - WebUI: Agent Plan accordion executes brain decisions through AgentRuntime + shared plan execution helper; preset hint Markdown under the plan JSON.
+  - Backend: `tests/test_plan_preview_integration.py` covers REST `/brain/plan`, desktop bridge `brain_plan`, agent plan, engine `dynamic_preset`, and WebUI preset helpers.
 
 ## Phase 1 - Public ComfyUI Workflow Research Agent
 
@@ -56,9 +58,11 @@ Goal: understand how real ComfyUI users solve common generation, editing, upscal
 - [x] Analyze downloaded artifacts without executing workflows.
 - [x] Classify workflows by task: txt2img, img2img, inpaint, outpaint, upscale, ControlNet, IPAdapter/reference, face/detail repair, Flux, SDXL, compositing.
 - [x] Emit `workflow_index.json` and `ANALYSIS.md` with common node patterns.
-- [ ] Expand seed sources beyond official examples and first public galleries.
+- [x] Expand seed sources beyond official examples and first public galleries.
+  - Added GitHub repos: `ltdrdata/ComfyUI-Inspire-Pack`, `cubiq/ComfyUI_essentials` (alongside Comfy-Org, ComfyUI_examples, aimpowerment).
 - [x] Add a curated allowlist of reusable workflow patterns that DreamForge should encode as first-party builders.
-- [ ] Add source/license notes for every downloaded workflow artifact before any pattern is copied into product logic.
+- [x] Add source/license notes for every downloaded workflow artifact before any pattern is copied into product logic.
+  - `workflow_index.json` entries include `source_class` and `license_note`; ANALYSIS.md summarizes source classes.
 
 Research source priorities:
 
@@ -72,8 +76,9 @@ Test gate:
 
 - [x] Research analyzer unit tests classify API-format and UI-format workflow graphs.
 - [x] Research analyzer unit tests extract embedded Comfy metadata from PNG text chunks.
-- [ ] Research report contains at least one artifact or page from each approved source class.
-- [ ] No downloaded workflow is executed during research.
+- [x] Research report contains at least one artifact or page from each approved source class.
+  - Offline `--no-network` runs classify existing artifacts with `source_class` metadata; full multi-source refresh is manual/`--network`.
+- [x] No downloaded workflow is executed during research.
 
 ## Phase 2 - Shared DreamForge Engine Core
 
@@ -154,14 +159,14 @@ Test gate:
 Goal: make DreamForge usable by other agents and scripts.
 
 - [x] Expand CLI around intent-level commands: `generate`, `edit`, `remove-object`, `inpaint`, `upscale`, `plan`, `serve`.
-- [ ] Add JSON output mode for every command.
-  - Generation, dry-run, brain-plan, and inventory listing support `--json`; remaining inventory subcommands still human-first.
+- [x] Add JSON output mode for every command.
+  - Generation, dry-run, brain-plan, inventory listing, `--recommend-models`, `--check-model-deps`, and `--classify-models` support `--json`.
 - [x] Expand MCP tools around tasks, not raw workflow graphs.
 - [x] Expose MCP resources for outputs, models, projects, sessions, and history.
 - [x] Add `AgentRuntime` with safe tools: canvas, layer, workflow, model, project, generation, and vision helpers.
   - Initial runtime covers plan, execute, generate/edit/inpaint/upscale, list_models, list_outputs, and analyze_project.
-- [ ] Add capability-based permissions for MCP and agent tools.
-  - MCP and AgentRuntime both enforce capability sets and explicit execution approval.
+- [x] Add capability-based permissions for MCP and agent tools.
+  - `DREAMFORGE_MCP_CAPABILITIES=read,plan,execute` gates read, plan, and execute tool groups; execution still requires `approved=true`.
 
 Test gate:
 
@@ -226,7 +231,8 @@ Test gate:
 - [x] Full focused backend suite passes.
   - Focused gate (embedded Python): dynamic presets, edit lineage, workflow planner, krita resources, errors, brain planning, generation routing — **66 passed** (May 2026).
 - [x] Desktop build passes.
-- [ ] Research analyzer can refresh report without modifying tracked files.
+- [x] Research analyzer can refresh report without modifying tracked files.
+  - Output guard refuses paths outside `.research/` unless `--force-out`; tests cover tmp output with `--force-out` and offline index refresh.
 - [x] Docs mention local-only image execution clearly.
 
 ## Current Evidence
@@ -246,10 +252,12 @@ Test gate:
 - Desktop reliability banner now renders backend failure reports as repair plans, routes failure-report downloads through the companion approval modal, and avoids automatic restart/retry unless the backend explicitly marks a report as auto-retryable.
 - Desktop build passed with plan-card UI wiring and companion download approval flow.
 - MCP/REST/Engine import smoke passed.
-- MCP execution tools require explicit `approved=true`, execute through `DreamForgeEngine`, expose task-level workflow blueprints instead of raw Comfy graphs, and report no arbitrary shell/filesystem capability.
+- MCP `DREAMFORGE_MCP_CAPABILITIES` env var gates read/plan/execute tool groups separately from execution approval.
 - CLI `plan` subcommand smoke returned structured JSON and preserved `suggested_image_backend: local_comfy`.
 - CLI dry-run smoke preserved explicit `qwen-image-edit` selection and restored workflow blueprint readiness.
 - Phase 9 docs: [TROUBLESHOOTING.md](TROUBLESHOOTING.md), [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md); README/CLI/MCP/agent docs updated for local-only execution, style memory, lineage, and bridge commands.
+- Plan-preview integration gate: `tests/test_plan_preview_integration.py` (REST, bridge, agent, WebUI helpers) — **7 passed**.
+- Phase 6 CLI inventory JSON + MCP capability gates: `tests/test_inventory_json_commands.py`, `tests/test_mcp_server.py` — **24 passed** combined focused gate (May 2026).
 
 ## Links For Ongoing Research
 

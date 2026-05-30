@@ -81,6 +81,9 @@ This writes a manifest JSON next to the output unless `--no-manifest` is passed.
 | | `--validate-output` | Check generated files for size, nonblank pixels, and basic contrast. | false |
 | | `--manifest-path` / `--no-manifest` | Control machine-readable generation manifest output. | auto |
 | | `--json` | Print machine-readable JSON (dry-run, plan, list commands). | false |
+| | `--recommend-models` | Rank local models for `--profile` (16gb, 8gb, 5gb). | — |
+| | `--check-model-deps MODEL` | Report missing companion files for a checkpoint. | — |
+| | `--classify-models` | Classify files under `backend/models` by architecture. | — |
 | **Performance** | `--performance` | Preset: `Speed`, `Quality`, `Extreme Speed`. | Speed |
 | | `--steps` | Exact number of sampling steps (overrides performance). | N/A |
 | | `--aspect-ratio` | Dimensions (e.g., `1152x896`, `1024x1024`). | 1152x896 |

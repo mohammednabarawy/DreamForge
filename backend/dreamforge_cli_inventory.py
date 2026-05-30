@@ -841,6 +841,128 @@ def add_inventory_arguments(parser):
                         help="Execute the organization plan (move files into canonical folders)")
     parser.add_argument("--organize-include-low-confidence", action="store_true",
                         help="Include low-confidence (filename-only) verdicts when planning moves")
+    parser.add_argument("--recommend-models", action="store_true",
+                        help="Rank local generation models for a VRAM profile")
+    parser.add_argument("--check-model-deps", metavar="MODEL",
+                        help="Check companion files required by a model name or path")
+    parser.add_argument("--classify-models", action="store_true",
+                        help="Classify every file under the models directory by architecture/role")
+    parser.add_argument("--profile", default="16gb",
+                        help="VRAM profile for --recommend-models (16gb, 8gb, 5gb, mps, auto)")
+
+
+def _inventory_wants_json(args) -> bool:
+    return bool(getattr(args, "inventory_json", False) or getattr(args, "json", False))
+
+
+def handle_inventory_arguments(args):
+    if getattr(args, "recommend_models", False):
+        profile = getattr(args, "profile", None) or getattr(args, "vram_profile", "16gb") or "16gb"
+        models = recommended_generation_models(profile=profile)
+        payload = {
+            "status": "success",
+            "profile": profile,
+            "models": models,
+        }
+        if _inventory_wants_json(args):
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(f"Recommended models for {profile}:")
+            for item in models[: getattr(args, "inventory_limit", None) or len(models)]:
+                print(
+                    f"  {item.get('name')}  "
+                    f"[{item.get('family')}]  "
+                    f"{item.get('size_mb', 0):.0f} MB"
+                )
+        return True
+
+    if getattr(args, "check_model_deps", None):
+        model = resolve_generation_model(args.check_model_deps)
+        if not model:
+            payload = {
+                "status": "error",
+                "message": f"Model not found: {args.check_model_deps}",
+            }
+        else:
+            missing = check_model_dependencies(model)
+            payload = {
+                "status": "success",
+                "model": model,
+                "ready": len(missing) == 0,
+                "missing_dependencies": missing,
+                "setup_warnings": model_setup_warnings(model),
+            }
+        if _inventory_wants_json(args):
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            if payload.get("status") != "success":
+                print(payload.get("message", "Model not found"))
+            else:
+                model_name = payload["model"].get("name", args.check_model_deps)
+                if payload["ready"]:
+                    print(f"{model_name}: ready")
+                else:
+                    print(f"{model_name}: missing {len(payload['missing_dependencies'])} companion file(s)")
+                    for dep in payload["missing_dependencies"]:
+                        print(f"  - {dep.get('relative') or dep.get('label') or dep}")
+                for warning in payload.get("setup_warnings") or []:
+                    print(f"  note: {warning}")
+        return True
+
+    if getattr(args, "classify_models", False):
+        payload = {
+            "status": "success",
+            **_classify_models_payload(
+                include_low_confidence=bool(getattr(args, "organize_include_low_confidence", False)),
+            ),
+        }
+        if _inventory_wants_json(args):
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            totals = payload.get("totals", {})
+            print(f"Models root: {payload.get('models_root', MODELS_ROOT)}")
+            print(f"Files: {totals.get('files', 0)}")
+            for family, count in sorted((totals.get("families") or {}).items()):
+                print(f"  {family}: {count}")
+        return True
+
+    if getattr(args, "organize", False) or getattr(args, "organize_apply", False):
+        payload = _organize_payload(
+            apply=bool(args.organize_apply),
+            include_low_confidence=bool(getattr(args, "organize_include_low_confidence", False)),
+        )
+        if _inventory_wants_json(args):
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            _print_organize_summary(payload)
+        return True
+
+    if not (args.list_models or args.list_fonts or args.list_inventory or args.list_styles):
+        return False
+
+    if _inventory_wants_json(args):
+        payload = {}
+        if args.list_models or args.list_inventory:
+            payload["models"] = list_model_inventory()
+        if args.list_fonts or args.list_inventory:
+            payload["fonts"] = list_system_fonts(font_filter=args.font_filter)
+        if args.list_styles:
+            payload["styles"] = list_model_inventory()["styles"]
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return True
+
+    if args.list_styles:
+        for style in list_model_inventory()["styles"][:args.inventory_limit or None]:
+            print(style)
+        return True
+
+    if args.list_models or args.list_inventory:
+        print_model_inventory(as_json=False, limit=args.inventory_limit)
+    if args.list_fonts or args.list_inventory:
+        if args.list_models or args.list_inventory:
+            print()
+        print_font_inventory(as_json=False, font_filter=args.font_filter, limit=args.inventory_limit)
+    return True
 
 
 def _classify_models_payload(include_low_confidence: bool = False):
@@ -917,46 +1039,6 @@ def _print_organize_summary(payload: dict) -> None:
         )
         for failure in result.get("failed", []):
             print(f"  FAIL {failure['source']} -> {failure['destination']}: {failure['error']}")
-
-
-def handle_inventory_arguments(args):
-    if getattr(args, "organize", False) or getattr(args, "organize_apply", False):
-        payload = _organize_payload(
-            apply=bool(args.organize_apply),
-            include_low_confidence=bool(getattr(args, "organize_include_low_confidence", False)),
-        )
-        if args.inventory_json:
-            print(json.dumps(payload, ensure_ascii=False, indent=2))
-        else:
-            _print_organize_summary(payload)
-        return True
-
-    if not (args.list_models or args.list_fonts or args.list_inventory or args.list_styles):
-        return False
-
-    if args.inventory_json:
-        payload = {}
-        if args.list_models or args.list_inventory:
-            payload["models"] = list_model_inventory()
-        if args.list_fonts or args.list_inventory:
-            payload["fonts"] = list_system_fonts(font_filter=args.font_filter)
-        if args.list_styles:
-            payload["styles"] = list_model_inventory()["styles"]
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return True
-
-    if args.list_styles:
-        for style in list_model_inventory()["styles"][:args.inventory_limit or None]:
-            print(style)
-        return True
-
-    if args.list_models or args.list_inventory:
-        print_model_inventory(as_json=False, limit=args.inventory_limit)
-    if args.list_fonts or args.list_inventory:
-        if args.list_models or args.list_inventory:
-            print()
-        print_font_inventory(as_json=False, font_filter=args.font_filter, limit=args.inventory_limit)
-    return True
 
 
 def main():

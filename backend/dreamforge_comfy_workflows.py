@@ -343,3 +343,559 @@ def comfy_upscale_basic(args: dict[str, Any]) -> dict[str, Any]:
     )
     return g
 
+
+def _sampler_inputs(
+    *,
+    model_out,
+    positive,
+    negative,
+    latent,
+    seed: int,
+    steps: int,
+    cfg: float,
+    sampler: str,
+    scheduler: str,
+    denoise: float,
+) -> dict[str, Any]:
+    return {
+        "model": model_out,
+        "positive": positive,
+        "negative": negative,
+        "latent_image": latent,
+        "seed": seed,
+        "steps": steps,
+        "cfg": cfg,
+        "sampler_name": sampler,
+        "scheduler": scheduler,
+        "denoise": denoise,
+    }
+
+
+def comfy_controlnet_basic(args: dict[str, Any]) -> dict[str, Any]:
+    """Structure-preserving txt2img/img2img with ControlNetApplyAdvanced."""
+    ckpt = str(args["ckpt_name"])
+    prompt = str(args.get("prompt", ""))
+    negative = str(args.get("negative", ""))
+    control_image = str(args.get("control_image") or args.get("image") or "")
+    controlnet_model = str(args.get("controlnet_model") or args.get("cn_model") or "")
+    if not controlnet_model:
+        raise ValueError("controlnet_model is required for ControlNet workflows")
+    width = int(args.get("width", 1024))
+    height = int(args.get("height", 1024))
+    steps = int(args.get("steps", 30))
+    cfg = float(args.get("cfg", 7.0))
+    sampler = str(args.get("sampler_name", "euler"))
+    scheduler = str(args.get("scheduler", "normal"))
+    seed = int(args.get("seed", 0))
+    denoise = float(args.get("denoise", args.get("edit_strength", 1.0)))
+    strength = float(args.get("cn_strength", args.get("controlnet_strength", 1.0)))
+    start = float(args.get("cn_start", args.get("controlnet_start", 0.0)))
+    end = float(args.get("cn_stop", args.get("controlnet_end", 1.0)))
+    image_filename = args.get("image")
+
+    g: dict[str, Any] = {}
+    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    g["2"] = _node("LoadImage", {"image": control_image, "upload": "image"})
+    g[str(n)] = _node("ControlNetLoader", {"control_net_name": controlnet_model})
+    cn_out = [str(n), 0]
+    n += 1
+    g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
+    pos = [str(n), 0]
+    n += 1
+    g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
+    neg = [str(n), 0]
+    n += 1
+    g[str(n)] = _node(
+        "ControlNetApplyAdvanced",
+        {
+            "positive": pos,
+            "negative": neg,
+            "control_net": cn_out,
+            "image": ["2", 0],
+            "strength": strength,
+            "start_percent": start,
+            "end_percent": end,
+        },
+    )
+    pos_cn, neg_cn = [str(n), 0], [str(n), 1]
+    n += 1
+    if image_filename:
+        g[str(n)] = _node("LoadImage", {"image": str(image_filename), "upload": "image"})
+        img_node = str(n)
+        n += 1
+        g[str(n)] = _node("VAEEncode", {"pixels": [img_node, 0], "vae": vae_out})
+        latent = [str(n), 0]
+        n += 1
+    else:
+        g[str(n)] = _node("EmptyLatentImage", {"width": width, "height": height, "batch_size": 1})
+        latent = [str(n), 0]
+        n += 1
+    g[str(n)] = _node(
+        "KSampler",
+        _sampler_inputs(
+            model_out=model_out,
+            positive=pos_cn,
+            negative=neg_cn,
+            latent=latent,
+            seed=seed,
+            steps=steps,
+            cfg=cfg,
+            sampler=sampler,
+            scheduler=scheduler,
+            denoise=denoise if image_filename else 1.0,
+        ),
+    )
+    samp = str(n)
+    n += 1
+    g[str(n)] = _node("VAEDecode", {"samples": [samp, 0], "vae": vae_out})
+    dec = str(n)
+    g[str(n + 1)] = _node(
+        "SaveImage",
+        {"images": [dec, 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+    )
+    return g
+
+
+def comfy_outpaint_basic(args: dict[str, Any]) -> dict[str, Any]:
+    """Pad canvas then inpaint the expanded region (Comfy ImagePadForOutpaint pattern)."""
+    ckpt = str(args["ckpt_name"])
+    prompt = str(args.get("prompt", ""))
+    negative = str(args.get("negative", ""))
+    image_filename = str(args["image"])
+    left = int(args.get("outpaint_left", 0))
+    top = int(args.get("outpaint_top", 0))
+    right = int(args.get("outpaint_right", 0))
+    bottom = int(args.get("outpaint_bottom", 0))
+    direction = str(args.get("outpaint_direction") or "").lower()
+    amount = int(args.get("outpaint_amount", 128))
+    if direction == "left":
+        left = max(left, amount)
+    elif direction == "right":
+        right = max(right, amount)
+    elif direction == "top":
+        top = max(top, amount)
+    elif direction == "bottom":
+        bottom = max(bottom, amount)
+    elif not any((left, top, right, bottom)):
+        right = amount
+    feather = int(args.get("outpaint_feathering", args.get("feather", 40)))
+    steps = int(args.get("steps", 30))
+    cfg = float(args.get("cfg", 7.0))
+    sampler = str(args.get("sampler_name", "euler"))
+    scheduler = str(args.get("scheduler", "normal"))
+    seed = int(args.get("seed", 0))
+    denoise = float(args.get("denoise", args.get("edit_strength", 1.0)))
+    grow_mask_by = int(args.get("grow_mask_by", args.get("inpaint_mask_grow_by", 0)))
+
+    g: dict[str, Any] = {}
+    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    g["2"] = _node("LoadImage", {"image": image_filename, "upload": "image"})
+    g["3"] = _node(
+        "ImagePadForOutpaint",
+        {
+            "image": ["2", 0],
+            "left": left,
+            "top": top,
+            "right": right,
+            "bottom": bottom,
+            "feathering": feather,
+        },
+    )
+    g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
+    pos = [str(n), 0]
+    n += 1
+    g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
+    neg = [str(n), 0]
+    n += 1
+    g[str(n)] = _node(
+        "VAEEncodeForInpaint",
+        {
+            "pixels": ["3", 0],
+            "mask": ["3", 1],
+            "vae": vae_out,
+            "grow_mask_by": grow_mask_by,
+        },
+    )
+    latent = [str(n), 0]
+    n += 1
+    g[str(n)] = _node(
+        "KSampler",
+        _sampler_inputs(
+            model_out=model_out,
+            positive=pos,
+            negative=neg,
+            latent=latent,
+            seed=seed,
+            steps=steps,
+            cfg=cfg,
+            sampler=sampler,
+            scheduler=scheduler,
+            denoise=denoise,
+        ),
+    )
+    samp = str(n)
+    n += 1
+    g[str(n)] = _node("VAEDecode", {"samples": [samp, 0], "vae": vae_out})
+    dec = str(n)
+    g[str(n + 1)] = _node(
+        "SaveImage",
+        {"images": [dec, 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+    )
+    return g
+
+
+def comfy_hires_two_pass(args: dict[str, Any]) -> dict[str, Any]:
+    """Generate smaller first pass, upscale latent, refine with low denoise."""
+    ckpt = str(args["ckpt_name"])
+    prompt = str(args.get("prompt", ""))
+    negative = str(args.get("negative", ""))
+    width = int(args.get("width", 1024))
+    height = int(args.get("height", 1024))
+    scale = float(args.get("hires_first_pass_scale", 0.5))
+    first_w = int(args.get("hires_first_width") or max(512, int(width * scale)))
+    first_h = int(args.get("hires_first_height") or max(512, int(height * scale)))
+    first_steps = int(args.get("hires_first_steps", args.get("steps", 20)))
+    second_steps = int(args.get("hires_second_steps", max(12, int(args.get("steps", 20)) // 2)))
+    cfg = float(args.get("cfg", 7.0))
+    sampler = str(args.get("sampler_name", "euler"))
+    scheduler = str(args.get("scheduler", "normal"))
+    seed = int(args.get("seed", 0))
+    second_denoise = float(args.get("hires_denoise", 0.35))
+    upscale_method = str(args.get("hires_latent_upscale_method", "nearest-exact"))
+
+    g: dict[str, Any] = {}
+    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
+    pos = [str(n), 0]
+    n += 1
+    g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
+    neg = [str(n), 0]
+    n += 1
+    g[str(n)] = _node("EmptyLatentImage", {"width": first_w, "height": first_h, "batch_size": 1})
+    latent1 = [str(n), 0]
+    n += 1
+    g[str(n)] = _node(
+        "KSampler",
+        _sampler_inputs(
+            model_out=model_out,
+            positive=pos,
+            negative=neg,
+            latent=latent1,
+            seed=seed,
+            steps=first_steps,
+            cfg=cfg,
+            sampler=sampler,
+            scheduler=scheduler,
+            denoise=1.0,
+        ),
+    )
+    samp1 = str(n)
+    n += 1
+    g[str(n)] = _node(
+        "LatentUpscale",
+        {
+            "samples": [samp1, 0],
+            "upscale_method": upscale_method,
+            "width": width,
+            "height": height,
+            "crop": "disabled",
+        },
+    )
+    latent2 = [str(n), 0]
+    n += 1
+    g[str(n)] = _node(
+        "KSampler",
+        _sampler_inputs(
+            model_out=model_out,
+            positive=pos,
+            negative=neg,
+            latent=latent2,
+            seed=seed,
+            steps=second_steps,
+            cfg=cfg,
+            sampler=sampler,
+            scheduler=scheduler,
+            denoise=second_denoise,
+        ),
+    )
+    samp2 = str(n)
+    n += 1
+    g[str(n)] = _node("VAEDecode", {"samples": [samp2, 0], "vae": vae_out})
+    dec = str(n)
+    g[str(n + 1)] = _node(
+        "SaveImage",
+        {"images": [dec, 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+    )
+    return g
+
+
+def comfy_ipadapter_reference(args: dict[str, Any]) -> dict[str, Any]:
+    """Reference/style guidance via ComfyUI_IPAdapter_plus (guarded at runtime)."""
+    ckpt = str(args["ckpt_name"])
+    prompt = str(args.get("prompt", ""))
+    negative = str(args.get("negative", ""))
+    reference_image = str(args.get("reference_image") or args.get("image") or "")
+    ipadapter_model = str(args.get("ipadapter_model") or args.get("ip_adapter_model") or "")
+    clip_vision = str(args.get("clip_vision") or args.get("clip_vision_model") or "")
+    if not ipadapter_model or not clip_vision:
+        raise ValueError("ipadapter_model and clip_vision are required for IPAdapter workflows")
+    width = int(args.get("width", 1024))
+    height = int(args.get("height", 1024))
+    steps = int(args.get("steps", 30))
+    cfg = float(args.get("cfg", 7.0))
+    sampler = str(args.get("sampler_name", "euler"))
+    scheduler = str(args.get("scheduler", "normal"))
+    seed = int(args.get("seed", 0))
+    weight = float(args.get("ipadapter_weight", args.get("reference_weight", 0.75)))
+
+    g: dict[str, Any] = {}
+    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    g["2"] = _node("LoadImage", {"image": reference_image, "upload": "image"})
+    g[str(n)] = _node("CLIPVisionLoader", {"clip_name": clip_vision})
+    clip_vis = [str(n), 0]
+    n += 1
+    g[str(n)] = _node("IPAdapterModelLoader", {"ipadapter_file": ipadapter_model})
+    ipa = [str(n), 0]
+    n += 1
+    g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
+    pos = [str(n), 0]
+    n += 1
+    g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
+    neg = [str(n), 0]
+    n += 1
+    g[str(n)] = _node(
+        "IPAdapterAdvanced",
+        {
+            "model": model_out,
+            "ipadapter": ipa,
+            "clip_vision": clip_vis,
+            "image": ["2", 0],
+            "weight": weight,
+            "weight_type": "linear",
+            "combine_embeds": "concat",
+            "start_at": 0.0,
+            "end_at": 1.0,
+            "embeds_scaling": "V only",
+        },
+    )
+    model_ipa = [str(n), 0]
+    n += 1
+    g[str(n)] = _node("EmptyLatentImage", {"width": width, "height": height, "batch_size": 1})
+    latent = [str(n), 0]
+    n += 1
+    g[str(n)] = _node(
+        "KSampler",
+        _sampler_inputs(
+            model_out=model_ipa,
+            positive=pos,
+            negative=neg,
+            latent=latent,
+            seed=seed,
+            steps=steps,
+            cfg=cfg,
+            sampler=sampler,
+            scheduler=scheduler,
+            denoise=1.0,
+        ),
+    )
+    samp = str(n)
+    n += 1
+    g[str(n)] = _node("VAEDecode", {"samples": [samp, 0], "vae": vae_out})
+    dec = str(n)
+    g[str(n + 1)] = _node(
+        "SaveImage",
+        {"images": [dec, 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+    )
+    return g
+
+
+def comfy_face_detail_basic(args: dict[str, Any]) -> dict[str, Any]:
+    """Face/hand detail repair via Impact Pack FaceDetailer + Impact Subpack detectors."""
+    ckpt = str(args["ckpt_name"])
+    image = str(args.get("image") or args.get("input_image") or "")
+    if not image:
+        raise ValueError("image is required for face detail workflows")
+    detail_target = str(args.get("detail_target") or "face").lower()
+    bbox_model = str(args.get("bbox_model") or args.get("bbox_detector_model") or "")
+    if not bbox_model:
+        bbox_model = "bbox/hand_yolov8s.pt" if detail_target == "hand" else "bbox/face_yolov8m.pt"
+    prompt = str(
+        args.get("detail_prompt")
+        or args.get("prompt")
+        or ("detailed hands, natural fingers" if detail_target == "hand" else "detailed face, sharp eyes, natural skin")
+    )
+    negative = str(args.get("negative") or "blurry, deformed, low quality, bad anatomy")
+    steps = int(args.get("steps", 20))
+    cfg = float(args.get("cfg", 8.0))
+    sampler = str(args.get("sampler_name", "euler"))
+    scheduler = str(args.get("scheduler", "normal"))
+    seed = int(args.get("seed", 0))
+    denoise = float(args.get("detail_denoise", args.get("denoise", args.get("edit_strength", 0.5))))
+    sam_model = str(args.get("sam_model") or args.get("sam_model_name") or "").strip()
+
+    g: dict[str, Any] = {}
+    g["1"] = _node("LoadImage", {"image": image, "upload": "image"})
+    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
+    pos = [str(n), 0]
+    n += 1
+    g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
+    neg = [str(n), 0]
+    n += 1
+    g[str(n)] = _node("UltralyticsDetectorProvider", {"model_name": bbox_model})
+    bbox_det = [str(n), 0]
+    n += 1
+    face_inputs: dict[str, Any] = {
+        "image": ["1", 0],
+        "model": model_out,
+        "clip": clip_out,
+        "vae": vae_out,
+        "guide_size": float(args.get("guide_size", 512)),
+        "guide_size_for": True,
+        "max_size": float(args.get("max_size", 1024)),
+        "seed": seed,
+        "steps": steps,
+        "cfg": cfg,
+        "sampler_name": sampler,
+        "scheduler": scheduler,
+        "positive": pos,
+        "negative": neg,
+        "denoise": denoise,
+        "feather": int(args.get("feather", 5)),
+        "noise_mask": True,
+        "force_inpaint": True,
+        "bbox_threshold": float(args.get("bbox_threshold", 0.5)),
+        "bbox_dilation": int(args.get("bbox_dilation", 10)),
+        "bbox_crop_factor": float(args.get("bbox_crop_factor", 3.0)),
+        "sam_detection_hint": str(args.get("sam_detection_hint", "center-1")),
+        "sam_dilation": int(args.get("sam_dilation", 0)),
+        "sam_threshold": float(args.get("sam_threshold", 0.93)),
+        "sam_bbox_expansion": int(args.get("sam_bbox_expansion", 0)),
+        "sam_mask_hint_threshold": float(args.get("sam_mask_hint_threshold", 0.7)),
+        "sam_mask_hint_use_negative": str(args.get("sam_mask_hint_use_negative", "False")),
+        "drop_size": int(args.get("drop_size", 10)),
+        "bbox_detector": bbox_det,
+        "wildcard": str(args.get("wildcard", "")),
+        "cycle": int(args.get("cycle", 1)),
+    }
+    if sam_model:
+        g[str(n)] = _node("SAMLoader", {"model_name": sam_model, "device_mode": "AUTO"})
+        face_inputs["sam_model_opt"] = [str(n), 0]
+        n += 1
+    g[str(n)] = _node("FaceDetailer", face_inputs)
+    enhanced = [str(n), 0]
+    g[str(n + 1)] = _node(
+        "SaveImage",
+        {"images": enhanced, "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+    )
+    return g
+
+
+def _parse_region_specs(args: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = args.get("region_prompts") or args.get("composition_regions") or args.get("regions_or_layers")
+    if isinstance(raw, str):
+        text = raw.strip()
+        if text.startswith("["):
+            import json
+
+            raw = json.loads(text)
+        else:
+            return [{"prompt": text, "x": 0, "y": 0, "width": 512, "height": 512}]
+    if isinstance(raw, dict):
+        raw = [raw]
+    if not isinstance(raw, list) or not raw:
+        bg = str(args.get("region_prompt") or args.get("prompt") or "")
+        fg = str(args.get("foreground_prompt") or "subject, detailed")
+        return [
+            {"prompt": bg, "x": 0, "y": 0, "width": 1024, "height": 1024},
+            {"prompt": fg, "x": 256, "y": 128, "width": 512, "height": 768},
+        ]
+    out: list[dict[str, Any]] = []
+    for item in raw:
+        if isinstance(item, str):
+            out.append({"prompt": item, "x": 0, "y": 0, "width": 512, "height": 512})
+            continue
+        if isinstance(item, dict):
+            out.append(
+                {
+                    "prompt": str(item.get("prompt") or item.get("text") or ""),
+                    "x": int(item.get("x", 0)),
+                    "y": int(item.get("y", 0)),
+                    "width": int(item.get("width", 512)),
+                    "height": int(item.get("height", 512)),
+                }
+            )
+    return out or [{"prompt": str(args.get("prompt", "")), "x": 0, "y": 0, "width": 1024, "height": 1024}]
+
+
+def comfy_area_composition(args: dict[str, Any]) -> dict[str, Any]:
+    """Regional prompts via ConditioningSetArea + ConditioningCombine."""
+    ckpt = str(args["ckpt_name"])
+    negative = str(args.get("negative", ""))
+    width = int(args.get("width", 1024))
+    height = int(args.get("height", 1024))
+    steps = int(args.get("steps", 30))
+    cfg = float(args.get("cfg", 7.0))
+    sampler = str(args.get("sampler_name", "euler"))
+    scheduler = str(args.get("scheduler", "normal"))
+    seed = int(args.get("seed", 0))
+    regions = _parse_region_specs(args)
+
+    g: dict[str, Any] = {}
+    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
+    negative_cond = [str(n), 0]
+    n += 1
+    combined: list[str] | None = None
+    for index, region in enumerate(regions):
+        g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": str(region["prompt"])})
+        enc = str(n)
+        n += 1
+        g[str(n)] = _node(
+            "ConditioningSetArea",
+            {
+                "conditioning": [enc, 0],
+                "width": int(region["width"]),
+                "height": int(region["height"]),
+                "x": int(region["x"]),
+                "y": int(region["y"]),
+                "strength": 1.0,
+            },
+        )
+        area = str(n)
+        n += 1
+        if combined is None:
+            combined = [area, 0]
+            continue
+        g[str(n)] = _node("ConditioningCombine", {"conditioning_1": combined, "conditioning_2": [area, 0]})
+        combined = [str(n), 0]
+        n += 1
+    positive = combined or [str(n - 1), 0]
+    g[str(n)] = _node("EmptyLatentImage", {"width": width, "height": height, "batch_size": 1})
+    latent = [str(n), 0]
+    n += 1
+    g[str(n)] = _node(
+        "KSampler",
+        _sampler_inputs(
+            model_out=model_out,
+            positive=positive,
+            negative=negative_cond,
+            latent=latent,
+            seed=seed,
+            steps=steps,
+            cfg=cfg,
+            sampler=sampler,
+            scheduler=scheduler,
+            denoise=1.0,
+        ),
+    )
+    samp = str(n)
+    n += 1
+    g[str(n)] = _node("VAEDecode", {"samples": [samp, 0], "vae": vae_out})
+    dec = str(n)
+    g[str(n + 1)] = _node(
+        "SaveImage",
+        {"images": [dec, 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+    )
+    return g
+

@@ -17,9 +17,14 @@ from dreamforge_comfy_workflow_import import (
     patch_api_workflow,
 )
 from dreamforge_comfy_workflows import (
+    comfy_area_composition,
+    comfy_controlnet_basic,
+    comfy_face_detail_basic,
     comfy_flux_dev_txt2img,
     comfy_flux_kontext_edit,
+    comfy_hires_two_pass,
     comfy_inpaint_basic,
+    comfy_outpaint_basic,
 )
 from dreamforge_krita_resources import (
     composite_inpaint_result,
@@ -71,6 +76,87 @@ def test_inpaint_workflow_passes_grow_mask_by():
         }
     )
     assert graph["5"]["inputs"]["grow_mask_by"] == 20
+
+
+def test_controlnet_workflow_uses_apply_advanced():
+    graph = comfy_controlnet_basic(
+        {
+            "ckpt_name": "sdxl.safetensors",
+            "control_image": "depth.png",
+            "controlnet_model": "control_depth.safetensors",
+            "prompt": "portrait",
+            "negative": "",
+        }
+    )
+    assert any(node.get("class_type") == "ControlNetApplyAdvanced" for node in graph.values())
+    assert any(node.get("class_type") == "ControlNetLoader" for node in graph.values())
+
+
+def test_outpaint_workflow_pads_canvas_before_inpaint():
+    graph = comfy_outpaint_basic(
+        {
+            "ckpt_name": "sdxl.safetensors",
+            "image": "main.png",
+            "prompt": "extend scene",
+            "negative": "",
+            "outpaint_direction": "right",
+            "outpaint_amount": 160,
+        }
+    )
+    pad = next(node for node in graph.values() if node.get("class_type") == "ImagePadForOutpaint")
+    assert pad["inputs"]["right"] == 160
+    assert any(node.get("class_type") == "VAEEncodeForInpaint" for node in graph.values())
+
+
+def test_hires_workflow_uses_latent_upscale_second_pass():
+    graph = comfy_hires_two_pass(
+        {
+            "ckpt_name": "sdxl.safetensors",
+            "prompt": "city",
+            "negative": "",
+            "width": 1024,
+            "height": 1024,
+            "hires_denoise": 0.25,
+        }
+    )
+    samplers = [node for node in graph.values() if node.get("class_type") == "KSampler"]
+    assert len(samplers) == 2
+    assert samplers[1]["inputs"]["denoise"] == 0.25
+    assert any(node.get("class_type") == "LatentUpscale" for node in graph.values())
+
+
+def test_face_detail_workflow_uses_impact_nodes():
+    graph = comfy_face_detail_basic(
+        {
+            "ckpt_name": "epicrealismXL_vxiAbeast.safetensors",
+            "image": "portrait.png",
+            "prompt": "sharp detailed face",
+            "negative": "blurry",
+            "sam_model": "sam_vit_b_01ec64.pth",
+        }
+    )
+    assert graph["1"]["class_type"] == "LoadImage"
+    assert any(node.get("class_type") == "UltralyticsDetectorProvider" for node in graph.values())
+    assert any(node.get("class_type") == "FaceDetailer" for node in graph.values())
+    assert any(node.get("class_type") == "SAMLoader" for node in graph.values())
+    detailer = next(node for node in graph.values() if node.get("class_type") == "FaceDetailer")
+    assert detailer["inputs"]["bbox_detector"]
+    assert detailer["inputs"]["sam_model_opt"]
+
+
+def test_area_composition_workflow_combines_regions():
+    graph = comfy_area_composition(
+        {
+            "ckpt_name": "sdxl.safetensors",
+            "negative": "",
+            "region_prompts": [
+                {"prompt": "studio background", "x": 0, "y": 0, "width": 1024, "height": 1024},
+                {"prompt": "product hero", "x": 256, "y": 128, "width": 512, "height": 512},
+            ],
+        }
+    )
+    assert any(node.get("class_type") == "ConditioningSetArea" for node in graph.values())
+    assert any(node.get("class_type") == "ConditioningCombine" for node in graph.values())
 
 
 def test_api_template_loader_and_patch():
@@ -154,3 +240,5 @@ def test_managed_comfy_extra_model_paths_points_to_shared_models(tmp_path, monke
     assert "dreamforge-managed:" in text
     assert models.as_posix() in text
     assert (models / "diffusion_models").is_dir()
+    assert (models / "sams").is_dir()
+    assert (models / "ultralytics" / "bbox").is_dir()

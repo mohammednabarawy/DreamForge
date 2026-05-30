@@ -645,61 +645,115 @@ def cmd_download_studio_resources(params: dict) -> dict:
     return payload
 
 
-def _namespace_from_params(params: dict) -> SimpleNamespace:
-    """Map generation request fields to CLI argparse namespace."""
-    mapping = {
-        "model": "model",
-        "base_model": "model",
-        "prompt": "prompt",
-        "negative_prompt": "negative_prompt",
-        "aspect_ratio": "aspect_ratio",
-        "width": "width",
-        "height": "height",
-        "seed": "seed",
-        "image_number": "image_number",
-        "output": "output",
-        "performance": "performance",
-        "steps": "steps",
-        "cfg_scale": "cfg_scale",
-        "sampler": "sampler",
-        "scheduler": "scheduler",
-        "styles": "styles",
-        "lora": "lora",
-        "input_image": "input_image",
-        "reference_images": "reference_images",
-        "control_images": "control_images",
-        "upscale_image": "upscale_image",
-        "upscale_method": "upscale_method",
-        "edit_type": "edit_type",
-        "edit_strength": "edit_strength",
-        "use_comfy_server": "use_comfy_server",
-        "inpaint_mask_path": "inpaint_mask_path",
-        "vram_profile": "vram_profile",
-        "use_case": "use_case",
-        "brand_kit": "brand_kit",
-        "subject": "subject",
-        "composition": "composition",
-        "lighting": "lighting",
-        "camera": "camera",
-        "brand_colors": "brand_colors",
-        "materials": "materials",
-        "visual_style": "visual_style",
-        "validate_output": "validate_output",
-        "no_manifest": "no_manifest",
+def cmd_get_user_style_profile(_params: dict) -> dict:
+    from dreamforge_user_style_profile import export_profile
+
+    payload = export_profile()
+    payload["ok"] = True
+    return payload
+
+
+def cmd_save_user_style_profile(params: dict) -> dict:
+    from dreamforge_user_style_profile import UserStyleProfile, load_profile, save_profile
+
+    raw = params.get("profile")
+    if not isinstance(raw, dict):
+        current = load_profile()
+        if "enabled" in params:
+            current.enabled = bool(params["enabled"])
+            profile = save_profile(current)
+            return {"ok": True, "status": "success", "profile": profile.to_dict()}
+        return _error("missing_profile")
+
+    profile = UserStyleProfile(
+        enabled=bool(raw.get("enabled", True)),
+        favorite_models=[str(item) for item in raw.get("favorite_models") or []],
+        favorite_styles=[str(item) for item in raw.get("favorite_styles") or []],
+        aspect_ratios=[str(item) for item in raw.get("aspect_ratios") or []],
+        workflow_modes=[str(item) for item in raw.get("workflow_modes") or []],
+        generation_count=int(raw.get("generation_count") or 0),
+    )
+    profile = save_profile(profile)
+    return {"ok": True, "status": "success", "profile": profile.to_dict()}
+
+
+def cmd_clear_user_style_profile(_params: dict) -> dict:
+    from dreamforge_user_style_profile import clear_profile
+
+    profile = clear_profile()
+    return {"ok": True, "status": "success", "profile": profile.to_dict()}
+
+
+def cmd_export_user_style_profile(_params: dict) -> dict:
+    from dreamforge_user_style_profile import export_profile
+
+    payload = export_profile()
+    payload["ok"] = True
+    return payload
+
+
+def cmd_suggest_dynamic_preset(params: dict) -> dict:
+    from dreamforge_dynamic_presets import suggest_dynamic_preset
+
+    intent = str(params.get("intent") or params.get("instruction") or "")
+    settings = params.get("settings") if isinstance(params.get("settings"), dict) else {}
+    payload = suggest_dynamic_preset(intent, settings)
+    payload["ok"] = True
+    return payload
+
+
+def cmd_check_custom_node_packs(params: dict) -> dict:
+    from dreamforge_workflow_planner import assess_custom_node_pack
+
+    pack_ids = params.get("pack_ids") or params.get("packs") or []
+    if isinstance(pack_ids, str):
+        pack_ids = [pack_ids]
+    object_info = None
+    if params.get("use_object_info"):
+        try:
+            from dreamforge_comfy_server import ensure_comfy_running
+            from dreamforge_comfy_client import ComfyClient
+
+            server = ensure_comfy_running(timeout_s=20.0)
+            object_info = ComfyClient(server.base_url).object_info(timeout_s=20.0)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc), "packs": []}
+
+    packs = [assess_custom_node_pack(str(pack_id), object_info=object_info) for pack_id in pack_ids]
+    return {
+        "ok": True,
+        "packs": packs,
+        "ready": all(item.get("ready") for item in packs) if packs else True,
     }
-    data = {"dry_run": True, "json": True}
-    for key, attr in mapping.items():
-        if key in params and params[key] is not None:
-            data[attr] = params[key]
-    return SimpleNamespace(**data)
 
 
 def cmd_dry_run(params: dict) -> dict:
-    from dreamforge_cli_direct import build_plan
+    from dreamforge_engine import DreamForgeEngine
 
     try:
-        plan = build_plan(_namespace_from_params(params))
+        plan = DreamForgeEngine.dry_run(params)
         return {"ok": True, "plan": plan}
+    except Exception as exc:
+        return _error(str(exc), detail=type(exc).__name__)
+
+
+
+def cmd_brain_plan(params: dict) -> dict:
+    from dreamforge_engine import DreamForgeEngine
+
+    try:
+        instruction = str(params.get("instruction") or params.get("prompt") or "")
+        decision = DreamForgeEngine.plan(
+            instruction,
+            current_settings=params.get("current_settings") if isinstance(params.get("current_settings"), dict) else params,
+            selected_image=str(params.get("selected_image") or params.get("input_image") or params.get("upscale_image") or ""),
+            gallery=params.get("gallery") if isinstance(params.get("gallery"), list) else [],
+            brain_provider=str(params.get("brain_provider") or "auto"),
+            brain_base_url=str(params.get("brain_base_url") or ""),
+            brain_model=str(params.get("brain_model") or ""),
+            brain_api_key=str(params.get("brain_api_key") or ""),
+        )
+        return {"ok": True, "decision": decision}
     except Exception as exc:
         return _error(str(exc), detail=type(exc).__name__)
 
@@ -757,6 +811,18 @@ def cmd_build_cli_argv(params: dict) -> dict:
     add("--brand-colors", params.get("brand_colors"))
     add("--materials", params.get("materials"))
     add("--visual-style", params.get("visual_style"))
+    add("--workflow-mode", params.get("workflow_mode"))
+    add("--arabic-text", params.get("arabic_text"))
+    if params.get("execute_workflow_plan"):
+        argv.append("--execute-workflow-plan")
+    workflow_plan = params.get("workflow_plan")
+    if workflow_plan is not None:
+        if isinstance(workflow_plan, (list, dict)):
+            import json
+
+            argv.extend(["--workflow-plan", json.dumps(workflow_plan, ensure_ascii=False)])
+        else:
+            add("--workflow-plan", workflow_plan)
     if params.get("validate_output"):
         argv.append("--validate-output")
     if params.get("no_manifest"):
@@ -794,6 +860,7 @@ HANDLERS = {
     "delete_output_image": cmd_delete_output_image,
     "delete_session": cmd_delete_session,
     "dry_run": cmd_dry_run,
+    "brain_plan": cmd_brain_plan,
     "build_cli_argv": cmd_build_cli_argv,
     "list_use_cases": cmd_list_use_cases,
     "get_ui_defaults": cmd_get_ui_defaults,
@@ -803,6 +870,12 @@ HANDLERS = {
     "download_model_companions": cmd_download_model_companions,
     "check_studio_resources": cmd_check_studio_resources,
     "download_studio_resources": cmd_download_studio_resources,
+    "get_user_style_profile": cmd_get_user_style_profile,
+    "save_user_style_profile": cmd_save_user_style_profile,
+    "clear_user_style_profile": cmd_clear_user_style_profile,
+    "export_user_style_profile": cmd_export_user_style_profile,
+    "suggest_dynamic_preset": cmd_suggest_dynamic_preset,
+    "check_custom_node_packs": cmd_check_custom_node_packs,
     **STUDIO_HANDLERS,
 }
 

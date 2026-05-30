@@ -60,6 +60,12 @@ export type GenerationSettings = {
   output?: string;
   validate_output?: boolean;
   civitai_api_key?: string;
+  workflow_mode?: string;
+  arabic_text?: string;
+  execute_workflow_plan?: boolean;
+  workflow_plan?: Array<Record<string, unknown>>;
+  detail_target?: string;
+  detail_prompt?: string;
 };
 
 export type InventoryPayload = {
@@ -78,19 +84,46 @@ export type DreamForgeErrorCode =
   | "missing_input_image"
   | "invalid_input_image"
   | "missing_model_dependencies"
+  | "missing_custom_node_pack"
   | "model_not_found"
   | "model_file_unreadable"
   | "unsupported_model_format"
+  | "unsupported_workflow_class"
   | "disk_full"
   | "virtual_memory_low"
   | "low_system_ram"
   | "low_disk_space"
   | "vram_headroom_low"
   | "worker_crashed"
+  | "comfy_server_crashed"
   | "generation_cancelled"
   | "generation_in_progress"
   | "invalid_request"
   | "generation_failed";
+
+export type RepairAction = {
+  action?: string;
+  requires_approval?: boolean;
+  hint?: string;
+  missing?: Array<Record<string, unknown>>;
+  nodes?: string[];
+  pack_id?: string;
+  vram_profile?: string;
+  scale?: number;
+  image_number?: number;
+  max_retries?: number;
+  [key: string]: unknown;
+};
+
+export type FailureReport = {
+  kind?: string;
+  summary?: string;
+  recoverable?: boolean;
+  auto_retry?: boolean;
+  max_auto_retries?: number;
+  requires_user_approval?: boolean;
+  repair_actions?: RepairAction[];
+};
 
 export type StructuredError = {
   code?: DreamForgeErrorCode | string;
@@ -99,6 +132,7 @@ export type StructuredError = {
   message?: string;
   suggestions?: string[];
   details?: Record<string, unknown>;
+  failure_report?: FailureReport;
   recoverable?: boolean;
 };
 

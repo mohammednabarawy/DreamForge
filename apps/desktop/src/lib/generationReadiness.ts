@@ -83,7 +83,7 @@ export function computeGenerateReadiness(args: {
       missingCompanions: false,
     };
   }
-  if (!args.modelDependenciesReady) {
+  if (studio !== "upscale" && !args.modelDependenciesReady) {
     const n = args.missingCompanionCount;
     return {
       ok: false,

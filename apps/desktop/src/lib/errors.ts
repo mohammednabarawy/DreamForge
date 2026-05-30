@@ -14,6 +14,7 @@
 
 import type {
   DreamForgeErrorCode,
+  FailureReport,
   StructuredError,
 } from "./tauri-api";
 
@@ -23,6 +24,8 @@ export type FriendlyError = {
   message: string;
   suggestions: string[];
   recoverable: boolean;
+  details?: Record<string, unknown>;
+  failureReport?: FailureReport;
 };
 
 type CopyEntry = {
@@ -180,6 +183,39 @@ const COPY: Record<DreamForgeErrorCode, CopyEntry> = {
     ],
     recoverable: true,
   },
+  comfy_server_crashed: {
+    title: "Local ComfyUI stopped responding",
+    message:
+      "The managed ComfyUI backend became unreachable during generation. " +
+      "This often means memory pressure or a failed workflow node.",
+    suggestions: [
+      "Review the repair actions below before retrying.",
+      "Restart the GPU engine if the backend is still offline.",
+      "Lower resolution or switch to a smaller local model.",
+    ],
+    recoverable: true,
+  },
+  missing_custom_node_pack: {
+    title: "Custom node pack missing",
+    message:
+      "This workflow needs a ComfyUI custom node that is not installed.",
+    suggestions: [
+      "Use a first-party fallback workflow when available.",
+      "Install custom nodes only after reviewing the exact pack.",
+      "Restart ComfyUI after installing node packs.",
+    ],
+    recoverable: true,
+  },
+  unsupported_workflow_class: {
+    title: "Unsupported workflow",
+    message:
+      "DreamForge will not execute this workflow class directly. Rebuild it as a first-party local workflow plan.",
+    suggestions: [
+      "Use the Brain plan to rebuild the request.",
+      "Avoid running downloaded ComfyUI graphs directly.",
+    ],
+    recoverable: true,
+  },
   generation_cancelled: {
     title: "Generation cancelled",
     message: "You cancelled the generation before it finished.",
@@ -291,6 +327,8 @@ export function describeError(
     message,
     suggestions,
     recoverable: payload.recoverable ?? entry.recoverable,
+    details: payload.details,
+    failureReport: payload.failure_report,
   };
 }
 

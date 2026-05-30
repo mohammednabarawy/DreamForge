@@ -7,6 +7,7 @@ WebSocket API (Krita AI Diffusion–style) via dreamforge_comfy_ws.
 from __future__ import annotations
 
 import json
+import logging
 import time
 import urllib.error
 import urllib.parse
@@ -14,6 +15,8 @@ import urllib.request
 import uuid
 from dataclasses import dataclass
 from typing import Any, Callable
+
+_log = logging.getLogger(__name__)
 
 
 def _http_json(method: str, url: str, payload: dict | None = None, timeout_s: float = 30.0) -> dict:
@@ -78,6 +81,54 @@ def _http_multipart(
     return json.loads(raw.decode("utf-8", errors="replace") or "{}")
 
 
+class ComfyExecutionError(RuntimeError):
+    """Raised when ComfyUI finishes a prompt without usable outputs."""
+
+    def __init__(self, message: str, *, prompt_id: str = "", details: dict | None = None):
+        super().__init__(message)
+        self.prompt_id = prompt_id
+        self.details = details or {}
+
+
+def _extract_comfy_execution_error(node: dict[str, Any]) -> str | None:
+    """Return a user-facing error when Comfy marked the prompt done but produced no outputs."""
+    if not isinstance(node, dict) or node.get("outputs"):
+        return None
+
+    status = node.get("status")
+    if not isinstance(status, dict):
+        return None
+
+    status_str = str(status.get("status_str") or "").lower()
+    completed = bool(status.get("completed"))
+    if not completed and status_str not in {"error", "failed"}:
+        return None
+
+    messages = status.get("messages") or []
+    for item in messages:
+        if not isinstance(item, (list, tuple)) or len(item) < 2:
+            continue
+        tag = str(item[0])
+        payload = item[1] if isinstance(item[1], dict) else {}
+        if tag != "execution_error":
+            continue
+        message = str(
+            payload.get("exception_message")
+            or payload.get("traceback")
+            or "ComfyUI execution failed"
+        ).strip()
+        node_type = payload.get("node_type")
+        if node_type:
+            return f"{node_type}: {message}"
+        return message
+
+    if status_str in {"error", "failed"}:
+        return "ComfyUI workflow failed without output images"
+    if completed:
+        return "ComfyUI finished without output images (likely OOM or workflow mismatch)"
+    return None
+
+
 @dataclass
 class ComfyPromptResult:
     prompt_id: str
@@ -130,21 +181,64 @@ class ComfyClient:
             timeout_s=timeout_s,
         )
 
+    def history_poll_state(self, prompt_id: str) -> str:
+        """Return pending, done, or error:<message> for WebSocket wait fallback."""
+        node = self.history(prompt_id).get(prompt_id) or {}
+        if node.get("outputs"):
+            return "done"
+        err = _extract_comfy_execution_error(node)
+        if err:
+            return f"error:{err}"
+        return "pending"
+
     def wait_for_outputs(
         self,
         prompt_id: str,
         *,
         timeout_s: float = 600.0,
         poll_s: float = 0.5,
+        max_connection_errors: int = 6,
     ) -> dict[str, Any]:
+        """Poll /history until outputs appear or an error is detected.
+
+        Tolerates transient connection errors (e.g. ComfyUI briefly
+        unreachable after heavy VRAM work) up to *max_connection_errors*
+        consecutive failures before giving up.
+        """
         deadline = time.time() + float(timeout_s)
         last = None
+        consecutive_conn_errors = 0
         while time.time() < deadline:
-            last = self.history(prompt_id)
+            try:
+                last = self.history(prompt_id)
+                consecutive_conn_errors = 0  # reset on success
+            except (urllib.error.URLError, OSError, ConnectionError) as exc:
+                consecutive_conn_errors += 1
+                _log.warning(
+                    "Comfy /history connection error (%d/%d): %s",
+                    consecutive_conn_errors,
+                    max_connection_errors,
+                    exc,
+                )
+                if consecutive_conn_errors >= max_connection_errors:
+                    raise ComfyExecutionError(
+                        f"ComfyUI server became unreachable after sampling "
+                        f"({consecutive_conn_errors} consecutive connection failures). "
+                        f"The server may have crashed (OOM, driver reset, etc.).",
+                        prompt_id=str(prompt_id),
+                        details={"last_error": str(exc)},
+                    ) from exc
+                # Back off progressively: 1s, 2s, 3s … before retrying
+                time.sleep(min(float(consecutive_conn_errors), 5.0))
+                continue
             # Comfy returns a dict keyed by prompt_id.
             node = last.get(prompt_id)
-            if node and isinstance(node, dict) and node.get("outputs"):
-                return node
+            if node and isinstance(node, dict):
+                if node.get("outputs"):
+                    return node
+                err = _extract_comfy_execution_error(node)
+                if err:
+                    raise ComfyExecutionError(err, prompt_id=str(prompt_id), details=node)
             time.sleep(float(poll_s))
         raise TimeoutError(f"Timed out waiting for Comfy outputs ({prompt_id}). Last={last}")
 
@@ -164,7 +258,7 @@ class ComfyClient:
         from dreamforge_comfy_ws import ComfyPromptStreamSession, new_client_id
 
         cid = str(client_id or new_client_id())
-        streamed = False
+        submitted: ComfyPromptResult | None = None
         if on_event is not None:
             try:
                 session = ComfyPromptStreamSession(
@@ -178,10 +272,14 @@ class ComfyClient:
                 )
                 session.start()
                 res = self.prompt(prompt, client_id=cid)
+                submitted = res
                 session.set_prompt_id(res.prompt_id)
-                session.wait_until_done()
-                streamed = True
-                node = self.wait_for_outputs(res.prompt_id, timeout_s=30.0, poll_s=poll_s)
+                session.wait_until_done(history_poll=self.history_poll_state)
+                node = self.wait_for_outputs(
+                    res.prompt_id,
+                    timeout_s=min(float(timeout_s), 120.0),
+                    poll_s=poll_s,
+                )
                 return res, node
             except ImportError as exc:
                 if on_event is not None:
@@ -198,8 +296,37 @@ class ComfyClient:
                         }
                     )
             except Exception as exc:
-                if streamed:
-                    raise
+                if submitted is not None:
+                    if on_event is not None:
+                        on_event(
+                            {
+                                "type": "progress",
+                                "job_id": job_id,
+                                "phase": "sampling",
+                                "progress": 0,
+                                "message": (
+                                    "Live preview WebSocket unavailable; "
+                                    "waiting for Comfy via HTTP…"
+                                ),
+                            },
+                        )
+                    try:
+                        node = self.wait_for_outputs(
+                            submitted.prompt_id,
+                            timeout_s=float(timeout_s),
+                            poll_s=poll_s,
+                        )
+                        return submitted, node
+                    except ComfyExecutionError:
+                        raise  # propagate structured Comfy errors
+                    except (urllib.error.URLError, OSError, ConnectionError) as http_exc:
+                        raise ComfyExecutionError(
+                            f"ComfyUI server became unreachable after sampling completed. "
+                            f"This usually means ComfyUI crashed (OOM, driver reset). "
+                            f"Original WebSocket error: {exc}; HTTP error: {http_exc}",
+                            prompt_id=str(submitted.prompt_id),
+                            details={"ws_error": str(exc), "http_error": str(http_exc)},
+                        ) from http_exc
                 if on_event is not None:
                     on_event(
                         {
@@ -211,7 +338,7 @@ class ComfyClient:
                         }
                     )
 
-        res = self.prompt(prompt, client_id=cid)
+        res = submitted or self.prompt(prompt, client_id=cid)
         node = self.wait_for_outputs(res.prompt_id, timeout_s=float(timeout_s), poll_s=poll_s)
         return res, node
 

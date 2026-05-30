@@ -106,6 +106,7 @@ from modules.imagebrowser import ImageBrowser
 import modules.ui.ui_image_gallery as ui_image_gallery
 import modules.ui.ui_llama_chat as ui_llama_chat
 import modules.ui.ui_settings as ui_settings
+import modules.ui.ui_agent_plan as ui_agent_plan
 
 from PIL import Image
 
@@ -471,6 +472,8 @@ with shared.gradio_root as block:
                         image = Image.open(file)
                         params = look(image, prompt, gr)
                         return params, [file]
+
+            ui_agent_plan.create_agent_plan_accordion()
 
         with gr.Column(scale=2) as right_col:
             with gr.Tab(label=t("Setting")):

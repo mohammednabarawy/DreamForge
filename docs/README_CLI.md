@@ -4,13 +4,16 @@ This is a custom Command Line Interface for DreamForge, allowing you to generate
 
 ## 🤖 MCP Server (For Agents)
 
-The recommended way for AI agents to interact with DreamForge is via the **MCP Server**. The server exposes 14 tools including image generation, editing, model discovery, and output searching.
+The recommended way for AI agents to interact with DreamForge is via the **MCP Server**. The server exposes task-level tools (generation, editing, planning, inventory) plus MCP **resources** for models, outputs, sessions, and project summary. Execution tools require explicit approval when configured.
 
 ```powershell
-# Start the MCP server
-.\python_embeded\python.exe dreamforge_mcp_server.py
+# Start the MCP server (stdio)
+dreamforge-mcp.bat
 ```
-See `AI_INSTRUCTIONS.md` and `DREAMFORGE_AGENT_SKILL.md` for details.
+
+Key tools: `dry_run`, `plan_workflow`, `generate_image`, `edit_image`, `inpaint_image`, `remove_object`, `upscale_image`, `generate_arabic_poster`, `list_models`, `recommend_model`, `check_dependencies`, `analyze_project`, `create_workflow`, `get_mcp_capabilities`.
+
+See [dreamforge_mcp_instructions.md](dreamforge_mcp_instructions.md), [DREAMFORGE_AGENT_SKILL.md](DREAMFORGE_AGENT_SKILL.md), and [AI_INSTRUCTIONS.md](AI_INSTRUCTIONS.md).
 
 ## DreamForge desktop (Tauri)
 
@@ -77,6 +80,7 @@ This writes a manifest JSON next to the output unless `--no-manifest` is passed.
 | | `--image-number` | Number of images to generate in a row. | 1 |
 | | `--validate-output` | Check generated files for size, nonblank pixels, and basic contrast. | false |
 | | `--manifest-path` / `--no-manifest` | Control machine-readable generation manifest output. | auto |
+| | `--json` | Print machine-readable JSON (dry-run, plan, list commands). | false |
 | **Performance** | `--performance` | Preset: `Speed`, `Quality`, `Extreme Speed`. | Speed |
 | | `--steps` | Exact number of sampling steps (overrides performance). | N/A |
 | | `--aspect-ratio` | Dimensions (e.g., `1152x896`, `1024x1024`). | 1152x896 |
@@ -356,3 +360,25 @@ Still needs work:
 - Qwen-Image-Edit (missing GGUF CLIP; FP8 safetensors crashed on load)
 - SVDQ/FP4 Flux variants (prior 15+ minute stall)
 - Use `--check-fake-text` when SDXL invents label gibberish on product surfaces
+
+## Desktop bridge (Tauri)
+
+The desktop app talks to `dreamforge_desktop_bridge.py` over stdio. Useful commands for tooling:
+
+| Command | Purpose |
+|---------|---------|
+| `get_user_style_profile` | Read local style memory JSON |
+| `save_user_style_profile` | Update enabled flag or full profile |
+| `clear_user_style_profile` | Reset learned preferences |
+| `export_user_style_profile` | Export profile + path |
+| `suggest_dynamic_preset` | Merge intent + memory + use-case recipe defaults |
+| `check_custom_node_packs` | Verify Comfy custom node folders (optional `use_object_info`) |
+| `brain_plan` | Structured plan without GPU work |
+
+Example:
+
+```json
+{"cmd":"suggest_dynamic_preset","params":{"intent":"cinematic product hero","settings":{}}}
+```
+
+See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) and [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).

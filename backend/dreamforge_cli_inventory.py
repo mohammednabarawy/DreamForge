@@ -297,6 +297,87 @@ def _family_rank_for_profile(model, profile):
     return score
 
 
+def detect_vram_profile():
+    """Best-effort local hardware profile without requiring GPU libraries for import."""
+    env_profile = (os.environ.get("DREAMFORGE_DESKTOP_VRAM_MODE") or os.environ.get("DREAMFORGE_VRAM_PROFILE") or "").lower()
+    if env_profile and env_profile not in {"auto", "default"}:
+        return env_profile
+    try:
+        import torch  # type: ignore
+
+        if torch.cuda.is_available():
+            props = torch.cuda.get_device_properties(0)
+            total_gb = props.total_memory / (1024 ** 3)
+            if total_gb >= 14:
+                return "16gb"
+            if total_gb >= 7:
+                return "8gb"
+            if total_gb >= 4:
+                return "5gb"
+            return "lowvram"
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return "mps"
+    except Exception:
+        pass
+    return "no_gpu"
+
+
+def normalize_vram_profile(profile):
+    profile = (profile or "auto").lower()
+    if profile in {"auto", "default"}:
+        return detect_vram_profile()
+    if profile in {"low", "lowvram", "5gb"}:
+        return "5gb"
+    if profile in {"mid", "midvram", "8gb"}:
+        return "8gb"
+    if profile in {"high", "16gb", "rtx5060ti16"}:
+        return "16gb"
+    if profile in {"cpu", "nogpu", "no_gpu", "none"}:
+        return "no_gpu"
+    return profile
+
+
+def _estimate_route_vram_gb(model):
+    """Fast model-size estimate used by the router before preflight runs."""
+    size_mb = model.get("size_mb") or 0
+    try:
+        size_gb = float(size_mb) / 1024.0
+    except (TypeError, ValueError):
+        return None
+    if not size_gb:
+        return None
+    name = (model.get("name") or "").lower()
+    family = (model.get("family") or "").lower()
+    if ".gguf" in name or any(tag in name for tag in ("q2_", "q3_", "q4_", "q5_", "q6_", "q8_")):
+        return round(size_gb * 1.1 + 1.5, 2)
+    if any(tag in name for tag in ("fp8", "e4m3", "e5m2", "nf4", "fp4", "svdq")):
+        if family.startswith("flux"):
+            return round(min(size_gb * 0.75 + 2.5, 14.5), 2)
+        return round(size_gb * 0.8 + 2.0, 2)
+    if family.startswith("flux"):
+        return 24.0 if size_gb > 18 else round(size_gb * 0.95 + 4.0, 2)
+    if family == "sd15":
+        return round(size_gb * 1.25, 2)
+    if family == "sdxl":
+        return round(size_gb * 1.45, 2)
+    if family.startswith("qwen"):
+        return round(size_gb * 1.55, 2)
+    if family.startswith("hidream"):
+        return round(size_gb * 1.6, 2)
+    return round(size_gb * 1.4, 2)
+
+
+def _profile_vram_budget_gb(profile):
+    profile = normalize_vram_profile(profile)
+    return {
+        "no_gpu": 0.0,
+        "mps": 8.0,
+        "5gb": 5.0,
+        "8gb": 8.0,
+        "16gb": 16.0,
+    }.get(profile)
+
+
 def hidream_o1_placement_hint(model):
     """HiDream-O1 repackaged weights should load via checkpoints (aio), not raw diffusion_models."""
     if not model or model.get("family") != "hidream_o1":
@@ -504,6 +585,7 @@ def model_setup_warnings(model):
 
 
 def recommended_generation_models(profile="16gb"):
+    profile = normalize_vram_profile(profile)
     inventory = list_model_inventory()
     models = []
     for category in GENERATION_MODEL_CATEGORIES:
@@ -516,6 +598,149 @@ def recommended_generation_models(profile="16gb"):
                 model["profile_score"] = _family_rank_for_profile(model, profile)
                 models.append(model)
     return sorted(models, key=lambda item: (item["profile_score"], -item["size_mb"]), reverse=True)
+
+
+def route_best_model(capabilities, vram_profile="16gb", speed_preference="Quality", exclude_families=None):
+    """Find the best available model for a set of capabilities, respecting VRAM and dependencies."""
+    from dreamforge_model_registry import supports_capability
+    
+    exclude_families = exclude_families or set()
+    requested_profile = vram_profile or "auto"
+    effective_profile = normalize_vram_profile(requested_profile)
+    vram_budget = _profile_vram_budget_gb(effective_profile)
+    inventory = list_model_inventory()
+    candidates = []
+
+    def _looks_like_generation_weight(model):
+        name = (model.get("name") or "").lower()
+        size_mb = model.get("size_mb") or 0
+        if size_mb and size_mb < 1200 and ("diffusion_pytorch_model" in name or name == "model.safetensors"):
+            return False
+        if size_mb and size_mb < 250:
+            return False
+        return True
+    
+    for category in GENERATION_MODEL_CATEGORIES:
+        for item in inventory["categories"].get(category, []):
+            model = dict(item)
+            model["category"] = category
+            model["engine_name"] = _engine_model_name(model)
+            model["family"] = infer_model_family(model["name"])
+            if not _looks_like_generation_weight(model):
+                continue
+            
+            if model["family"] in exclude_families:
+                continue
+            
+            valid = True
+            for cap in capabilities:
+                if not supports_capability(model["family"], cap):
+                    valid = False
+                    break
+            
+            if not valid:
+                continue
+
+            estimated_vram = _estimate_route_vram_gb(model)
+            model["estimated_vram_gb"] = estimated_vram
+            model["requested_vram_profile"] = requested_profile
+            model["effective_vram_profile"] = effective_profile
+            if vram_budget == 0.0:
+                if model.get("family") not in {"sd15", "sdxl"} or (model.get("size_mb") or 0) > 2500:
+                    continue
+            elif vram_budget is not None and estimated_vram is not None:
+                headroom = 1.5 if vram_budget <= 8 else 0.75
+                if estimated_vram > vram_budget + headroom:
+                    continue
+                
+            # Check dependencies, if missing, skip as a router candidate
+            missing_deps = check_model_dependencies(model)
+            if missing_deps:
+                continue
+                
+            model["profile_score"] = _family_rank_for_profile(model, effective_profile)
+            family_priority = {
+                "flux_kontext": 70,
+                "qwen_image_edit": 65,
+                "flux": 60,
+                "qwen_image": 55,
+                "hidream_o1": 50,
+                "hidream": 45,
+                "sdxl": 40,
+                "sd15": 20,
+            }
+            model["profile_score"] += family_priority.get(model["family"], 10)
+            if category == "checkpoints" and (model.get("size_mb") or 0) >= 1500:
+                model["profile_score"] += 10
+            
+            if speed_preference == "Speed":
+                # Slightly favor smaller/quantized files for speed
+                model["profile_score"] += min(20, max(0, (5000 - (model.get("size_mb") or 0))) / 250)
+                name = (model.get("name") or "").lower()
+                if any(token in name for token in ("schnell", "turbo", "lightning", "dmd2", "hyper")):
+                    model["profile_score"] += 35
+                if any(token in name for token in ("dev", "pro", "full_f16", "bf16")) and "schnell" not in name:
+                    model["profile_score"] -= 20
+            elif speed_preference == "Quality":
+                name = (model.get("name") or "").lower()
+                if any(token in name for token in ("dev", "juggernaut", "realvis", "epicrealism", "base")):
+                    model["profile_score"] += 20
+                if any(token in name for token in ("schnell", "turbo", "lightning", "hyper")):
+                    model["profile_score"] -= 15
+                
+            candidates.append(model)
+            
+    if not candidates:
+        return None
+        
+    # Sort and return best
+    candidates = sorted(candidates, key=lambda item: (item["profile_score"], -item.get("estimated_vram_gb") if item.get("estimated_vram_gb") is not None else 0), reverse=True)
+    return candidates[0]
+
+
+def get_fallback_model(failed_model_name, capabilities, vram_profile="16gb", speed_preference="Quality"):
+    """Find a fallback model if the requested one is missing or has missing dependencies."""
+    failed_model = resolve_generation_model(failed_model_name)
+    exclude = set()
+    if failed_model:
+        exclude.add(failed_model.get("family"))
+    return route_best_model(capabilities, vram_profile, speed_preference, exclude_families=exclude)
+
+
+def model_fallback_actions(model, capabilities, vram_profile="16gb", speed_preference="Quality"):
+    """Return structured agent/UI actions for missing companions or unusable model routes."""
+    actions = []
+    missing = check_model_dependencies(model)
+    if missing:
+        actions.append(
+            {
+                "action": "download_model_companions",
+                "model": model.get("name") or model.get("engine_name"),
+                "family": model.get("family"),
+                "missing": missing,
+                "hint": "Download or place these companion files, then retry the same selected model.",
+            }
+        )
+    fallback = get_fallback_model(
+        model.get("name") or model.get("engine_name"),
+        capabilities,
+        vram_profile,
+        speed_preference,
+    )
+    if fallback:
+        actions.append(
+            {
+                "action": "switch_model",
+                "model": fallback.get("engine_name") or fallback.get("name"),
+                "name": fallback.get("name"),
+                "family": fallback.get("family"),
+                "category": fallback.get("category"),
+                "estimated_vram_gb": fallback.get("estimated_vram_gb"),
+                "effective_vram_profile": fallback.get("effective_vram_profile"),
+                "reason": "Local fallback model is installed and ready for this request.",
+            }
+        )
+    return actions
 
 
 import random

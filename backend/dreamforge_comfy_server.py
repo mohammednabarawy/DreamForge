@@ -59,6 +59,8 @@ def _dreamforge_extra_model_paths_yaml(models_base: Path) -> str:
         unet
         diffusion_models
     vae: vae
+    sams: sams
+    ultralytics: ultralytics
 """
 
 _MODEL_DIRS = (
@@ -77,7 +79,46 @@ _MODEL_DIRS = (
     "upscale_models",
     "unet",
     "vae",
+    "sams",
+    "ultralytics",
+    "ultralytics/bbox",
+    "ultralytics/segm",
 )
+
+# Impact Subpack registers ultralytics_bbox relative to ComfyUI/models at import time.
+_COMFY_MODELS_MIRROR_DIRS = ("ultralytics",)
+
+
+def _create_dir_link(link: Path, target: Path) -> None:
+    target = target.resolve()
+    link.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.symlink(target, link, target_is_directory=True)
+        return
+    except OSError:
+        pass
+    if os.name == "nt":
+        subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+            check=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return
+    raise OSError(f"Unable to link {link} -> {target}")
+
+
+def _mirror_models_into_comfy_tree(comfy_root: Path, models_root: Path) -> None:
+    """Mirror shared model folders into ComfyUI/models for custom nodes that ignore extra_model_paths."""
+    local_root = Path(comfy_root) / "models"
+    local_root.mkdir(parents=True, exist_ok=True)
+    for name in _COMFY_MODELS_MIRROR_DIRS:
+        target = Path(models_root) / name
+        if not target.exists():
+            continue
+        link = local_root / name
+        if link.exists() or link.is_symlink():
+            continue
+        _create_dir_link(link, target)
 
 
 def write_dreamforge_extra_model_paths_config(comfy_root: Path | None = None) -> Path:
@@ -88,6 +129,7 @@ def write_dreamforge_extra_model_paths_config(comfy_root: Path | None = None) ->
     models_root.mkdir(parents=True, exist_ok=True)
     for folder in _MODEL_DIRS:
         (models_root / folder).mkdir(parents=True, exist_ok=True)
+    _mirror_models_into_comfy_tree(root, models_root)
 
     block = _dreamforge_extra_model_paths_yaml(models_root).strip() + "\n"
     dreamforge_yaml = root / _DREAMFORGE_EXTRA_MODEL_PATHS_NAME

@@ -117,7 +117,12 @@ export default function App() {
             mentions={mc.mentionTargets}
             generating={mc.generating}
             generationLog={mc.generationLog}
-            planPreview={mc.planPreview}
+            agentPlan={mc.agentPlan}
+            planApprovalRequired={mc.appConfig?.agent.approval_required}
+            planRunBusy={mc.planRunBusy}
+            onApplyAgentPlan={() => void mc.applyAgentPlan()}
+            onRunApprovedPlan={() => void mc.runApprovedPlan()}
+            onDismissAgentPlan={mc.dismissAgentPlan}
             onDryRun={() => void mc.runDryRun()}
             onGenerate={() => void mc.runGenerate()}
             onCancel={() => void mc.runCancel()}
@@ -154,6 +159,7 @@ export default function App() {
             aspectPresets={mc.aspectPresets}
             uiDefaults={mc.uiDefaults}
             activeModelLabel={mc.activeModelLabel}
+            studioMode={mc.studioMode}
             onUseCaseChange={mc.setUseCase}
             onRefreshInventory={mc.refreshStudioCatalog}
             modelDependencies={mc.modelDependencies}
@@ -169,6 +175,13 @@ export default function App() {
             onSaveAppConfig={(patch) => void mc.saveAppConfig(patch)}
             onTestAgentProvider={(patch) => void mc.testAgentProvider(patch)}
             imageNumberMax={mc.imageNumberMax}
+            userStyleProfile={mc.userStyleProfile}
+            userStyleProfilePath={mc.userStyleProfilePath}
+            onUserStyleMemoryEnabledChange={(enabled) =>
+              void mc.setUserStyleMemoryEnabled(enabled)
+            }
+            onClearUserStyleMemory={() => void mc.clearUserStyleMemory()}
+            onExportUserStyleMemory={() => void mc.exportUserStyleMemory()}
           />
         </Panel>
       </PanelGroup>
@@ -196,7 +209,9 @@ export default function App() {
         currentItem={mc.companionDownload.currentItem}
         fileProgress={mc.companionDownload.fileProgress}
         modelName={mc.companionDownload.modelName}
+        pendingMissing={mc.companionDownload.pendingMissing}
         onClose={mc.companionDownload.close}
+        onApprove={mc.companionDownload.approve}
         onRetry={mc.companionDownload.retry}
       />
     </>

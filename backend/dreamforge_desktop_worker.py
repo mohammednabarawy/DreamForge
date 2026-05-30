@@ -24,7 +24,8 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from dreamforge_comfy_server import boot_managed_comfy_server
-from dreamforge_generation import request_stop, run_generation
+from dreamforge_generation import request_stop
+from dreamforge_engine import DreamForgeEngine
 from dreamforge_agent_tools import normalize_generation_params
 from dreamforge_errors import (
     from_exception,
@@ -112,7 +113,7 @@ def serve() -> None:
                 emit(evt, events_path)
 
             try:
-                result = run_generation(base, stream_sink=sink, job_id=job_id)
+                result = DreamForgeEngine.execute_job(params, stream_sink=sink, job_id=job_id)
                 emit(
                     {
                         "type": "finished",

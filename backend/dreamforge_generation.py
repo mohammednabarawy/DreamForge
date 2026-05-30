@@ -335,6 +335,8 @@ def _comfy_workflow_mode(
     cn_type: str,
     model: dict,
     model_family: str,
+    workflow_mode: str | None = None,
+    edit_type: str | None = None,
 ) -> str:
     from dreamforge_comfy_workflow_import import comfy_workflow_mode
 
@@ -344,7 +346,27 @@ def _comfy_workflow_mode(
         model=model,
         model_family=model_family,
         checkpoint_is_flux_kontext=_checkpoint_is_flux_kontext,
+        workflow_mode=workflow_mode,
+        edit_type=edit_type,
     )
+
+
+def _first_inventory_model(category: str, hints: tuple[str, ...] = ()) -> str | None:
+    try:
+        from dreamforge_cli_inventory import list_model_inventory
+
+        items = list_model_inventory().get("categories", {}).get(category, [])
+        if hints:
+            for item in items:
+                text = " ".join(str(item.get(key, "")) for key in ("name", "relative_path", "stem")).lower()
+                if any(h in text for h in hints):
+                    return str(item.get("name") or item.get("relative_path") or "").replace("\\", "/")
+        if items:
+            item = items[0]
+            return str(item.get("name") or item.get("relative_path") or "").replace("\\", "/")
+    except Exception:
+        return None
+    return None
 
 
 def _build_comfy_prompt_graph(
@@ -370,10 +392,16 @@ def _build_comfy_prompt_graph(
         resolve_comfy_workflow_template,
     )
     from dreamforge_comfy_workflows import (
+        comfy_area_composition,
+        comfy_controlnet_basic,
         comfy_flux_dev_txt2img,
         comfy_flux_kontext_edit,
+        comfy_face_detail_basic,
+        comfy_hires_two_pass,
         comfy_img2img_basic,
         comfy_inpaint_basic,
+        comfy_ipadapter_reference,
+        comfy_outpaint_basic,
         comfy_txt2img_basic,
         comfy_upscale_basic,
     )
@@ -413,10 +441,109 @@ def _build_comfy_prompt_graph(
         bindings["mask"] = mask_filename
     if reference_stitch_filename:
         bindings["reference_stitch"] = reference_stitch_filename
+    controlnet_model = bindings.get("controlnet_model")
+    if controlnet_model:
+        bindings["controlnet_model"] = controlnet_model
     if template_path:
         return build_prompt_from_template(template_path, bindings), str(template_path)
 
-    if input_filename:
+    common = {
+        **loader_args,
+        "prompt": prompt,
+        "negative": negative,
+        "steps": settings["steps"],
+        "cfg": settings["cfg"],
+        "sampler_name": settings["sampler_name"],
+        "scheduler": settings["scheduler"],
+        "seed": seed,
+        "filename_prefix": "DreamForge",
+        "width": settings["width"],
+        "height": settings["height"],
+    }
+
+    if mode == "hires":
+        graph = comfy_hires_two_pass(
+            {
+                **common,
+                "hires_denoise": float(getattr(job, "hires_denoise", 0.35) or 0.35),
+                "hires_first_pass_scale": float(getattr(job, "hires_first_pass_scale", 0.5) or 0.5),
+                "hires_first_width": getattr(job, "hires_first_width", None),
+                "hires_first_height": getattr(job, "hires_first_height", None),
+                "hires_first_steps": getattr(job, "hires_first_steps", None),
+                "hires_second_steps": getattr(job, "hires_second_steps", None),
+                "hires_latent_upscale_method": getattr(job, "hires_latent_upscale_method", "nearest-exact"),
+            }
+        )
+    elif mode == "area_composition":
+        graph = comfy_area_composition(
+            {
+                **common,
+                "region_prompts": getattr(job, "region_prompts", None)
+                or getattr(job, "region_prompts_json", None)
+                or getattr(job, "composition_regions", None),
+                "region_prompt": getattr(job, "region_prompt", None),
+                "foreground_prompt": getattr(job, "foreground_prompt", None),
+            }
+        )
+    elif mode == "ipadapter":
+        ref_name = getattr(job, "reference_image", None) or input_filename
+        graph = comfy_ipadapter_reference(
+            {
+                **common,
+                "reference_image": ref_name,
+                "ipadapter_model": getattr(job, "ipadapter_model", None)
+                or _first_inventory_model("ipadapter"),
+                "clip_vision": getattr(job, "clip_vision", None)
+                or _first_inventory_model("clip_vision", ("vit", "clip-vision")),
+                "ipadapter_weight": getattr(job, "ipadapter_weight", getattr(job, "reference_weight", 0.75)),
+            }
+        )
+    elif mode == "face_detail" and input_filename:
+        graph = comfy_face_detail_basic(
+            {
+                **common,
+                "image": input_filename,
+                "detail_prompt": getattr(job, "detail_prompt", None) or prompt,
+                "detail_target": getattr(job, "detail_target", "face"),
+                "bbox_model": getattr(job, "bbox_model", None)
+                or getattr(job, "bbox_detector_model", None),
+                "sam_model": getattr(job, "sam_model", None)
+                or getattr(job, "sam_model_name", None),
+                "detail_denoise": getattr(job, "detail_denoise", edit_strength),
+                "denoise": edit_strength,
+            }
+        )
+    elif mode == "controlnet":
+        graph = comfy_controlnet_basic(
+            {
+                **common,
+                "image": input_filename,
+                "control_image": getattr(job, "control_image", None) or input_filename,
+                "controlnet_model": getattr(job, "controlnet_model", None)
+                or _first_inventory_model("controlnet", (str(getattr(job, "cn_type", "") or "").lower(),)),
+                "cn_strength": getattr(job, "cn_strength", getattr(job, "controlnet_strength", 1.0)),
+                "cn_start": getattr(job, "cn_start", getattr(job, "controlnet_start", 0.0)),
+                "cn_stop": getattr(job, "cn_stop", getattr(job, "controlnet_end", 1.0)),
+                "denoise": edit_strength if input_filename else 1.0,
+            }
+        )
+    elif mode == "outpaint" and input_filename:
+        graph = comfy_outpaint_basic(
+            {
+                **common,
+                "image": input_filename,
+                "denoise": edit_strength,
+                "grow_mask_by": grow_mask_by,
+                "outpaint_left": int(getattr(job, "outpaint_left", 0) or 0),
+                "outpaint_top": int(getattr(job, "outpaint_top", 0) or 0),
+                "outpaint_right": int(getattr(job, "outpaint_right", 0) or 0),
+                "outpaint_bottom": int(getattr(job, "outpaint_bottom", 0) or 0),
+                "outpaint_direction": getattr(job, "outpaint_direction", None),
+                "outpaint_amount": int(getattr(job, "outpaint_amount", 128) or 128),
+                "outpaint_feathering": int(getattr(job, "outpaint_feathering", 40) or 40),
+            }
+        )
+    elif input_filename:
         if mode == "upscale":
             graph = comfy_upscale_basic(
                 {
@@ -541,7 +668,8 @@ def run_generation(
         write_manifest,
         validate_image,
     )
-    from dreamforge_cli_inventory import check_model_dependencies
+    from dreamforge_cli_inventory import check_model_dependencies, model_fallback_actions
+    from dreamforge_model_registry import required_capabilities_for_request
 
     extend_sys_path()
     os.chdir(BACKEND_ROOT)
@@ -556,6 +684,7 @@ def run_generation(
             ),
             job,
             model_family,
+            is_live=stream_sink is not None,
         )
         if getattr(job, "clip_skip", None) is not None:
             try:
@@ -568,7 +697,16 @@ def run_generation(
 
         missing_deps = check_model_dependencies(model)
         if missing_deps:
-            err = missing_model_dependencies(missing_deps, job_id=job_id)
+            err = missing_model_dependencies(
+                missing_deps,
+                job_id=job_id,
+                actions=model_fallback_actions(
+                    model,
+                    required_capabilities_for_request(vars(job)),
+                    getattr(job, "vram_profile", "auto"),
+                    getattr(job, "performance", "Quality"),
+                ),
+            )
             emit_event(stream_sink, err)
             return {"status": "error", **err}
 
@@ -581,11 +719,46 @@ def run_generation(
             emit_event(stream_sink, first_err)
             return {"status": "error", **first_err}
 
+        from dreamforge_workflow_executor import (
+            execute_workflow_plan,
+            should_execute_workflow_plan,
+        )
+
+        if should_execute_workflow_plan(job, data):
+            return execute_workflow_plan(
+                base_args=base_args,
+                data=data,
+                job=job,
+                stream_sink=stream_sink,
+                job_id=job_id,
+            )
+
+        if not os.environ.get("DREAMFORGE_IN_ARABIC_PIPELINE"):
+            from dreamforge_arabic_composite import (
+                arabic_composite_requested,
+                run_arabic_text_composite_job,
+            )
+
+            if arabic_composite_requested(job):
+                return run_arabic_text_composite_job(
+                    job=job,
+                    base_args=base_args,
+                    model=model,
+                    prompt=prompt,
+                    negative=negative,
+                    width=width,
+                    height=height,
+                    seed=seed,
+                    stream_sink=stream_sink,
+                    job_id=job_id,
+                )
+
         explicit_input_path = getattr(job, "input_image", None)
         upscale_input_path = getattr(job, "upscale_image", None)
         cn_selection = getattr(job, "cn_selection", None) or "None"
         cn_type = getattr(job, "cn_type", None) or "None"
         edit_type = getattr(job, "edit_type", "auto")
+        workflow_mode = getattr(job, "workflow_mode", None) or getattr(job, "comfy_workflow_mode", None)
         # Desktop state can briefly carry both input_image and a stale upscale_image
         # when switching modes. An explicit edit input must win so Kontext/inpaint
         # jobs do not silently become "upscale the original image".
@@ -761,6 +934,32 @@ def run_generation(
                 emit_event(stream_sink, err)
                 return {"status": "error", **err}
 
+        reference_filename = input_filename
+        ref_only_path = getattr(job, "reference_image", None)
+        if ref_only_path:
+            try:
+                from dreamforge_paths import resolve_image_path_or_raise
+
+                resolved_ref_path = resolve_image_path_or_raise(str(ref_only_path))
+                ref_local_name = Path(resolved_ref_path).name
+                if not reference_filename or str(ref_only_path) != str(input_path or ""):
+                    ref_upload = client.upload_image(
+                        image_bytes=Path(resolved_ref_path).read_bytes(),
+                        filename=ref_local_name,
+                        folder_type="input",
+                        overwrite=True,
+                    )
+                    reference_filename = str(ref_upload.get("name") or ref_local_name)
+                job.reference_image = reference_filename
+            except (FileNotFoundError, ValueError, OSError) as exc:
+                err = invalid_input_image(
+                    f"reference image: {exc}",
+                    path=str(ref_only_path),
+                    job_id=job_id,
+                )
+                emit_event(stream_sink, err)
+                return {"status": "error", **err}
+
         mask_filename = None
         if cn_type == "inpaint" and mask_path and input_path:
             try:
@@ -797,7 +996,48 @@ def run_generation(
             cn_type=str(cn_type or ""),
             model=model,
             model_family=model_family,
+            workflow_mode=str(workflow_mode or "") or None,
+            edit_type=str(edit_type or "") or None,
         )
+        if comfy_mode == "ipadapter":
+            from dreamforge_workflow_planner import custom_node_pack_present
+
+            if not custom_node_pack_present("ComfyUI_IPAdapter_plus"):
+                from dreamforge_errors import missing_custom_node_pack
+
+                err = missing_custom_node_pack(
+                    "ComfyUI_IPAdapter_plus",
+                    job_id=job_id,
+                    nodes=("IPAdapterModelLoader", "IPAdapterAdvanced"),
+                )
+                emit_event(stream_sink, err)
+                return {"status": "error", **err}
+        if comfy_mode == "face_detail":
+            from dreamforge_workflow_planner import custom_node_pack_present
+
+            missing_packs = [
+                pack
+                for pack in ("ComfyUI-Impact-Pack", "ComfyUI-Impact-Subpack")
+                if not custom_node_pack_present(pack)
+            ]
+            if missing_packs:
+                from dreamforge_errors import missing_custom_node_pack
+
+                err = missing_custom_node_pack(
+                    missing_packs[0],
+                    job_id=job_id,
+                    nodes=("UltralyticsDetectorProvider", "FaceDetailer", "SAMLoader"),
+                )
+                emit_event(stream_sink, err)
+                return {"status": "error", **err}
+            if not input_filename:
+                err = invalid_input_image(
+                    "face detail repair requires an input image",
+                    path=str(getattr(job, "input_image", "") or ""),
+                    job_id=job_id,
+                )
+                emit_event(stream_sink, err)
+                return {"status": "error", **err}
         prompt_graph, template_used = _build_comfy_prompt_graph(
             job=job,
             mode=comfy_mode,
@@ -809,7 +1049,7 @@ def run_generation(
             seed=seed,
             edit_strength=edit_strength,
             cn_upscale=cn_upscale,
-            input_filename=input_filename,
+            input_filename=input_filename or reference_filename,
             mask_filename=mask_filename,
             reference_stitch_filename=reference_stitch_filename,
             grow_mask_by=grow_mask_by,
@@ -935,6 +1175,8 @@ def run_generation(
             )
             if not Path(manifest_path).is_absolute():
                 manifest_path = str(PROJECT_ROOT / manifest_path)
+            from dreamforge_edit_lineage import build_edit_lineage
+
             manifest_path = write_manifest(
                 manifest_path,
                 {
@@ -952,6 +1194,15 @@ def run_generation(
                         "cn_type": cn_type,
                         "edit_strength": edit_strength,
                     },
+                    "lineage": build_edit_lineage(
+                        job=job,
+                        data=data if isinstance(data, dict) else None,
+                        input_image=str(input_path) if input_path else None,
+                        upscale_image=str(upscale_input_path) if is_upscale_job else None,
+                        inpaint_mask=str(mask_path) if mask_path else None,
+                        edit_type=edit_type,
+                        output_images=images,
+                    ),
                     "images": images,
                     "raw_images": raw_images,
                     "validation": validation,
@@ -987,7 +1238,13 @@ def _coerce_performance_preset(requested: str | None, family_preset: str | None)
     return requested
 
 
-def _tune_edit_job_settings(settings: dict, job, model_family: str) -> dict:
+def _tune_edit_job_settings(
+    settings: dict,
+    job,
+    model_family: str,
+    *,
+    is_live: bool = False,
+) -> dict:
     """Lower latency defaults for reference / Kontext edits without overriding explicit Custom runs."""
     out = dict(settings)
     edit_type = str(getattr(job, "edit_type", "auto") or "auto").lower()
@@ -1045,6 +1302,22 @@ def _tune_edit_job_settings(settings: dict, job, model_family: str) -> dict:
     step_cap = {"5gb": 12, "8gb": 20, "16gb": 24}.get(vram, 20)
     if not custom_perf:
         out["steps"] = min(int(out.get("steps", step_cap)), step_cap)
+
+    if is_live and not explicit_sampling and recipe:
+        try:
+            from dreamforge_krita_recipes import live_sampling_params
+
+            live = live_sampling_params(family, edit_type)
+        except ImportError:
+            live = None
+        if live:
+            out["steps"] = int(live["steps"])
+            out["cfg"] = float(live["cfg"])
+            if live.get("sampler_name"):
+                out["sampler_name"] = live["sampler_name"]
+            if live.get("scheduler"):
+                out["scheduler"] = live["scheduler"]
+
     if explicit_sampling:
         if getattr(job, "steps", None) is not None:
             out["steps"] = int(job.steps)

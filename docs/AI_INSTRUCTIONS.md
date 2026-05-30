@@ -1,13 +1,16 @@
 # Ultimate DreamForge AI Agent Tool — Instructions
 
-This project (`D:\\DreamForge`) is an automation-friendly wrapper around local DreamForge for AI agents. It provides a rich MCP server, family-aware routing for 10+ modern models, and an exact Arabic/text poster pipeline.
+This project (`D:\\DreamForge`) is an automation-friendly wrapper around **local** DreamForge inference for AI agents. It provides an MCP server, family-aware routing for modern models, managed ComfyUI execution, and an exact Arabic/text poster pipeline.
+
+**Image generation never leaves the machine** unless the user separately configures a cloud LLM for planning chat—not for rendering.
 
 ## Core Capabilities
 
-1. **MCP Server** (`dreamforge_mcp_server.py`) — 14 tools including `dry_run`, `recommend_model`, `edit_image`, and output search.
-2. **Headless CLI** (`dreamforge_cli_direct.py`) — Direct PowerShell wrappers available (`dreamforge-cli.ps1`).
-3. **Arabic/text poster pipeline** (`arabic_poster_pipeline.py`) — Multi-pass compositing for exact typography.
-4. **Model Inventory** — Detects and routes SDXL, Flux, Flux Kontext, Flux 2 Klein, HiDream O1, Qwen Image, Qwen Edit, Z-Image, and Hunyuan.
+1. **MCP Server** (`dreamforge_mcp_server.py`) — Generation, editing, planning, inventory; capability-gated execution with optional approval.
+2. **Headless CLI** (`dreamforge_cli_direct.py`) — `--json` for scripts; use-case recipes and manifests with edit lineage.
+3. **Desktop bridge** (`dreamforge_desktop_bridge.py`) — Style memory, dynamic presets, custom-node checks, brain plans.
+4. **Arabic/text poster pipeline** (`arabic_poster_pipeline.py`) — Multi-pass compositing for exact typography.
+5. **Model inventory** — SDXL, Flux, Flux Kontext, Flux 2 Klein, HiDream O1, Qwen Image/Edit, Z-Image, Hunyuan.
 
 ---
 
@@ -16,7 +19,8 @@ This project (`D:\\DreamForge`) is an automation-friendly wrapper around local D
 | Rule | Action |
 | :--- | :--- |
 | Discover models | Use MCP `list_models()` or `recommend_model(use_case)` |
-| Plan before GPU | Use MCP `dry_run()` — check `ready` and `missing_dependencies` |
+| Plan before GPU | Use MCP `dry_run()` or `plan_workflow()` — check `ready` and `missing_dependencies` |
+| User preferences | Local style memory + `dynamic_preset` in brain plans (opt-in on disk) |
 | Image Editing | Use MCP `edit_image()` with `edit_type="kontext"` for Flux Kontext |
 | This machine (16 GB) | VRAM profile `16gb` |
 | Final assets | Outputs tracked via manifest JSONs; use `list_outputs()` |
@@ -61,6 +65,9 @@ For Qwen edit models, ensure `clip/Qwen2.5-VL-7B-Instruct-Q4_K_S.gguf` is instal
 
 ## Related Docs
 
-- `README_CLI.md` — full argument reference
+- `README_CLI.md` — full argument reference, desktop bridge commands
+- `TROUBLESHOOTING.md` — Comfy, models, nodes, VRAM, security
+- `RELEASE_CHECKLIST.md` — pre-release test gate
+- `dreamforge_mcp_instructions.md` — MCP tool details
 - `EVALUATION_REPORT.md` — test results and improvement backlog
 - `DREAMFORGE_AGENT_SKILL.md` — short skill for agents

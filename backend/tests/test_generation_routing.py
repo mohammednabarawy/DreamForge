@@ -237,6 +237,143 @@ def test_dry_run_accepts_explicit_qwen_edit_model_name():
     assert plan["input_image"] == "/tmp/reference.png"
 
 
+def test_generation_dry_run_preserves_explicit_user_model(monkeypatch):
+    import dreamforge_cli_direct as cli
+
+    selected = {
+        "name": "juggernautXL_v8Rundiffusion.safetensors",
+        "stem": "juggernautXL_v8Rundiffusion",
+        "relative_path": "juggernautXL_v8Rundiffusion.safetensors",
+        "path": "/models/juggernautXL_v8Rundiffusion.safetensors",
+        "size_mb": 6776,
+        "category": "checkpoints",
+        "engine_name": "juggernautXL_v8Rundiffusion.safetensors",
+        "family": "sdxl",
+    }
+    monkeypatch.setattr(cli, "resolve_generation_model", lambda _name: selected)
+
+    plan = cli.build_plan(
+        SimpleNamespace(
+            dry_run=True,
+            json=True,
+            model="juggernautXL_v8Rundiffusion.safetensors",
+            prompt="cinematic portrait",
+            negative_prompt="",
+            aspect_ratio=None,
+            width=None,
+            height=None,
+            seed=1,
+            image_number=4,
+            output=None,
+            performance="Speed",
+            steps=None,
+            cfg_scale=None,
+            sampler=None,
+            scheduler=None,
+            styles=None,
+            lora=[],
+            input_image=None,
+            upscale_image=None,
+            upscale_method="RealESRGAN_x2",
+            edit_type="auto",
+            edit_strength=None,
+            vram_profile="5gb",
+            use_case="none",
+            brand_kit=None,
+            subject=None,
+            composition=None,
+            lighting=None,
+            camera=None,
+            brand_colors=None,
+            materials=None,
+            visual_style=None,
+            validate_output=False,
+            no_manifest=False,
+        )
+    )
+
+    assert plan["model"]["name"] == "juggernautXL_v8Rundiffusion.safetensors"
+    assert plan["model"]["family"] == "sdxl"
+
+
+def test_dry_run_reports_companion_download_and_switch_actions(monkeypatch):
+    import dreamforge_cli_direct as cli
+    import dreamforge_cli_inventory as inv
+    from dreamforge_model_registry import ModelCapabilities
+
+    qwen = {
+        "name": "Qwen_Image_Edit-Q3_K_M.gguf",
+        "stem": "Qwen_Image_Edit-Q3_K_M",
+        "relative_path": "Qwen_Image_Edit-Q3_K_M.gguf",
+        "path": "/models/Qwen_Image_Edit-Q3_K_M.gguf",
+        "size_mb": 9231,
+        "category": "diffusion_models",
+        "engine_name": "../diffusion_models/Qwen_Image_Edit-Q3_K_M.gguf",
+        "family": "qwen_image_edit",
+    }
+    fallback = {
+        "name": "flux1-dev-kontext_fp8_scaled.safetensors",
+        "engine_name": "../diffusion_models/flux1-dev-kontext_fp8_scaled.safetensors",
+        "category": "diffusion_models",
+        "family": "flux_kontext",
+        "estimated_vram_gb": 10.8,
+        "effective_vram_profile": "16gb",
+    }
+    missing = [{"id": "clip_qwen25_edit_gguf", "name": "qwen_2.5_vl_7b_edit-q2_k.gguf"}]
+
+    monkeypatch.setattr(cli, "resolve_generation_model", lambda _name: qwen)
+    monkeypatch.setattr(inv, "check_model_dependencies", lambda model: missing if model["family"] == "qwen_image_edit" else [])
+    monkeypatch.setattr(inv, "get_fallback_model", lambda *_args, **_kwargs: fallback)
+
+    plan = cli.build_plan(
+        SimpleNamespace(
+            dry_run=True,
+            json=True,
+            model="Qwen_Image_Edit-Q3_K_M.gguf",
+            prompt="preserve poster text",
+            negative_prompt="",
+            aspect_ratio=None,
+            width=None,
+            height=None,
+            seed=1,
+            image_number=1,
+            output=None,
+            performance="Quality",
+            steps=None,
+            cfg_scale=None,
+            sampler=None,
+            scheduler=None,
+            styles=None,
+            lora=[],
+            input_image="/tmp/reference.png",
+            upscale_image=None,
+            upscale_method="RealESRGAN_x2",
+            edit_type="qwen_edit",
+            edit_strength=None,
+            vram_profile="16gb",
+            use_case="image_edit",
+            brand_kit=None,
+            subject=None,
+            composition=None,
+            lighting=None,
+            camera=None,
+            brand_colors=None,
+            materials=None,
+            visual_style=None,
+            validate_output=False,
+            no_manifest=False,
+        )
+    )
+
+    actions = plan["recommended_actions"]
+    assert plan["ready"] is False
+    assert actions[0]["action"] == "download_model_companions"
+    assert actions[0]["missing"][0]["id"] == "clip_qwen25_edit_gguf"
+    assert actions[1]["action"] == "switch_model"
+    assert actions[1]["family"] == "flux_kontext"
+    assert ModelCapabilities.QWEN_SEMANTIC_EDIT
+
+
 def test_dry_run_reports_krita_kontext_recipe():
     from dreamforge_cli_direct import build_plan
 
@@ -354,15 +491,53 @@ def test_flux_kontext_uses_krita_edit_recipe(monkeypatch):
     assert out["scheduler"] == "simple"
 
 
+def test_flux_kontext_live_preview_uses_krita_live_steps(monkeypatch):
+    monkeypatch.chdir(_BACKEND)
+    from dreamforge_generation import _tune_edit_job_settings
+
+    job = SimpleNamespace(
+        performance="Flux",
+        steps=None,
+        cfg_scale=None,
+        sampler=None,
+        scheduler=None,
+        edit_type="kontext",
+        input_image="/tmp/reference.png",
+        upscale_image=None,
+    )
+
+    out = _tune_edit_job_settings(
+        {
+            "performance_selection": "Flux",
+            "steps": 16,
+            "cfg": 3.0,
+            "sampler_name": "euler",
+            "scheduler": "beta",
+            "clip_skip": 1,
+        },
+        job,
+        "flux_kontext",
+        is_live=True,
+    )
+
+    assert out["steps"] == 8
+    assert out["cfg"] == 3.5
+
+
 def test_krita_recipe_catalog_exposes_comfy_install_requirements():
-    from dreamforge_krita_recipes import COMFY_INSTALL_RECIPE, edit_recipe
+    from dreamforge_krita_recipes import COMFY_INSTALL_RECIPE, edit_recipe, live_sampling_params
 
     recipe = edit_recipe("flux_kontext", "kontext")
     assert recipe is not None
     assert "flux1-dev-kontext_fp8_scaled.safetensors" in recipe["checkpoints"]
+    live = live_sampling_params("flux_kontext", "kontext")
+    assert live is not None
+    assert live["steps"] == 8
     required_ids = {node["id"] for node in COMFY_INSTALL_RECIPE["required_custom_nodes"]}
     assert "comfyui-inpaint-nodes" in required_ids
     assert "comfyui-tooling-nodes" in required_ids
+    assert COMFY_INSTALL_RECIPE.get("comfy_version")
+    assert all(node.get("version") for node in COMFY_INSTALL_RECIPE["required_custom_nodes"])
 
 
 def test_edit_strength_is_clamped_for_kontext():

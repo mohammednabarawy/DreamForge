@@ -15,7 +15,9 @@ type Props = {
   currentItem: ModelDependencyItem | null;
   fileProgress: DownloadProgressPayload | null;
   modelName: string;
+  pendingMissing: ModelDependencyItem[];
   onClose: () => void;
+  onApprove: () => void;
   onRetry: () => void;
 };
 
@@ -53,7 +55,9 @@ export function CompanionDownloadModal({
   currentItem,
   fileProgress,
   modelName,
+  pendingMissing,
   onClose,
+  onApprove,
   onRetry,
 }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -68,6 +72,7 @@ export function CompanionDownloadModal({
   if (!open) return null;
 
   const running = phase === "running";
+  const confirming = phase === "confirm";
   const pct =
     fileProgress?.percentage ??
     (fileProgress?.status === "complete" || fileProgress?.status === "exists"
@@ -88,6 +93,8 @@ export function CompanionDownloadModal({
               <CheckCircle2 size={18} className="shrink-0 text-emerald-400" />
             ) : phase === "error" ? (
               <AlertCircle size={18} className="shrink-0 text-amber-400" />
+            ) : confirming ? (
+              <AlertCircle size={18} className="shrink-0 text-df-orange" />
             ) : (
               <Download
                 size={18}
@@ -96,7 +103,7 @@ export function CompanionDownloadModal({
             )}
             <div className="min-w-0">
               <h2 className="truncate text-sm font-semibold text-dfui-fg">
-                Companion downloads
+                {confirming ? "Download missing components?" : "Companion downloads"}
               </h2>
               <p className="truncate font-mono text-[10px] text-dfui-muted">
                 {modelName || "—"}
@@ -119,6 +126,8 @@ export function CompanionDownloadModal({
             <span>
               {running
                 ? `File ${currentIndex} of ${totalCount || "—"}`
+                : confirming
+                  ? `${pendingMissing.length} file(s) ready for download`
                 : totalCount > 0
                   ? `Processed ${totalCount} file(s)`
                   : "Ready"}
@@ -134,7 +143,9 @@ export function CompanionDownloadModal({
               />
             </div>
             <p className="mt-1 text-[10px] text-dfui-muted">
-              {fileProgress?.downloaded != null && fileProgress?.total != null
+              {confirming
+                ? "DreamForge will download these files into backend/models after approval."
+                : fileProgress?.downloaded != null && fileProgress?.total != null
                 ? `${formatBytes(fileProgress.downloaded)} / ${formatBytes(fileProgress.total)} (${pct}%)`
                 : running
                   ? "Starting transfer…"
@@ -167,6 +178,16 @@ export function CompanionDownloadModal({
         </div>
 
         <div className="flex items-center justify-end gap-2 border-t border-dfui-border/50 px-4 py-3">
+          {confirming && (
+            <button
+              type="button"
+              onClick={onApprove}
+              disabled={pendingMissing.length === 0}
+              className="rounded-lg bg-df-blue px-3 py-1.5 text-xs font-semibold text-white hover:bg-df-blue/90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Download {pendingMissing.length ? `${pendingMissing.length} file(s)` : "files"}
+            </button>
+          )}
           {phase === "error" && (
             <button
               type="button"

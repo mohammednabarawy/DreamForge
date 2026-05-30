@@ -116,23 +116,202 @@ PROMPT_PROFILES = {
 }
 
 
-def _run_dreamforge_cmd(cmd, label="DreamForge"):
-    """Run a DreamForge CLI command and parse output paths."""
-    result = subprocess.run(cmd, capture_output=True, text=True, cwd=PROJECT_ROOT)
+def _coalesce_cfg_scale(value, default=7.0):
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
-    if result.returncode != 0:
-        print(f"[PIPELINE] {label} FAILED!")
-        print(f"  STDERR: {result.stderr[-500:]}")
-        print(f"  STDOUT: {result.stdout[-500:]}")
+
+def _extract_result_paths(result: dict) -> list[str]:
+    paths: list[str] = []
+    for item in result.get("images") or []:
+        if isinstance(item, dict) and item.get("path"):
+            paths.append(str(item["path"]))
+        elif isinstance(item, str):
+            paths.append(item)
+    for path in result.get("output_paths") or []:
+        text = str(path)
+        if text and text not in paths:
+            paths.append(text)
+    return paths
+
+
+_CLI_PROGRESS_LAST: dict[str, str] = {}
+
+
+def _cli_progress_sink(payload: dict) -> None:
+    """Print generation progress to the CLI while the Arabic pipeline runs nested jobs."""
+    event_type = str(payload.get("type") or "")
+    if event_type == "progress":
+        message = str(payload.get("message") or payload.get("phase") or "").strip()
+        if not message or message == _CLI_PROGRESS_LAST.get("message"):
+            return
+        _CLI_PROGRESS_LAST["message"] = message
+        print(f"  … {message}", flush=True)
+    elif event_type == "error":
+        message = str(payload.get("message") or payload.get("code") or "generation failed").strip()
+        print(f"  ERROR: {message}", flush=True)
+
+
+def _run_dreamforge_inprocess(
+    label: str,
+    *,
+    image_number: int = 1,
+    output_dir: str = "outputs",
+    **fields,
+) -> list[str]:
+    """Run generation in-process so the Arabic pipeline reuses the active ComfyUI server."""
+    from dreamforge_engine import DreamForgeEngine
+
+    width = int(fields["width"])
+    height = int(fields["height"])
+    model_name = fields.get("base_model") or fields.get("model")
+    
+    params = {
+        "model": model_name,
+        "prompt": fields.get("prompt") or "",
+        "negative_prompt": fields.get("negative_prompt") or "",
+        "aspect_ratio": fields.get("aspect_ratio") or f"{width}x{height}",
+        "width": width,
+        "height": height,
+        "seed": int(fields.get("seed", -1)),
+        "image_number": int(fields.get("image_number", image_number) or 1),
+        "output": fields.get("output") or output_dir,
+        "performance": fields.get("performance") or "Speed",
+        "steps": fields.get("steps"),
+        "cfg_scale": _coalesce_cfg_scale(fields.get("cfg_scale")),
+        "sampler": fields.get("sampler") or "dpmpp_2m_sde_gpu",
+        "scheduler": fields.get("scheduler") or "karras",
+        "styles": fields.get("styles"),
+        "lora": list(fields.get("loras") or fields.get("lora") or []),
+        "input_image": fields.get("input_image"),
+        "edit_type": fields.get("edit_type") or "auto",
+        "edit_strength": fields.get("edit_strength"),
+        "cn_selection": fields.get("cn_selection") or "None",
+        "cn_type": fields.get("cn_type") or "None",
+        "vram_profile": "auto",
+        "use_case": "none",
+    }
+
+    prev_flag = os.environ.get("DREAMFORGE_IN_ARABIC_PIPELINE")
+    os.environ["DREAMFORGE_IN_ARABIC_PIPELINE"] = "1"
+    try:
+        print(f"[PIPELINE] {label}: sampling in-process (reusing ComfyUI)…", flush=True)
+        if model_name:
+            print(f"  Model: {model_name}", flush=True)
+        result = DreamForgeEngine.execute_job(params, stream_sink=_cli_progress_sink)
+    finally:
+        if prev_flag is None:
+            os.environ.pop("DREAMFORGE_IN_ARABIC_PIPELINE", None)
+        else:
+            os.environ["DREAMFORGE_IN_ARABIC_PIPELINE"] = prev_flag
+
+    if result.get("status") != "success":
+        message = result.get("message") or result.get("code") or "generation failed"
+        print(f"[PIPELINE] {label} FAILED: {message}", flush=True)
+        lowered = str(message).lower()
+        if "paging file" in lowered or "out of memory" in lowered or "oom" in lowered:
+            print(
+                "  Hint: close other GPU apps, increase Windows virtual memory, "
+                "or use --vram-profile 8gb / --performance Speed.",
+                flush=True,
+            )
+        log_path = BACKEND_ROOT / "outputs" / "dreamforge" / "logs" / "comfy.server.log"
+        if log_path.is_file():
+            print(f"  See Comfy log: {log_path}", flush=True)
         return []
 
-    # Parse output paths from JSON marker
-    paths = []
-    for line in result.stdout.splitlines():
+    paths = _extract_result_paths(result)
+    if not paths:
+        print(
+            f"[PIPELINE] {label} succeeded but returned no image paths.",
+            flush=True,
+        )
+    return paths
+
+
+
+def _extract_paths_from_cli_stdout(stdout: str) -> list[str]:
+    """Parse dreamforge_cli_direct --json output or legacy __OUTPUT_JSON__ lines."""
+    text = (stdout or "").strip()
+    if not text:
+        return []
+
+    for line in text.splitlines():
         if "__OUTPUT_JSON__=" in line:
-            json_str = line.split("__OUTPUT_JSON__=", 1)[1]
-            paths = json.loads(json_str)
-            break
+            try:
+                raw = json.loads(line.split("__OUTPUT_JSON__=", 1)[1])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(raw, list):
+                return [str(path) for path in raw if path]
+
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+
+    paths: list[str] = []
+    for item in payload.get("images") or []:
+        if isinstance(item, dict) and item.get("path"):
+            paths.append(str(item["path"]))
+        elif isinstance(item, str):
+            paths.append(item)
+    if paths:
+        return paths
+
+    for result in payload.get("results") or []:
+        if not isinstance(result, dict):
+            continue
+        for item in result.get("images") or []:
+            if isinstance(item, dict) and item.get("path"):
+                paths.append(str(item["path"]))
+            elif isinstance(item, str):
+                paths.append(item)
+    return paths
+
+
+def _recent_output_images(*, limit: int = 1, output_dir: str = "outputs") -> list[str]:
+    patterns = [
+        os.path.join(PROJECT_ROOT, "outputs", "dreamforge", "comfy", "*.png"),
+        os.path.join(PROJECT_ROOT, "outputs", "dreamforge", "comfy", "*.jpg"),
+        os.path.join(PROJECT_ROOT, "outputs", "dreamforge", "comfy", "*.webp"),
+        os.path.join(PROJECT_ROOT, output_dir, "dreamforge", "comfy", "*.png"),
+    ]
+    candidates: list[str] = []
+    for pattern in patterns:
+        candidates.extend(glob.glob(pattern))
+    candidates = sorted(set(candidates), key=os.path.getmtime, reverse=True)
+    return candidates[:limit]
+
+
+def _run_dreamforge_cmd(cmd, label="DreamForge", *, output_dir="outputs", image_number=1):
+    """Run a DreamForge CLI command and parse output paths."""
+    env = os.environ.copy()
+    env["DREAMFORGE_IN_ARABIC_PIPELINE"] = "1"
+    if "--json" not in cmd:
+        cmd = [*cmd, "--json"]
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd=PROJECT_ROOT, env=env)
+
+    paths = _extract_paths_from_cli_stdout(result.stdout)
+    if not paths:
+        paths = _recent_output_images(limit=max(1, int(image_number or 1)), output_dir=output_dir)
+
+    if result.returncode != 0 and not paths:
+        print(f"[PIPELINE] {label} FAILED!")
+        print(f"  STDERR: {result.stderr[-800:]}")
+        print(f"  STDOUT: {result.stdout[-800:]}")
+        return []
+
+    if not paths:
+        print(f"[PIPELINE] {label} produced no output paths.")
+        if result.stderr.strip():
+            print(f"  STDERR: {result.stderr[-800:]}")
+        if result.stdout.strip():
+            print(f"  STDOUT: {result.stdout[-800:]}")
 
     return paths
 
@@ -273,65 +452,40 @@ def run_dreamforge_generation(
     cn_cpds_stop=0.75,
 ):
     """
-    Run DreamForge image generation via the CLI.
+    Run DreamForge image generation in-process (reuses the active ComfyUI server).
     Returns list of generated image paths.
     """
-    python_exe = str(PYTHON_EXE)
-    cli_script = os.path.join(BACKEND_ROOT, "dreamforge_cli_direct.py")
+    cfg = _coalesce_cfg_scale(cfg_scale)
 
-    cmd = [
-        python_exe, cli_script,
-        "--prompt", prompt,
-        "--output", output_dir,
-        "--aspect-ratio", f"{width}x{height}",
-        "--cfg-scale", str(cfg_scale),
-        "--sampler", sampler,
-        "--scheduler", scheduler,
-        "--image-number", str(image_number),
-        "--performance", performance,
-    ]
+    print(f"\n{'='*60}", flush=True)
+    print(f"[PIPELINE] Step 1: Generating scene with DreamForge", flush=True)
+    print(f"{'='*60}", flush=True)
+    print(f"  Prompt: {prompt[:100]}...", flush=True)
+    print(f"  Resolution: {width}x{height}", flush=True)
 
-    if steps is not None:
-        cmd.extend(["--steps", str(steps)])
-    if negative_prompt:
-        cmd.extend(["--negative-prompt", negative_prompt])
-    if seed != -1:
-        cmd.extend(["--seed", str(seed)])
-    if styles:
-        cmd.extend(["--styles"] + styles)
-    if base_model:
-        cmd.extend(["--base-model", base_model])
-    if loras:
-        for lora in loras:
-            cmd.extend(["--lora", lora])
-    if cn_cpds:
-        cmd.extend([
-            "--cn-cpds", cn_cpds,
-            "--cn-cpds-weight", str(cn_cpds_weight),
-            "--cn-cpds-stop", str(cn_cpds_stop),
-        ])
+    paths = _run_dreamforge_inprocess(
+        "Scene generation",
+        image_number=image_number,
+        output_dir=output_dir,
+        prompt=prompt,
+        output=output_dir,
+        width=width,
+        height=height,
+        negative_prompt=negative_prompt,
+        seed=seed,
+        performance=performance,
+        steps=steps,
+        styles=styles,
+        base_model=base_model,
+        cfg_scale=cfg,
+        sampler=sampler,
+        scheduler=scheduler,
+        loras=loras,
+    )
 
-    print(f"\n{'='*60}")
-    print(f"[PIPELINE] Step 1: Generating scene with DreamForge")
-    print(f"{'='*60}")
-    print(f"  Prompt: {prompt[:100]}...")
-    print(f"  Resolution: {width}x{height}")
-
-    paths = _run_dreamforge_cmd(cmd, "Scene generation")
-
-    if not paths:
-        # Fallback: find most recent files in output dir
-        full_output = os.path.join(PROJECT_ROOT, output_dir)
-        candidates = sorted(
-            glob.glob(os.path.join(full_output, "dreamforge_*")),
-            key=os.path.getmtime,
-            reverse=True
-        )
-        paths = candidates[:image_number]
-
-    print(f"  Generated {len(paths)} image(s)")
+    print(f"  Generated {len(paths)} image(s)", flush=True)
     for p in paths:
-        print(f"    -> {p}")
+        print(f"    -> {p}", flush=True)
     return paths
 
 
@@ -370,48 +524,36 @@ def run_harmonization(
         prompt: Should describe the desired look ("elegant Arabic calligraphy...")
         denoise_strength: 0.25-0.45 for best results (too low = no effect, too high = destroys text)
     """
-    python_exe = str(PYTHON_EXE)
-    cli_script = os.path.join(BACKEND_ROOT, "dreamforge_cli_direct.py")
+    cfg = _coalesce_cfg_scale(cfg_scale)
 
-    cmd = [
-        python_exe, cli_script,
-        "--prompt", prompt,
-        "--input-image", composited_image_path,
-        "--vary-strength", str(denoise_strength),
-        "--output", os.path.dirname(output_path) or "outputs",
-        "--aspect-ratio", f"{width}x{height}",
-        "--cfg-scale", str(cfg_scale),
-        "--image-number", "1",
-        "--performance", performance,
-    ]
+    print(f"\n{'='*60}", flush=True)
+    print(f"[PIPELINE] Step 3: Harmonizing text with scene (denoise={denoise_strength})", flush=True)
+    print(f"{'='*60}", flush=True)
+    print(f"  Input: {composited_image_path}", flush=True)
+    print(f"  Denoise: {denoise_strength}", flush=True)
 
-    if steps is not None:
-        cmd.extend(["--steps", str(steps)])
-    if negative_prompt:
-        cmd.extend(["--negative-prompt", negative_prompt])
-    if seed != -1:
-        cmd.extend(["--seed", str(seed)])
-    if styles:
-        cmd.extend(["--styles"] + styles)
-    if base_model:
-        cmd.extend(["--base-model", base_model])
-    if loras:
-        for lora in loras:
-            cmd.extend(["--lora", lora])
-    if cn_cpds:
-        cmd.extend([
-            "--cn-cpds", cn_cpds,
-            "--cn-cpds-weight", str(cn_cpds_weight),
-            "--cn-cpds-stop", str(cn_cpds_stop),
-        ])
-
-    print(f"\n{'='*60}")
-    print(f"[PIPELINE] Step 3: Harmonizing text with scene (denoise={denoise_strength})")
-    print(f"{'='*60}")
-    print(f"  Input: {composited_image_path}")
-    print(f"  Denoise: {denoise_strength}")
-
-    paths = _run_dreamforge_cmd(cmd, "Harmonization")
+    paths = _run_dreamforge_inprocess(
+        "Harmonization",
+        image_number=1,
+        output_dir=os.path.dirname(output_path) or "outputs",
+        prompt=prompt,
+        negative_prompt=negative_prompt,
+        width=width,
+        height=height,
+        seed=seed,
+        performance=performance,
+        steps=steps,
+        styles=styles,
+        base_model=base_model,
+        cfg_scale=cfg,
+        loras=loras,
+        input_image=composited_image_path,
+        edit_type="img2img",
+        edit_strength=denoise_strength,
+        cn_selection="Custom...",
+        cn_type="img2img",
+        output=os.path.dirname(output_path) or "outputs",
+    )
 
     if paths:
         # Copy the harmonized result to the desired output path
@@ -530,6 +672,12 @@ def apply_preset(args):
         "line_spacing": 1.4,
         "no_wrap": False,
         "max_lines": None,
+        "font_size": None,
+        "padding": 60,
+        "opacity": 1.0,
+        "darken": 0.0,
+        "text_color": "255,255,255",
+        "random_font": False,
         "steps": None,
         "prompt_profile": "none",
         "export_scale": 1.0,
@@ -686,7 +834,7 @@ def run_full_pipeline(args):
         steps=args.steps,
         styles=args.styles,
         base_model=args.base_model,
-        cfg_scale=args.cfg_scale,
+        cfg_scale=_coalesce_cfg_scale(args.cfg_scale),
         image_number=args.image_number,
         loras=args.lora,
         cn_cpds=text_reference_path if args.text_guide in ("scene", "both") else None,
@@ -757,7 +905,7 @@ def run_full_pipeline(args):
                 steps=args.steps,
                 styles=args.styles,
                 base_model=args.base_model,
-                cfg_scale=args.cfg_scale,
+                cfg_scale=_coalesce_cfg_scale(args.cfg_scale),
                 loras=args.lora,
                 cn_cpds=text_reference_path if args.text_guide in ("harmonize", "both") else None,
                 cn_cpds_weight=args.cn_cpds_weight,

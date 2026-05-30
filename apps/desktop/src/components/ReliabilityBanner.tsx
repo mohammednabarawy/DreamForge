@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
-import { AlertTriangle, Download, RefreshCw, X, Zap } from "lucide-react";
+import { AlertTriangle, Download, RefreshCw, ShieldCheck, Wrench, X, Zap } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { FriendlyError } from "../lib/errors";
+import type { RepairAction } from "../lib/tauri-api";
 
 type Props = {
   lastError: FriendlyError | null;
@@ -37,6 +38,52 @@ function ActionButton({
   );
 }
 
+function actionLabel(action: RepairAction) {
+  switch (action.action) {
+    case "download_model_companions":
+      return "Download missing assets";
+    case "install_custom_node_pack":
+      return `Install ${String(action.pack_id ?? "custom node pack")}`;
+    case "replace_node_pattern":
+      return "Rebuild with fallback nodes";
+    case "disable_optional_stage":
+      return "Disable optional stage";
+    case "restart_local_backend":
+      return "Restart local backend";
+    case "reduce_resolution":
+      return "Reduce resolution";
+    case "reduce_batch":
+      return "Use single image";
+    case "switch_vram_profile":
+      return `Switch VRAM profile${action.vram_profile ? ` to ${action.vram_profile}` : ""}`;
+    case "switch_model_route":
+      return "Switch local model";
+    case "retry_with_safer_settings":
+      return "Retry with safer settings";
+    case "request_input":
+      return "Attach required input";
+    case "reimport_asset":
+      return "Re-import asset";
+    case "rebuild_workflow_plan":
+      return "Rebuild workflow plan";
+    case "inspect_logs":
+      return "Inspect logs";
+    default:
+      return String(action.action ?? "Repair action");
+  }
+}
+
+function repairActionHint(action: RepairAction) {
+  if (typeof action.hint === "string" && action.hint.trim()) return action.hint;
+  if (Array.isArray(action.nodes) && action.nodes.length > 0) {
+    return `Nodes: ${action.nodes.slice(0, 3).join(", ")}`;
+  }
+  if (Array.isArray(action.missing) && action.missing.length > 0) {
+    return `${action.missing.length} file(s)`;
+  }
+  return "";
+}
+
 function ErrorActions({
   error,
   onDismiss,
@@ -55,6 +102,12 @@ function ErrorActions({
   restarting?: boolean;
 }) {
   const code = error.code;
+  const repairActions = error.failureReport?.repair_actions ?? [];
+  const downloadable = repairActions.some((a) => a.action === "download_model_companions");
+  const restartable = repairActions.some((a) => a.action === "restart_local_backend");
+  const lowerable = repairActions.some(
+    (a) => a.action === "switch_vram_profile" || a.action === "reduce_resolution",
+  );
   return (
     <motion.div
       initial={{ opacity: 0, y: -6 }}
@@ -76,14 +129,45 @@ function ErrorActions({
               ))}
             </ul>
           )}
+          {repairActions.length > 0 && (
+            <div className="mt-2 rounded-md border border-rose-400/20 bg-black/15 px-2 py-1.5">
+              <div className="mb-1 flex items-center gap-1 text-[10px] font-medium text-rose-100">
+                <Wrench size={11} />
+                Repair plan
+                {error.failureReport?.requires_user_approval && (
+                  <span className="inline-flex items-center gap-1 rounded border border-amber-400/30 px-1 text-[9px] text-amber-200">
+                    <ShieldCheck size={9} />
+                    Approval required
+                  </span>
+                )}
+              </div>
+              <ul className="space-y-1 text-[10px] text-dfui-tertiary">
+                {repairActions.slice(0, 4).map((action, i) => {
+                  const hint = repairActionHint(action);
+                  return (
+                    <li key={`${action.action ?? "repair"}-${i}`} className="flex gap-1.5">
+                      <span className="mt-1 h-1 w-1 shrink-0 rounded-full bg-rose-300/70" />
+                      <span>
+                        <span className="text-dfui-secondary">{actionLabel(action)}</span>
+                        {hint ? ` - ${hint}` : ""}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
           <div className="mt-2 flex flex-wrap gap-1.5">
-            {(code === "worker_crashed" || code === "generation_failed") && (
+            {(code === "worker_crashed" ||
+              code === "generation_failed" ||
+              code === "comfy_server_crashed" ||
+              restartable) && (
               <ActionButton onClick={onRestartEngine} disabled={restarting}>
                 <RefreshCw size={11} className={restarting ? "animate-spin" : ""} />
                 Restart GPU engine
               </ActionButton>
             )}
-            {code === "missing_model_dependencies" && (
+            {(code === "missing_model_dependencies" || downloadable) && (
               <ActionButton
                 onClick={onDownloadCompanions}
                 disabled={companionDownloadBusy}
@@ -92,7 +176,7 @@ function ErrorActions({
                 Download companions
               </ActionButton>
             )}
-            {code === "out_of_memory" && (
+            {(code === "out_of_memory" || lowerable) && (
               <ActionButton onClick={onLowerVramProfile}>
                 <Zap size={11} />
                 Lower VRAM profile

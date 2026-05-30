@@ -8,7 +8,7 @@ import {
   type ModelDependencyItem,
 } from "../lib/tauri-api";
 
-export type CompanionDownloadPhase = "idle" | "running" | "done" | "error";
+export type CompanionDownloadPhase = "idle" | "confirm" | "running" | "done" | "error";
 
 export type CompanionDownloadLine = {
   ts: number;
@@ -74,6 +74,7 @@ export function useCompanionDownload() {
   const [fileProgress, setFileProgress] =
     useState<DownloadProgressPayload | null>(null);
   const [modelName, setModelName] = useState("");
+  const [pendingMissing, setPendingMissing] = useState<ModelDependencyItem[]>([]);
   const runIdRef = useRef(0);
 
   const append = useCallback((level: CompanionDownloadLine["level"], text: string) => {
@@ -90,6 +91,7 @@ export function useCompanionDownload() {
     setCurrentItem(null);
     setFileProgress(null);
     setModelName("");
+    setPendingMissing([]);
   }, [phase]);
 
   const runDownload = useCallback(
@@ -216,10 +218,28 @@ export function useCompanionDownload() {
   const start = useCallback(
     (model: string, missing: ModelDependencyItem[]) => {
       setOpen(true);
-      void runDownload(model, missing);
+      setPhase("confirm");
+      setLines([]);
+      setCurrentIndex(0);
+      setTotalCount(missing.length);
+      setCurrentItem(null);
+      setFileProgress(null);
+      setModelName(model);
+      setPendingMissing(missing);
+      append("info", `Model: ${model}`);
+      append("info", `${missing.length} companion file(s) need approval before download.`);
+      for (const item of missing.slice(0, 8)) {
+        append("info", `  • ${itemLabel(item)}${item.relative ? ` → ${item.relative}` : ""}`);
+      }
+      if (missing.length > 8) append("info", `  • ${missing.length - 8} more…`);
     },
-    [runDownload],
+    [append],
   );
+
+  const approve = useCallback(() => {
+    if (!modelName) return;
+    void runDownload(modelName, pendingMissing);
+  }, [modelName, pendingMissing, runDownload]);
 
   const retry = useCallback(() => {
     if (!modelName) return;
@@ -246,8 +266,10 @@ export function useCompanionDownload() {
     currentItem,
     fileProgress,
     modelName,
+    pendingMissing,
     busy: phase === "running",
     start,
+    approve,
     close,
     retry,
   };

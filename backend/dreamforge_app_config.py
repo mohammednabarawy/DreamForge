@@ -6,6 +6,7 @@ import copy
 import json
 import os
 import re
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -19,6 +20,15 @@ from dreamforge_agent_tools import USE_CASE_RECIPES
 CONFIG_ENV = "DREAMFORGE_APP_CONFIG_PATH"
 
 PROVIDER_PRESETS: list[dict[str, Any]] = [
+    {
+        "id": "embedded",
+        "label": "Embedded Llama.cpp (Local GGUF)",
+        "mode": "local",
+        "base_url": "",
+        "default_model": "Qwen2.5-7B-Instruct-abliterated-v2.Q4_K_M.gguf",
+        "requires_api_key": False,
+        "test_kind": "embedded",
+    },
     {
         "id": "ollama",
         "label": "Ollama",
@@ -210,6 +220,19 @@ def test_agent_provider(config: dict[str, Any] | None = None) -> dict[str, Any]:
     api_key = str(agent.get("api_key") or "").strip()
     start = time.perf_counter()
 
+    if provider == "embedded":
+        from dreamforge_brain import XLC_AVAILABLE, EmbeddedLlamaCppProvider
+        if not XLC_AVAILABLE:
+            return _test_result(False, provider, model, start, "xllamacpp_not_installed")
+        try:
+            prov = EmbeddedLlamaCppProvider()
+            path = prov._get_model_path()
+            if not path.is_file():
+                return _test_result(False, provider, model, start, f"gguf_model_missing: {path}")
+            return _test_result(True, provider, model, start, "ok")
+        except Exception as e:
+            return _test_result(False, provider, model, start, str(e))
+
     if preset.get("requires_api_key") and not api_key:
         return _test_result(False, provider, model, start, "api_key_missing")
     if not base_url:
@@ -263,17 +286,32 @@ def plan_agent_instruction(params: dict[str, Any]) -> dict[str, Any]:
             "message": "Tell the agent what you want to create or edit.",
         }
 
+    from dreamforge_dynamic_presets import apply_dynamic_preset
+
+    enriched, dynamic_preset = apply_dynamic_preset(instruction, current)
+    original = dict(current)
+
     provider_plan = _provider_agent_plan(
         cfg,
         instruction,
-        current,
+        enriched,
         selected_image,
         model_gallery,
+        dynamic_preset=dynamic_preset,
+        original_settings=original,
     )
     if provider_plan:
         return provider_plan
 
-    return _heuristic_agent_plan(instruction, current, selected_image, model_gallery)
+    result = _heuristic_agent_plan(
+        instruction,
+        enriched,
+        selected_image,
+        model_gallery,
+        dynamic_preset=dynamic_preset,
+        original_settings=original,
+    )
+    return result
 
 
 def _merge_allowed(base: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
@@ -306,10 +344,59 @@ def _provider_agent_plan(
     current: dict[str, Any],
     selected_image: str,
     model_gallery: list[Any],
+    *,
+    dynamic_preset: dict[str, Any] | None = None,
+    original_settings: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     agent = cfg.get("agent", {})
     provider = str(agent.get("provider") or "custom")
     preset = provider_preset(provider)
+
+    # Embedded llama.cpp provider uses AiBrain directly
+    if provider == "embedded":
+        from dreamforge_brain import AiBrain, XLC_AVAILABLE
+        if not XLC_AVAILABLE:
+            return None
+        try:
+            brain = AiBrain()
+            brain.configure("embedded")
+            plan = brain.plan_decision(
+                user_intent=instruction,
+                current_settings=_safe_settings(current),
+                selected_image=selected_image,
+                gallery=_model_gallery_summary(model_gallery),
+            )
+        except Exception as exc:
+            print(f"[DreamForge Brain Plan Error] {exc}", file=sys.stderr)
+            return None
+        if not isinstance(plan, dict):
+            return None
+        patch = plan.get("patch") if isinstance(plan.get("patch"), dict) else {}
+        mode = _normalize_mode(str(plan.get("mode") or _mode_for_patch(patch, selected_image)))
+        patch = _complete_patch_for_mode(mode, patch, selected_image, model_gallery)
+        blueprint = plan.get("workflow_blueprint") if isinstance(plan.get("workflow_blueprint"), dict) else {}
+        return _attach_dynamic_preset(
+            {
+                "ok": True,
+                "source": "provider",
+                "provider": provider,
+                "provider_model": "Embedded Qwen",
+                "message": str(plan.get("message") or "Agent planned a DreamForge workflow."),
+                "mode": mode,
+                "patch": _filter_generation_patch(patch),
+                "actions": _string_list(plan.get("actions")),
+                "downloads": _string_list(plan.get("downloads")),
+                "workflow_plan": plan.get("workflow_plan"),
+                "workflow_blueprint": blueprint,
+                "readiness": blueprint.get("readiness") if isinstance(blueprint, dict) else None,
+                "operations": plan.get("operations"),
+            },
+            dynamic_preset,
+            current,
+            original_settings or {},
+        )
+
+    # For non-embedded providers, use _post_json directly (testable HTTP path)
     if preset.get("test_kind") not in {"ollama", "openai_compatible"}:
         return None
 
@@ -394,17 +481,27 @@ def _provider_agent_plan(
     patch = plan.get("patch") if isinstance(plan.get("patch"), dict) else {}
     mode = _normalize_mode(str(plan.get("mode") or _mode_for_patch(patch, selected_image)))
     patch = _complete_patch_for_mode(mode, patch, selected_image, model_gallery)
-    return {
-        "ok": True,
-        "source": "provider",
-        "provider": provider,
-        "provider_model": model,
-        "message": str(plan.get("message") or "Agent planned a DreamForge workflow."),
-        "mode": mode,
-        "patch": _filter_generation_patch(patch),
-        "actions": _string_list(plan.get("actions")),
-        "downloads": _string_list(plan.get("downloads")),
-    }
+    blueprint = plan.get("workflow_blueprint") if isinstance(plan.get("workflow_blueprint"), dict) else {}
+    return _attach_dynamic_preset(
+        {
+            "ok": True,
+            "source": "provider",
+            "provider": provider,
+            "provider_model": model,
+            "message": str(plan.get("message") or "Agent planned a DreamForge workflow."),
+            "mode": mode,
+            "patch": _filter_generation_patch(patch),
+            "actions": _string_list(plan.get("actions")),
+            "downloads": _string_list(plan.get("downloads")),
+            "workflow_plan": plan.get("workflow_plan"),
+            "workflow_blueprint": blueprint,
+            "readiness": blueprint.get("readiness") if isinstance(blueprint, dict) else None,
+            "operations": plan.get("operations"),
+        },
+        dynamic_preset,
+        current,
+        original_settings or {},
+    )
 
 
 def _heuristic_agent_plan(
@@ -412,6 +509,9 @@ def _heuristic_agent_plan(
     current: dict[str, Any],
     selected_image: str,
     model_gallery: list[Any],
+    *,
+    dynamic_preset: dict[str, Any] | None = None,
+    original_settings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     text = instruction.lower()
     has_text_intent = any(
@@ -554,17 +654,48 @@ def _heuristic_agent_plan(
         patch["model"] = model
         downloads.append(f"Check companion files for {Path(model).name}.")
 
-    return {
-        "ok": True,
-        "source": "local",
-        "provider": "",
-        "provider_model": "",
-        "message": f"Prepared an {mode} workflow from the instruction." if mode in {"edit", "inpaint", "upscale"} else "Prepared a generate workflow from the instruction.",
-        "mode": mode,
-        "patch": _filter_generation_patch(patch),
-        "actions": actions,
-        "downloads": downloads,
-    }
+    workflow_plan = None
+    workflow_blueprint = None
+    readiness = None
+    operations = None
+    try:
+        from dreamforge_brain import heuristic_brain_decision
+
+        decision = heuristic_brain_decision(instruction, current, selected_image, [])
+        if isinstance(decision, dict):
+            workflow_plan = decision.get("workflow_plan")
+            workflow_blueprint = decision.get("workflow_blueprint")
+            operations = decision.get("operations")
+            if isinstance(workflow_blueprint, dict):
+                readiness = workflow_blueprint.get("readiness")
+            brain_patch = _filter_generation_patch(
+                decision.get("patch") if isinstance(decision.get("patch"), dict) else {}
+            )
+            for key, value in brain_patch.items():
+                patch.setdefault(key, value)
+    except Exception:
+        pass
+
+    return _attach_dynamic_preset(
+        {
+            "ok": True,
+            "source": "local",
+            "provider": "",
+            "provider_model": "",
+            "message": f"Prepared an {mode} workflow from the instruction." if mode in {"edit", "inpaint", "upscale"} else "Prepared a generate workflow from the instruction.",
+            "mode": mode,
+            "patch": _filter_generation_patch(patch),
+            "actions": actions,
+            "downloads": downloads,
+            "workflow_plan": workflow_plan,
+            "workflow_blueprint": workflow_blueprint,
+            "readiness": readiness,
+            "operations": operations,
+        },
+        dynamic_preset,
+        current,
+        original_settings or {},
+    )
 
 
 _GENERATION_PATCH_KEYS = {
@@ -599,6 +730,14 @@ _GENERATION_PATCH_KEYS = {
     "lighting",
     "camera",
     "brand_colors",
+    "workflow_mode",
+    "arabic_text",
+    "execute_workflow_plan",
+    "workflow_plan",
+    "detail_target",
+    "detail_prompt",
+    "reference_image",
+    "control_image",
 }
 
 
@@ -645,6 +784,28 @@ def _filter_generation_patch(patch: dict[str, Any]) -> dict[str, Any]:
     if use_case is not None and use_case not in {"none", *USE_CASE_RECIPES.keys()}:
         filtered["use_case"] = "image_edit" if filtered.get("input_image") else "none"
     return filtered
+
+
+def _attach_dynamic_preset(
+    payload: dict[str, Any],
+    dynamic_preset: dict[str, Any] | None,
+    enriched: dict[str, Any],
+    original: dict[str, Any],
+) -> dict[str, Any]:
+    if not dynamic_preset:
+        return payload
+    payload["dynamic_preset"] = dynamic_preset
+    patch = payload.get("patch")
+    if not isinstance(patch, dict):
+        return payload
+    applied = dynamic_preset.get("applied") if isinstance(dynamic_preset.get("applied"), dict) else {}
+    for key in applied:
+        if key in _GENERATION_PATCH_KEYS and key not in original:
+            value = enriched.get(key)
+            if value is not None:
+                patch[key] = value
+    payload["patch"] = _filter_generation_patch(patch)
+    return payload
 
 
 def _safe_settings(settings: dict[str, Any]) -> dict[str, Any]:

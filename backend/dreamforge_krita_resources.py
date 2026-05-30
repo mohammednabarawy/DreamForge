@@ -118,6 +118,48 @@ STUDIO_RESOURCE_SOURCES: dict[str, dict[str, Any]] = {
         "min_bytes": 900 * 1024 * 1024,
         "optional": True,
     },
+    "controlnet_depth_sd15": {
+        "relative": "controlnet/control_lora_rank128_v11f1p_sd15_depth_fp16.safetensors",
+        "url": "https://huggingface.co/comfyanonymous/ControlNet-v1-1_fp16_safetensors/resolve/main/control_lora_rank128_v11f1p_sd15_depth_fp16.safetensors",
+        "min_bytes": 60 * 1024 * 1024,
+        "optional": True,
+    },
+    "controlnet_pose_sd15": {
+        "relative": "controlnet/control_lora_rank128_v11p_sd15_openpose_fp16.safetensors",
+        "url": "https://huggingface.co/comfyanonymous/ControlNet-v1-1_fp16_safetensors/resolve/main/control_lora_rank128_v11p_sd15_openpose_fp16.safetensors",
+        "min_bytes": 60 * 1024 * 1024,
+        "optional": True,
+    },
+    "controlnet_canny_sd15": {
+        "relative": "controlnet/control_v11p_sd15_canny_fp16.safetensors",
+        "url": "https://huggingface.co/comfyanonymous/ControlNet-v1-1_fp16_safetensors/resolve/main/control_v11p_sd15_canny_fp16.safetensors",
+        "min_bytes": 60 * 1024 * 1024,
+        "optional": True,
+    },
+    "controlnet_sdxl_union": {
+        "relative": "controlnet/xinsir-controlnet-union-sdxl-1.0-promax.safetensors",
+        "url": "https://huggingface.co/xinsir/controlnet-union-sdxl-1.0/resolve/main/diffusion_pytorch_model_promax.safetensors",
+        "min_bytes": 2 * 1024 * 1024 * 1024,
+        "optional": True,
+    },
+    "clip_vision_ipadapter_vith": {
+        "relative": "clip_vision/clip-vision_vit-h.safetensors",
+        "url": "https://huggingface.co/h94/IP-Adapter/resolve/main/models/image_encoder/model.safetensors",
+        "min_bytes": 1 * 1024 * 1024 * 1024,
+        "optional": True,
+    },
+    "ipadapter_sdxl_vith": {
+        "relative": "ipadapter/ip-adapter_sdxl_vit-h.safetensors",
+        "url": "https://huggingface.co/h94/IP-Adapter/resolve/main/sdxl_models/ip-adapter_sdxl_vit-h.safetensors",
+        "min_bytes": 500 * 1024 * 1024,
+        "optional": True,
+    },
+    "ipadapter_sd15": {
+        "relative": "ipadapter/ip-adapter_sd15.safetensors",
+        "url": "https://huggingface.co/h94/IP-Adapter/resolve/main/models/ip-adapter_sd15.safetensors",
+        "min_bytes": 50 * 1024 * 1024,
+        "optional": True,
+    },
     "upscaler_ultrasharp_legacy": {
         "relative": "upscale_models/4x-UltraSharp.pth",
         "url": "https://huggingface.co/lokCX/4x-Ultrasharp/resolve/main/4x-UltraSharp.pth",

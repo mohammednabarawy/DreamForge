@@ -1,6 +1,6 @@
 # DreamForge
 
-**Local AI image creation studio** — desktop app, headless CLI, Gradio WebUI, and MCP tools for agents. Run SDXL, Flux, HiDream, Qwen, Z-Image, and more on your own GPU without sending prompts to the cloud.
+**Local AI image creation studio** — desktop app, headless CLI, Gradio WebUI, and MCP tools for agents. Run SDXL, Flux, HiDream, Qwen, Z-Image, and more on your own GPU. **Image generation and editing run on your machine**; optional cloud LLM providers are used only for agent *planning* text if you configure them.
 
 **Repository:** [github.com/mohammednabarawy/DreamForge](https://github.com/mohammednabarawy/DreamForge)
 
@@ -10,7 +10,7 @@
 
 ## Why DreamForge?
 
-- **Private by default** — models and images stay on your machine.
+- **Private by default** — models, prompts, and images stay on your machine (local ComfyUI / DreamForge worker).
 - **Runs on almost anything** — 24 GB workstations down to 4 GB GPUs, Apple Silicon, AMD/Intel via DirectML, and CPU-only fallback. See the [Optimization & Hardware Guide](docs/OPTIMIZATION.md).
 - **Multiple surfaces** — pick the desktop studio, classic web UI, CLI, or MCP for automation.
 - **Production-minded** — VRAM profiles, dry-runs, manifests, Arabic poster compositing, and agent recipes.
@@ -61,6 +61,7 @@ Generated images and model weights are **not** committed. Place checkpoints unde
 |-----------|---------|
 | **Windows 10/11** | Primary target (NVIDIA CUDA) |
 | **macOS 14+ (Apple Silicon)** | MPS via Metal |
+| **Linux** | Supported via `setup.sh` (NVIDIA CUDA or CPU fallback) |
 | **NVIDIA GPU** | CUDA (16 GB recommended; `8gb` / `5gb` profiles supported) |
 | **Python 3.10+** | For `setup.bat` / `setup.sh` |
 | **Model files** | `.safetensors` / `.gguf` under `backend/models/` |
@@ -149,15 +150,18 @@ Use `--dry-run` on the CLI to resolve the plan without loading the GPU.
 | Doc | Contents |
 |-----|----------|
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute, PR workflow, testing |
-| [docs/README_CLI.md](docs/README_CLI.md) | CLI arguments, batch JSONL, MCP |
+| [docs/README_CLI.md](docs/README_CLI.md) | CLI arguments, `--json`, MCP |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Comfy, model paths, missing nodes, VRAM, security |
+| [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) | Pre-release test gate |
 | [docs/AI_INSTRUCTIONS.md](docs/AI_INSTRUCTIONS.md) | Agent integration |
 | [docs/DREAMFORGE_AGENT_SKILL.md](docs/DREAMFORGE_AGENT_SKILL.md) | Use cases, model families |
+| [docs/dreamforge_mcp_instructions.md](docs/dreamforge_mcp_instructions.md) | MCP tool guidance |
 | [apps/desktop/README.md](apps/desktop/README.md) | Tauri app setup |
 | [backend/readme.md](backend/readme.md) | Engine notes |
 
 ## Outputs
 
-Generations default to `outputs/` (gitignored). The desktop app and CLI can write JSON manifests next to images when validation is enabled.
+Generations default to `outputs/` (gitignored). The desktop app and CLI write JSON **manifests** next to images (prompt, model, routing, validation, and **edit lineage** when applicable). Local **style memory** is stored at `outputs/dreamforge/memory/user_style_profile.json` (opt-in; manage in desktop Settings).
 
 ## Branding
 

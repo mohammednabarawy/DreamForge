@@ -39,3 +39,60 @@ def test_comfy_workflow_mode_kontext():
         checkpoint_is_flux_kontext=_is_kontext,
     )
     assert mode == "kontext"
+
+
+def test_comfy_workflow_mode_respects_explicit_workflow_mode():
+    assert (
+        comfy_workflow_mode(
+            input_filename=None,
+            cn_type="None",
+            model={"name": "sdxl.safetensors"},
+            model_family="sdxl",
+            checkpoint_is_flux_kontext=_is_kontext,
+            workflow_mode="hires",
+        )
+        == "hires"
+    )
+    assert (
+        comfy_workflow_mode(
+            input_filename="main.png",
+            cn_type="img2img",
+            model={"name": "sdxl.safetensors"},
+            model_family="sdxl",
+            checkpoint_is_flux_kontext=_is_kontext,
+            workflow_mode="controlnet",
+        )
+        == "controlnet"
+    )
+    assert (
+        comfy_workflow_mode(
+            input_filename=None,
+            cn_type="None",
+            model={"name": "sdxl.safetensors"},
+            model_family="sdxl",
+            checkpoint_is_flux_kontext=_is_kontext,
+            workflow_mode="area_composition",
+        )
+        == "area_composition"
+    )
+    assert (
+        comfy_workflow_mode(
+            input_filename="main.png",
+            cn_type="None",
+            model={"name": "sdxl.safetensors"},
+            model_family="sdxl",
+            checkpoint_is_flux_kontext=_is_kontext,
+            workflow_mode="face_detail",
+        )
+        == "face_detail"
+    )
+    assert (
+        comfy_workflow_mode(
+            input_filename="main.png",
+            cn_type="depth",
+            model={"name": "sdxl.safetensors"},
+            model_family="sdxl",
+            checkpoint_is_flux_kontext=_is_kontext,
+        )
+        == "controlnet"
+    )

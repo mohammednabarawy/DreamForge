@@ -77,6 +77,43 @@ export type AgentProviderTestResult = {
   detail: string;
 };
 
+export type WorkflowReadiness = {
+  ready?: boolean;
+  missing_inputs?: string[];
+  missing_models?: string[];
+  missing_node_packs?: string[];
+  optional_nodes?: string[];
+  recommended_actions?: Array<Record<string, unknown>>;
+  warnings?: string[];
+};
+
+export type DynamicPresetMeta = {
+  schema_version?: string;
+  source?: string[];
+  applied?: Record<string, unknown>;
+};
+
+export type AgentPlanSnapshot = {
+  source?: string;
+  provider?: string;
+  message?: string;
+  mode?: AgentPlanResult["mode"];
+  applied?: Partial<GenerationSettings>;
+  proposed?: Partial<GenerationSettings>;
+  actions?: string[];
+  downloads?: string[];
+  operations?: string[];
+  dynamic_preset?: DynamicPresetMeta;
+  workflow_plan?: Array<{
+    id?: string;
+    operation?: string;
+    mode?: string;
+    params?: Record<string, unknown>;
+  }>;
+  workflow_blueprint?: Record<string, unknown>;
+  readiness?: WorkflowReadiness;
+};
+
 export type AgentPlanResult = {
   ok?: boolean;
   source: "provider" | "local";
@@ -87,6 +124,11 @@ export type AgentPlanResult = {
   patch: Partial<GenerationSettings>;
   actions: string[];
   downloads: string[];
+  workflow_plan?: AgentPlanSnapshot["workflow_plan"];
+  workflow_blueprint?: Record<string, unknown>;
+  readiness?: WorkflowReadiness;
+  operations?: string[];
+  dynamic_preset?: DynamicPresetMeta;
 };
 
 type BridgeOk<T> = { ok?: boolean; error?: string } & T;
@@ -258,6 +300,49 @@ export async function downloadStudioResources(
     studio_mode: studioMode,
     upscale_method: upscaleMethod ?? null,
   });
+}
+
+export type UserStyleProfile = {
+  enabled: boolean;
+  favorite_models: string[];
+  favorite_styles: string[];
+  aspect_ratios: string[];
+  workflow_modes: string[];
+  generation_count: number;
+};
+
+export type UserStyleProfileExport = {
+  status: string;
+  profile: UserStyleProfile;
+  path: string;
+};
+
+export async function getUserStyleProfile() {
+  const res = await bridgeInvoke<UserStyleProfileExport>(
+    "get_user_style_profile",
+  );
+  return res;
+}
+
+export async function saveUserStyleProfile(
+  patch: Partial<UserStyleProfile> & { enabled?: boolean },
+) {
+  const current = await getUserStyleProfile();
+  const profile = { ...current.profile, ...patch };
+  return bridgeInvoke<{ status: string; profile: UserStyleProfile }>(
+    "save_user_style_profile",
+    { profile },
+  );
+}
+
+export async function clearUserStyleProfile() {
+  return bridgeInvoke<{ status: string; profile: UserStyleProfile }>(
+    "clear_user_style_profile",
+  );
+}
+
+export async function exportUserStyleProfile() {
+  return bridgeInvoke<UserStyleProfileExport>("export_user_style_profile");
 }
 
 export async function writeTempPng(dataUrl: string) {

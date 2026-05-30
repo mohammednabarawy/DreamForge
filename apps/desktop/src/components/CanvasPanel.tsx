@@ -9,6 +9,8 @@ import { PromptBar } from "./PromptBar";
 import type { EngineState } from "../lib/engine";
 import type { GenerationSettings } from "../lib/tauri-api";
 import type { StudioMode } from "../lib/model-selection";
+import { WorkflowPlanPanel } from "./WorkflowPlanPanel";
+import type { AgentPlanSnapshot } from "../lib/studioBridge";
 
 type Mention = { kind: "model" | "style"; label: string; value: string };
 
@@ -36,7 +38,12 @@ type Props = {
   mentions: Mention[];
   generating: boolean;
   generationLog: string;
-  planPreview: string | null;
+  agentPlan: AgentPlanSnapshot | null;
+  planApprovalRequired?: boolean;
+  planRunBusy?: boolean;
+  onApplyAgentPlan?: () => void;
+  onRunApprovedPlan?: () => void;
+  onDismissAgentPlan?: () => void;
   onDryRun: () => void;
   onGenerate: () => void;
   onCancel: () => void;
@@ -74,7 +81,12 @@ export function CanvasPanel({
   mentions,
   generating,
   generationLog,
-  planPreview,
+  agentPlan,
+  planApprovalRequired,
+  planRunBusy,
+  onApplyAgentPlan,
+  onRunApprovedPlan,
+  onDismissAgentPlan,
   onDryRun,
   onGenerate,
   onCancel,
@@ -205,10 +217,20 @@ export function CanvasPanel({
             </div>
           </div>
         )}
-        {planPreview && !generating && (
-          <pre className="absolute right-4 top-4 max-h-[40%] max-w-sm overflow-auto rounded-lg border border-dfui-border bg-dfui-bg/80 p-2 font-mono text-[10px] text-dfui-secondary">
-            {planPreview}
-          </pre>
+        {agentPlan && !generating && (
+          <WorkflowPlanPanel
+            plan={agentPlan}
+            applied={Boolean(agentPlan.applied && Object.keys(agentPlan.applied).length)}
+            approvalRequired={planApprovalRequired}
+            runBusy={planRunBusy}
+            canRunGeneration={workerReady && !generating}
+            runBlockReason={generateBlockReason}
+            onApply={onApplyAgentPlan}
+            onRun={onRunApprovedPlan}
+            onDismiss={onDismissAgentPlan}
+            onDownloadCompanions={onDownloadCompanions}
+            companionDownloadBusy={companionDownloadBusy}
+          />
         )}
       </div>
       {(generating || generationLog) && (

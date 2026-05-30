@@ -6,7 +6,7 @@ import struct
 
 import pytest
 
-from dreamforge_comfy_ws import ComfyProgressTracker, extract_preview_image_bytes
+from dreamforge_comfy_ws import ComfyProgressTracker, ComfyPromptStreamSession, extract_preview_image_bytes
 from dreamforge_comfy_server import parse_comfy_startup_url
 
 
@@ -66,3 +66,24 @@ def test_progress_tracker_weighted_value():
     assert tracker.value > 0.1
     tracker.handle({"type": "progress", "data": {"prompt_id": "other"}}, prompt_id="job-1")
     assert tracker._samples == 5
+
+
+def test_wait_until_done_accepts_history_poll_done():
+    session = ComfyPromptStreamSession("http://127.0.0.1:8188", "client-1", timeout_s=5.0)
+    session.set_prompt_id("prompt-1")
+    session._connected.set()
+
+    def history_poll(prompt_id: str) -> str:
+        assert prompt_id == "prompt-1"
+        return "done"
+
+    session.wait_until_done(history_poll=history_poll)
+
+
+def test_wait_until_done_history_poll_error():
+    session = ComfyPromptStreamSession("http://127.0.0.1:8188", "client-1", timeout_s=5.0)
+    session.set_prompt_id("prompt-1")
+    session._connected.set()
+
+    with pytest.raises(RuntimeError, match="boom"):
+        session.wait_until_done(history_poll=lambda _pid: "error:boom")

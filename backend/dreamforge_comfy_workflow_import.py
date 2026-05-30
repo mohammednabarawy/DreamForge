@@ -360,11 +360,44 @@ def comfy_workflow_mode(
     model: dict,
     model_family: str,
     checkpoint_is_flux_kontext,
+    workflow_mode: str | None = None,
+    edit_type: str | None = None,
 ) -> str:
+    mode_key = str(workflow_mode or "").strip().lower()
+    edit = str(edit_type or "").lower()
+    if mode_key == "hires":
+        return "hires"
+    if mode_key in ("area_composition", "composite"):
+        return "area_composition"
+    if mode_key == "ipadapter":
+        return "ipadapter"
+    if mode_key == "face_detail" or edit == "face_detail":
+        return "face_detail"
+    cn = str(cn_type or "None").lower()
+    controlnet_types = {
+        "depth",
+        "canny",
+        "pose",
+        "openpose",
+        "lineart",
+        "scribble",
+        "sketch",
+        "recolour",
+        "controlnet",
+        "controlnet_structure",
+    }
+    if cn == "outpaint" or edit == "outpaint" or mode_key == "outpaint":
+        return "outpaint"
+    if cn in controlnet_types or mode_key == "controlnet":
+        return "controlnet"
+    if cn == "ipadapter" or mode_key == "reference":
+        return "ipadapter"
+    if cn == "area_composition":
+        return "area_composition"
     if input_filename:
-        if cn_type == "upscale":
+        if cn == "upscale":
             return "upscale"
-        if cn_type == "inpaint":
+        if cn == "inpaint":
             return "inpaint"
         if checkpoint_is_flux_kontext(model, model_family):
             return "kontext"

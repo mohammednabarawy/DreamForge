@@ -54,6 +54,12 @@ const PASSTHROUGH_KEYS: (keyof GenerationSettings)[] = [
   "cn_type",
   "reference_images",
   "comfy_workflow_api",
+  "workflow_mode",
+  "arabic_text",
+  "execute_workflow_plan",
+  "workflow_plan",
+  "detail_target",
+  "detail_prompt",
 ];
 
 function coercePromptText(prompt: unknown): string {

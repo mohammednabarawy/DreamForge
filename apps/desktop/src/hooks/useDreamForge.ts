@@ -81,6 +81,7 @@ import {
   type ModelGalleryItem,
   type ModelDependencyItem,
   type UiDefaults,
+  type RepairAction,
 } from "../lib/tauri-api";
 import {
   cleanupCanvasPreviewUrls,
@@ -104,6 +105,9 @@ import {
 import {
   aggregateLoraKeywords,
   checkStudioResources,
+  clearUserStyleProfile,
+  exportUserStyleProfile,
+  getUserStyleProfile,
   getAppConfig,
   getLoraInfo,
   getStudioSettings,
@@ -111,12 +115,15 @@ import {
   planAgentInstruction,
   saveAppConfig,
   saveStudioSettings,
+  saveUserStyleProfile,
   testAgentProvider,
+  type AgentPlanSnapshot,
   type AgentProviderPreset,
   type AgentProviderTestResult,
   type DreamForgeAppConfig,
   type DreamForgeAppConfigPatch,
   type StudioSettings,
+  type UserStyleProfile,
 } from "../lib/studioBridge";
 import {
   appendExtraReferencePath,
@@ -128,6 +135,22 @@ import {
   resolveReferenceImagePath,
   type ReferenceImageMode,
 } from "../lib/referenceImage";
+import {
+  planBlocksDirectGenerate,
+  resolvePlannedSettings,
+} from "../lib/workflowPlanActions";
+
+function companionItemsFromActions(actions?: RepairAction[]) {
+  return (
+    actions
+      ?.filter((action) => action.action === "download_model_companions")
+      .flatMap((action) =>
+        Array.isArray(action.missing)
+          ? (action.missing as ModelDependencyItem[])
+          : [],
+      ) ?? []
+  );
+}
 
 const ASPECT_PRESETS = [
   "1024x1024",
@@ -159,7 +182,10 @@ export function useDreamForge() {
   const [jobId, setJobId] = useState<string | null>(null);
   const [lastJobId, setLastJobId] = useState<string | null>(null);
   const [generationLog, setGenerationLog] = useState<string>("");
-  const [planPreview, setPlanPreview] = useState<string | null>(null);
+  const [agentPlan, setAgentPlan] = useState<AgentPlanSnapshot | null>(null);
+  const [planRunBusy, setPlanRunBusy] = useState(false);
+  const agentPlanRef = useRef(agentPlan);
+  agentPlanRef.current = agentPlan;
   const [engineState, setEngineState] = useState<EngineState>("booting");
   const [status, setStatus] = useState<string>("Starting GPU engine…");
   const [workerReady, setWorkerReady] = useState(false);
@@ -186,6 +212,10 @@ export function useDreamForge() {
   const [agentProviderTest, setAgentProviderTest] =
     useState<AgentProviderTestResult | null>(null);
   const [agentProviderBusy, setAgentProviderBusy] = useState(false);
+  const [userStyleProfile, setUserStyleProfile] = useState<UserStyleProfile | null>(
+    null,
+  );
+  const [userStyleProfilePath, setUserStyleProfilePath] = useState<string>("");
   const [agentPlannedMode, setAgentPlannedMode] = useState<StudioMode | null>(
     null,
   );
@@ -473,6 +503,57 @@ export function useDreamForge() {
     [settings.performance, lockFamilyDefaults],
   );
 
+  const refreshUserStyleProfile = useCallback(async () => {
+    try {
+      const res = await getUserStyleProfile();
+      setUserStyleProfile(res.profile);
+      setUserStyleProfilePath(res.path ?? "");
+      return res.profile;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const setUserStyleMemoryEnabled = useCallback(async (enabled: boolean) => {
+    try {
+      const res = await saveUserStyleProfile({ enabled });
+      setUserStyleProfile(res.profile);
+      setStatus(enabled ? "Local style memory enabled" : "Local style memory disabled");
+    } catch (e) {
+      setStatus(`Style memory update failed: ${String(e)}`);
+    }
+  }, []);
+
+  const clearUserStyleMemory = useCallback(async () => {
+    try {
+      const res = await clearUserStyleProfile();
+      setUserStyleProfile(res.profile);
+      setStatus("Local style memory cleared");
+    } catch (e) {
+      setStatus(`Clear memory failed: ${String(e)}`);
+    }
+  }, []);
+
+  const exportUserStyleMemory = useCallback(async () => {
+    try {
+      const res = await exportUserStyleProfile();
+      setUserStyleProfile(res.profile);
+      setUserStyleProfilePath(res.path ?? "");
+      const blob = new Blob([JSON.stringify(res.profile, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "dreamforge-user-style-profile.json";
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setStatus(`Exported style memory (${res.path})`);
+    } catch (e) {
+      setStatus(`Export memory failed: ${String(e)}`);
+    }
+  }, []);
+
   const loadStudioCatalog = useCallback(async (force = false) => {
     if (studioCatalogLoadedRef.current && !force) {
       return;
@@ -488,6 +569,7 @@ export function useDreamForge() {
         studio,
         app,
         providers,
+        styleProfile,
       ] = await Promise.all([
         getModelGallery(""),
         getLoraGallery(""),
@@ -497,6 +579,7 @@ export function useDreamForge() {
         getStudioSettings().catch(() => null),
         getAppConfig().catch(() => null),
         listAgentProviders().catch(() => []),
+        getUserStyleProfile().catch(() => null),
       ]);
       const recipes = (useCaseRes.use_cases ?? []) as UseCaseRecipe[];
       useCasesRef.current = recipes;
@@ -535,6 +618,10 @@ export function useDreamForge() {
       }
       if (app) setAppConfig(app);
       setAgentProviders(providers);
+      if (styleProfile?.profile) {
+        setUserStyleProfile(styleProfile.profile);
+        setUserStyleProfilePath(styleProfile.path ?? "");
+      }
       studioCatalogLoadedRef.current = true;
     } catch (e) {
       setStatus(`Studio catalog error: ${String(e)}`);
@@ -739,6 +826,7 @@ export function useDreamForge() {
       if (p.success) {
         setStatus("Generation complete");
         setLastError(null);
+        void refreshUserStyleProfile();
         void notifyDone("DreamForge", "Your image finished rendering.");
         const result = (p as { result?: { images?: Array<{ path: string }> } })
           .result;
@@ -766,10 +854,7 @@ export function useDreamForge() {
           shortErrorLine(p) +
             (tailHint ? ` (log: ${tailHint.slice(0, 80)})` : ""),
         );
-        if (
-          friendly.recoverable &&
-          (friendly.code === "out_of_memory" || friendly.code === "worker_crashed")
-        ) {
+        if (friendly.recoverable && friendly.failureReport?.auto_retry === true) {
           setStatus(`${friendly.title} — restarting GPU engine…`);
           window.setTimeout(() => {
             void runRestartEngineRef.current?.();
@@ -1361,38 +1446,38 @@ export function useDreamForge() {
         })),
       });
       const patch = res.patch ?? {};
+      const planPatch: Partial<GenerationSettings> = { ...patch };
+      if (res.workflow_plan?.length) {
+        planPatch.workflow_plan = res.workflow_plan as GenerationSettings["workflow_plan"];
+        planPatch.execute_workflow_plan = res.workflow_plan.length > 1;
+      }
       if (res.mode && res.mode !== "agent") {
         setAgentPlannedMode(res.mode);
       }
-      if (applyPlan && Object.keys(patch).length > 0) {
+      if (applyPlan && Object.keys(planPatch).length > 0) {
         userPickedModelRef.current = false;
-        patchSettings(patch);
+        patchSettings(planPatch);
         if (res.mode && res.mode !== "agent") {
           await saveAppConfigPatch({ ui: { studio_mode: res.mode } });
           setAgentPlannedMode(null);
         }
       }
-      setPlanPreview(
-        JSON.stringify(
-          {
-            source: res.source,
-            provider: res.provider_model
-              ? `${res.provider ?? "provider"} / ${res.provider_model}`
-              : res.source,
-            message: res.message,
-            mode: res.mode,
-            applied: applyPlan ? patch : {},
-            proposed: patch,
-            actions: res.actions,
-            downloads: res.downloads,
-            next: applyPlan
-              ? "Workflow settings were applied and the routed mode was opened. Review dependency prompts, then run."
-              : "Review this plan, then press Apply plan to update DreamForge settings.",
-          },
-          null,
-          2,
-        ),
-      );
+      setAgentPlan({
+        source: res.provider_model
+          ? `${res.provider ?? "provider"} / ${res.provider_model}`
+          : res.source,
+        message: res.message,
+        mode: res.mode,
+        applied: applyPlan ? planPatch : undefined,
+        proposed: planPatch,
+        actions: res.actions,
+        downloads: res.downloads,
+        operations: res.operations,
+        dynamic_preset: res.dynamic_preset,
+        workflow_plan: res.workflow_plan,
+        workflow_blueprint: res.workflow_blueprint,
+        readiness: res.readiness,
+      });
       setStatus(
         applyPlan
           ? res.mode && res.mode !== "agent"
@@ -1431,7 +1516,15 @@ export function useDreamForge() {
           : "";
       const extra =
         prepared.hints.length > 0 ? `${prepared.hints[0]} ` : "";
-      setPlanPreview(`${hint}${extra}\n${JSON.stringify(res.plan ?? res, null, 2)}`);
+      setAgentPlan({
+        source: "dry-run",
+        message: `${hint}${extra}`.trim() || "Dry-run plan",
+        proposed: prepared.settings,
+        workflow_blueprint:
+          typeof res.plan === "object" && res.plan
+            ? (res.plan as Record<string, unknown>)
+            : { raw: res.plan ?? res },
+      });
       setStatus(
         prepared.applied.length
           ? `Dry-run ready (${prepared.applied.join(", ")})`
@@ -1442,9 +1535,222 @@ export function useDreamForge() {
     }
   }, [appConfig?.ui.studio_mode, runAgentInstruction, settings, selected, modelGalleryAll, patchSettings]);
 
+  const startGeneration = useCallback(
+    async (
+      preparedSettings: GenerationSettings,
+      meta?: { mapped?: string; hint?: string; studioMode?: StudioMode },
+    ) => {
+      const prompt = (preparedSettings.prompt ?? "").trim();
+      if (!prompt) {
+        setStatus("Enter a prompt before generating");
+        return false;
+      }
+      if (!preparedSettings.model) {
+        setStatus("Select a base model");
+        return false;
+      }
+      const studioMode =
+        meta?.studioMode ??
+        ((appConfig?.ui.studio_mode ?? "generate") as StudioMode);
+      const readiness = computeGenerateReadiness({
+        workerReady,
+        generating: generatingRef.current,
+        engineState,
+        engineLabel: engineLabel(engineState, bootMessage),
+        prompt,
+        model: preparedSettings.model ?? "",
+        modelDependenciesReady: modelDependencies.ready,
+        missingCompanionCount: modelDependencies.missing.length,
+        studioMissingAssetCount: studioResources.missing.length,
+        settings: preparedSettings,
+        modelGallery: modelGalleryAll,
+        studioMode,
+      });
+      if (!readiness.ok) {
+        setStatus(readiness.reason);
+        if (readiness.missingCompanions) {
+          setLastError(
+            describeError({
+              code: "missing_model_dependencies",
+              message: readiness.reason,
+            }),
+          );
+        }
+        return false;
+      }
+      if (!workerReady) {
+        setStatus(engineLabel(engineState, bootMessage));
+        return false;
+      }
+      if (generatingRef.current) {
+        setStatus("Generation already in progress");
+        return false;
+      }
+
+      const sid = activeSessionIdRef.current || DEFAULT_SESSION_ID;
+      const output = preparedSettings.upscale_image
+        ? outputPathForSession(sid, "upscale")
+        : preparedSettings.input_image
+          ? outputPathForSession(
+              sid,
+              preparedSettings.edit_type === "inpaint" ? "inpaint" : "edit",
+            )
+          : outputPathForSession(sid, "gen");
+
+      let params: GenerationSettings = {
+        ...preparedSettings,
+        prompt,
+        output,
+        validate_output: true,
+        use_comfy_server: true,
+      };
+      if (params.lora?.length && !params.lora_keywords?.trim()) {
+        try {
+          const kw = await aggregateLoraKeywords(params.lora);
+          if (kw) params = { ...params, lora_keywords: kw };
+        } catch {
+          /* optional */
+        }
+      }
+
+      setGenerating(true);
+      generatingRef.current = true;
+      setEngineState("generating");
+      const mapped = meta?.mapped ? ` · ${meta.mapped}` : "";
+      const hint = meta?.hint ? ` · ${meta.hint}` : "";
+      setStatus(
+        `Generating with ${modelBasename(params.model ?? "model")}…${mapped}${hint}`,
+      );
+      setAgentPlan(null);
+      setGenerationLog("");
+      lastPreviewSigRef.current = "";
+      setLiveProgress({ percentage: 0, title: "Starting generation…" });
+      patchSettings({ output });
+
+      try {
+        const resolvedParams = await resolveGenerationImagePaths(params);
+        const res = await invokeGeneration(resolvedParams);
+        setJobId(res.job_id);
+        setLastJobId(res.job_id);
+        if (res.job_id) startLogPoll(res.job_id);
+        return true;
+      } catch (e) {
+        setGenerating(false);
+        generatingRef.current = false;
+        const msg = String(e);
+        if (msg.includes("generation_in_progress")) {
+          setStatus("Generation already in progress — wait or cancel first");
+        } else {
+          setStatus(`Start failed: ${msg}`);
+        }
+        return false;
+      }
+    },
+    [
+      appConfig?.ui.studio_mode,
+      patchSettings,
+      startLogPoll,
+      workerReady,
+      engineState,
+      bootMessage,
+      modelDependencies,
+      studioResources.missing.length,
+      modelGalleryAll,
+    ],
+  );
+
+  const dismissAgentPlan = useCallback(() => {
+    setAgentPlan(null);
+    setAgentPlannedMode(null);
+    setStatus("Plan dismissed");
+  }, []);
+
+  const applyAgentPlan = useCallback(async () => {
+    const plan = agentPlanRef.current;
+    if (!plan?.proposed || !Object.keys(plan.proposed).length) {
+      setStatus("No plan settings to apply");
+      return;
+    }
+    userPickedModelRef.current = false;
+    patchSettings(plan.proposed);
+    if (plan.mode && plan.mode !== "agent") {
+      await saveAppConfigPatch({ ui: { studio_mode: plan.mode } });
+      setAgentPlannedMode(null);
+    }
+    setAgentPlan({ ...plan, applied: plan.proposed });
+    setStatus(
+      plan.mode && plan.mode !== "agent"
+        ? `Plan applied — switched to ${plan.mode} mode`
+        : "Plan applied — click Run plan to start generation",
+    );
+  }, [patchSettings, saveAppConfigPatch]);
+
+  const runApprovedPlan = useCallback(async () => {
+    const plan = agentPlanRef.current;
+    if (!plan) {
+      setStatus("No plan to run");
+      return;
+    }
+    if (plan.readiness?.ready === false) {
+      setStatus("Plan is not ready — resolve missing inputs or models first");
+      return;
+    }
+    setPlanRunBusy(true);
+    try {
+      const merged = resolvePlannedSettings(plan, settingsRef.current);
+      userPickedModelRef.current = false;
+      patchSettings(merged);
+      const targetMode =
+        plan.mode && plan.mode !== "agent"
+          ? plan.mode
+          : ((appConfig?.ui.studio_mode ?? "generate") as StudioMode);
+      if (plan.mode && plan.mode !== "agent" && plan.mode !== appConfig?.ui.studio_mode) {
+        await saveAppConfigPatch({ ui: { studio_mode: plan.mode } });
+        setAgentPlannedMode(null);
+      }
+      setAgentPlan({ ...plan, applied: merged });
+
+      const prepared = prepareGenerationFromAgentPrompt(merged, {
+        selectedImagePath: selected?.images?.[0],
+        modelGallery: modelGalleryAll,
+      });
+      if (prepared.applied.length || prepared.hints.length) {
+        patchSettings(prepared.settings);
+      }
+      const mapped =
+        prepared.applied.length > 0
+          ? `mapped ${prepared.applied.join(", ")}`
+          : undefined;
+      const hint = prepared.hints.length > 0 ? prepared.hints[0] : undefined;
+      await startGeneration(prepared.settings, {
+        mapped,
+        hint,
+        studioMode: targetMode,
+      });
+    } finally {
+      setPlanRunBusy(false);
+    }
+  }, [
+    appConfig?.ui.studio_mode,
+    modelGalleryAll,
+    patchSettings,
+    saveAppConfigPatch,
+    selected,
+    startGeneration,
+  ]);
+
   const runGenerate = useCallback(async () => {
     if ((appConfig?.ui.studio_mode ?? "generate") === "agent") {
       await runAgentInstruction(true);
+      return;
+    }
+    if (
+      planBlocksDirectGenerate(
+        agentPlanRef.current,
+        appConfig?.agent.approval_required,
+      )
+    ) {
+      setStatus("Review the plan card — use Run plan to start generation");
       return;
     }
     const prepared = prepareGenerationFromAgentPrompt(settingsRef.current, {
@@ -1454,122 +1760,20 @@ export function useDreamForge() {
     if (prepared.applied.length || prepared.hints.length) {
       patchSettings(prepared.settings);
     }
-
-    const prompt = (prepared.settings.prompt ?? "").trim();
-    if (!prompt) {
-      setStatus("Enter a prompt before generating");
-      return;
-    }
-    if (!prepared.settings.model) {
-      setStatus("Select a base model");
-      return;
-    }
-    const readiness = computeGenerateReadiness({
-      workerReady,
-      generating: generatingRef.current,
-      engineState,
-      engineLabel: engineLabel(engineState, bootMessage),
-      prompt,
-      model: prepared.settings.model ?? "",
-      modelDependenciesReady: modelDependencies.ready,
-      missingCompanionCount: modelDependencies.missing.length,
-      studioMissingAssetCount: studioResources.missing.length,
-      settings: prepared.settings,
-      modelGallery: modelGalleryAll,
-      studioMode: (appConfig?.ui.studio_mode ?? "generate") as StudioMode,
-    });
-    if (!readiness.ok) {
-      setStatus(readiness.reason);
-      if (readiness.missingCompanions) {
-        setLastError(
-          describeError({
-            code: "missing_model_dependencies",
-            message: readiness.reason,
-          }),
-        );
-      }
-      return;
-    }
-    if (!workerReady) {
-      setStatus(engineLabel(engineState, bootMessage));
-      return;
-    }
-    if (generatingRef.current) {
-      setStatus("Generation already in progress");
-      return;
-    }
-
-    const sid = activeSessionIdRef.current || DEFAULT_SESSION_ID;
-    const output = prepared.settings.upscale_image
-      ? outputPathForSession(sid, "upscale")
-      : prepared.settings.input_image
-        ? outputPathForSession(
-            sid,
-            prepared.settings.edit_type === "inpaint" ? "inpaint" : "edit",
-          )
-        : outputPathForSession(sid, "gen");
-
-    let params: GenerationSettings = {
-      ...prepared.settings,
-      prompt,
-      output,
-      validate_output: true,
-    };
-    params = { ...params, use_comfy_server: true };
-    if (params.lora?.length && !params.lora_keywords?.trim()) {
-      try {
-        const kw = await aggregateLoraKeywords(params.lora);
-        if (kw) params = { ...params, lora_keywords: kw };
-      } catch {
-        /* optional */
-      }
-    }
-
-    setGenerating(true);
-    generatingRef.current = true;
-    setEngineState("generating");
     const mapped =
       prepared.applied.length > 0
-        ? ` · mapped ${prepared.applied.join(", ")}`
-        : prepared.hints.length > 0
-          ? ` · ${prepared.hints[0]}`
-          : "";
-    setStatus(`Generating with ${modelBasename(params.model ?? "model")}…${mapped}`);
-    setPlanPreview(null);
-    setGenerationLog("");
-    lastPreviewSigRef.current = "";
-    setLiveProgress({ percentage: 0, title: "Starting generation…" });
-    patchSettings({ output });
-
-    try {
-      const resolvedParams = await resolveGenerationImagePaths(params);
-      const res = await invokeGeneration(resolvedParams);
-      setJobId(res.job_id);
-      setLastJobId(res.job_id);
-      if (res.job_id) startLogPoll(res.job_id);
-    } catch (e) {
-      setGenerating(false);
-      generatingRef.current = false;
-      const msg = String(e);
-      if (msg.includes("generation_in_progress")) {
-        setStatus("Generation already in progress — wait or cancel first");
-      } else {
-        setStatus(`Start failed: ${msg}`);
-      }
-    }
+        ? `mapped ${prepared.applied.join(", ")}`
+        : undefined;
+    const hint = prepared.hints.length > 0 ? prepared.hints[0] : undefined;
+    await startGeneration(prepared.settings, { mapped, hint });
   }, [
-    settings,
     appConfig?.ui.studio_mode,
+    appConfig?.agent.approval_required,
     runAgentInstruction,
     selected,
     modelGalleryAll,
     patchSettings,
-    startLogPoll,
-    workerReady,
-    engineState,
-    bootMessage,
-    modelDependencies,
-    studioResources.missing.length,
+    startGeneration,
   ]);
 
   const runRestartEngine = useCallback(async () => {
@@ -1662,6 +1866,19 @@ export function useDreamForge() {
       appConfig?.ui.studio_mode,
     ],
   );
+  const planApprovalPending =
+    planBlocksDirectGenerate(agentPlan, appConfig?.agent.approval_required) &&
+    (appConfig?.ui.studio_mode ?? "generate") !== "agent";
+  const effectiveGenerateReadiness = useMemo(() => {
+    if (planApprovalPending) {
+      return {
+        ok: false as const,
+        reason: "Review the plan card — use Run plan to start generation",
+        missingCompanions: false as const,
+      };
+    }
+    return generateReadiness;
+  }, [planApprovalPending, generateReadiness]);
   const missingDownloadCount =
     modelDependencies.missing.length + studioResources.missing.length;
 
@@ -1857,19 +2074,38 @@ export function useDreamForge() {
   );
 
   const downloadMissingCompanions = useCallback(async () => {
-    const model = (settingsRef.current.model ?? "").trim();
-    if (!model) {
+    const plan = agentPlanRef.current;
+    const plannedModel =
+      typeof plan?.proposed?.model === "string" ? plan.proposed.model : "";
+    const fromErrorReport = companionItemsFromActions(
+      lastError?.failureReport?.repair_actions,
+    );
+    const fromErrorDetails = companionItemsFromActions(
+      (lastError?.details?.recommended_actions as RepairAction[] | undefined) ?? [],
+    );
+    const model = ((settingsRef.current.model ?? "") || plannedModel).trim();
+    if (!model && fromErrorReport.length === 0 && fromErrorDetails.length === 0) {
       setStatus("Select a model first");
       return;
     }
-    setStatus("Opening companion download…");
+    setStatus("Preparing companion download approval…");
     try {
-      const res = await checkModelDependencies(model);
+      const res = model
+        ? await checkModelDependencies(model)
+        : { missing: [] as ModelDependencyItem[], ready: true };
       const fromModel = res.missing ?? [];
       const fromStudio = studioResources.missing;
+      const fromPlan =
+        companionItemsFromActions(plan?.readiness?.recommended_actions as RepairAction[] | undefined);
       const merged: ModelDependencyItem[] = [];
       const keys = new Set<string>();
-      for (const item of [...fromModel, ...fromStudio]) {
+      for (const item of [
+        ...fromModel,
+        ...fromStudio,
+        ...fromPlan,
+        ...fromErrorReport,
+        ...fromErrorDetails,
+      ]) {
         const k = `${item.id ?? ""}|${item.url ?? ""}|${item.filename ?? ""}|${item.relative ?? ""}`;
         if (keys.has(k)) continue;
         keys.add(k);
@@ -1879,11 +2115,16 @@ export function useDreamForge() {
         missing: fromModel,
         ready: res.ready ?? fromModel.length === 0,
       });
-      companionDownload.start(model, merged);
+      if (merged.length === 0) {
+        setStatus("All companion files are already present");
+        return;
+      }
+      companionDownload.start(model || "workflow-assets", merged);
+      setStatus(`Review download approval for ${merged.length} companion file(s)`);
     } catch (e) {
       setStatus(`Could not list companions: ${String(e)}`);
     }
-  }, [companionDownload, studioResources.missing]);
+  }, [companionDownload, lastError, studioResources.missing]);
 
   useEffect(() => {
     const model = settings.model?.trim();
@@ -1958,7 +2199,11 @@ export function useDreamForge() {
     jobId,
     logJobId: jobId ?? lastJobId,
     generationLog,
-    planPreview,
+    agentPlan,
+    planRunBusy,
+    applyAgentPlan,
+    runApprovedPlan,
+    dismissAgentPlan,
     status,
     engineState,
     workerReady,
@@ -1984,9 +2229,9 @@ export function useDreamForge() {
     downloadMissingCompanions,
     companionDownload,
     lowerVramProfile,
-    canGenerate: generateReadiness.ok,
-    generateBlockReason: generateReadiness.reason,
-    needsCompanionDownload: generateReadiness.missingCompanions,
+    canGenerate: effectiveGenerateReadiness.ok,
+    generateBlockReason: effectiveGenerateReadiness.reason,
+    needsCompanionDownload: effectiveGenerateReadiness.missingCompanions,
     uiDefaults,
     modelGallery,
     loraGallery,
@@ -1998,6 +2243,12 @@ export function useDreamForge() {
     setLockFamilyDefaults,
     profileHints,
     galleryLoading,
+    userStyleProfile,
+    userStyleProfilePath,
+    setUserStyleMemoryEnabled,
+    clearUserStyleMemory,
+    exportUserStyleMemory,
+    refreshUserStyleProfile,
     selectModelGallery,
     toggleLoraGallery,
     aspectPresets: uiDefaults?.aspect_ratios?.map((a) =>

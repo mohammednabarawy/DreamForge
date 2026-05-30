@@ -28,6 +28,7 @@ import {
   type DreamForgeAppConfig,
   type DreamForgeAppConfigPatch,
   type StudioSettings,
+  type UserStyleProfile,
 } from "../lib/studioBridge";
 import { DEFAULT_MAX_LORA_STACK } from "../lib/loraStack";
 
@@ -53,6 +54,7 @@ type Props = {
   uiDefaults: UiDefaults | null;
   onRefreshInventory: () => void;
   activeModelLabel: string;
+  studioMode: string;
   onUseCaseChange: (useCase: string) => void;
   modelDependencies?: { missing: Array<{ id?: string; relative?: string; note?: string }>; ready: boolean };
   companionDownloadBusy?: boolean;
@@ -67,6 +69,11 @@ type Props = {
   onSaveAppConfig?: (patch: DreamForgeAppConfigPatch) => void | Promise<void>;
   onTestAgentProvider?: (patch?: DreamForgeAppConfigPatch) => void | Promise<void>;
   imageNumberMax?: number;
+  userStyleProfile?: UserStyleProfile | null;
+  userStyleProfilePath?: string;
+  onUserStyleMemoryEnabledChange?: (enabled: boolean) => void | Promise<void>;
+  onClearUserStyleMemory?: () => void | Promise<void>;
+  onExportUserStyleMemory?: () => void | Promise<void>;
 };
 
 const CUSTOM_PERF = "Custom...";
@@ -91,6 +98,7 @@ export function InspectorPanel({
   uiDefaults,
   onRefreshInventory,
   activeModelLabel,
+  studioMode,
   onUseCaseChange,
   modelDependencies,
   companionDownloadBusy,
@@ -105,6 +113,11 @@ export function InspectorPanel({
   onSaveAppConfig,
   onTestAgentProvider,
   imageNumberMax = 8,
+  userStyleProfile,
+  userStyleProfilePath,
+  onUserStyleMemoryEnabledChange,
+  onClearUserStyleMemory,
+  onExportUserStyleMemory,
 }: Props) {
   const [tab, setTab] = useState<Tab>("models");
   const [styleFilter, setStyleFilter] = useState("");
@@ -127,6 +140,8 @@ export function InspectorPanel({
     (p) => p.id === appConfig?.agent.provider,
   );
   const requiresAgentKey = Boolean(activeProvider?.requires_api_key);
+
+  const isUpscale = studioMode === "upscale";
 
   const modelTiles: GalleryTile[] = useMemo(
     () =>
@@ -305,23 +320,26 @@ export function InspectorPanel({
               </ul>
             )}
 
-            <label className="block">
-              <span className="text-xs text-dfui-muted">Use case recipe</span>
-              <select
-                value={settings.use_case ?? ""}
-                onChange={(e) => onUseCaseChange(e.target.value)}
-                className="df-select mt-1 w-full px-2.5 py-2 text-xs"
-              >
-                <option value="">—</option>
-                <option value="product_ad">product_ad</option>
-                <option value="cinematic_scene">cinematic_scene</option>
-                <option value="social_post">social_post</option>
-                <option value="arabic_poster">arabic_poster</option>
-                <option value="fast_draft">fast_draft</option>
-                <option value="image_edit">image_edit</option>
-              </select>
-            </label>
+            {!isUpscale && (
+              <label className="block">
+                <span className="text-xs text-dfui-muted">Use case recipe</span>
+                <select
+                  value={settings.use_case ?? ""}
+                  onChange={(e) => onUseCaseChange(e.target.value)}
+                  className="df-select mt-1 w-full px-2.5 py-2 text-xs"
+                >
+                  <option value="">—</option>
+                  <option value="product_ad">product_ad</option>
+                  <option value="cinematic_scene">cinematic_scene</option>
+                  <option value="social_post">social_post</option>
+                  <option value="arabic_poster">arabic_poster</option>
+                  <option value="fast_draft">fast_draft</option>
+                  <option value="image_edit">image_edit</option>
+                </select>
+              </label>
+            )}
 
+            {!isUpscale && (
             <div>
               <span className="text-xs text-dfui-muted">LoRAs</span>
               <input
@@ -365,6 +383,7 @@ export function InspectorPanel({
                 </button>
               )}
             </div>
+            )}
           </div>
         )}
 
@@ -380,6 +399,63 @@ export function InspectorPanel({
 
         {tab === "settings" && (
           <div className="space-y-3">
+            {userStyleProfile && onUserStyleMemoryEnabledChange && (
+              <div className="space-y-2 rounded-lg border border-dfui-border/50 bg-dfui-bg/30 p-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-[10px] font-medium uppercase tracking-wide text-dfui-muted">
+                      Local style memory
+                    </p>
+                    <p className="text-[10px] text-dfui-tertiary">
+                      Opt-in preferences stored on this machine only
+                    </p>
+                  </div>
+                  <label className="inline-flex items-center gap-1.5 text-[10px] text-dfui-secondary">
+                    <input
+                      type="checkbox"
+                      checked={userStyleProfile.enabled}
+                      onChange={(e) =>
+                        void onUserStyleMemoryEnabledChange(e.target.checked)
+                      }
+                      className="accent-dfui-accent"
+                    />
+                    Enabled
+                  </label>
+                </div>
+                <p className="text-[10px] text-dfui-tertiary">
+                  {userStyleProfile.generation_count} remembered job
+                  {userStyleProfile.generation_count === 1 ? "" : "s"}
+                  {userStyleProfile.favorite_models[0]
+                    ? ` · top model: ${userStyleProfile.favorite_models[0]}`
+                    : ""}
+                </p>
+                {userStyleProfilePath && (
+                  <p className="truncate font-mono text-[9px] text-dfui-muted">
+                    {userStyleProfilePath}
+                  </p>
+                )}
+                <div className="flex flex-wrap gap-1.5">
+                  {onExportUserStyleMemory && (
+                    <button
+                      type="button"
+                      onClick={() => void onExportUserStyleMemory()}
+                      className="rounded-md border border-dfui-border/60 px-2 py-1 text-[10px] text-dfui-secondary hover:border-dfui-accent/40"
+                    >
+                      Export JSON
+                    </button>
+                  )}
+                  {onClearUserStyleMemory && (
+                    <button
+                      type="button"
+                      onClick={() => void onClearUserStyleMemory()}
+                      className="rounded-md border border-amber-400/30 px-2 py-1 text-[10px] text-amber-200 hover:border-amber-300/50"
+                    >
+                      Clear memory
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
             {appConfig && onSaveAppConfig && (
               <div className="space-y-2 rounded-lg border border-dfui-accent/25 bg-dfui-accent/5 p-2.5">
                 <div className="flex items-center justify-between gap-2">
@@ -605,35 +681,56 @@ export function InspectorPanel({
                 <option value="5gb">5 GB</option>
               </select>
             </label>
-            <label className="block">
-              <span className="text-xs text-dfui-muted">Aspect ratio</span>
-              <select
-                value={settings.aspect_ratio ?? "1024x1024"}
-                onChange={(e) => onChange({ aspect_ratio: e.target.value })}
-                className="df-select mt-1 w-full px-2.5 py-2 text-xs"
-              >
-                {aspectPresets.map((a) => (
-                  <option key={a} value={a}>
-                    {a}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block">
-              <span className="text-xs text-dfui-muted">
-                Image count — {settings.image_number ?? 1}
-              </span>
-              <input
-                type="range"
-                min={1}
-                max={imageNumberMax}
-                value={settings.image_number ?? 1}
-                onChange={(e) =>
-                  onChange({ image_number: Number(e.target.value) })
-                }
-                className="mt-1 w-full accent-dfui-accent"
-              />
-            </label>
+            {isUpscale && (
+              <label className="block">
+                <span className="text-xs text-dfui-muted">Upscale method</span>
+                <select
+                  value={settings.upscale_method ?? "fast_2x"}
+                  onChange={(e) => onChange({ upscale_method: e.target.value })}
+                  className="df-select mt-1 w-full px-2.5 py-2 text-xs"
+                >
+                  <option value="fast_2x">Fast 2× (OmniSR)</option>
+                  <option value="fast_3x">Fast 3× (OmniSR)</option>
+                  <option value="fast_4x">Fast 4× (OmniSR)</option>
+                  <option value="quality">High quality 4× (HAT)</option>
+                  <option value="sharp">Sharper 4×</option>
+                  <option value="default">Quality 4× (NMKD)</option>
+                </select>
+              </label>
+            )}
+            {!isUpscale && (
+              <label className="block">
+                <span className="text-xs text-dfui-muted">Aspect ratio</span>
+                <select
+                  value={settings.aspect_ratio ?? "1024x1024"}
+                  onChange={(e) => onChange({ aspect_ratio: e.target.value })}
+                  className="df-select mt-1 w-full px-2.5 py-2 text-xs"
+                >
+                  {aspectPresets.map((a) => (
+                    <option key={a} value={a}>
+                      {a}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {!isUpscale && (
+              <label className="block">
+                <span className="text-xs text-dfui-muted">
+                  Image count — {settings.image_number ?? 1}
+                </span>
+                <input
+                  type="range"
+                  min={1}
+                  max={imageNumberMax}
+                  value={settings.image_number ?? 1}
+                  onChange={(e) =>
+                    onChange({ image_number: Number(e.target.value) })
+                  }
+                  className="mt-1 w-full accent-dfui-accent"
+                />
+              </label>
+            )}
             <label className="flex items-center gap-2 text-[11px] text-dfui-muted">
               <input
                 type="checkbox"

@@ -157,6 +157,22 @@ def test_agent_plan_falls_back_to_local_edit_route(tmp_path: Path, monkeypatch):
     assert "fake Arabic" in result["patch"]["negative_prompt"]
 
 
+def test_agent_plan_includes_dynamic_preset_for_product_intent(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv(app_config.CONFIG_ENV, str(tmp_path / "app-config.json"))
+    result = app_config.plan_agent_instruction(
+        {
+            "instruction": "Professional product advertisement photo for a luxury watch",
+            "settings": {"prompt": "watch hero"},
+            "model_gallery": [],
+        }
+    )
+    assert result["ok"] is True
+    preset = result.get("dynamic_preset")
+    assert isinstance(preset, dict)
+    assert preset.get("applied", {}).get("use_case") == "product_ad"
+    assert result["patch"].get("use_case") == "product_ad"
+
+
 def test_provider_plan_uses_schema_then_text_fallback(tmp_path: Path, monkeypatch):
     monkeypatch.setenv(app_config.CONFIG_ENV, str(tmp_path / "app-config.json"))
     app_config.save_app_config(

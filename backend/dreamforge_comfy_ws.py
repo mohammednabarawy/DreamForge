@@ -21,6 +21,7 @@ from _paths import PROJECT_ROOT
 from dreamforge_progress import GEN_SAMPLING, generation_label, generation_phase_from_preview
 
 ProgressCallback = Callable[[dict[str, Any]], None]
+HistoryPollFn = Callable[[str], str]
 
 # ComfyUI protocol.BinaryEventTypes (see repositories/ComfyUI/protocol.py)
 _PREVIEW_IMAGE = 1
@@ -267,13 +268,21 @@ class ComfyPromptStreamSession:
         self._prompt_id = str(prompt_id)
         self.config.prompt_id = self._prompt_id
 
-    def wait_until_done(self) -> None:
+    def wait_until_done(self, *, history_poll: HistoryPollFn | None = None) -> None:
         deadline = time.time() + float(self.config.timeout_s)
+        last_poll = 0.0
         while time.time() < deadline:
             if self._error is not None:
                 raise RuntimeError(str(self._error)) from self._error
             if self._done.is_set():
                 return
+            if history_poll and self._prompt_id and time.time() - last_poll >= 2.0:
+                last_poll = time.time()
+                state = history_poll(self._prompt_id)
+                if state == "done":
+                    return
+                if state.startswith("error:"):
+                    raise RuntimeError(state[6:])
             time.sleep(0.05)
         raise TimeoutError(f"Timed out waiting for Comfy prompt {self._prompt_id}")
 
@@ -345,6 +354,10 @@ class ComfyPromptStreamSession:
                     if self._prompt_id and pid not in (None, self._prompt_id):
                         continue
 
+                    if msg_type == "execution_success" and self._prompt_id:
+                        self._done.set()
+                        break
+
                     if msg_type == "progress_state" and self._prompt_id:
                         self._tracker.handle_progress_state(msg, prompt_id=self._prompt_id)
                         self._emit_progress()
@@ -352,11 +365,7 @@ class ComfyPromptStreamSession:
                         self._tracker.handle(msg, prompt_id=self._prompt_id)
                         self._emit_progress()
 
-                    if (
-                        msg_type == "executing"
-                        and data.get("node") is None
-                        and pid == self._prompt_id
-                    ):
+                    if msg_type == "executing" and data.get("node") is None:
                         self._done.set()
                         break
         except Exception as exc:

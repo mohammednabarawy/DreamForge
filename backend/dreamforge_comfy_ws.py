@@ -91,18 +91,40 @@ class ComfyProgressTracker:
         return max(legacy, self._state_ratio)
 
 
-def live_preview_path() -> Path:
-    return PROJECT_ROOT / "outputs" / "preview.jpg"
+def _sanitize_job_id(job_id: str) -> str:
+    cleaned = "".join(c if c.isalnum() or c in "-_" else "_" for c in str(job_id or "").strip())
+    return cleaned[:80] or "live"
 
 
-def write_live_preview(image_bytes: bytes, *, image_format: int | None = None) -> Path:
-    """Write preview.jpg for the desktop shell (atomic replace)."""
+def count_comfy_prompt_nodes(prompt: dict[str, Any]) -> int:
+    """Estimate graph size for progress weighting (Krita workflow.node_count)."""
+    if not isinstance(prompt, dict):
+        return 1
+    return max(len(prompt), 1)
+
+
+def live_preview_path(job_id: str = "") -> Path:
+    base = PROJECT_ROOT / "outputs"
+    if str(job_id or "").strip():
+        return base / f"preview-{_sanitize_job_id(job_id)}.jpg"
+    return base / "preview.jpg"
+
+
+def write_live_preview(
+    image_bytes: bytes,
+    *,
+    image_format: int | None = None,
+    job_id: str = "",
+) -> Path:
+    """Write live preview JPEG for the desktop shell (atomic replace)."""
     from PIL import Image
 
-    path = live_preview_path()
+    path = live_preview_path(job_id)
     path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path = live_preview_path()
     # Tauri also checks backend/outputs/preview.jpg when agent_root is backend/.
-    backend_mirror = path.parent.parent / "backend" / "outputs" / "preview.jpg"
+    backend_mirror = path.parent.parent / "backend" / "outputs" / path.name
+    backend_legacy = path.parent.parent / "backend" / "outputs" / legacy_path.name
     if image_format == 2 or image_bytes[:8] == b"\x89PNG\r\n\x1a\n":
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         buf = io.BytesIO()
@@ -117,15 +139,23 @@ def write_live_preview(image_bytes: bytes, *, image_format: int | None = None) -
         except Exception:
             pass
 
-    tmp = path.with_suffix(".jpg.tmp")
-    tmp.write_bytes(image_bytes)
-    tmp.replace(path)
+    def _atomic_write(target: Path) -> None:
+        tmp = target.with_suffix(f"{target.suffix}.tmp")
+        tmp.write_bytes(image_bytes)
+        tmp.replace(target)
+
+    _atomic_write(path)
+    if job_id:
+        _atomic_write(legacy_path)
     resolved = path.resolve()
-    try:
-        backend_mirror.parent.mkdir(parents=True, exist_ok=True)
-        backend_mirror.write_bytes(image_bytes)
-    except OSError:
-        pass
+    for mirror in (backend_mirror, backend_legacy if job_id else None):
+        if mirror is None:
+            continue
+        try:
+            mirror.parent.mkdir(parents=True, exist_ok=True)
+            mirror.write_bytes(image_bytes)
+        except OSError:
+            pass
     return resolved
 
 
@@ -263,6 +293,8 @@ class ComfyPromptStreamSession:
         self._thread.start()
         if not self._connected.wait(timeout=15.0):
             raise TimeoutError("Timed out connecting to ComfyUI WebSocket for live preview")
+        if self._error is not None:
+            raise RuntimeError(str(self._error)) from self._error
 
     def set_prompt_id(self, prompt_id: str) -> None:
         self._prompt_id = str(prompt_id)
@@ -300,7 +332,11 @@ class ComfyPromptStreamSession:
     def _emit_preview(self, image_bytes: bytes, fmt: int) -> None:
         if not self.on_event:
             return
-        path = write_live_preview(image_bytes, image_format=fmt)
+        path = write_live_preview(
+            image_bytes,
+            image_format=fmt,
+            job_id=self.config.job_id,
+        )
         pct = int(self._tracker.value * 100)
         self.on_event(
             preview_stream_payload(
@@ -344,6 +380,12 @@ class ComfyPromptStreamSession:
                     msg_type = msg.get("type")
                     data = msg.get("data") or {}
                     pid = data.get("prompt_id")
+
+                    if msg_type == "execution_start" and self._prompt_id and pid == self._prompt_id:
+                        self._tracker = ComfyProgressTracker(
+                            sample_count=self.config.sample_count,
+                            node_count=self.config.node_count,
+                        )
 
                     if msg_type == "execution_error" and pid == self._prompt_id:
                         err = data.get("exception_message") or "ComfyUI execution_error"

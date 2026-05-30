@@ -87,3 +87,41 @@ def test_wait_until_done_history_poll_error():
 
     with pytest.raises(RuntimeError, match="boom"):
         session.wait_until_done(history_poll=lambda _pid: "error:boom")
+
+
+def test_count_comfy_prompt_nodes():
+    from dreamforge_comfy_ws import count_comfy_prompt_nodes
+
+    assert count_comfy_prompt_nodes({}) == 1
+    assert count_comfy_prompt_nodes({"1": {}, "2": {}, "3": {}}) == 3
+
+
+def test_live_preview_path_is_job_scoped():
+    from dreamforge_comfy_ws import live_preview_path
+
+    assert live_preview_path().name == "preview.jpg"
+    assert live_preview_path("job-123").name == "preview-job-123.jpg"
+
+
+def test_write_live_preview_writes_job_and_legacy(tmp_path, monkeypatch):
+    from dreamforge_comfy_ws import write_live_preview
+
+    monkeypatch.setattr("dreamforge_comfy_ws.PROJECT_ROOT", tmp_path)
+    jpeg = b"\xff\xd8\xff" + b"x" * 64
+    path = write_live_preview(jpeg, job_id="abc123")
+    assert path.name == "preview-abc123.jpg"
+    assert path.is_file()
+    assert (tmp_path / "outputs" / "preview.jpg").is_file()
+
+
+def test_start_raises_stored_connect_error(monkeypatch):
+    monkeypatch.setattr("dreamforge_comfy_ws.ensure_websockets_available", lambda: None)
+
+    def fake_run(self) -> None:
+        self._error = RuntimeError("connect refused")
+        self._connected.set()
+
+    monkeypatch.setattr(ComfyPromptStreamSession, "_run", fake_run)
+    session = ComfyPromptStreamSession("http://127.0.0.1:8188", "client-1")
+    with pytest.raises(RuntimeError, match="connect refused"):
+        session.start()

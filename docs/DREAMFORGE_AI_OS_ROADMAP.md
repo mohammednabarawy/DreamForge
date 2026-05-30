@@ -258,6 +258,7 @@ Test gate:
 - Phase 9 docs: [TROUBLESHOOTING.md](TROUBLESHOOTING.md), [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md); README/CLI/MCP/agent docs updated for local-only execution, style memory, lineage, and bridge commands.
 - Plan-preview integration gate: `tests/test_plan_preview_integration.py` (REST, bridge, agent, WebUI helpers) — **7 passed**.
 - Phase 6 CLI inventory JSON + MCP capability gates: `tests/test_inventory_json_commands.py`, `tests/test_mcp_server.py` — **24 passed** combined focused gate (May 2026).
+- Streaming preview hardening (Krita/Comfy patterns): job-scoped `preview-{job_id}.jpg`, workflow node_count for progress, inpaint `live_steps`, full post-stream output timeout, WS connect error surfacing — see [OPTIMIZATION.md](OPTIMIZATION.md) §7.
 
 ## Links For Ongoing Research
 

@@ -277,7 +277,7 @@ class ComfyClient:
                 session.wait_until_done(history_poll=self.history_poll_state)
                 node = self.wait_for_outputs(
                     res.prompt_id,
-                    timeout_s=min(float(timeout_s), 120.0),
+                    timeout_s=float(timeout_s),
                     poll_s=poll_s,
                 )
                 return res, node

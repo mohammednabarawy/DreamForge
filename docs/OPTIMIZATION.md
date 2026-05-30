@@ -162,11 +162,19 @@ A warning never blocks generation — but ignoring one often leads to a hard err
 
 During generation the desktop shell uses a **three-layer preview path** so the canvas updates quickly without blocking on full PNG reads:
 
-1. **Live steps** — Python emits `preview` events with `preview_path` (and only embeds base64 when the JPEG is under 400 KB). Tauri watches `preview.jpg` in the job folder (~80 ms) and emits `generation-preview` with `quality: "live"` (max edge 512).
-2. **Final frame** — On success, Rust emits a final `generation-preview` (`quality: "final"`, max edge 2048) *before* `generation-finished`, using a short stable-file retry so the last write is complete.
-3. **UI display** — The React hook prefers event payloads, then `convertFileSrc` asset URLs for finals (no giant base64 round-trips). Disk polling is a fallback only if no event arrives for ~900 ms.
+1. **Live steps** — Python opens Comfy `/ws` *before* queueing the prompt (Krita AI Diffusion pattern), streams binary preview frames, and writes `outputs/preview-{job_id}.jpg` plus a legacy `preview.jpg` alias. Events include `preview_path` and `job_id`. Tauri watches both paths (~80 ms) and emits `generation-preview` with `quality: "live"` (max edge 512).
+2. **Progress** — Weighted progress uses the workflow node count and sampler steps (`progress_state` + legacy `progress` messages). Live edit jobs use Krita `live_steps` (e.g. Flux Kontext 8, Flux inpaint 8, Qwen edit 10).
+3. **Final frame** — On success, Rust emits a final `generation-preview` (`quality: "final"`, max edge 2048) *before* `generation-finished`, using a short stable-file retry so the last write is complete.
+4. **UI display** — The React hook prefers event payloads with matching `job_id`, then `convertFileSrc` asset URLs for finals. Disk polling (`read_live_preview`) is a fallback only if no event arrives for ~900 ms and prefers the active job’s preview file.
 
-If the canvas looks stuck on an old step, restart the app after upgrading — stale workers skip the mmap loader and the new preview events.
+**Stability notes (aligned with ComfyUI + Krita):**
+
+- Use REST `/history/{prompt_id}` as a 2 s fallback while the WebSocket runs; do not rely on polling alone.
+- After WebSocket completion, wait for outputs with the full job timeout (not a short post-stream cap).
+- Install `websockets` in the GPU Python env; without it, generation still completes but live canvas updates degrade to HTTP-only.
+- If previews stall, verify Comfy is reachable on the configured port and that custom nodes respond quickly to `/object_info` (slow object_info can block plugin-style clients).
+
+If the canvas looks stuck on an old step, restart the app after upgrading — stale workers skip the new preview events.
 
 ---
 

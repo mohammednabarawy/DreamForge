@@ -543,6 +543,48 @@ fn live_preview_candidates() -> Vec<PathBuf> {
     ]
 }
 
+fn sanitize_preview_job_id(job_id: &str) -> String {
+    let cleaned: String = job_id
+        .trim()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(80)
+        .collect();
+    if cleaned.is_empty() {
+        "live".to_string()
+    } else {
+        cleaned
+    }
+}
+
+fn live_preview_candidates_for_job(job_id: Option<&str>) -> Vec<PathBuf> {
+    let root = agent_root();
+    let mut candidates = Vec::new();
+    if let Some(id) = job_id {
+        let safe = sanitize_preview_job_id(id);
+        let name = format!("preview-{safe}.jpg");
+        candidates.push(root.join("outputs").join(&name));
+        candidates.push(outputs_root(&root).join(&name));
+    }
+    candidates.extend(live_preview_candidates());
+    candidates
+}
+
+fn preview_file_matches_job(path: &Path, job_id: &str) -> bool {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    let safe = sanitize_preview_job_id(job_id);
+    name.eq_ignore_ascii_case("preview.jpg")
+        || name.eq_ignore_ascii_case(&format!("preview-{safe}.jpg"))
+}
+
 fn resolve_preview_file(path_str: &str) -> Option<PathBuf> {
     let path = PathBuf::from(path_str);
     if path.is_file() {
@@ -655,7 +697,7 @@ fn attach_preview_bytes(payload: &mut Value, path: &Path, bytes: &[u8]) {
 }
 
 fn emit_live_preview_from_disk(app: &AppHandle, job_id: Option<&str>) {
-    for candidate in live_preview_candidates() {
+    for candidate in live_preview_candidates_for_job(job_id) {
         if !candidate.is_file() {
             continue;
         }
@@ -693,10 +735,7 @@ fn start_live_preview_watch(app: &AppHandle, state: &Arc<AppState>, job_id: &str
                 return;
             };
             let is_preview = event.paths.iter().any(|p| {
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|n| n.eq_ignore_ascii_case("preview.jpg"))
-                    .unwrap_or(false)
+                preview_file_matches_job(p, &job)
             });
             if !is_preview {
                 return;
@@ -835,7 +874,8 @@ fn emit_preview_from_event(app: &AppHandle, value: &Value) {
             payload["preview_path"] = json!(path_str);
         }
     } else if value.get("has_preview") == Some(&Value::Bool(true)) {
-        for candidate in live_preview_candidates() {
+        let job_id = value.get("job_id").and_then(|v| v.as_str());
+        for candidate in live_preview_candidates_for_job(job_id) {
             if candidate.is_file() {
                 if let Some(bytes) = preview_bytes_with_retry(&candidate, 3, PREVIEW_LIVE_MAX_EDGE)
                 {
@@ -1981,9 +2021,14 @@ async fn read_image_preview(path: String, quality: Option<String>) -> Result<Val
 }
 
 #[tauri::command]
-async fn read_live_preview() -> Result<Value, String> {
-    tokio::task::spawn_blocking(|| {
-        for candidate in live_preview_candidates() {
+async fn read_live_preview(state: State<'_, Arc<AppState>>) -> Result<Value, String> {
+    let job_id = state
+        .generation
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().map(|job| job.job_id.clone()));
+    tokio::task::spawn_blocking(move || {
+        for candidate in live_preview_candidates_for_job(job_id.as_deref()) {
             if !candidate.is_file() {
                 continue;
             }

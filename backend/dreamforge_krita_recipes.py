@@ -48,6 +48,8 @@ EDIT_RECIPES: dict[str, dict[str, Any]] = {
         "inpaint_grow": 4,
         "inpaint_feather": 4,
         "inpaint_mask_grow_by": 20,
+        "live_steps": 8,
+        "live_cfg": 30.0,
     },
     "qwen_image_edit": {
         "name": "Qwen Edit",

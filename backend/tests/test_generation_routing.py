@@ -524,6 +524,39 @@ def test_flux_kontext_live_preview_uses_krita_live_steps(monkeypatch):
     assert out["cfg"] == 3.5
 
 
+def test_flux_inpaint_live_preview_uses_krita_live_steps(monkeypatch):
+    monkeypatch.chdir(_BACKEND)
+    from dreamforge_generation import _tune_edit_job_settings
+
+    job = SimpleNamespace(
+        performance="Flux",
+        steps=None,
+        cfg_scale=None,
+        sampler=None,
+        scheduler=None,
+        edit_type="inpaint",
+        input_image="/tmp/reference.png",
+        upscale_image=None,
+    )
+
+    out = _tune_edit_job_settings(
+        {
+            "performance_selection": "Flux",
+            "steps": 20,
+            "cfg": 30.0,
+            "sampler_name": "euler",
+            "scheduler": "simple",
+            "clip_skip": 1,
+        },
+        job,
+        "flux_inpaint",
+        is_live=True,
+    )
+
+    assert out["steps"] == 8
+    assert out["cfg"] == 30.0
+
+
 def test_krita_recipe_catalog_exposes_comfy_install_requirements():
     from dreamforge_krita_recipes import COMFY_INSTALL_RECIPE, edit_recipe, live_sampling_params
 

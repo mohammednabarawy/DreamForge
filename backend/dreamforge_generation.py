@@ -1079,11 +1079,13 @@ def run_generation(
             emit_event(stream_sink, payload)
 
         if streaming:
+            from dreamforge_comfy_ws import count_comfy_prompt_nodes
+
             _res, node = client.run_prompt_with_stream(
                 prompt_graph,
                 job_id=job_id or "",
                 sample_count=sample_steps,
-                node_count=1,
+                node_count=count_comfy_prompt_nodes(prompt_graph),
                 timeout_s=60 * 30,
                 on_event=_comfy_stream_event,
             )

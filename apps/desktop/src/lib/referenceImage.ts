@@ -1,5 +1,6 @@
 import type { GenerationSettings } from "./tauri-api";
 import { readImagePreview } from "./tauri-api";
+import { isEditFamilyMode, type StudioMode } from "./model-selection";
 
 export const DREAMFORGE_IMAGE_PATH_MIME = "application/x-dreamforge-image-path";
 
@@ -210,6 +211,25 @@ export async function resolveGenerationImagePaths(
     next.reference_images = await Promise.all(
       next.reference_images.map((path) => resolveReferenceImagePath(path)),
     );
+  }
+  return next;
+}
+
+/** Drop cross-mode image fields so Kontext edit never reads a stale upscale path. */
+export function sanitizeEditFamilySettings(
+  settings: GenerationSettings,
+  studioMode: StudioMode,
+): GenerationSettings {
+  if (!isEditFamilyMode(studioMode)) return settings;
+  const next = { ...settings };
+  if (studioMode === "upscale") {
+    next.input_image = undefined;
+    next.inpaint_mask_path = undefined;
+    return next;
+  }
+  next.upscale_image = undefined;
+  if (studioMode === "edit") {
+    next.inpaint_mask_path = undefined;
   }
   return next;
 }

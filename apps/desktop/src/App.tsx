@@ -140,6 +140,7 @@ export default function App() {
             onOpenFullLog={() => setFullLogOpen(true)}
             activeModelLabel={mc.activeModelLabel}
             referenceModelFamily={mc.referenceModelFamily}
+            editPlanState={mc.editPlanState}
           />
         </Panel>
         <PanelResizeHandle className="w-1 bg-dfui-border/50 transition hover:bg-dfui-accent/60" />

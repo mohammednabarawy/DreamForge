@@ -698,8 +698,191 @@ def test_krita_recipe_catalog_exposes_comfy_install_requirements():
     assert all(node.get("version") for node in COMFY_INSTALL_RECIPE["required_custom_nodes"])
 
 
+def test_mode_contract_preservation_hints():
+    from dreamforge_mode_contract import build_mode_contract, build_preservation_hints
+
+    hints = build_preservation_hints(
+        {"face_preservation": True, "preserve_text": True, "preserve_style": False}
+    )
+    assert "Preserve face identity" in hints
+    assert "Preserve text, logos, and typography" in hints
+    assert "Preserve overall style" not in " ".join(hints)
+
+    contract = build_mode_contract(
+        "edit",
+        {"preserve_character": True},
+        {"face_preservation": True, "model": "flux1-dev-kontext_fp8_scaled.safetensors"},
+    )
+    assert contract["preservation_hints"]
+    assert "Preserve character identity and outfit" in contract["preservation_hints"]
+
+
+def test_edit_mode_contract_includes_preservation_from_job():
+    from dreamforge_mode_contract import build_mode_contract
+
+    job = {
+        "model": "flux1-dev-kontext_fp8_scaled.safetensors",
+        "input_image": "D:/refs/hero.png",
+        "upscale_image": "D:/refs/stale_upscale.png",
+        "edit_type": "kontext",
+        "preserve_character": True,
+        "preserve_text": True,
+        "face_preservation": True,
+    }
+    proposed = {
+        "model": job["model"],
+        "edit_type": job["edit_type"],
+        "input_image": job["input_image"],
+    }
+    contract = build_mode_contract("edit", proposed, job)
+    hints = contract["preservation_hints"]
+    assert "Preserve character identity and outfit" in hints
+    assert "Preserve text, logos, and typography" in hints
+    assert contract["model_policy"] in {"route_curated_model", "preserve_user_model"}
+
+
 def test_edit_strength_is_clamped_for_kontext():
     from dreamforge_generation import _clamp_float
 
     assert _clamp_float(1.5, 1.0, 0.0, 1.0) == 1.0
     assert _clamp_float("bad", 1.0, 0.0, 1.0) == 1.0
+
+
+def test_edit_dry_run_carries_edit_strength_and_preservation(monkeypatch):
+    import dreamforge_cli_direct as cli
+
+    selected = {
+        "name": "flux1-dev-kontext_fp8_scaled.safetensors",
+        "stem": "flux1-dev-kontext_fp8_scaled",
+        "relative_path": "flux1-dev-kontext_fp8_scaled.safetensors",
+        "path": "/models/flux1-dev-kontext_fp8_scaled.safetensors",
+        "size_mb": 11000,
+        "category": "diffusion_models",
+        "engine_name": "flux1-dev-kontext_fp8_scaled.safetensors",
+        "family": "flux_kontext",
+    }
+    monkeypatch.setattr(cli, "resolve_generation_model", lambda _name: selected)
+
+    plan = cli.build_plan(
+        SimpleNamespace(
+            dry_run=True,
+            json=True,
+            model="flux1-dev-kontext_fp8_scaled.safetensors",
+            prompt="same pose, new background",
+            negative_prompt="",
+            aspect_ratio=None,
+            width=None,
+            height=None,
+            seed=1,
+            image_number=1,
+            output=None,
+            performance="Speed",
+            steps=None,
+            cfg_scale=None,
+            sampler=None,
+            scheduler=None,
+            styles=None,
+            lora=[],
+            input_image="/tmp/source.png",
+            inpaint_mask_path=None,
+            upscale_image=None,
+            upscale_method="RealESRGAN_x2",
+            edit_type="kontext",
+            edit_strength=0.72,
+            inpaint_grow=None,
+            inpaint_feather=None,
+            inpaint_mask_grow_by=None,
+            preserve_character=True,
+            preserve_style=False,
+            preserve_text=True,
+            face_preservation=True,
+            vram_profile="16gb",
+            style="image_edit",
+            brand_kit=None,
+            subject=None,
+            composition=None,
+            lighting=None,
+            camera=None,
+            brand_colors=None,
+            materials=None,
+            visual_style=None,
+            validate_output=False,
+            no_manifest=False,
+        )
+    )
+
+    assert plan["mode"] == "edit"
+    assert plan["settings"]["edit_strength"] == 0.72
+    hints = plan["mode_contract"]["preservation_hints"]
+    assert "Preserve character identity and outfit" in hints
+    assert "Preserve text, logos, and typography" in hints
+    assert "edit_strength" in plan["mode_contract"]["preserved_fields"]
+
+
+def test_inpaint_dry_run_carries_mask_controls(monkeypatch):
+    import dreamforge_cli_direct as cli
+
+    selected = {
+        "name": "flux-fill-dev.safetensors",
+        "stem": "flux-fill-dev",
+        "relative_path": "flux-fill-dev.safetensors",
+        "path": "/models/flux-fill-dev.safetensors",
+        "size_mb": 11000,
+        "category": "diffusion_models",
+        "engine_name": "flux-fill-dev.safetensors",
+        "family": "flux_fill",
+    }
+    monkeypatch.setattr(cli, "resolve_generation_model", lambda _name: selected)
+
+    plan = cli.build_plan(
+        SimpleNamespace(
+            dry_run=True,
+            json=True,
+            model="flux-fill-dev.safetensors",
+            prompt="fill the masked region",
+            negative_prompt="",
+            aspect_ratio=None,
+            width=None,
+            height=None,
+            seed=1,
+            image_number=1,
+            output=None,
+            performance="Speed",
+            steps=None,
+            cfg_scale=None,
+            sampler=None,
+            scheduler=None,
+            styles=None,
+            lora=[],
+            input_image="/tmp/source.png",
+            inpaint_mask_path="/tmp/mask.png",
+            upscale_image=None,
+            upscale_method="RealESRGAN_x2",
+            edit_type="inpaint",
+            edit_strength=0.85,
+            inpaint_grow=12,
+            inpaint_feather=4,
+            inpaint_mask_grow_by=8,
+            preserve_character=False,
+            preserve_style=False,
+            preserve_text=False,
+            face_preservation=False,
+            vram_profile="16gb",
+            style="image_edit",
+            brand_kit=None,
+            subject=None,
+            composition=None,
+            lighting=None,
+            camera=None,
+            brand_colors=None,
+            materials=None,
+            visual_style=None,
+            validate_output=False,
+            no_manifest=False,
+        )
+    )
+
+    assert plan["mode"] == "inpaint"
+    assert plan["settings"]["edit_strength"] == 0.85
+    contract = plan["mode_contract"]
+    assert "inpaint_mask_path" in contract["preserved_fields"]

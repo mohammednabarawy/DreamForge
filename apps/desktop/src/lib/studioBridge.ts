@@ -101,6 +101,7 @@ export type ModeContract = {
   selected_model?: string;
   changed_fields?: string[];
   preserved_fields?: string[];
+  preservation_hints?: string[];
   summary?: string;
 };
 
@@ -125,6 +126,8 @@ export type AgentPlanSnapshot = {
   provider?: string;
   message?: string;
   mode?: AgentPlanResult["mode"];
+  /** Fingerprint of settings used when the plan was built (edit-family freshness). */
+  settings_snapshot?: string;
   applied?: Partial<GenerationSettings>;
   proposed?: Partial<GenerationSettings>;
   actions?: string[];

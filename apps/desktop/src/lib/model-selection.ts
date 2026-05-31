@@ -14,6 +14,10 @@ export type StyleRecipe = {
 
 export type StudioMode = "generate" | "edit" | "inpaint" | "upscale" | "agent";
 
+export function isEditFamilyMode(mode?: StudioMode): boolean {
+  return mode === "edit" || mode === "inpaint" || mode === "upscale";
+}
+
 export function modelBasename(path: string): string {
   const normalized = path.replace(/\\/g, "/");
   const parts = normalized.split("/");

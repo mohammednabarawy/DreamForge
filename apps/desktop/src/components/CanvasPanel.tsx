@@ -9,6 +9,7 @@ import { PromptBar } from "./PromptBar";
 import type { EngineState } from "../lib/engine";
 import type { GenerationSettings } from "../lib/tauri-api";
 import type { StudioMode } from "../lib/model-selection";
+import type { EditFamilyPlanState } from "../lib/generationReadiness";
 import { WorkflowPlanPanel } from "./WorkflowPlanPanel";
 import type { AgentPlanSnapshot, AgentTranscriptMessage } from "../lib/studioBridge";
 import { AgentTranscriptPanel } from "./AgentTranscriptPanel";
@@ -60,6 +61,7 @@ type Props = {
   onOpenFullLog: () => void;
   activeModelLabel: string;
   referenceModelFamily?: string;
+  editPlanState?: EditFamilyPlanState;
 };
 
 export function CanvasPanel({
@@ -107,6 +109,7 @@ export function CanvasPanel({
   onOpenFullLog,
   activeModelLabel,
   referenceModelFamily,
+  editPlanState,
 }: Props) {
   return (
     <section className="flex h-full min-w-0 flex-col">
@@ -294,6 +297,7 @@ export function CanvasPanel({
         onDownloadCompanions={onDownloadCompanions}
         activeModelLabel={activeModelLabel}
         referenceModelFamily={referenceModelFamily}
+        editPlanState={editPlanState}
       />
     </section>
   );

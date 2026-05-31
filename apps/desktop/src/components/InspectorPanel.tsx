@@ -13,7 +13,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { modelMatches, type StyleRecipe } from "../lib/model-selection";
+import { modelMatches, isEditFamilyMode, modelBasename, selectCuratedModelForMode, type StudioMode, type StyleRecipe } from "../lib/model-selection";
 import { ThumbnailGallery, type GalleryTile } from "./ThumbnailGallery";
 import type {
   GenerationSettings,
@@ -164,13 +164,25 @@ export function InspectorPanel({
   const showEditStrength = Boolean(settings.input_image) || ["kontext", "inpaint", "img2img", "qwen_edit"].includes(settings.edit_type ?? "");
   const isQwenModel = (settings.model ?? activeModelLabel).toLowerCase().includes("qwen");
 
+  const isEditFamily = isEditFamilyMode(studioMode as StudioMode);
+  const powerUserInspector = Boolean(appConfig?.ui.advanced_mode);
+  const isUpscale = studioMode === "upscale";
+  const isInpaint = studioMode === "inpaint";
   const activeStyleId = settings.style;
   const activeLoras = settings.lora ?? [];
   const activeProvider = agentProviders.find(
     (p) => p.id === appConfig?.agent.provider,
   );
 
-  const isUpscale = studioMode === "upscale";
+  const routedModelLabel = useMemo(() => {
+    if (!isEditFamily) return activeModelLabel;
+    const routed = selectCuratedModelForMode(
+      studioMode as StudioMode,
+      modelGallery,
+      settings.model,
+    );
+    return modelBasename(routed || settings.model || activeModelLabel);
+  }, [isEditFamily, studioMode, modelGallery, settings.model, activeModelLabel]);
 
   const modelTiles: GalleryTile[] = useMemo(
     () =>
@@ -205,16 +217,25 @@ export function InspectorPanel({
   );
 
   const tabs: { id: Tab; label: string; icon: typeof Boxes }[] = useMemo(
-    () => [
-      { id: "discover", label: "Discover", icon: Globe },
-      { id: "models", label: "Models", icon: Boxes },
-      ...(!isUpscale
-        ? [{ id: "loras" as const, label: "LoRAs", icon: Layers }]
-        : []),
-      { id: "styles", label: "Styles", icon: Palette },
-      { id: "settings", label: "Settings", icon: SlidersHorizontal },
-    ],
-    [isUpscale],
+    () => {
+      const full: { id: Tab; label: string; icon: typeof Boxes }[] = [
+        { id: "discover", label: "Discover", icon: Globe },
+        { id: "models", label: "Models", icon: Boxes },
+        ...(!isUpscale
+          ? [{ id: "loras" as const, label: "LoRAs", icon: Layers }]
+          : []),
+        { id: "styles", label: "Styles", icon: Palette },
+        { id: "settings", label: "Settings", icon: SlidersHorizontal },
+      ];
+      if (isEditFamily && !powerUserInspector) {
+        return full.filter((t) => t.id === "settings");
+      }
+      if (isEditFamily && powerUserInspector) {
+        return full.filter((t) => t.id !== "discover");
+      }
+      return full;
+    },
+    [isEditFamily, isUpscale, powerUserInspector],
   );
 
   const tabScrollRef = useRef<HTMLDivElement>(null);
@@ -233,6 +254,18 @@ export function InspectorPanel({
       setTab("models");
     }
   }, [isUpscale, tab]);
+
+  useEffect(() => {
+    if (isEditFamily && tab !== "settings" && !powerUserInspector) {
+      setTab("settings");
+    }
+  }, [isEditFamily, powerUserInspector, tab]);
+
+  useEffect(() => {
+    if (isEditFamily && !tabs.some((t) => t.id === tab)) {
+      setTab("settings");
+    }
+  }, [isEditFamily, tab, tabs]);
 
   useEffect(() => {
     const el = tabScrollRef.current;
@@ -526,6 +559,146 @@ export function InspectorPanel({
         {tab === "settings" && (
           <div className="h-full min-h-0 overflow-y-auto">
           <div className="space-y-3">
+            {isEditFamily && (
+              <div className="space-y-2.5 rounded-lg border border-dfui-accent/30 bg-dfui-accent/5 p-2.5">
+                <div>
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-dfui-muted">
+                    {isUpscale ? "Upscale route" : isInpaint ? "Inpaint route" : "Image edit route"}
+                  </p>
+                  <p className="mt-1 text-xs text-dfui-secondary">
+                    Routed model:{" "}
+                    <span className="font-mono text-dfui-fg">{routedModelLabel}</span>
+                  </p>
+                  <p className="mt-1 text-[10px] leading-snug text-dfui-tertiary">
+                    Generate builds a dry-run plan first. Review the plan card on the canvas, then Run plan.
+                    {!powerUserInspector && " Enable Advanced mode in Settings to pick models manually."}
+                  </p>
+                </div>
+                {isUpscale && (
+                  <label className="block">
+                    <span className="text-xs text-dfui-muted">Upscale method</span>
+                    <select
+                      value={settings.upscale_method ?? "fast_2x"}
+                      onChange={(e) => onChange({ upscale_method: e.target.value })}
+                      className="df-select mt-1 w-full px-2.5 py-2 text-xs"
+                    >
+                      <option value="fast_2x">Fast 2× (OmniSR)</option>
+                      <option value="fast_3x">Fast 3× (OmniSR)</option>
+                      <option value="fast_4x">Fast 4× (OmniSR)</option>
+                      <option value="quality">High quality 4× (HAT)</option>
+                      <option value="sharp">Sharper 4×</option>
+                      <option value="default">Quality 4× (NMKD)</option>
+                    </select>
+                  </label>
+                )}
+                {showEditStrength && !isUpscale && (
+                  <label className="block">
+                    <span className="text-xs text-dfui-muted">
+                      Edit strength — {Math.round((settings.edit_strength ?? 0.98) * 100)}%
+                    </span>
+                    <input
+                      type="range"
+                      min={0.1}
+                      max={1}
+                      step={0.01}
+                      value={settings.edit_strength ?? 0.98}
+                      onChange={(e) =>
+                        onChange({ edit_strength: Number(e.target.value) })
+                      }
+                      className="mt-1 w-full accent-dfui-accent"
+                    />
+                  </label>
+                )}
+                <label className="inline-flex items-center gap-1.5 text-[11px] text-dfui-secondary">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(settings.face_preservation)}
+                    onChange={(e) =>
+                      onChange({
+                        face_preservation: e.target.checked,
+                        identity_mode: e.target.checked ? "faceid" : undefined,
+                      })
+                    }
+                    className="accent-dfui-accent"
+                  />
+                  Preserve face (FaceID when identity attached)
+                </label>
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
+                  {(
+                    [
+                      ["preserve_character", "Character"],
+                      ["preserve_style", "Style"],
+                      ["preserve_text", "Text / logos"],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <label
+                      key={key}
+                      className="inline-flex items-center gap-1.5 text-[10px] text-dfui-secondary"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={Boolean(settings[key])}
+                        onChange={(e) => onChange({ [key]: e.target.checked })}
+                        className="accent-dfui-accent"
+                      />
+                      Preserve {label.toLowerCase()}
+                    </label>
+                  ))}
+                </div>
+                {isInpaint && (
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <label className="block">
+                      <span className="text-[10px] text-dfui-muted">
+                        Mask grow — {settings.inpaint_grow ?? 4}px
+                      </span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={24}
+                        step={1}
+                        value={settings.inpaint_grow ?? 4}
+                        onChange={(e) =>
+                          onChange({ inpaint_grow: Number(e.target.value) })
+                        }
+                        className="mt-1 w-full accent-dfui-accent"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-[10px] text-dfui-muted">
+                        Feather — {settings.inpaint_feather ?? 4}px
+                      </span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={24}
+                        step={1}
+                        value={settings.inpaint_feather ?? 4}
+                        onChange={(e) =>
+                          onChange({ inpaint_feather: Number(e.target.value) })
+                        }
+                        className="mt-1 w-full accent-dfui-accent"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-[10px] text-dfui-muted">
+                        Comfy expand — {settings.inpaint_mask_grow_by ?? 20}px
+                      </span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={64}
+                        step={1}
+                        value={settings.inpaint_mask_grow_by ?? 20}
+                        onChange={(e) =>
+                          onChange({ inpaint_mask_grow_by: Number(e.target.value) })
+                        }
+                        className="mt-1 w-full accent-dfui-accent"
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
+            )}
             {(onAttachReferencePack || onCreateReferencePack) && (
               <div className="space-y-2 rounded-lg border border-dfui-border/50 bg-dfui-bg/30 p-2.5">
                 <div className="flex items-center justify-between gap-2">
@@ -990,7 +1163,7 @@ export function InspectorPanel({
                 <option value="5gb">5 GB</option>
               </select>
             </label>
-            {isUpscale && (
+            {isUpscale && powerUserInspector && (
               <label className="block">
                 <span className="text-xs text-dfui-muted">Upscale method</span>
                 <select
@@ -1007,7 +1180,7 @@ export function InspectorPanel({
                 </select>
               </label>
             )}
-            {!isUpscale && (
+            {!isUpscale && (!isEditFamily || powerUserInspector) && (
               <label className="block">
                 <span className="text-xs text-dfui-muted">Aspect ratio</span>
                 <select
@@ -1023,7 +1196,7 @@ export function InspectorPanel({
                 </select>
               </label>
             )}
-            {!isUpscale && (
+            {!isUpscale && (!isEditFamily || powerUserInspector) && (
               <label className="block">
                 <span className="text-xs text-dfui-muted">
                   Image count — {settings.image_number ?? 1}
@@ -1183,7 +1356,7 @@ export function InspectorPanel({
                 className="df-input mt-1 w-full px-2.5 py-1.5 text-xs resize-none"
               />
             </label>
-            {showEditStrength && (
+            {showEditStrength && (!isEditFamily || powerUserInspector) && (
               <label className="block">
                 <span className="text-xs text-dfui-muted">
                   Edit strength — {Math.round((settings.edit_strength ?? 0.98) * 100)}%
@@ -1201,7 +1374,7 @@ export function InspectorPanel({
                 />
               </label>
             )}
-            {showAdvancedSampling && (
+            {showAdvancedSampling && (!isEditFamily || powerUserInspector) && (
               <>
                 {!isCustomPerf && (
                   <p className="rounded-md border border-dfui-border/40 bg-dfui-bg/40 px-2 py-1 text-[10px] leading-snug text-dfui-tertiary">

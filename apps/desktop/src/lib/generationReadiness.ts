@@ -1,7 +1,11 @@
 import type { GenerationSettings } from "./tauri-api";
 import { generationNeedsReferenceImage } from "./parseAgentPrompt";
 import type { ModelGalleryItem } from "./tauri-api";
-import type { StudioMode } from "./model-selection";
+import type { EditFamilyPlanState } from "./workflowPlanActions";
+import { isEditFamilyMode, type StudioMode } from "./model-selection";
+
+export { isEditFamilyMode };
+export type { EditFamilyPlanState };
 
 export function vramProfileFromHardware(
   vramGb: number | null,
@@ -35,6 +39,7 @@ export function computeGenerateReadiness(args: {
   settings: GenerationSettings;
   modelGallery: ModelGalleryItem[];
   studioMode?: StudioMode;
+  editPlanState?: EditFamilyPlanState;
 }): GenerateReadiness {
   if (args.generating) {
     return { ok: false, reason: "Generation in progress", missingCompanions: false };
@@ -118,6 +123,20 @@ export function computeGenerateReadiness(args: {
     return {
       ok: false,
       reason: "Attach a reference image or pick a text-to-image model",
+      missingCompanions: false,
+    };
+  }
+  if (args.editPlanState === "not_ready") {
+    return {
+      ok: false,
+      reason: "Plan is not ready — resolve missing inputs in the plan card",
+      missingCompanions: false,
+    };
+  }
+  if (args.editPlanState === "stale") {
+    return {
+      ok: false,
+      reason: "Settings changed — click Generate to refresh the plan",
       missingCompanions: false,
     };
   }

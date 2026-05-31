@@ -121,6 +121,18 @@ def build_parser():
         help="Scale edit input to this megapixel budget before VAE encode (e.g. 0.75 for 8GB VRAM)",
     )
     parser.add_argument("--inpaint-mask-path", default=None, help="Mask image path for inpaint edits")
+    parser.add_argument("--inpaint-grow", type=int, default=None, help="Pixels to grow inpaint mask before feathering")
+    parser.add_argument("--inpaint-feather", type=int, default=None, help="Gaussian feather radius for inpaint mask edges")
+    parser.add_argument(
+        "--inpaint-mask-grow-by",
+        type=int,
+        default=None,
+        dest="inpaint_mask_grow_by",
+        help="Comfy grow_mask_by expansion for inpaint sampling",
+    )
+    parser.add_argument("--preserve-character", action="store_true", help="Planner hint: preserve character identity")
+    parser.add_argument("--preserve-style", action="store_true", help="Planner hint: preserve overall style")
+    parser.add_argument("--preserve-text", action="store_true", help="Planner hint: preserve text and logos")
     parser.add_argument("--cn-selection", default="None", help="ControlNet preset selection; use Custom... for direct settings")
     parser.add_argument("--cn-type", default="None", help="ControlNet type: canny, depth, pose, openpose, lineart, scribble, tile")
     parser.add_argument("--controlnet-model", default=None, help="ControlNet filename or relative path under models/controlnet")
@@ -625,6 +637,13 @@ def build_plan(base_args, data=None):
         "edit_strength": getattr(job, "edit_strength", None),
         "input_image": getattr(job, "input_image", None),
         "inpaint_mask_path": getattr(job, "inpaint_mask_path", None),
+        "inpaint_grow": getattr(job, "inpaint_grow", None),
+        "inpaint_feather": getattr(job, "inpaint_feather", None),
+        "inpaint_mask_grow_by": getattr(job, "inpaint_mask_grow_by", None),
+        "preserve_character": getattr(job, "preserve_character", None),
+        "preserve_style": getattr(job, "preserve_style", None),
+        "preserve_text": getattr(job, "preserve_text", None),
+        "face_preservation": getattr(job, "face_preservation", None),
         "upscale_image": getattr(job, "upscale_image", None),
         "upscale_method": getattr(job, "upscale_method", None),
         "cn_selection": getattr(job, "cn_selection", None),

@@ -71,6 +71,7 @@ def build_mode_contract(
         model_source = source or "agent"
 
     summary = _summary(normalized_mode, model_policy, selected_model, changed_fields)
+    merged = {**original, **proposed}
     return {
         "schema_version": "1.0",
         "mode": normalized_mode,
@@ -79,6 +80,7 @@ def build_mode_contract(
         "selected_model": selected_model,
         "changed_fields": changed_fields,
         "preserved_fields": sorted(set(preserved_fields)),
+        "preservation_hints": build_preservation_hints(merged),
         "summary": summary,
     }
 
@@ -112,3 +114,18 @@ def _summary(mode: str, policy: str, model: str, changed_fields: list[str]) -> s
         label = mode.capitalize()
         return f"{label} mode will use the routed local stack."
     return "Agent mode will plan with the selected local runtime."
+
+
+def build_preservation_hints(settings: dict[str, Any] | None) -> list[str]:
+    """Human-readable preservation intents from edit-family UI toggles."""
+    data = settings if isinstance(settings, dict) else {}
+    hints: list[str] = []
+    if data.get("face_preservation"):
+        hints.append("Preserve face identity")
+    if data.get("preserve_character"):
+        hints.append("Preserve character identity and outfit")
+    if data.get("preserve_style"):
+        hints.append("Preserve overall style and palette")
+    if data.get("preserve_text"):
+        hints.append("Preserve text, logos, and typography")
+    return hints

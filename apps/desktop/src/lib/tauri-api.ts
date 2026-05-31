@@ -58,6 +58,14 @@ export type GenerationSettings = {
   identity_role?: string;
   identity_mode?: string;
   face_preservation?: boolean;
+  /** Inpaint mask preprocessing (Krita grow/feather). */
+  inpaint_grow?: number;
+  inpaint_feather?: number;
+  inpaint_mask_grow_by?: number;
+  /** Planner hints for edit-family preservation (UI toggles). */
+  preserve_character?: boolean;
+  preserve_style?: boolean;
+  preserve_text?: boolean;
   inpaint_mask_path?: string;
   /** Optional Comfy Save (API Format) workflow template path. */
   comfy_workflow_api?: string;

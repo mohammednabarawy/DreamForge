@@ -152,12 +152,16 @@ import {
   removeExtraReferenceAt,
   resolveGenerationImagePaths,
   resolveReferenceImagePath,
+  sanitizeEditFamilySettings,
   type ReferenceImageMode,
 } from "../lib/referenceImage";
 import {
   planBlocksDirectGenerate,
   resolvePlannedSettings,
+  computePlanSettingsSnapshot,
+  editFamilyPlanState,
 } from "../lib/workflowPlanActions";
+import { isEditFamilyMode } from "../lib/generationReadiness";
 
 function companionItemsFromActions(actions?: RepairAction[]) {
   return (
@@ -1970,7 +1974,12 @@ export function useDreamForge() {
     }
     setStatus("Planning…");
     try {
-      const prepared = prepareGenerationFromAgentPrompt(settingsRef.current, {
+      const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+      const sanitized = sanitizeEditFamilySettings(
+        settingsRef.current,
+        studioMode,
+      );
+      const prepared = prepareGenerationFromAgentPrompt(sanitized, {
         selectedImagePath: selected?.images?.[0],
         modelGallery: modelGalleryAll,
       });
@@ -1998,7 +2007,8 @@ export function useDreamForge() {
       setAgentPlan({
         source: "dry-run",
         message: `${hint}${extra}`.trim() || "Dry-run plan",
-        mode: typeof planPayload.mode === "string" ? (planPayload.mode as StudioMode) : undefined,
+        mode: typeof planPayload.mode === "string" ? (planPayload.mode as StudioMode) : studioMode,
+        settings_snapshot: computePlanSettingsSnapshot(prepared.settings, studioMode),
         proposed: prepared.settings,
         operations: Array.isArray(planPayload.operations)
           ? planPayload.operations.map((item) => String(item))
@@ -2033,29 +2043,30 @@ export function useDreamForge() {
       preparedSettings: GenerationSettings,
       meta?: { mapped?: string; hint?: string; studioMode?: StudioMode },
     ) => {
-      const prompt = (preparedSettings.prompt ?? "").trim();
+      const studioMode =
+        meta?.studioMode ??
+        ((appConfig?.ui.studio_mode ?? "generate") as StudioMode);
+      const sanitized = sanitizeEditFamilySettings(preparedSettings, studioMode);
+      const prompt = (sanitized.prompt ?? "").trim();
       if (!prompt) {
         setStatus("Enter a prompt before generating");
         return false;
       }
-      if (!preparedSettings.model) {
+      if (!sanitized.model) {
         setStatus("Select a base model");
         return false;
       }
-      const studioMode =
-        meta?.studioMode ??
-        ((appConfig?.ui.studio_mode ?? "generate") as StudioMode);
       const readiness = computeGenerateReadiness({
         workerReady,
         generating: generatingRef.current,
         engineState,
         engineLabel: engineLabel(engineState, bootMessage),
         prompt,
-        model: preparedSettings.model ?? "",
+        model: sanitized.model ?? "",
         modelDependenciesReady: modelDependencies.ready,
         missingCompanionCount: modelDependencies.missing.length,
         studioMissingAssetCount: studioResources.missing.length,
-        settings: preparedSettings,
+        settings: sanitized,
         modelGallery: modelGalleryAll,
         studioMode,
       });
@@ -2081,17 +2092,17 @@ export function useDreamForge() {
       }
 
       const sid = activeSessionIdRef.current || DEFAULT_SESSION_ID;
-      const output = preparedSettings.upscale_image
+      const output = sanitized.upscale_image
         ? outputPathForSession(sid, "upscale")
-        : preparedSettings.input_image
+        : sanitized.input_image
           ? outputPathForSession(
               sid,
-              preparedSettings.edit_type === "inpaint" ? "inpaint" : "edit",
+              sanitized.edit_type === "inpaint" ? "inpaint" : "edit",
             )
           : outputPathForSession(sid, "gen");
 
       let params: GenerationSettings = {
-        ...preparedSettings,
+        ...sanitized,
         prompt,
         output,
         validate_output: true,
@@ -2248,14 +2259,39 @@ export function useDreamForge() {
   ]);
 
   const runGenerate = useCallback(async () => {
-    if ((appConfig?.ui.studio_mode ?? "generate") === "agent") {
+    const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+    if (studioMode === "agent") {
       await runAgentInstruction(true);
+      return;
+    }
+    if (isEditFamilyMode(studioMode)) {
+      const snapshot = computePlanSettingsSnapshot(
+        settingsRef.current,
+        studioMode,
+      );
+      const plan = agentPlanRef.current;
+      const planState = editFamilyPlanState(plan, studioMode, snapshot);
+      if (planState === "none" || planState === "stale") {
+        await runDryRun();
+        setStatus(
+          planState === "stale"
+            ? "Settings changed — review the updated plan card, then Run plan"
+            : "Review the routed plan on the canvas, then Run plan",
+        );
+        return;
+      }
+      if (planState === "not_ready") {
+        setStatus("Plan is not ready — resolve missing setup in the plan card");
+        return;
+      }
+      await runApprovedPlan();
       return;
     }
     if (
       planBlocksDirectGenerate(
         agentPlanRef.current,
         appConfig?.agent.approval_required,
+        { studioMode },
       )
     ) {
       setStatus("Review the plan card — use Run plan to start generation");
@@ -2278,6 +2314,8 @@ export function useDreamForge() {
     appConfig?.ui.studio_mode,
     appConfig?.agent.approval_required,
     runAgentInstruction,
+    runDryRun,
+    runApprovedPlan,
     selected,
     modelGalleryAll,
     patchSettings,
@@ -2346,6 +2384,15 @@ export function useDreamForge() {
     companionDownload.phase,
   ]);
 
+  const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+  const planSettingsSnapshot = useMemo(
+    () => computePlanSettingsSnapshot(settings, studioMode),
+    [settings, studioMode],
+  );
+  const editPlanState = useMemo(
+    () => editFamilyPlanState(agentPlan, studioMode, planSettingsSnapshot),
+    [agentPlan, studioMode, planSettingsSnapshot],
+  );
   const generateReadiness = useMemo(
     () =>
       computeGenerateReadiness({
@@ -2360,7 +2407,8 @@ export function useDreamForge() {
         studioMissingAssetCount: studioResources.missing.length,
         settings,
         modelGallery: modelGalleryAll,
-        studioMode: (appConfig?.ui.studio_mode ?? "generate") as StudioMode,
+        studioMode,
+        editPlanState: isEditFamilyMode(studioMode) ? editPlanState : undefined,
       }),
     [
       workerReady,
@@ -2371,14 +2419,18 @@ export function useDreamForge() {
       modelDependencies,
       studioResources.missing.length,
       modelGalleryAll,
-      appConfig?.ui.studio_mode,
+      studioMode,
+      editPlanState,
     ],
   );
   const planApprovalPending =
-    planBlocksDirectGenerate(agentPlan, appConfig?.agent.approval_required) &&
-    (appConfig?.ui.studio_mode ?? "generate") !== "agent";
+    studioMode !== "agent" &&
+    planBlocksDirectGenerate(agentPlan, appConfig?.agent.approval_required, {
+      studioMode,
+      settingsSnapshot: planSettingsSnapshot,
+    });
   const effectiveGenerateReadiness = useMemo(() => {
-    if (planApprovalPending) {
+    if (planApprovalPending && !isEditFamilyMode(studioMode)) {
       return {
         ok: false as const,
         reason: "Review the plan card — use Run plan to start generation",
@@ -2386,7 +2438,7 @@ export function useDreamForge() {
       };
     }
     return generateReadiness;
-  }, [planApprovalPending, generateReadiness]);
+  }, [planApprovalPending, generateReadiness, studioMode]);
   const missingDownloadCount =
     modelDependencies.missing.length + studioResources.missing.length;
 
@@ -2404,38 +2456,6 @@ export function useDreamForge() {
       setStatus(`Cancel failed: ${String(e)}`);
     }
   }, [stopLogPoll, workerReady]);
-
-  const useSelectedImageFor = useCallback(
-    async (mode: "edit" | "inpaint" | "upscale") => {
-      const path = selected?.images?.[0];
-      if (!path) {
-        setStatus("Select a session image first");
-        return;
-      }
-      const mapped: ReferenceImageMode =
-        mode === "upscale" ? "upscale" : mode === "inpaint" ? "inpaint" : "reference";
-      const resolved = await resolveReferenceImagePath(path);
-      patchSettings(
-        buildReferenceImagePatch(resolved, mapped, (suffix) =>
-          outputPathForSession(
-            activeSessionIdRef.current || DEFAULT_SESSION_ID,
-            suffix === "upscale"
-              ? "upscale"
-              : suffix === "inpaint"
-                ? "inpaint"
-                : "edit",
-          ),
-        ),
-      );
-      if (mapped === "inpaint") {
-        setInpaintMaskOpen(true);
-        setStatus(`Attached ${referenceStatusLabel(mapped, resolved)} - paint a fresh mask`);
-      } else {
-        setStatus(`Attached ${referenceStatusLabel(mapped, resolved)}`);
-      }
-    },
-    [patchSettings, selected],
-  );
 
   const attachReferenceImage = useCallback(
     async (path: string, mode: ReferenceImageMode) => {
@@ -2464,6 +2484,7 @@ export function useDreamForge() {
         }
       }
       patchSettings(patch);
+      setAgentPlan(null);
       if (mode === "inpaint") {
         setInpaintMaskOpen(true);
         setStatus(`Attached ${referenceStatusLabel(mode, resolved)} - paint a fresh mask`);
@@ -2529,6 +2550,7 @@ export function useDreamForge() {
     async (mode: StudioMode) => {
       await saveAppConfigPatch({ ui: { studio_mode: mode } });
       setAgentPlannedMode(null);
+      setAgentPlan(null);
       if (mode === "generate") {
         setStatus("Generation mode - model library selection is unlocked");
         return;
@@ -2603,6 +2625,50 @@ export function useDreamForge() {
       saveAppConfigPatch,
       selected,
     ],
+  );
+
+  const useSelectedImageFor = useCallback(
+    async (mode: "edit" | "inpaint" | "upscale") => {
+      const path = selected?.images?.[0];
+      if (!path) {
+        setStatus("Select a session image first");
+        return;
+      }
+      setAgentPlan(null);
+      const currentMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+      if (currentMode !== mode) {
+        await setStudioMode(mode);
+        if (mode === "inpaint") {
+          setInpaintMaskOpen(true);
+          setStatus("Attached image for inpaint — paint a fresh mask");
+        } else {
+          setStatus(`Switched to ${mode} mode with selected image`);
+        }
+        return;
+      }
+      const mapped: ReferenceImageMode =
+        mode === "upscale" ? "upscale" : mode === "inpaint" ? "inpaint" : "reference";
+      const resolved = await resolveReferenceImagePath(path);
+      patchSettings(
+        buildReferenceImagePatch(resolved, mapped, (suffix) =>
+          outputPathForSession(
+            activeSessionIdRef.current || DEFAULT_SESSION_ID,
+            suffix === "upscale"
+              ? "upscale"
+              : suffix === "inpaint"
+                ? "inpaint"
+                : "edit",
+          ),
+        ),
+      );
+      if (mapped === "inpaint") {
+        setInpaintMaskOpen(true);
+        setStatus(`Attached ${referenceStatusLabel(mapped, resolved)} - paint a fresh mask`);
+      } else {
+        setStatus(`Attached ${referenceStatusLabel(mapped, resolved)}`);
+      }
+    },
+    [appConfig?.ui.studio_mode, patchSettings, selected, setStudioMode],
   );
 
   const downloadMissingCompanions = useCallback(async () => {
@@ -2890,6 +2956,7 @@ export function useDreamForge() {
     saveStudioSettings: saveStudioSettingsPatch,
     appConfig,
     studioMode: (appConfig?.ui.studio_mode ?? "generate") as StudioMode,
+    editPlanState,
     agentPlannedMode,
     setStudioMode,
     agentProviders,

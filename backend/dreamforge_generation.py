@@ -1053,7 +1053,16 @@ def run_generation(
         inpaint_recipe = inpaint_mask_recipe_values(
             str(getattr(job, "edit_type", "inpaint") or "inpaint")
         )
-        grow_mask_by = int(inpaint_recipe["inpaint_mask_grow_by"])
+
+        def _job_inpaint_int(name: str, recipe_key: str) -> int:
+            value = getattr(job, name, None)
+            if value is not None:
+                return int(value)
+            return int(inpaint_recipe[recipe_key])
+
+        grow_mask_by = _job_inpaint_int("inpaint_mask_grow_by", "inpaint_mask_grow_by")
+        inpaint_grow = _job_inpaint_int("inpaint_grow", "inpaint_grow")
+        inpaint_feather = _job_inpaint_int("inpaint_feather", "inpaint_feather")
         inpaint_mask_img = None
 
         input_filename = None
@@ -1161,8 +1170,8 @@ def run_generation(
                 mask_bytes, inpaint_mask_img = prepare_inpaint_mask_bytes(
                     mask_resolved,
                     image_size=main_size,
-                    grow=int(inpaint_recipe["inpaint_grow"]),
-                    feather=int(inpaint_recipe["inpaint_feather"]),
+                    grow=inpaint_grow,
+                    feather=inpaint_feather,
                 )
                 mask_name = f"{Path(str(mask_path)).stem}_df_inpaint.png"
                 mask_upload = client.upload_image(

@@ -91,6 +91,7 @@ export function WorkflowPlanPanel({
   const identityReference = plan.identity_reference;
   const changedFields = modeContract?.changed_fields ?? [];
   const preservedFields = modeContract?.preserved_fields ?? [];
+  const preservationHints = modeContract?.preservation_hints ?? [];
   const runCheck = canRunApprovedPlan(plan, readiness);
   const runDisabled =
     runBusy ||
@@ -208,6 +209,12 @@ export function WorkflowPlanPanel({
               <p className="font-mono">
                 <span className="text-dfui-tertiary">preserves: </span>
                 <span>{preservedFields.slice(0, 8).join(", ")}</span>
+              </p>
+            )}
+            {preservationHints.length > 0 && (
+              <p className="font-mono">
+                <span className="text-dfui-tertiary">intents: </span>
+                <span>{preservationHints.join(" · ")}</span>
               </p>
             )}
           </div>
@@ -398,7 +405,8 @@ export function WorkflowPlanPanel({
         )}
         {onDownloadCompanions &&
           ((readiness?.missing_models?.length ?? 0) > 0 ||
-            (readiness?.recommended_actions?.length ?? 0) > 0) && (
+            (readiness?.recommended_actions?.length ?? 0) > 0 ||
+            (plan.downloads?.length ?? 0) > 0) && (
             <button
               type="button"
               onClick={onDownloadCompanions}

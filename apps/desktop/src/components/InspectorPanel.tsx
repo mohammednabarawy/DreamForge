@@ -9,6 +9,7 @@ import {
   Palette,
   ShieldCheck,
   SlidersHorizontal,
+  Tag,
   XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -29,6 +30,8 @@ import {
   type AgentProviderTestResult,
   type DreamForgeAppConfig,
   type DreamForgeAppConfigPatch,
+  type IdentityRecord,
+  type ReferencePack,
   type StudioSettings,
   type UserStyleProfile,
 } from "../lib/studioBridge";
@@ -73,6 +76,16 @@ type Props = {
   imageNumberMax?: number;
   userStyleProfile?: UserStyleProfile | null;
   userStyleProfilePath?: string;
+  referencePacks?: ReferencePack[];
+  onAttachReferencePack?: (packId: string) => void;
+  onCreateReferencePack?: (name: string, type: ReferencePack["type"]) => void | Promise<void>;
+  onDeleteReferencePack?: (packId: string) => void | Promise<void>;
+  onRefreshReferencePacks?: () => void | Promise<void>;
+  identities?: IdentityRecord[];
+  onAttachIdentity?: (identityId: string) => void;
+  onCreateIdentity?: (name: string, type: IdentityRecord["type"]) => void | Promise<void>;
+  onDeleteIdentity?: (identityId: string) => void | Promise<void>;
+  onRefreshIdentities?: () => void | Promise<void>;
   onUserStyleMemoryEnabledChange?: (enabled: boolean) => void | Promise<void>;
   onClearUserStyleMemory?: () => void | Promise<void>;
   onExportUserStyleMemory?: () => void | Promise<void>;
@@ -117,12 +130,26 @@ export function InspectorPanel({
   imageNumberMax = 8,
   userStyleProfile,
   userStyleProfilePath,
+  referencePacks = [],
+  onAttachReferencePack,
+  onCreateReferencePack,
+  onDeleteReferencePack,
+  onRefreshReferencePacks,
+  identities = [],
+  onAttachIdentity,
+  onCreateIdentity,
+  onDeleteIdentity,
+  onRefreshIdentities,
   onUserStyleMemoryEnabledChange,
   onClearUserStyleMemory,
   onExportUserStyleMemory,
 }: Props) {
   const [tab, setTab] = useState<Tab>("models");
   const [styleFilter, setStyleFilter] = useState("");
+  const [newPackName, setNewPackName] = useState("");
+  const [newPackType, setNewPackType] = useState<ReferencePack["type"]>("style");
+  const [newIdentityName, setNewIdentityName] = useState("");
+  const [newIdentityType, setNewIdentityType] = useState<IdentityRecord["type"]>("person");
 
   const performances = uiDefaults?.performances ?? [
     "Speed",
@@ -142,7 +169,6 @@ export function InspectorPanel({
   const activeProvider = agentProviders.find(
     (p) => p.id === appConfig?.agent.provider,
   );
-  const requiresAgentKey = Boolean(activeProvider?.requires_api_key);
 
   const isUpscale = studioMode === "upscale";
 
@@ -500,6 +526,227 @@ export function InspectorPanel({
         {tab === "settings" && (
           <div className="h-full min-h-0 overflow-y-auto">
           <div className="space-y-3">
+            {(onAttachReferencePack || onCreateReferencePack) && (
+              <div className="space-y-2 rounded-lg border border-dfui-border/50 bg-dfui-bg/30 p-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Tag size={14} className="text-dfui-accent" />
+                    <div>
+                      <p className="text-[10px] font-medium uppercase tracking-wide text-dfui-muted">
+                        Reference packs
+                      </p>
+                      <p className="text-[10px] text-dfui-tertiary">
+                        Local named images for identity, product, brand, or style guidance
+                      </p>
+                    </div>
+                  </div>
+                  {onRefreshReferencePacks && (
+                    <button
+                      type="button"
+                      onClick={() => void onRefreshReferencePacks()}
+                      className="rounded-md border border-dfui-border/60 px-2 py-1 text-[10px] text-dfui-secondary hover:border-dfui-accent/40"
+                    >
+                      Refresh
+                    </button>
+                  )}
+                </div>
+                {referencePacks.length > 0 && onAttachReferencePack && (
+                  <label className="block">
+                    <span className="text-[10px] text-dfui-tertiary">Attach pack</span>
+                    <select
+                      value={settings.reference_pack_id ?? ""}
+                      onChange={(e) => onAttachReferencePack(e.target.value)}
+                      className="df-select mt-0.5 w-full px-2.5 py-2 text-xs"
+                    >
+                      <option value="">No reference pack</option>
+                      {referencePacks.map((pack) => (
+                        <option key={pack.id} value={pack.id}>
+                          {pack.name} · {pack.type} · {pack.image_paths.length} image
+                          {pack.image_paths.length === 1 ? "" : "s"}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {settings.reference_pack_id && (
+                  <div className="flex items-center gap-1.5 rounded border border-dfui-accent/25 bg-dfui-accent/5 px-2 py-1">
+                    <p className="min-w-0 flex-1 truncate font-mono text-[9px] text-dfui-secondary">
+                      Attached: {settings.reference_pack_id}
+                      {settings.reference_pack_role ? ` · ${settings.reference_pack_role}` : ""}
+                    </p>
+                    {onDeleteReferencePack && (
+                      <button
+                        type="button"
+                        onClick={() => void onDeleteReferencePack(settings.reference_pack_id ?? "")}
+                        className="rounded border border-red-400/30 px-1.5 py-0.5 text-[9px] text-red-300 hover:border-red-300/50"
+                        title="Delete this local pack record; source images stay on disk"
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                )}
+                {onCreateReferencePack && (
+                  <div className="grid grid-cols-[1fr_auto] gap-1.5">
+                    <input
+                      value={newPackName}
+                      onChange={(e) => setNewPackName(e.target.value)}
+                      placeholder="New pack name"
+                      className="df-input px-2 py-1.5 text-xs"
+                    />
+                    <select
+                      value={newPackType}
+                      onChange={(e) => setNewPackType(e.target.value as ReferencePack["type"])}
+                      className="df-select px-2 py-1.5 text-xs"
+                    >
+                      <option value="style">style</option>
+                      <option value="person">person</option>
+                      <option value="character">character</option>
+                      <option value="product">product</option>
+                      <option value="brand">brand</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const name = newPackName.trim();
+                        if (!name) return;
+                        void Promise.resolve(onCreateReferencePack(name, newPackType)).then(() =>
+                          setNewPackName(""),
+                        );
+                      }}
+                      disabled={!newPackName.trim()}
+                      className="col-span-2 rounded-md border border-dfui-accent/40 bg-dfui-accent/10 px-2 py-1.5 text-[10px] text-dfui-accent hover:bg-dfui-accent/15 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Save current / selected image(s) as pack
+                    </button>
+                  </div>
+                )}
+                {referencePacks.length === 0 && (
+                  <p className="text-[10px] text-dfui-tertiary">
+                    No packs yet. Attach or select an image, name it, then save a local pack.
+                  </p>
+                )}
+              </div>
+            )}
+            {(onAttachIdentity || onCreateIdentity) && (
+              <div className="space-y-2 rounded-lg border border-dfui-border/50 bg-dfui-bg/30 p-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck size={14} className="text-dfui-accent" />
+                    <div>
+                      <p className="text-[10px] font-medium uppercase tracking-wide text-dfui-muted">
+                        Identity registry
+                      </p>
+                      <p className="text-[10px] text-dfui-tertiary">
+                        Local SQLite identities for people, products, brands, styles, and places
+                      </p>
+                    </div>
+                  </div>
+                  {onRefreshIdentities && (
+                    <button
+                      type="button"
+                      onClick={() => void onRefreshIdentities()}
+                      className="rounded-md border border-dfui-border/60 px-2 py-1 text-[10px] text-dfui-secondary hover:border-dfui-accent/40"
+                    >
+                      Refresh
+                    </button>
+                  )}
+                </div>
+                {identities.length > 0 && onAttachIdentity && (
+                  <label className="block">
+                    <span className="text-[10px] text-dfui-tertiary">Attach identity</span>
+                    <select
+                      value={settings.identity_id ?? ""}
+                      onChange={(e) => onAttachIdentity(e.target.value)}
+                      className="df-select mt-0.5 w-full px-2.5 py-2 text-xs"
+                    >
+                      <option value="">No identity</option>
+                      {identities.map((identity) => (
+                        <option key={identity.id} value={identity.id}>
+                          {identity.name} · {identity.type} · {identity.image_paths.length} image
+                          {identity.image_paths.length === 1 ? "" : "s"}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {settings.identity_id && (
+                  <div className="space-y-1.5 rounded border border-dfui-accent/25 bg-dfui-accent/5 px-2 py-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <p className="min-w-0 flex-1 truncate font-mono text-[9px] text-dfui-secondary">
+                        Attached: {settings.identity_id}
+                        {settings.identity_role ? ` · ${settings.identity_role}` : ""}
+                      </p>
+                      {onDeleteIdentity && (
+                        <button
+                          type="button"
+                          onClick={() => void onDeleteIdentity(settings.identity_id ?? "")}
+                          className="rounded border border-red-400/30 px-1.5 py-0.5 text-[9px] text-red-300 hover:border-red-300/50"
+                          title="Delete this local identity record; source images stay on disk"
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </div>
+                    <label className="inline-flex items-center gap-1.5 text-[10px] text-dfui-secondary">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(settings.face_preservation)}
+                        onChange={(e) =>
+                          onChange({
+                            face_preservation: e.target.checked,
+                            identity_mode: e.target.checked ? "faceid" : undefined,
+                          })
+                        }
+                        className="accent-dfui-accent"
+                      />
+                      Require local FaceID preservation
+                    </label>
+                  </div>
+                )}
+                {onCreateIdentity && (
+                  <div className="grid grid-cols-[1fr_auto] gap-1.5">
+                    <input
+                      value={newIdentityName}
+                      onChange={(e) => setNewIdentityName(e.target.value)}
+                      placeholder="New identity name"
+                      className="df-input px-2 py-1.5 text-xs"
+                    />
+                    <select
+                      value={newIdentityType}
+                      onChange={(e) => setNewIdentityType(e.target.value as IdentityRecord["type"])}
+                      className="df-select px-2 py-1.5 text-xs"
+                    >
+                      <option value="person">person</option>
+                      <option value="character">character</option>
+                      <option value="product">product</option>
+                      <option value="brand">brand</option>
+                      <option value="style">style</option>
+                      <option value="location">location</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const name = newIdentityName.trim();
+                        if (!name) return;
+                        void Promise.resolve(onCreateIdentity(name, newIdentityType)).then(() =>
+                          setNewIdentityName(""),
+                        );
+                      }}
+                      disabled={!newIdentityName.trim()}
+                      className="col-span-2 rounded-md border border-dfui-accent/40 bg-dfui-accent/10 px-2 py-1.5 text-[10px] text-dfui-accent hover:bg-dfui-accent/15 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Save current / selected image(s) as identity
+                    </button>
+                  </div>
+                )}
+                {identities.length === 0 && (
+                  <p className="text-[10px] text-dfui-tertiary">
+                    No identities yet. Attach or select image(s), name the identity, then save it locally.
+                  </p>
+                )}
+              </div>
+            )}
             {userStyleProfile && onUserStyleMemoryEnabledChange && (
               <div className="space-y-2 rounded-lg border border-dfui-border/50 bg-dfui-bg/30 p-2.5">
                 <div className="flex items-center justify-between gap-2">
@@ -564,10 +811,10 @@ export function InspectorPanel({
                     <Bot size={14} className="text-dfui-accent" />
                     <div>
                       <p className="text-[10px] font-medium uppercase tracking-wide text-dfui-muted">
-                        Agent provider
+                        Agent runtime
                       </p>
                       <p className="text-[10px] text-dfui-tertiary">
-                        Backend-owned config, keys redacted on read
+                        Local open-source planner only
                       </p>
                     </div>
                   </div>
@@ -589,7 +836,7 @@ export function InspectorPanel({
                   )}
                 </div>
                 <label className="block">
-                  <span className="text-[10px] text-dfui-tertiary">Provider</span>
+                  <span className="text-[10px] text-dfui-tertiary">Runtime</span>
                   <select
                     value={appConfig.agent.provider}
                     onChange={(e) => {
@@ -641,28 +888,6 @@ export function InspectorPanel({
                     />
                   </label>
                 </div>
-                {requiresAgentKey && (
-                  <label className="block">
-                    <span className="text-[10px] text-dfui-tertiary">API key</span>
-                    <input
-                      type="password"
-                      placeholder={
-                        appConfig.agent.api_key_configured
-                          ? `Configured ****${appConfig.agent.api_key_tail ?? ""}`
-                          : "Paste provider key"
-                      }
-                      onBlur={(e) => {
-                        const apiKey = e.target.value.trim();
-                        if (!apiKey) return;
-                        void onSaveAppConfig({
-                          agent: { api_key: apiKey },
-                        });
-                        e.currentTarget.value = "";
-                      }}
-                      className="df-input mt-0.5 w-full px-2 py-1.5 font-mono text-[10px]"
-                    />
-                  </label>
-                )}
                 <label className="block">
                   <span className="text-[10px] text-dfui-tertiary">
                     Agent instructions
@@ -678,7 +903,7 @@ export function InspectorPanel({
                       })
                     }
                     className="df-input mt-0.5 w-full resize-none px-2 py-1.5 text-[10px]"
-                    placeholder="Prefer Arabic typography workflows, ask before cloud image context…"
+                    placeholder="Prefer Arabic typography workflows, ask before expensive runs…"
                   />
                 </label>
                 <div className="grid grid-cols-2 gap-2">
@@ -700,21 +925,6 @@ export function InspectorPanel({
                   <label className="flex items-start gap-2 text-[10px] text-dfui-muted">
                     <input
                       type="checkbox"
-                      checked={appConfig.privacy.allow_cloud_image_context}
-                      onChange={(e) =>
-                        void onSaveAppConfig({
-                          privacy: {
-                            allow_cloud_image_context: e.target.checked,
-                          },
-                        })
-                      }
-                      className="mt-0.5 accent-dfui-accent"
-                    />
-                    Allow cloud image context
-                  </label>
-                  <label className="flex items-start gap-2 text-[10px] text-dfui-muted">
-                    <input
-                      type="checkbox"
                       checked={appConfig.ui.advanced_mode}
                       onChange={(e) =>
                         void onSaveAppConfig({
@@ -729,11 +939,9 @@ export function InspectorPanel({
                 <div className="flex items-center justify-between gap-2 border-t border-dfui-border/30 pt-2">
                   <span className="inline-flex items-center gap-1 text-[10px] text-dfui-tertiary">
                     <ShieldCheck size={12} />
-                    {activeProvider?.mode === "cloud"
-                      ? "Cloud provider"
-                      : activeProvider?.mode === "local"
-                        ? "Local provider"
-                        : "Custom endpoint"}
+                    {activeProvider?.id === "embedded"
+                      ? "Embedded local model"
+                      : "Local server runtime"}
                   </span>
                   <button
                     type="button"

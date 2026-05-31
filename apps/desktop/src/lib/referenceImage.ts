@@ -5,6 +5,17 @@ export const DREAMFORGE_IMAGE_PATH_MIME = "application/x-dreamforge-image-path";
 
 export type ReferenceImageMode = "reference" | "inpaint" | "upscale";
 
+export const UPSCALE_METHOD_LABELS: Record<string, string> = {
+  fast_2x: "Fast 2x (OmniSR)",
+  fast_3x: "Fast 3x (OmniSR)",
+  fast_4x: "Fast 4x (OmniSR)",
+  quality: "High quality 4x (HAT)",
+  sharp: "Sharper 4x",
+  default: "Quality 4x (NMKD)",
+  "2x": "Fast 2x (OmniSR)",
+  "4x": "Quality 4x (NMKD)",
+};
+
 export const REFERENCE_IMAGE_MODES: Array<{
   id: ReferenceImageMode;
   label: string;
@@ -51,6 +62,11 @@ export function activeReferenceMode(
   return "reference";
 }
 
+export function upscaleMethodLabel(method: string | undefined): string {
+  const key = (method ?? "fast_2x").trim();
+  return UPSCALE_METHOD_LABELS[key] ?? key;
+}
+
 export function buildReferenceImagePatch(
   path: string,
   mode: ReferenceImageMode,
@@ -60,10 +76,11 @@ export function buildReferenceImagePatch(
     return {
       upscale_image: path,
       input_image: undefined,
+      inpaint_mask_path: undefined,
       edit_type: "auto",
       cn_selection: "Custom...",
       cn_type: "upscale",
-      upscale_method: "2x",
+      upscale_method: "fast_2x",
       style: "image_edit",
       output: outputFor("upscale"),
     };
@@ -73,6 +90,7 @@ export function buildReferenceImagePatch(
     return {
       input_image: path,
       upscale_image: undefined,
+      inpaint_mask_path: undefined,
       edit_type: "inpaint",
       cn_selection: "Custom...",
       cn_type: "inpaint",
@@ -84,6 +102,7 @@ export function buildReferenceImagePatch(
   return {
     input_image: path,
     upscale_image: undefined,
+    inpaint_mask_path: undefined,
     edit_type: "kontext",
     cn_selection: "None",
     cn_type: "None",

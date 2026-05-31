@@ -95,7 +95,27 @@ def test_mcp_create_workflow_returns_blueprint_not_raw_graph():
     assert payload["status"] == "success"
     assert "workflow_blueprint" in payload
     assert "workflow_graph" not in payload
+    assert "mode_contract" in payload
+    assert payload["operations"]
     assert "area_composition" in payload["workflow_blueprint"]["template_ids"]
+
+
+def test_mcp_create_workflow_explicit_inpaint_reports_missing_inputs():
+    import dreamforge_mcp_server as mcp_server
+
+    payload = json.loads(
+        mcp_server.create_workflow(
+            "replace this area",
+            mode="inpaint",
+            settings={},
+        )
+    )
+
+    assert payload["status"] == "success"
+    assert payload["mode_contract"]["mode"] == "inpaint"
+    assert "inpaint_repair" in payload["workflow_blueprint"]["template_ids"]
+    assert payload["workflow_blueprint"]["readiness"]["ready"] is False
+    assert payload["workflow_blueprint"]["readiness"]["missing_inputs"] == ["input_image", "mask"]
 
 
 def test_mcp_sessions_resource_is_structured(monkeypatch):

@@ -205,6 +205,32 @@ def test_upscale_readiness_recommends_selected_upscaler_download(monkeypatch):
     assert downloads[0]["missing"][0]["filename"] == "OmniSR_X4_DIV2K.safetensors"
 
 
+def test_explicit_inpaint_blueprint_requires_image_and_mask(monkeypatch):
+    import dreamforge_workflow_planner as planner
+
+    monkeypatch.setattr(
+        planner,
+        "_inventory_categories",
+        lambda: {"checkpoints": [{"name": "flux-fill-dev.safetensors", "family": "flux_fill"}]},
+    )
+
+    blueprint = build_live_workflow_blueprint(
+        "replace this area",
+        operations=["inpaint"],
+        has_image=False,
+        has_mask=False,
+        current_settings={
+            "prompt": "replace this area",
+            "edit_type": "inpaint",
+        },
+    )
+
+    assert "inpaint_repair" in blueprint["template_ids"]
+    assert blueprint["readiness"]["ready"] is False
+    assert blueprint["readiness"]["missing_inputs"] == ["input_image", "mask"]
+    assert "A mask or region selection is required" in " ".join(blueprint["warnings"])
+
+
 def test_face_detail_blueprint_requires_impact_packs_and_bbox_models(monkeypatch, tmp_path):
     import dreamforge_workflow_planner as planner
 

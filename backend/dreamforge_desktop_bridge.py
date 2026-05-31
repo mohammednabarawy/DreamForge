@@ -624,6 +624,51 @@ def cmd_export_user_style_profile(_params: dict) -> dict:
     return payload
 
 
+def cmd_list_reference_packs(_params: dict) -> dict:
+    from dreamforge_reference_packs import list_reference_packs
+
+    return {"ok": True, "packs": list_reference_packs()}
+
+
+def cmd_save_reference_pack(params: dict) -> dict:
+    from dreamforge_reference_packs import upsert_reference_pack
+
+    pack = upsert_reference_pack(params)
+    return {"ok": True, "pack": pack}
+
+
+def cmd_delete_reference_pack(params: dict) -> dict:
+    from dreamforge_reference_packs import delete_reference_pack
+
+    pack_id = str(params.get("id") or params.get("pack_id") or "")
+    deleted = delete_reference_pack(pack_id)
+    return {"ok": True, "deleted": deleted}
+
+
+def cmd_list_identities(params: dict) -> dict:
+    from dreamforge_identity_registry import list_identities, search_identities
+
+    identity_type = params.get("type")
+    query = str(params.get("query") or "").strip()
+    identities = search_identities(query, identity_type) if query else list_identities(identity_type)
+    return {"ok": True, "identities": identities}
+
+
+def cmd_save_identity(params: dict) -> dict:
+    from dreamforge_identity_registry import upsert_identity
+
+    identity = upsert_identity(params)
+    return {"ok": True, "identity": identity}
+
+
+def cmd_delete_identity(params: dict) -> dict:
+    from dreamforge_identity_registry import delete_identity
+
+    identity_id = str(params.get("id") or params.get("identity_id") or "")
+    deleted = delete_identity(identity_id)
+    return {"ok": True, "deleted": deleted}
+
+
 def cmd_suggest_dynamic_preset(params: dict) -> dict:
     from dreamforge_dynamic_presets import suggest_dynamic_preset
 
@@ -725,6 +770,12 @@ def cmd_build_cli_argv(params: dict) -> dict:
     add("--scheduler", params.get("scheduler"))
     add("--input-image", params.get("input_image"))
     add("--reference-images", params.get("reference_images"))
+    add("--reference-pack-id", params.get("reference_pack_id"))
+    add("--reference-pack-role", params.get("reference_pack_role"))
+    add("--identity-id", params.get("identity_id"))
+    add("--identity-role", params.get("identity_role"))
+    add("--identity-mode", params.get("identity_mode"))
+    add("--face-preservation", params.get("face_preservation"))
     add("--control-images", params.get("control_images"))
     add("--comfy-workflow-api", params.get("comfy_workflow_api"))
     add("--use-comfy-server", params.get("use_comfy_server"))
@@ -809,6 +860,12 @@ HANDLERS = {
     "save_user_style_profile": cmd_save_user_style_profile,
     "clear_user_style_profile": cmd_clear_user_style_profile,
     "export_user_style_profile": cmd_export_user_style_profile,
+    "list_reference_packs": cmd_list_reference_packs,
+    "save_reference_pack": cmd_save_reference_pack,
+    "delete_reference_pack": cmd_delete_reference_pack,
+    "list_identities": cmd_list_identities,
+    "save_identity": cmd_save_identity,
+    "delete_identity": cmd_delete_identity,
     "suggest_dynamic_preset": cmd_suggest_dynamic_preset,
     "check_custom_node_packs": cmd_check_custom_node_packs,
     **STUDIO_HANDLERS,

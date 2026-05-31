@@ -266,6 +266,7 @@ def template_ids_for_operations(
     *,
     has_image: bool = False,
     has_mask: bool = False,
+    strict_inpaint: bool = False,
 ) -> list[str]:
     ids: list[str] = []
     for op in operations:
@@ -274,7 +275,7 @@ def template_ids_for_operations(
         elif op in ("edit_image", "style_transfer", "face_edit"):
             ids.append("flux_kontext_edit" if has_image else "txt2img_basic")
         elif op in ("remove_object", "inpaint"):
-            ids.append("inpaint_repair" if has_mask else "flux_kontext_edit")
+            ids.append("inpaint_repair" if has_mask or strict_inpaint else "flux_kontext_edit")
         elif op == "outpaint":
             ids.append("outpaint_canvas_extend")
         elif op == "upscale":
@@ -304,13 +305,19 @@ def build_live_workflow_blueprint(
     current_settings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     settings = current_settings or {}
+    strict_inpaint = _strict_inpaint_requested(settings)
     ops = operations or resolve_operations_from_intent(
         intent,
         has_image=has_image,
         has_mask=has_mask,
         has_references=has_references,
     )
-    template_ids = template_ids_for_operations(ops, has_image=has_image, has_mask=has_mask)
+    template_ids = template_ids_for_operations(
+        ops,
+        has_image=has_image,
+        has_mask=has_mask,
+        strict_inpaint=strict_inpaint,
+    )
     templates = [TEMPLATE_REGISTRY[item].to_dict() for item in template_ids if item in TEMPLATE_REGISTRY]
     required_inputs = _dedupe([value for spec in templates for value in spec.get("required_inputs", [])])
     required_models = _dedupe([value for spec in templates for value in spec.get("required_models", [])])
@@ -356,6 +363,14 @@ def build_live_workflow_blueprint(
             ".research/comfy_workflow_research/ANALYSIS.md",
         ],
     }
+
+
+def _strict_inpaint_requested(settings: dict[str, Any]) -> bool:
+    edit_type = str(settings.get("edit_type") or "").lower()
+    mode = str(settings.get("mode") or settings.get("studio_mode") or "").lower()
+    workflow_mode = str(settings.get("workflow_mode") or "").lower()
+    cn_type = str(settings.get("cn_type") or "").lower()
+    return "inpaint" in {edit_type, mode, workflow_mode, cn_type}
 
 
 def _inventory_categories() -> dict[str, list[dict[str, Any]]]:
@@ -499,8 +514,16 @@ def assess_workflow_readiness(
         template_ids=template_ids,
         current_settings=settings,
     )
+    identity_actions = [
+        action
+        for action in settings.get("identity_dependency_actions", [])
+        if isinstance(action, dict)
+    ]
+    if identity_actions:
+        recommended_actions.extend(identity_actions)
+        warnings.append("Face identity preservation needs local optional dependencies before it can run.")
     return {
-        "ready": not missing_inputs and not missing_models and not missing_node_packs,
+        "ready": not missing_inputs and not missing_models and not missing_node_packs and not identity_actions,
         "missing_inputs": missing_inputs,
         "missing_models": _dedupe(missing_models),
         "missing_node_packs": missing_node_packs,

@@ -61,10 +61,34 @@ export function computeGenerateReadiness(args: {
     };
   }
   const studio = args.studioMode ?? "generate";
+  const hasEditImage = Boolean((args.settings.input_image ?? "").trim());
+  const hasUpscaleImage = Boolean((args.settings.upscale_image ?? "").trim());
+  const hasInpaintMask = Boolean((args.settings.inpaint_mask_path ?? "").trim());
+  if (studio === "edit" && !hasEditImage) {
+    return {
+      ok: false,
+      reason: "Attach an image to edit (canvas output or reference)",
+      missingCompanions: false,
+    };
+  }
+  if (studio === "inpaint" && !hasEditImage) {
+    return {
+      ok: false,
+      reason: "Attach an image before creating an inpaint mask",
+      missingCompanions: false,
+    };
+  }
+  if (studio === "inpaint" && !hasInpaintMask) {
+    return {
+      ok: false,
+      reason: "Create or attach an inpaint mask first",
+      missingCompanions: false,
+    };
+  }
   if (
     studio === "upscale" &&
-    !Boolean((args.settings.upscale_image ?? "").trim()) &&
-    !Boolean((args.settings.input_image ?? "").trim())
+    !hasUpscaleImage &&
+    !hasEditImage
   ) {
     return {
       ok: false,
@@ -72,11 +96,7 @@ export function computeGenerateReadiness(args: {
       missingCompanions: false,
     };
   }
-  if (
-    args.settings.edit_type === "inpaint" &&
-    Boolean((args.settings.input_image ?? "").trim()) &&
-    !Boolean((args.settings.inpaint_mask_path ?? "").trim())
-  ) {
+  if (args.settings.edit_type === "inpaint" && hasEditImage && !hasInpaintMask) {
     return {
       ok: false,
       reason: "Create or attach an inpaint mask first",

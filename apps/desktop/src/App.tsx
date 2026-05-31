@@ -118,11 +118,14 @@ export default function App() {
             generating={mc.generating}
             generationLog={mc.generationLog}
             agentPlan={mc.agentPlan}
+            agentTranscript={mc.agentTranscript}
+            agentRuntimeLabel={mc.agentRuntimeLabel}
             planApprovalRequired={mc.appConfig?.agent.approval_required}
             planRunBusy={mc.planRunBusy}
             onApplyAgentPlan={() => void mc.applyAgentPlan()}
             onRunApprovedPlan={() => void mc.runApprovedPlan()}
             onDismissAgentPlan={mc.dismissAgentPlan}
+            onClearAgentTranscript={mc.clearAgentTranscript}
             onDryRun={() => void mc.runDryRun()}
             onGenerate={() => void mc.runGenerate()}
             onCancel={() => void mc.runCancel()}
@@ -178,6 +181,20 @@ export default function App() {
             imageNumberMax={mc.imageNumberMax}
             userStyleProfile={mc.userStyleProfile}
             userStyleProfilePath={mc.userStyleProfilePath}
+            referencePacks={mc.referencePacks}
+            onAttachReferencePack={mc.attachReferencePack}
+            onCreateReferencePack={(name, type) =>
+              void mc.createReferencePackFromCurrent(name, type)
+            }
+            onDeleteReferencePack={(packId) => void mc.deleteReferencePack(packId)}
+            onRefreshReferencePacks={() => void mc.refreshReferencePacks()}
+            identities={mc.identities}
+            onAttachIdentity={mc.attachIdentity}
+            onCreateIdentity={(name, type) =>
+              void mc.createIdentityFromCurrent(name, type)
+            }
+            onDeleteIdentity={(identityId) => void mc.deleteIdentity(identityId)}
+            onRefreshIdentities={() => void mc.refreshIdentities()}
             onUserStyleMemoryEnabledChange={(enabled) =>
               void mc.setUserStyleMemoryEnabled(enabled)
             }

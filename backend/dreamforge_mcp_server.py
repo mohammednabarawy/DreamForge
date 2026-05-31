@@ -874,6 +874,11 @@ def create_workflow(
             has_references=has_refs,
         )
         mode_l = (mode or "").lower()
+        if mode_l == "inpaint" and "inpaint" not in operations:
+            operations.append("inpaint")
+            current_settings.setdefault("edit_type", "inpaint")
+        if mode_l == "upscale" and "upscale" not in operations:
+            operations.append("upscale")
         if mode_l in ("hires", "hires_fix", "two_pass") and "hires_fix" not in operations:
             operations.append("hires_fix")
         if mode_l in ("ipadapter", "reference", "reference_ipadapter") and "reference_guidance" not in operations:
@@ -888,7 +893,28 @@ def create_workflow(
             has_references=has_refs,
             current_settings=current_settings,
         )
-        return json.dumps({"status": "success", "mode": mode, "workflow_blueprint": blueprint}, indent=2)
+        mode_contract = None
+        try:
+            from dreamforge_mode_contract import build_mode_contract
+
+            mode_contract = build_mode_contract(
+                mode_l or "generate",
+                current_settings,
+                settings or {},
+                source="mcp",
+            )
+        except Exception:
+            mode_contract = None
+        return json.dumps(
+            {
+                "status": "success",
+                "mode": mode,
+                "operations": operations,
+                "workflow_blueprint": blueprint,
+                "mode_contract": mode_contract,
+            },
+            indent=2,
+        )
     except Exception as e:
         return json.dumps({"status": "error", "message": f"Failed to create workflow blueprint: {e}"})
 

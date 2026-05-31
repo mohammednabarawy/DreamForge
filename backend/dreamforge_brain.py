@@ -391,6 +391,18 @@ def heuristic_brain_decision(
     gallery: Optional[list] = None,
 ) -> Dict[str, Any]:
     settings = current_settings or {}
+    try:
+        from dreamforge_reference_packs import apply_reference_pack_to_settings
+
+        settings = apply_reference_pack_to_settings(settings)
+    except Exception:
+        settings = dict(settings)
+    try:
+        from dreamforge_identity_registry import apply_identity_to_settings
+
+        settings = apply_identity_to_settings(settings)
+    except Exception:
+        settings = dict(settings)
     has_image = bool(selected_image or settings.get("input_image") or settings.get("upscale_image"))
     has_mask = bool(settings.get("inpaint_mask_path") or settings.get("mask"))
     operations = _infer_operations(user_intent, has_image=has_image, has_mask=has_mask)
@@ -433,6 +445,16 @@ def heuristic_brain_decision(
         )
         if reference_image:
             patch.setdefault("reference_image", reference_image)
+    if isinstance(settings.get("reference_pack"), dict):
+        pack = settings["reference_pack"]
+        patch.setdefault("reference_pack_id", pack.get("id"))
+        patch.setdefault("reference_pack_role", pack.get("type"))
+        patch.setdefault("reference_images", settings.get("reference_images") or [])
+    if isinstance(settings.get("identity_reference"), dict):
+        identity = settings["identity_reference"]
+        patch.setdefault("identity_id", identity.get("id"))
+        patch.setdefault("identity_role", identity.get("type"))
+        patch.setdefault("reference_images", settings.get("reference_images") or [])
     if "face_detail" in operations:
         patch.setdefault("workflow_mode", "face_detail")
         if has_image:
@@ -488,7 +510,22 @@ def heuristic_brain_decision(
         message="Planned with the built-in local heuristic because no local brain model was required.",
         actions=operations,
     )
-    return decision.to_dict()
+    payload = decision.to_dict()
+    if isinstance(settings.get("reference_pack"), dict):
+        pack = settings["reference_pack"]
+        payload["reference_pack"] = pack
+        payload["message"] = f"{payload['message']} Attached reference pack: {pack.get('name')}."
+    if isinstance(settings.get("identity_reference"), dict):
+        identity = settings["identity_reference"]
+        payload["identity_reference"] = identity
+        payload["message"] = f"{payload['message']} Attached identity: {identity.get('name')}."
+    if settings.get("identity_dependency_actions"):
+        payload.setdefault("recommended_actions", []).extend(settings["identity_dependency_actions"])
+    if settings.get("reference_pack_missing"):
+        payload.setdefault("warnings", []).append(f"Reference pack not found: {settings['reference_pack_missing']}")
+    if settings.get("identity_missing"):
+        payload.setdefault("warnings", []).append(f"Identity not found: {settings['identity_missing']}")
+    return payload
 
 
 def coerce_brain_decision(
@@ -720,10 +757,12 @@ def plan_user_intent(
 ) -> Dict[str, Any]:
     """Plan a DreamForge operation without executing image generation."""
     from dreamforge_dynamic_presets import apply_dynamic_preset
+    from dreamforge_mode_contract import build_mode_contract
 
+    original_settings = current_settings or {}
     settings, dynamic_preset = apply_dynamic_preset(
         user_intent,
-        current_settings or {},
+        original_settings,
     )
     brain = AiBrain()
     try:
@@ -731,8 +770,20 @@ def plan_user_intent(
     except Exception as exc:
         payload = heuristic_brain_decision(user_intent, settings, selected_image, gallery or [])
         payload["dynamic_preset"] = dynamic_preset
+        payload["mode_contract"] = build_mode_contract(
+            str(payload.get("mode") or "generate"),
+            payload.get("patch") if isinstance(payload.get("patch"), dict) else {},
+            original_settings,
+            source=str(payload.get("suggested_brain_provider") or "heuristic"),
+        )
         payload["warnings"].append(str(exc))
         return payload
     payload = brain.plan_decision(user_intent, settings, selected_image, gallery or [])
     payload["dynamic_preset"] = dynamic_preset
+    payload["mode_contract"] = build_mode_contract(
+        str(payload.get("mode") or "generate"),
+        payload.get("patch") if isinstance(payload.get("patch"), dict) else {},
+        original_settings,
+        source=str(payload.get("suggested_brain_provider") or "heuristic"),
+    )
     return payload

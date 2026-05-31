@@ -9,6 +9,7 @@ import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -48,65 +49,27 @@ PROVIDER_PRESETS: list[dict[str, Any]] = [
         "test_kind": "openai_compatible",
     },
     {
-        "id": "openai",
-        "label": "OpenAI",
-        "mode": "cloud",
-        "base_url": "https://api.openai.com/v1",
-        "default_model": "gpt-4o-mini",
-        "requires_api_key": True,
-        "test_kind": "openai_compatible",
-    },
-    {
-        "id": "openrouter",
-        "label": "OpenRouter",
-        "mode": "cloud",
-        "base_url": "https://openrouter.ai/api/v1",
-        "default_model": "openai/gpt-4o-mini",
-        "requires_api_key": True,
-        "test_kind": "openai_compatible",
-    },
-    {
-        "id": "anthropic",
-        "label": "Anthropic",
-        "mode": "cloud",
-        "base_url": "https://api.anthropic.com",
-        "default_model": "claude-3-5-haiku-latest",
-        "requires_api_key": True,
-        "test_kind": "unsupported",
-    },
-    {
-        "id": "google",
-        "label": "Google Gemini",
-        "mode": "cloud",
-        "base_url": "https://generativelanguage.googleapis.com",
-        "default_model": "gemini-2.0-flash",
-        "requires_api_key": True,
-        "test_kind": "unsupported",
-    },
-    {
-        "id": "custom",
-        "label": "Custom OpenAI-compatible",
-        "mode": "custom",
-        "base_url": "",
-        "default_model": "",
+        "id": "llamacpp",
+        "label": "llama.cpp server",
+        "mode": "local",
+        "base_url": "http://localhost:8080/v1",
+        "default_model": "local-model",
         "requires_api_key": False,
         "test_kind": "openai_compatible",
     },
 ]
+
+LOCAL_AGENT_PROVIDER_IDS = {preset["id"] for preset in PROVIDER_PRESETS}
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 
 DEFAULT_APP_CONFIG: dict[str, Any] = {
     "agent": {
         "provider": "ollama",
         "base_url": "http://localhost:11434",
         "model": "gemma3:4b",
-        "api_key": "",
         "custom_instructions": "",
         "approval_required": True,
         "auto_configure_workflows": True,
-    },
-    "privacy": {
-        "cloud_confirmation_required": True,
-        "allow_cloud_image_context": False,
     },
     "ui": {
         "studio_mode": "generate",
@@ -119,12 +82,11 @@ _AGENT_KEYS = {
     "provider",
     "base_url",
     "model",
-    "api_key",
     "custom_instructions",
     "approval_required",
     "auto_configure_workflows",
 }
-_PRIVACY_KEYS = {"cloud_confirmation_required", "allow_cloud_image_context"}
+_PRIVACY_KEYS: set[str] = set()
 _UI_KEYS = {"studio_mode", "advanced_mode"}
 
 _AGENT_FIELD_GUIDE = """
@@ -163,7 +125,7 @@ def provider_preset(provider_id: str) -> dict[str, Any]:
     for preset in PROVIDER_PRESETS:
         if preset["id"] == provider_id:
             return copy.deepcopy(preset)
-    return provider_preset("custom")
+    return provider_preset("ollama")
 
 
 def load_app_config(*, redacted: bool = True) -> dict[str, Any]:
@@ -175,22 +137,13 @@ def load_app_config(*, redacted: bool = True) -> dict[str, Any]:
             cfg = _merge_allowed(cfg, raw)
         except (OSError, json.JSONDecodeError, TypeError):
             pass
+    cfg = _normalize_agent_config(cfg)
     return redact_config(cfg) if redacted else cfg
 
 
 def save_app_config(incoming: dict[str, Any]) -> dict[str, Any]:
     existing = load_app_config(redacted=False)
-    next_cfg = _merge_allowed(existing, incoming)
-
-    agent_in = incoming.get("agent") if isinstance(incoming.get("agent"), dict) else {}
-    if agent_in.get("clear_api_key"):
-        next_cfg["agent"]["api_key"] = ""
-    elif "api_key" in agent_in:
-        api_key = str(agent_in.get("api_key") or "")
-        if api_key:
-            next_cfg["agent"]["api_key"] = api_key
-        else:
-            next_cfg["agent"]["api_key"] = existing.get("agent", {}).get("api_key", "")
+    next_cfg = _normalize_agent_config(_merge_allowed(existing, incoming))
 
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -202,22 +155,20 @@ def save_app_config(incoming: dict[str, Any]) -> dict[str, Any]:
 
 def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
     redacted = copy.deepcopy(cfg)
-    api_key = str(redacted.get("agent", {}).get("api_key") or "")
     redacted.setdefault("agent", {})
     redacted["agent"]["api_key"] = ""
-    redacted["agent"]["api_key_configured"] = bool(api_key)
-    redacted["agent"]["api_key_tail"] = api_key[-4:] if api_key else ""
+    redacted["agent"]["api_key_configured"] = False
+    redacted["agent"]["api_key_tail"] = ""
     return redacted
 
 
 def test_agent_provider(config: dict[str, Any] | None = None) -> dict[str, Any]:
     cfg = _merge_runtime_config(load_app_config(redacted=False), config or {})
     agent = cfg.get("agent", {})
-    provider = str(agent.get("provider") or "custom")
+    provider = str(agent.get("provider") or DEFAULT_APP_CONFIG["agent"]["provider"])
     preset = provider_preset(provider)
     base_url = str(agent.get("base_url") or preset.get("base_url") or "").rstrip("/")
     model = str(agent.get("model") or preset.get("default_model") or "").strip()
-    api_key = str(agent.get("api_key") or "").strip()
     start = time.perf_counter()
 
     if provider == "embedded":
@@ -233,10 +184,10 @@ def test_agent_provider(config: dict[str, Any] | None = None) -> dict[str, Any]:
         except Exception as e:
             return _test_result(False, provider, model, start, str(e))
 
-    if preset.get("requires_api_key") and not api_key:
-        return _test_result(False, provider, model, start, "api_key_missing")
     if not base_url:
         return _test_result(False, provider, model, start, "base_url_missing")
+    if not _is_local_base_url(base_url):
+        return _test_result(False, provider, model, start, "local_endpoint_required")
     if not model:
         return _test_result(False, provider, model, start, "model_missing")
     if preset.get("test_kind") == "unsupported":
@@ -263,9 +214,9 @@ def test_agent_provider(config: dict[str, Any] | None = None) -> dict[str, Any]:
                 "temperature": 0,
                 "max_tokens": 8,
             }
-            _post_json(f"{base_url}/chat/completions", payload, api_key or None)
+            _post_json(f"{base_url}/chat/completions", payload, None)
     except Exception as exc:  # noqa: BLE001 - bridge must return structured failures
-        return _test_result(False, provider, model, start, _redact(str(exc), api_key))
+        return _test_result(False, provider, model, start, _redact(str(exc), ""))
 
     return _test_result(True, provider, model, start, "ok")
 
@@ -330,12 +281,36 @@ def _merge_allowed(base: dict[str, Any], incoming: dict[str, Any]) -> dict[str, 
 
 
 def _merge_runtime_config(base: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
-    merged = _merge_allowed(base, incoming)
-    agent_in = incoming.get("agent") if isinstance(incoming.get("agent"), dict) else {}
-    if agent_in.get("api_key") == "" and agent_in.get("api_key_configured"):
-        merged.setdefault("agent", {})
-        merged["agent"]["api_key"] = base.get("agent", {}).get("api_key", "")
-    return merged
+    return _normalize_agent_config(_merge_allowed(base, incoming), coerce_remote_base_url=False)
+
+
+def _normalize_agent_config(cfg: dict[str, Any], *, coerce_remote_base_url: bool = True) -> dict[str, Any]:
+    normalized = copy.deepcopy(cfg)
+    agent = normalized.setdefault("agent", {})
+    provider = str(agent.get("provider") or DEFAULT_APP_CONFIG["agent"]["provider"])
+    reset_model = False
+    if provider not in LOCAL_AGENT_PROVIDER_IDS:
+        provider = DEFAULT_APP_CONFIG["agent"]["provider"]
+        agent["provider"] = provider
+        reset_model = True
+    preset = provider_preset(provider)
+    base_url = str(agent.get("base_url") or preset.get("base_url") or "").strip()
+    if coerce_remote_base_url and provider != "embedded" and base_url and not _is_local_base_url(base_url):
+        base_url = str(preset.get("base_url") or "")
+    agent["base_url"] = base_url
+    agent["model"] = str((None if reset_model else agent.get("model")) or preset.get("default_model") or "")
+    agent.pop("api_key", None)
+    agent.pop("clear_api_key", None)
+    normalized["privacy"] = {}
+    return normalized
+
+
+def _is_local_base_url(base_url: str) -> bool:
+    if not base_url:
+        return False
+    parsed = urllib.parse.urlparse(base_url)
+    host = (parsed.hostname or "").lower()
+    return host in LOCAL_HOSTS
 
 
 def _provider_agent_plan(
@@ -349,7 +324,7 @@ def _provider_agent_plan(
     original_settings: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     agent = cfg.get("agent", {})
-    provider = str(agent.get("provider") or "custom")
+    provider = str(agent.get("provider") or DEFAULT_APP_CONFIG["agent"]["provider"])
     preset = provider_preset(provider)
 
     # Embedded llama.cpp provider uses AiBrain directly
@@ -402,10 +377,9 @@ def _provider_agent_plan(
 
     base_url = str(agent.get("base_url") or preset.get("base_url") or "").rstrip("/")
     model = str(agent.get("model") or preset.get("default_model") or "").strip()
-    api_key = str(agent.get("api_key") or "").strip()
     if not base_url or not model:
         return None
-    if preset.get("requires_api_key") and not api_key:
+    if not _is_local_base_url(base_url):
         return None
 
     system = (
@@ -466,10 +440,10 @@ def _provider_agent_plan(
                 "response_format": _agent_response_schema(),
             }
             try:
-                raw = _post_json(f"{base_url}/chat/completions", payload, api_key or None)
+                raw = _post_json(f"{base_url}/chat/completions", payload, None)
             except Exception:
                 payload.pop("response_format", None)
-                raw = _post_json(f"{base_url}/chat/completions", payload, api_key or None)
+                raw = _post_json(f"{base_url}/chat/completions", payload, None)
             choices = raw.get("choices") or []
             content = ((choices[0].get("message") or {}).get("content") or "").strip()
         plan = _parse_json_object(content)
@@ -737,6 +711,13 @@ _GENERATION_PATCH_KEYS = {
     "detail_target",
     "detail_prompt",
     "reference_image",
+    "reference_images",
+    "reference_pack_id",
+    "reference_pack_role",
+    "identity_id",
+    "identity_role",
+    "identity_mode",
+    "face_preservation",
     "control_image",
 }
 
@@ -792,11 +773,25 @@ def _attach_dynamic_preset(
     enriched: dict[str, Any],
     original: dict[str, Any],
 ) -> dict[str, Any]:
+    from dreamforge_mode_contract import build_mode_contract
+
     if not dynamic_preset:
+        payload["mode_contract"] = build_mode_contract(
+            str(payload.get("mode") or "generate"),
+            payload.get("patch") if isinstance(payload.get("patch"), dict) else {},
+            original,
+            source=str(payload.get("source") or "local"),
+        )
         return payload
     payload["dynamic_preset"] = dynamic_preset
     patch = payload.get("patch")
     if not isinstance(patch, dict):
+        payload["mode_contract"] = build_mode_contract(
+            str(payload.get("mode") or "generate"),
+            {},
+            original,
+            source=str(payload.get("source") or "local"),
+        )
         return payload
     applied = dynamic_preset.get("applied") if isinstance(dynamic_preset.get("applied"), dict) else {}
     for key in applied:
@@ -805,6 +800,12 @@ def _attach_dynamic_preset(
             if value is not None:
                 patch[key] = value
     payload["patch"] = _filter_generation_patch(patch)
+    payload["mode_contract"] = build_mode_contract(
+        str(payload.get("mode") or "generate"),
+        payload["patch"],
+        original,
+        source=str(payload.get("source") or "local"),
+    )
     return payload
 
 

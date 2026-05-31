@@ -10,6 +10,7 @@ import {
   defaultReferenceEditStrength,
   effectiveReferenceEditStrength,
   readImagePathFromDrop,
+  upscaleMethodLabel,
   type ReferenceImageMode,
 } from "../lib/referenceImage";
 import type { GenerationSettings } from "../lib/tauri-api";
@@ -226,6 +227,9 @@ export function ReferenceImageControl({
                 REFERENCE_IMAGE_MODES.find((item) => item.id === attachedMode)
                   ?.label
               }
+              {attachedMode === "upscale"
+                ? ` · ${upscaleMethodLabel(settings.upscale_method)}`
+                : ""}
               {settings.inpaint_mask_path ? " · mask set" : ""}
               {extraReferences.length > 0
                 ? ` · +${extraReferences.length} ref`

@@ -82,6 +82,12 @@ def build_parser():
         default=None,
         help="Additional Kontext/control reference images (Krita-style multi-reference)",
     )
+    parser.add_argument("--reference-pack-id", default=None, help="Local reference pack id to attach")
+    parser.add_argument("--reference-pack-role", default=None, help="Intended role for the attached reference pack")
+    parser.add_argument("--identity-id", default=None, help="Local identity registry id to attach")
+    parser.add_argument("--identity-role", default=None, help="Intended role for the attached identity")
+    parser.add_argument("--identity-mode", default=None, help="Optional identity mode, e.g. faceid for local face preservation")
+    parser.add_argument("--face-preservation", action="store_true", help="Require local face identity preservation dependencies")
     parser.add_argument(
         "--comfy-workflow-api",
         default=None,
@@ -521,6 +527,31 @@ def _apply_generation_recipe_settings(settings: dict, model: dict, job) -> dict:
 
 def build_plan(base_args, data=None):
     job, model, prompt, negative, width, height, brand_kit = _compile_job(base_args, data)
+    job_settings = vars(job).copy()
+    reference_pack = None
+    identity_reference = None
+    identity_dependency_actions = []
+    try:
+        from dreamforge_reference_packs import apply_reference_pack_to_settings
+
+        expanded_settings = apply_reference_pack_to_settings(job_settings)
+        reference_pack = expanded_settings.get("reference_pack")
+        if expanded_settings.get("reference_images"):
+            job.reference_images = expanded_settings["reference_images"]
+        job_settings = expanded_settings
+    except Exception:
+        pass
+    try:
+        from dreamforge_identity_registry import apply_identity_to_settings
+
+        expanded_settings = apply_identity_to_settings(job_settings)
+        identity_reference = expanded_settings.get("identity_reference")
+        identity_dependency_actions = list(expanded_settings.get("identity_dependency_actions") or [])
+        if expanded_settings.get("reference_images"):
+            job.reference_images = expanded_settings["reference_images"]
+        job_settings = expanded_settings
+    except Exception:
+        pass
     settings = _apply_generation_recipe_settings(
         _apply_edit_recipe_settings(
             _auto_settings(model, job, width, height, negative),
@@ -544,10 +575,11 @@ def build_plan(base_args, data=None):
         getattr(job, "performance", "Quality"),
     )
     workflow_blueprint = None
+    operations = []
     try:
         from dreamforge_workflow_planner import build_live_workflow_blueprint, resolve_operations_from_intent
 
-        current_settings = vars(job).copy()
+        current_settings = job_settings.copy()
         has_image = bool(getattr(job, "input_image", None) or getattr(job, "upscale_image", None))
         has_mask = bool(getattr(job, "inpaint_mask_path", None))
         has_refs = bool(getattr(job, "reference_images", None) or getattr(job, "control_images", None))
@@ -579,9 +611,45 @@ def build_plan(base_args, data=None):
             "status": "error",
             "warnings": [f"Workflow blueprint planning failed: {exc}"],
         }
+    mode = _plan_mode_for_job(job)
+    proposed_patch = {
+        "model": model.get("engine_name") or model.get("name"),
+        "style": getattr(job, "style", None),
+        "aspect_ratio": getattr(job, "aspect_ratio", None),
+        "performance": getattr(job, "performance", None),
+        "steps": settings.get("steps"),
+        "cfg_scale": settings.get("cfg"),
+        "sampler": settings.get("sampler_name"),
+        "scheduler": settings.get("scheduler"),
+        "edit_type": getattr(job, "edit_type", None),
+        "edit_strength": getattr(job, "edit_strength", None),
+        "input_image": getattr(job, "input_image", None),
+        "inpaint_mask_path": getattr(job, "inpaint_mask_path", None),
+        "upscale_image": getattr(job, "upscale_image", None),
+        "upscale_method": getattr(job, "upscale_method", None),
+        "cn_selection": getattr(job, "cn_selection", None),
+        "cn_type": getattr(job, "cn_type", None),
+        "workflow_mode": getattr(job, "workflow_mode", None),
+        "reference_pack_id": getattr(job, "reference_pack_id", None),
+        "reference_pack_role": getattr(job, "reference_pack_role", None),
+        "identity_id": getattr(job, "identity_id", None),
+        "identity_role": getattr(job, "identity_role", None),
+    }
+    try:
+        from dreamforge_mode_contract import build_mode_contract
+
+        mode_contract = build_mode_contract(
+            mode,
+            proposed_patch,
+            vars(job),
+            source="dry-run",
+        )
+    except Exception:
+        mode_contract = None
     return {
         "schema_version": "1.1",
         "status": "planned",
+        "mode": mode,
         "prompt": prompt,
         "negative_prompt": settings["negative"],
         "model": model,
@@ -604,10 +672,26 @@ def build_plan(base_args, data=None):
         "brand_kit": brand_kit.get("_path") if isinstance(brand_kit, dict) else None,
         "missing_dependencies": missing_deps,
         "setup_warnings": setup_warnings,
-        "recommended_actions": route_actions + list((workflow_blueprint or {}).get("readiness", {}).get("recommended_actions", [])),
+        "recommended_actions": route_actions
+        + list((workflow_blueprint or {}).get("readiness", {}).get("recommended_actions", []))
+        + identity_dependency_actions,
         "workflow_blueprint": workflow_blueprint,
+        "operations": operations,
+        "mode_contract": mode_contract,
+        "reference_pack": reference_pack,
+        "identity_reference": identity_reference,
         "ready": len(missing_deps) == 0 and bool((workflow_blueprint or {}).get("readiness", {}).get("ready", True)),
     }
+
+
+def _plan_mode_for_job(job) -> str:
+    if getattr(job, "upscale_image", None):
+        return "upscale"
+    if getattr(job, "inpaint_mask_path", None) or str(getattr(job, "edit_type", "") or "").lower() == "inpaint":
+        return "inpaint"
+    if getattr(job, "input_image", None):
+        return "edit"
+    return "generate"
 
 
 def _load_input_image(path):

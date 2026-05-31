@@ -36,6 +36,28 @@ function ReadinessBadge({ ready }: { ready?: boolean }) {
   );
 }
 
+type TemplateMeta = {
+  id?: string;
+  title?: string;
+  label?: string;
+  builder?: string;
+};
+
+function templateMap(value: unknown): Record<string, TemplateMeta> {
+  if (Array.isArray(value)) {
+    return Object.fromEntries(
+      value
+        .filter((item): item is TemplateMeta => typeof item === "object" && item !== null)
+        .map((item) => [item.id ?? item.label ?? "", item])
+        .filter(([id]) => id),
+    );
+  }
+  if (typeof value === "object" && value) {
+    return value as Record<string, TemplateMeta>;
+  }
+  return {};
+}
+
 export function WorkflowPlanPanel({
   plan,
   applied,
@@ -50,10 +72,10 @@ export function WorkflowPlanPanel({
   companionDownloadBusy,
 }: Props) {
   const blueprint = plan.workflow_blueprint as
-    | { template_ids?: string[]; templates?: Record<string, { title?: string; builder?: string }> }
+    | { template_ids?: string[]; templates?: unknown }
     | undefined;
   const templateIds = blueprint?.template_ids ?? [];
-  const templates = blueprint?.templates ?? {};
+  const templates = templateMap(blueprint?.templates);
   const readiness = plan.readiness;
   const steps = plan.workflow_plan ?? [];
   const modelLabel = plannedModelLabel(plan);
@@ -64,6 +86,11 @@ export function WorkflowPlanPanel({
     ([, value]) => value !== undefined && value !== null && value !== "",
   );
   const presetSources = plan.dynamic_preset?.source ?? [];
+  const modeContract = plan.mode_contract;
+  const referencePack = plan.reference_pack;
+  const identityReference = plan.identity_reference;
+  const changedFields = modeContract?.changed_fields ?? [];
+  const preservedFields = modeContract?.preserved_fields ?? [];
   const runCheck = canRunApprovedPlan(plan, readiness);
   const runDisabled =
     runBusy ||
@@ -110,6 +137,80 @@ export function WorkflowPlanPanel({
           <p className="rounded border border-dfui-border/60 bg-dfui-surface/40 px-2 py-1 font-mono text-[10px] text-dfui-fg">
             {modelLabel}
           </p>
+        </div>
+      )}
+
+      {referencePack && (
+        <div>
+          <p className="mb-1 font-mono text-[9px] uppercase tracking-wider text-dfui-tertiary">
+            Reference pack
+          </p>
+          <div className="rounded border border-dfui-accent/25 bg-dfui-accent/5 px-2 py-1.5 text-[10px] text-dfui-secondary">
+            <p className="font-medium text-dfui-fg">
+              {referencePack.name ?? referencePack.id ?? "Attached pack"}
+              {referencePack.type ? ` · ${referencePack.type}` : ""}
+            </p>
+            {(referencePack.tags?.length ?? 0) > 0 && (
+              <p className="mt-0.5 font-mono text-[9px] text-dfui-tertiary">
+                {referencePack.tags!.slice(0, 6).join(", ")}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {identityReference && (
+        <div>
+          <p className="mb-1 font-mono text-[9px] uppercase tracking-wider text-dfui-tertiary">
+            Identity
+          </p>
+          <div className="rounded border border-dfui-accent/25 bg-dfui-accent/5 px-2 py-1.5 text-[10px] text-dfui-secondary">
+            <p className="font-medium text-dfui-fg">
+              {identityReference.name ?? identityReference.id ?? "Attached identity"}
+              {identityReference.type ? ` · ${identityReference.type}` : ""}
+            </p>
+            {identityReference.embedding_status && (
+              <p className="mt-0.5 font-mono text-[9px] text-dfui-tertiary">
+                Embeddings: {identityReference.embedding_status}
+              </p>
+            )}
+            {(identityReference.tags?.length ?? 0) > 0 && (
+              <p className="mt-0.5 font-mono text-[9px] text-dfui-tertiary">
+                {identityReference.tags!.slice(0, 6).join(", ")}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {modeContract && (
+        <div>
+          <p className="mb-1 font-mono text-[9px] uppercase tracking-wider text-dfui-tertiary">
+            Mode contract
+          </p>
+          <div className="space-y-1 rounded border border-dfui-border/60 bg-dfui-surface/40 px-2 py-1.5 text-[10px] text-dfui-secondary">
+            {modeContract.summary && (
+              <p className="text-dfui-fg">{modeContract.summary}</p>
+            )}
+            <p className="font-mono">
+              <span className="text-dfui-tertiary">model policy: </span>
+              <span className="text-dfui-fg">
+                {(modeContract.model_policy ?? "unknown").replace(/_/g, " ")}
+              </span>
+            </p>
+            {changedFields.length > 0 && (
+              <p className="font-mono">
+                <span className="text-dfui-tertiary">changes: </span>
+                <span>{changedFields.slice(0, 8).join(", ")}</span>
+              </p>
+            )}
+            {preservedFields.length > 0 && (
+              <p className="font-mono">
+                <span className="text-dfui-tertiary">preserves: </span>
+                <span>{preservedFields.slice(0, 8).join(", ")}</span>
+              </p>
+            )}
+          </div>
         </div>
       )}
 
@@ -224,7 +325,7 @@ export function WorkflowPlanPanel({
                   key={id}
                   className="rounded border border-dfui-border/60 px-2 py-1 text-[10px] text-dfui-secondary"
                 >
-                  <span className="font-medium text-dfui-fg">{meta?.title ?? id}</span>
+                  <span className="font-medium text-dfui-fg">{meta?.title ?? meta?.label ?? id}</span>
                   {meta?.builder && (
                     <span className="mt-0.5 block font-mono text-[9px] text-dfui-tertiary">
                       {meta.builder}

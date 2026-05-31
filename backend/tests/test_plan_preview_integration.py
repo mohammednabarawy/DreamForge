@@ -23,6 +23,25 @@ def test_engine_plan_includes_dynamic_preset():
     preset = decision.get("dynamic_preset")
     assert isinstance(preset, dict)
     assert preset.get("applied", {}).get("style") == "product_ad"
+    assert decision.get("mode_contract", {}).get("model_policy") in {
+        "suggest_model",
+        "manual_selection",
+        "preserve_user_model",
+        "route_curated_model",
+    }
+
+
+def test_engine_plan_contract_preserves_explicit_generate_model():
+    decision = DreamForgeEngine.plan(
+        "Professional product advertisement for a luxury watch",
+        current_settings={
+            "prompt": "watch hero",
+            "model": "my-explicit-model.safetensors",
+        },
+    )
+    contract = decision.get("mode_contract") or {}
+    assert contract["model_policy"] == "preserve_user_model"
+    assert contract["selected_model"] == "my-explicit-model.safetensors"
 
 
 def test_plan_user_intent_includes_dynamic_preset():
@@ -56,6 +75,7 @@ def test_agent_plan_instruction_includes_dynamic_preset(tmp_path, monkeypatch):
     )
     assert result.get("ok") is True
     assert result.get("dynamic_preset", {}).get("applied", {}).get("style") == "social_post"
+    assert isinstance(result.get("mode_contract"), dict)
 
 
 def test_rest_brain_plan_endpoint():

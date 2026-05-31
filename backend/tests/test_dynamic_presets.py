@@ -34,6 +34,15 @@ def test_apply_dynamic_preset_is_deterministic():
     assert first == second
 
 
+def test_apply_dynamic_preset_handles_existing_list_values():
+    settings, meta = apply_dynamic_preset(
+        "Professional product advertisement",
+        {"styles": ["Style: existing"], "lora": []},
+    )
+    assert settings["styles"] == ["Style: existing"]
+    assert meta["applied"].get("style") == "product_ad"
+
+
 def test_custom_node_pack_requires_registered_nodes_when_object_info_provided(monkeypatch):
     monkeypatch.setattr(
         "dreamforge_workflow_planner._custom_node_directory_present",

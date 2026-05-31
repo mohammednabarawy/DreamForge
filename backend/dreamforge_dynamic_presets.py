@@ -34,12 +34,15 @@ def infer_style_from_intent(intent: str) -> str | None:
 
 def _is_unset(key: str, settings: dict[str, Any]) -> bool:
     value = settings.get(key)
-    if value in _UNSET:
-        return True
     if key in ("styles", "lora") and value == []:
         return True
     if key == "model" and not str(value or "").strip():
         return True
+    try:
+        if value in _UNSET:
+            return True
+    except TypeError:
+        return False
     return False
 
 

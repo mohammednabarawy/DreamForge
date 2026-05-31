@@ -119,19 +119,29 @@ import {
   getAppConfig,
   getLoraInfo,
   getStudioSettings,
+  deleteReferencePack,
+  deleteIdentity,
   listAgentProviders,
+  listIdentities,
+  listReferencePacks,
   planAgentInstruction,
   saveAppConfig,
+  saveIdentity,
+  saveReferencePack,
   saveStudioSettings,
   saveUserStyleProfile,
   testAgentProvider,
   type AgentPlanSnapshot,
+  type AgentTranscriptMessage,
   type AgentProviderPreset,
   type AgentProviderTestResult,
   type DreamForgeAppConfig,
   type DreamForgeAppConfigPatch,
+  type IdentityRecord,
+  type ReferencePack,
   type StudioSettings,
   type UserStyleProfile,
+  type WorkflowReadiness,
 } from "../lib/studioBridge";
 import {
   appendExtraReferencePath,
@@ -159,6 +169,79 @@ function companionItemsFromActions(actions?: RepairAction[]) {
           : [],
       ) ?? []
   );
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value ? (value as Record<string, unknown>) : undefined;
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => String(item)) : [];
+}
+
+function actionList(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value)
+    ? value.filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
+    : [];
+}
+
+function missingDependencyLabels(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) =>
+    typeof item === "object" && item
+      ? String(
+          (item as Record<string, unknown>).name ??
+            (item as Record<string, unknown>).id ??
+            JSON.stringify(item),
+        )
+      : String(item),
+  );
+}
+
+function uniqueStrings(items: string[]): string[] {
+  return [...new Set(items.filter(Boolean))];
+}
+
+function dryRunReadinessSnapshot(
+  planPayload: Record<string, unknown>,
+  workflowBlueprint: Record<string, unknown>,
+): WorkflowReadiness | undefined {
+  const blueprintReadiness = recordValue(workflowBlueprint.readiness);
+  const hasReady = typeof planPayload.ready === "boolean" || typeof blueprintReadiness?.ready === "boolean";
+  const readiness: WorkflowReadiness = {
+    ready:
+      typeof planPayload.ready === "boolean"
+        ? planPayload.ready
+        : typeof blueprintReadiness?.ready === "boolean"
+          ? blueprintReadiness.ready
+          : undefined,
+    missing_inputs: stringList(blueprintReadiness?.missing_inputs),
+    missing_models: uniqueStrings([
+      ...stringList(blueprintReadiness?.missing_models),
+      ...missingDependencyLabels(planPayload.missing_dependencies),
+    ]),
+    missing_node_packs: stringList(blueprintReadiness?.missing_node_packs),
+    optional_nodes: stringList(blueprintReadiness?.optional_nodes),
+    recommended_actions: [
+      ...actionList(blueprintReadiness?.recommended_actions),
+      ...actionList(planPayload.recommended_actions),
+    ],
+    warnings: uniqueStrings([
+      ...stringList(blueprintReadiness?.warnings),
+      ...stringList(planPayload.setup_warnings),
+    ]),
+  };
+  const hasDetails =
+    hasReady ||
+    Boolean(
+      readiness.missing_inputs?.length ||
+        readiness.missing_models?.length ||
+        readiness.missing_node_packs?.length ||
+        readiness.optional_nodes?.length ||
+        readiness.recommended_actions?.length ||
+        readiness.warnings?.length,
+    );
+  return hasDetails ? readiness : undefined;
 }
 
 const ASPECT_PRESETS = [
@@ -193,6 +276,7 @@ export function useDreamForge() {
   const [lastJobId, setLastJobId] = useState<string | null>(null);
   const [generationLog, setGenerationLog] = useState<string>("");
   const [agentPlan, setAgentPlan] = useState<AgentPlanSnapshot | null>(null);
+  const [agentTranscript, setAgentTranscript] = useState<AgentTranscriptMessage[]>([]);
   const [planRunBusy, setPlanRunBusy] = useState(false);
   const agentPlanRef = useRef(agentPlan);
   agentPlanRef.current = agentPlan;
@@ -230,6 +314,8 @@ export function useDreamForge() {
     null,
   );
   const [userStyleProfilePath, setUserStyleProfilePath] = useState<string>("");
+  const [referencePacks, setReferencePacks] = useState<ReferencePack[]>([]);
+  const [identities, setIdentities] = useState<IdentityRecord[]>([]);
   const [agentPlannedMode, setAgentPlannedMode] = useState<StudioMode | null>(
     null,
   );
@@ -654,6 +740,8 @@ export function useDreamForge() {
         app,
         providers,
         styleProfile,
+        packs,
+        identityRecords,
       ] = await Promise.all([
         getModelGallery("", fetchOpts),
         getLoraGallery("", fetchOpts),
@@ -664,6 +752,8 @@ export function useDreamForge() {
         getAppConfig().catch(() => null),
         listAgentProviders().catch(() => []),
         getUserStyleProfile().catch(() => null),
+        listReferencePacks().catch(() => []),
+        listIdentities().catch(() => []),
       ]);
       const recipes = (styleIdRes.styles ?? []) as StyleRecipe[];
       setStyleRecipes(recipes);
@@ -720,6 +810,8 @@ export function useDreamForge() {
         setUserStyleProfile(styleProfile.profile);
         setUserStyleProfilePath(styleProfile.path ?? "");
       }
+      setReferencePacks(packs);
+      setIdentities(identityRecords);
       studioCatalogLoadedRef.current = true;
     } catch (e) {
       setStatus(`Studio catalog error: ${String(e)}`);
@@ -1163,6 +1255,221 @@ export function useDreamForge() {
     });
   }, []);
 
+  const refreshReferencePacks = useCallback(async () => {
+    try {
+      const packs = await listReferencePacks();
+      setReferencePacks(packs);
+      return packs;
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const mergeReferencePaths = useCallback((...groups: Array<string[] | undefined>) => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const group of groups) {
+      for (const item of group ?? []) {
+        const path = item.trim();
+        if (!path || seen.has(path)) continue;
+        seen.add(path);
+        out.push(path);
+      }
+    }
+    return out.length ? out : undefined;
+  }, []);
+
+  const attachReferencePack = useCallback(
+    (packId: string) => {
+      const pack = referencePacks.find((item) => item.id === packId);
+      const identity = identities.find((item) => item.id === settingsRef.current.identity_id);
+      if (!pack) {
+        patchSettings({
+          reference_pack_id: undefined,
+          reference_pack_role: undefined,
+          reference_images: mergeReferencePaths(identity?.image_paths),
+        });
+        setStatus("Reference pack cleared");
+        return;
+      }
+      patchSettings({
+        reference_pack_id: pack.id,
+        reference_pack_role: pack.type,
+        reference_images: mergeReferencePaths(pack.image_paths, identity?.image_paths),
+      });
+      setStatus(`Attached reference pack: ${pack.name}`);
+    },
+    [identities, mergeReferencePaths, patchSettings, referencePacks],
+  );
+
+  const createReferencePackFromCurrent = useCallback(
+    async (name: string, type: ReferencePack["type"] = "style") => {
+      const imagePaths = [
+        settingsRef.current.input_image,
+        settingsRef.current.upscale_image,
+        ...(settingsRef.current.reference_images ?? []),
+        selected?.images?.[0],
+      ].filter((item): item is string => Boolean(item?.trim()));
+      if (!imagePaths.length) {
+        setStatus("Attach or select image(s) before creating a reference pack");
+        return null;
+      }
+      try {
+        const pack = await saveReferencePack({
+          name,
+          type,
+          image_paths: imagePaths,
+          tags: [],
+          preferred_use_cases: [type],
+        });
+        setReferencePacks((prev) => [pack, ...prev.filter((item) => item.id !== pack.id)]);
+        const identity = identities.find((item) => item.id === settingsRef.current.identity_id);
+        patchSettings({
+          reference_pack_id: pack.id,
+          reference_pack_role: pack.type,
+          reference_images: mergeReferencePaths(pack.image_paths, identity?.image_paths),
+        });
+        setStatus(`Saved reference pack: ${pack.name}`);
+        return pack;
+      } catch (e) {
+        setStatus(`Save reference pack failed: ${String(e)}`);
+        return null;
+      }
+    },
+    [identities, mergeReferencePaths, patchSettings, selected],
+  );
+
+  const removeReferencePack = useCallback(
+    async (packId: string) => {
+      if (!packId) return;
+      try {
+        const deleted = await deleteReferencePack(packId);
+        if (!deleted) {
+          setStatus("Reference pack was already gone");
+        } else {
+          setStatus("Reference pack deleted");
+        }
+        setReferencePacks((prev) => prev.filter((item) => item.id !== packId));
+        if (settingsRef.current.reference_pack_id === packId) {
+          const identity = identities.find((item) => item.id === settingsRef.current.identity_id);
+          patchSettings({
+            reference_pack_id: undefined,
+            reference_pack_role: undefined,
+            reference_images: mergeReferencePaths(identity?.image_paths),
+          });
+        }
+      } catch (e) {
+        setStatus(`Delete reference pack failed: ${String(e)}`);
+      }
+    },
+    [identities, mergeReferencePaths, patchSettings],
+  );
+
+  const refreshIdentities = useCallback(async () => {
+    try {
+      const records = await listIdentities();
+      setIdentities(records);
+      return records;
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const attachIdentity = useCallback(
+    (identityId: string) => {
+      const identity = identities.find((item) => item.id === identityId);
+      const pack = referencePacks.find((item) => item.id === settingsRef.current.reference_pack_id);
+      if (!identity) {
+        patchSettings({
+          identity_id: undefined,
+          identity_role: undefined,
+          identity_mode: undefined,
+          face_preservation: undefined,
+          reference_images: mergeReferencePaths(pack?.image_paths),
+        });
+        setStatus("Identity cleared");
+        return;
+      }
+      patchSettings({
+        identity_id: identity.id,
+        identity_role: identity.type,
+        reference_images: mergeReferencePaths(pack?.image_paths, identity.image_paths),
+      });
+      setStatus(`Attached identity: ${identity.name}`);
+    },
+    [identities, mergeReferencePaths, patchSettings, referencePacks],
+  );
+
+  const createIdentityFromCurrent = useCallback(
+    async (name: string, type: IdentityRecord["type"] = "style") => {
+      const imagePaths = [
+        settingsRef.current.input_image,
+        settingsRef.current.upscale_image,
+        ...(settingsRef.current.reference_images ?? []),
+        selected?.images?.[0],
+      ].filter((item): item is string => Boolean(item?.trim()));
+      if (!imagePaths.length) {
+        setStatus("Attach or select image(s) before creating an identity");
+        return null;
+      }
+      try {
+        const identity = await saveIdentity({
+          name,
+          type,
+          image_paths: imagePaths,
+          reference_pack_ids: settingsRef.current.reference_pack_id
+            ? [settingsRef.current.reference_pack_id]
+            : [],
+          tags: [],
+          metadata: {},
+          embeddings: {},
+          embedding_status: "not_extracted",
+        });
+        setIdentities((prev) => [identity, ...prev.filter((item) => item.id !== identity.id)]);
+        const pack = referencePacks.find((item) => item.id === settingsRef.current.reference_pack_id);
+        patchSettings({
+          identity_id: identity.id,
+          identity_role: identity.type,
+          reference_images: mergeReferencePaths(pack?.image_paths, identity.image_paths),
+        });
+        setStatus(`Saved identity: ${identity.name}`);
+        return identity;
+      } catch (e) {
+        setStatus(`Save identity failed: ${String(e)}`);
+        return null;
+      }
+    },
+    [mergeReferencePaths, patchSettings, referencePacks, selected],
+  );
+
+  const removeIdentity = useCallback(
+    async (identityId: string) => {
+      if (!identityId) return;
+      try {
+        const deleted = await deleteIdentity(identityId);
+        if (!deleted) {
+          setStatus("Identity was already gone");
+        } else {
+          setStatus("Identity deleted");
+        }
+        setIdentities((prev) => prev.filter((item) => item.id !== identityId));
+        if (settingsRef.current.identity_id === identityId) {
+          const pack = referencePacks.find((item) => item.id === settingsRef.current.reference_pack_id);
+          patchSettings({
+            identity_id: undefined,
+            identity_role: undefined,
+            identity_mode: undefined,
+            face_preservation: undefined,
+            reference_images: mergeReferencePaths(pack?.image_paths),
+          });
+        }
+      } catch (e) {
+        setStatus(`Delete identity failed: ${String(e)}`);
+      }
+    },
+    [mergeReferencePaths, patchSettings, referencePacks],
+  );
+
   const syncOutputPathForSession = useCallback(
     (sessionId: string) => {
       const sid = sessionId.trim() || DEFAULT_SESSION_ID;
@@ -1521,8 +1828,8 @@ export function useDreamForge() {
         setAgentProviderTest(res);
         setStatus(
           res.ok
-            ? `Agent provider connected (${res.latency_ms} ms)`
-            : `Agent provider test failed: ${res.detail}`,
+            ? `Agent runtime connected (${res.latency_ms} ms)`
+            : `Agent runtime test failed: ${res.detail}`,
         );
         return res;
       } catch (e) {
@@ -1534,7 +1841,7 @@ export function useDreamForge() {
           detail: String(e),
         };
         setAgentProviderTest(res);
-        setStatus(`Agent provider test failed: ${String(e)}`);
+        setStatus(`Agent runtime test failed: ${String(e)}`);
         return res;
       } finally {
         setAgentProviderBusy(false);
@@ -1543,12 +1850,30 @@ export function useDreamForge() {
     [appConfig, saveAppConfigPatch],
   );
 
+  const appendAgentTranscript = useCallback(
+    (message: Omit<AgentTranscriptMessage, "id" | "created_at">) => {
+      const entry: AgentTranscriptMessage = {
+        ...message,
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        created_at: new Date().toISOString(),
+      };
+      setAgentTranscript((prev) => [...prev.slice(-23), entry]);
+      return entry;
+    },
+    [],
+  );
+
   const runAgentInstruction = useCallback(async (applyPlan: boolean) => {
     const instruction = (settingsRef.current.prompt ?? "").trim();
     if (!instruction) {
       setStatus("Tell the agent what you want DreamForge to do");
       return;
     }
+    appendAgentTranscript({
+      role: "user",
+      text: instruction,
+      status: applyPlan ? "applied" : "planned",
+    });
     setStatus(applyPlan ? "Agent is applying the workflow..." : "Agent is planning the workflow...");
     try {
       const res = await planAgentInstruction({
@@ -1581,10 +1906,11 @@ export function useDreamForge() {
           setAgentPlannedMode(null);
         }
       }
+      const source = res.provider_model
+        ? `${res.provider ?? "provider"} / ${res.provider_model}`
+        : res.source;
       setAgentPlan({
-        source: res.provider_model
-          ? `${res.provider ?? "provider"} / ${res.provider_model}`
-          : res.source,
+        source,
         message: res.message,
         mode: res.mode,
         applied: applyPlan ? planPatch : undefined,
@@ -1593,9 +1919,26 @@ export function useDreamForge() {
         downloads: res.downloads,
         operations: res.operations,
         dynamic_preset: res.dynamic_preset,
+        mode_contract: res.mode_contract,
         workflow_plan: res.workflow_plan,
         workflow_blueprint: res.workflow_blueprint,
         readiness: res.readiness,
+        reference_pack:
+          typeof res.reference_pack === "object" && res.reference_pack
+            ? (res.reference_pack as AgentPlanSnapshot["reference_pack"])
+            : undefined,
+        identity_reference:
+          typeof res.identity_reference === "object" && res.identity_reference
+            ? (res.identity_reference as AgentPlanSnapshot["identity_reference"])
+            : undefined,
+      });
+      appendAgentTranscript({
+        role: "assistant",
+        text: res.message || "Agent planned a DreamForge workflow.",
+        source,
+        mode: res.mode,
+        actions: res.actions,
+        status: applyPlan ? "applied" : "planned",
       });
       setStatus(
         applyPlan
@@ -1605,9 +1948,15 @@ export function useDreamForge() {
           : "Agent plan ready for review",
       );
     } catch (e) {
+      appendAgentTranscript({
+        role: "assistant",
+        text: `Agent planning failed: ${String(e)}`,
+        status: "error",
+      });
       setStatus(`Agent planning failed: ${String(e)}`);
     }
   }, [
+    appendAgentTranscript,
     modelGalleryAll,
     patchSettings,
     saveAppConfigPatch,
@@ -1635,14 +1984,39 @@ export function useDreamForge() {
           : "";
       const extra =
         prepared.hints.length > 0 ? `${prepared.hints[0]} ` : "";
+      const planPayload =
+        typeof res.plan === "object" && res.plan
+          ? (res.plan as Record<string, unknown>)
+          : {};
+      const workflowBlueprint =
+        typeof planPayload.workflow_blueprint === "object" && planPayload.workflow_blueprint
+          ? (planPayload.workflow_blueprint as Record<string, unknown>)
+          : Object.keys(planPayload).length > 0
+            ? planPayload
+            : { raw: res.plan ?? res };
+      const readiness = dryRunReadinessSnapshot(planPayload, workflowBlueprint);
       setAgentPlan({
         source: "dry-run",
         message: `${hint}${extra}`.trim() || "Dry-run plan",
+        mode: typeof planPayload.mode === "string" ? (planPayload.mode as StudioMode) : undefined,
         proposed: prepared.settings,
-        workflow_blueprint:
-          typeof res.plan === "object" && res.plan
-            ? (res.plan as Record<string, unknown>)
-            : { raw: res.plan ?? res },
+        operations: Array.isArray(planPayload.operations)
+          ? planPayload.operations.map((item) => String(item))
+          : undefined,
+        readiness,
+        mode_contract:
+          typeof planPayload.mode_contract === "object" && planPayload.mode_contract
+            ? (planPayload.mode_contract as AgentPlanSnapshot["mode_contract"])
+            : undefined,
+        reference_pack:
+          typeof planPayload.reference_pack === "object" && planPayload.reference_pack
+            ? (planPayload.reference_pack as AgentPlanSnapshot["reference_pack"])
+            : undefined,
+        identity_reference:
+          typeof planPayload.identity_reference === "object" && planPayload.identity_reference
+            ? (planPayload.identity_reference as AgentPlanSnapshot["identity_reference"])
+            : undefined,
+        workflow_blueprint: workflowBlueprint,
       });
       setStatus(
         prepared.applied.length
@@ -2053,7 +2427,12 @@ export function useDreamForge() {
           ),
         ),
       );
-      setStatus(`Attached ${referenceStatusLabel(mapped, resolved)}`);
+      if (mapped === "inpaint") {
+        setInpaintMaskOpen(true);
+        setStatus(`Attached ${referenceStatusLabel(mapped, resolved)} - paint a fresh mask`);
+      } else {
+        setStatus(`Attached ${referenceStatusLabel(mapped, resolved)}`);
+      }
     },
     [patchSettings, selected],
   );
@@ -2085,7 +2464,12 @@ export function useDreamForge() {
         }
       }
       patchSettings(patch);
-      setStatus(`Attached ${referenceStatusLabel(mode, resolved)}`);
+      if (mode === "inpaint") {
+        setInpaintMaskOpen(true);
+        setStatus(`Attached ${referenceStatusLabel(mode, resolved)} - paint a fresh mask`);
+      } else {
+        setStatus(`Attached ${referenceStatusLabel(mode, resolved)}`);
+      }
     },
     [modelGalleryAll, patchSettings],
   );
@@ -2186,6 +2570,7 @@ export function useDreamForge() {
         patch.steps = Math.min(Math.max(settingsRef.current.steps ?? 20, 20), 28);
         patch.upscale_image = undefined;
         patch.upscale_method = undefined;
+        patch.inpaint_mask_path = undefined;
         const src =
           selected?.images?.[0] ?? settingsRef.current.input_image ?? "";
         if (src.trim()) patch.input_image = src.trim();
@@ -2375,6 +2760,15 @@ export function useDreamForge() {
     return [...models, ...styles];
   }, [modelGalleryAll, styleRecipes]);
 
+  const agentRuntimeLabel = useMemo(() => {
+    const agent = appConfig?.agent;
+    if (!agent) return "Local reasoning runtime";
+    const provider = agentProviders.find((item) => item.id === agent.provider);
+    const label = provider?.label ?? agent.provider ?? "Local runtime";
+    const model = agent.model ? ` · ${agent.model}` : "";
+    return `${label}${model}`;
+  }, [agentProviders, appConfig]);
+
   return {
     outputs,
     sessions,
@@ -2396,10 +2790,13 @@ export function useDreamForge() {
     logJobId: jobId ?? lastJobId,
     generationLog,
     agentPlan,
+    agentTranscript,
+    agentRuntimeLabel,
     planRunBusy,
     applyAgentPlan,
     runApprovedPlan,
     dismissAgentPlan,
+    clearAgentTranscript: () => setAgentTranscript([]),
     status,
     engineState,
     workerReady,
@@ -2441,6 +2838,16 @@ export function useDreamForge() {
     galleryLoading,
     userStyleProfile,
     userStyleProfilePath,
+    referencePacks,
+    refreshReferencePacks,
+    attachReferencePack,
+    createReferencePackFromCurrent,
+    deleteReferencePack: removeReferencePack,
+    identities,
+    refreshIdentities,
+    attachIdentity,
+    createIdentityFromCurrent,
+    deleteIdentity: removeIdentity,
     setUserStyleMemoryEnabled,
     clearUserStyleMemory,
     exportUserStyleMemory,

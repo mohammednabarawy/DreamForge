@@ -12,7 +12,7 @@ if str(_BACKEND) not in sys.path:
 import dreamforge_app_config as app_config
 
 
-def test_app_config_redacts_and_preserves_api_key(tmp_path: Path, monkeypatch):
+def test_app_config_rejects_cloud_agent_provider(tmp_path: Path, monkeypatch):
     monkeypatch.setenv(app_config.CONFIG_ENV, str(tmp_path / "app-config.json"))
 
     saved = app_config.save_app_config(
@@ -21,67 +21,40 @@ def test_app_config_redacts_and_preserves_api_key(tmp_path: Path, monkeypatch):
                 "provider": "openai",
                 "base_url": "https://api.openai.com/v1",
                 "model": "gpt-4o-mini",
-                "api_key": "sk-test-secret",
             }
         }
     )
+    assert saved["agent"]["provider"] == "ollama"
+    assert saved["agent"]["base_url"] == "http://localhost:11434"
+    assert saved["agent"]["model"] == "gemma3:4b"
     assert saved["agent"]["api_key"] == ""
-    assert saved["agent"]["api_key_configured"] is True
-    assert saved["agent"]["api_key_tail"] == "cret"
-
-    saved_again = app_config.save_app_config({"agent": {"model": "gpt-4.1-mini"}})
-    assert saved_again["agent"]["api_key_configured"] is True
+    assert saved["agent"]["api_key_configured"] is False
     raw = app_config.load_app_config(redacted=False)
-    assert raw["agent"]["api_key"] == "sk-test-secret"
-    assert raw["agent"]["model"] == "gpt-4.1-mini"
+    assert "api_key" not in raw["agent"]
 
 
 def test_provider_presets_include_local_ollama_without_key():
     providers = {p["id"]: p for p in app_config.list_agent_providers()}
+    assert set(providers) == {"embedded", "ollama", "lmstudio", "llamacpp"}
+    assert all(p["mode"] == "local" for p in providers.values())
+    assert all(p["requires_api_key"] is False for p in providers.values())
     assert providers["ollama"]["requires_api_key"] is False
     assert providers["ollama"]["base_url"] == "http://localhost:11434"
 
 
-def test_agent_provider_missing_key_is_structured_failure(tmp_path: Path, monkeypatch):
+def test_agent_provider_requires_local_endpoint(tmp_path: Path, monkeypatch):
     monkeypatch.setenv(app_config.CONFIG_ENV, str(tmp_path / "app-config.json"))
     result = app_config.test_agent_provider(
         {
             "agent": {
-                "provider": "openai",
+                "provider": "lmstudio",
                 "base_url": "https://api.openai.com/v1",
-                "model": "gpt-4o-mini",
+                "model": "local-model",
             }
         }
     )
     assert result["ok"] is False
-    assert result["detail"] == "api_key_missing"
-
-
-def test_redacted_runtime_config_preserves_stored_key(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv(app_config.CONFIG_ENV, str(tmp_path / "app-config.json"))
-    monkeypatch.setattr(app_config, "_post_json", lambda *args, **kwargs: {})
-    app_config.save_app_config(
-        {
-            "agent": {
-                "provider": "openai",
-                "base_url": "https://api.openai.com/v1",
-                "model": "gpt-4o-mini",
-                "api_key": "sk-live-secret",
-            }
-        }
-    )
-    result = app_config.test_agent_provider(
-        {
-            "agent": {
-                "provider": "openai",
-                "base_url": "https://api.openai.com/v1",
-                "model": "gpt-4o-mini",
-                "api_key": "",
-                "api_key_configured": True,
-            }
-        }
-    )
-    assert result["detail"] != "api_key_missing"
+    assert result["detail"] == "local_endpoint_required"
 
 
 def test_heuristic_edit_defaults_to_kontext_without_text_intent():
@@ -152,6 +125,8 @@ def test_agent_plan_falls_back_to_local_edit_route(tmp_path: Path, monkeypatch):
     assert result["mode"] == "edit"
     assert result["patch"]["input_image"] == "D:/work/poster.png"
     assert result["patch"]["edit_type"] == "qwen_edit"
+    assert result["mode_contract"]["model_policy"] == "route_curated_model"
+    assert "edit_type" in result["mode_contract"]["changed_fields"]
     assert result["patch"]["steps"] == 50
     assert result["patch"]["cfg_scale"] == 4.0
     assert "fake Arabic" in result["patch"]["negative_prompt"]

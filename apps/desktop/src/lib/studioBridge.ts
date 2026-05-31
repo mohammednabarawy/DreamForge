@@ -33,7 +33,7 @@ export type ImageLibraryPage = {
 export type AgentProviderPreset = {
   id: string;
   label: string;
-  mode: "local" | "cloud" | "custom";
+  mode: "local";
   base_url: string;
   default_model: string;
   requires_api_key: boolean;
@@ -54,8 +54,8 @@ export type DreamForgeAppConfig = {
     clear_api_key?: boolean;
   };
   privacy: {
-    cloud_confirmation_required: boolean;
-    allow_cloud_image_context: boolean;
+    cloud_confirmation_required?: boolean;
+    allow_cloud_image_context?: boolean;
   };
   ui: {
     studio_mode: "generate" | "edit" | "inpaint" | "upscale" | "agent";
@@ -93,6 +93,33 @@ export type DynamicPresetMeta = {
   applied?: Record<string, unknown>;
 };
 
+export type ModeContract = {
+  schema_version?: string;
+  mode?: string;
+  model_policy?: string;
+  model_source?: string;
+  selected_model?: string;
+  changed_fields?: string[];
+  preserved_fields?: string[];
+  summary?: string;
+};
+
+export type AttachedReferencePack = {
+  id?: string;
+  name?: string;
+  type?: string;
+  tags?: string[];
+  preferred_use_cases?: string[];
+};
+
+export type AttachedIdentityReference = {
+  id?: string;
+  name?: string;
+  type?: string;
+  tags?: string[];
+  embedding_status?: string;
+};
+
 export type AgentPlanSnapshot = {
   source?: string;
   provider?: string;
@@ -104,6 +131,9 @@ export type AgentPlanSnapshot = {
   downloads?: string[];
   operations?: string[];
   dynamic_preset?: DynamicPresetMeta;
+  mode_contract?: ModeContract;
+  reference_pack?: AttachedReferencePack;
+  identity_reference?: AttachedIdentityReference;
   workflow_plan?: Array<{
     id?: string;
     operation?: string;
@@ -112,6 +142,17 @@ export type AgentPlanSnapshot = {
   }>;
   workflow_blueprint?: Record<string, unknown>;
   readiness?: WorkflowReadiness;
+};
+
+export type AgentTranscriptMessage = {
+  id: string;
+  role: "user" | "assistant" | "system";
+  text: string;
+  created_at: string;
+  source?: string;
+  mode?: AgentPlanResult["mode"];
+  actions?: string[];
+  status?: "planned" | "applied" | "error";
 };
 
 export type AgentPlanResult = {
@@ -129,6 +170,9 @@ export type AgentPlanResult = {
   readiness?: WorkflowReadiness;
   operations?: string[];
   dynamic_preset?: DynamicPresetMeta;
+  mode_contract?: ModeContract;
+  reference_pack?: AttachedReferencePack;
+  identity_reference?: AttachedIdentityReference;
 };
 
 type BridgeOk<T> = { ok?: boolean; error?: string } & T;
@@ -317,6 +361,33 @@ export type UserStyleProfileExport = {
   path: string;
 };
 
+export type ReferencePack = {
+  id: string;
+  name: string;
+  type: "person" | "character" | "product" | "brand" | "style";
+  image_paths: string[];
+  tags: string[];
+  notes?: string;
+  preferred_use_cases: string[];
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type IdentityRecord = {
+  id: string;
+  name: string;
+  type: "person" | "character" | "product" | "brand" | "style" | "location";
+  image_paths: string[];
+  reference_pack_ids: string[];
+  tags: string[];
+  notes?: string;
+  metadata?: Record<string, unknown>;
+  embeddings?: Record<string, unknown>;
+  embedding_status?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
 export async function getUserStyleProfile() {
   const res = await bridgeInvoke<UserStyleProfileExport>(
     "get_user_style_profile",
@@ -343,6 +414,53 @@ export async function clearUserStyleProfile() {
 
 export async function exportUserStyleProfile() {
   return bridgeInvoke<UserStyleProfileExport>("export_user_style_profile");
+}
+
+export async function listReferencePacks() {
+  const res = await bridgeInvoke<{ packs: ReferencePack[] }>(
+    "list_reference_packs",
+  );
+  return res.packs ?? [];
+}
+
+export async function saveReferencePack(pack: Partial<ReferencePack> & { name: string }) {
+  const res = await bridgeInvoke<{ pack: ReferencePack }>(
+    "save_reference_pack",
+    pack,
+  );
+  return res.pack;
+}
+
+export async function deleteReferencePack(id: string) {
+  const res = await bridgeInvoke<{ deleted: boolean }>(
+    "delete_reference_pack",
+    { id },
+  );
+  return res.deleted;
+}
+
+export async function listIdentities(query = "", type = "") {
+  const res = await bridgeInvoke<{ identities: IdentityRecord[] }>(
+    "list_identities",
+    { query, type },
+  );
+  return res.identities ?? [];
+}
+
+export async function saveIdentity(identity: Partial<IdentityRecord> & { name: string }) {
+  const res = await bridgeInvoke<{ identity: IdentityRecord }>(
+    "save_identity",
+    identity,
+  );
+  return res.identity;
+}
+
+export async function deleteIdentity(id: string) {
+  const res = await bridgeInvoke<{ deleted: boolean }>(
+    "delete_identity",
+    { id },
+  );
+  return res.deleted;
 }
 
 export async function writeTempPng(dataUrl: string) {

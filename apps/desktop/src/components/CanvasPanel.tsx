@@ -10,7 +10,8 @@ import type { EngineState } from "../lib/engine";
 import type { GenerationSettings } from "../lib/tauri-api";
 import type { StudioMode } from "../lib/model-selection";
 import { WorkflowPlanPanel } from "./WorkflowPlanPanel";
-import type { AgentPlanSnapshot } from "../lib/studioBridge";
+import type { AgentPlanSnapshot, AgentTranscriptMessage } from "../lib/studioBridge";
+import { AgentTranscriptPanel } from "./AgentTranscriptPanel";
 
 type Mention = { kind: "model" | "style"; label: string; value: string };
 
@@ -39,11 +40,14 @@ type Props = {
   generating: boolean;
   generationLog: string;
   agentPlan: AgentPlanSnapshot | null;
+  agentTranscript?: AgentTranscriptMessage[];
+  agentRuntimeLabel?: string;
   planApprovalRequired?: boolean;
   planRunBusy?: boolean;
   onApplyAgentPlan?: () => void;
   onRunApprovedPlan?: () => void;
   onDismissAgentPlan?: () => void;
+  onClearAgentTranscript?: () => void;
   onDryRun: () => void;
   onGenerate: () => void;
   onCancel: () => void;
@@ -83,11 +87,14 @@ export function CanvasPanel({
   generating,
   generationLog,
   agentPlan,
+  agentTranscript = [],
+  agentRuntimeLabel,
   planApprovalRequired,
   planRunBusy,
   onApplyAgentPlan,
   onRunApprovedPlan,
   onDismissAgentPlan,
+  onClearAgentTranscript,
   onDryRun,
   onGenerate,
   onCancel,
@@ -232,6 +239,13 @@ export function CanvasPanel({
             onDismiss={onDismissAgentPlan}
             onDownloadCompanions={onDownloadCompanions}
             companionDownloadBusy={companionDownloadBusy}
+          />
+        )}
+        {studioMode === "agent" && !generating && (
+          <AgentTranscriptPanel
+            messages={agentTranscript}
+            runtimeLabel={agentRuntimeLabel}
+            onClear={onClearAgentTranscript}
           />
         )}
       </div>

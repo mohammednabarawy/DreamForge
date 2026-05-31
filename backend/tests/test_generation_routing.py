@@ -294,6 +294,131 @@ def test_generation_dry_run_preserves_explicit_user_model(monkeypatch):
 
     assert plan["model"]["name"] == "juggernautXL_v8Rundiffusion.safetensors"
     assert plan["model"]["family"] == "sdxl"
+    assert plan["mode"] == "generate"
+    assert plan["mode_contract"]["model_policy"] == "preserve_user_model"
+    assert plan["mode_contract"]["selected_model"] == "juggernautXL_v8Rundiffusion.safetensors"
+
+
+def test_edit_dry_run_reports_routed_mode_contract(monkeypatch):
+    import dreamforge_cli_direct as cli
+
+    selected = {
+        "name": "flux1-dev-kontext_fp8_scaled.safetensors",
+        "stem": "flux1-dev-kontext_fp8_scaled",
+        "relative_path": "flux1-dev-kontext_fp8_scaled.safetensors",
+        "path": "/models/flux1-dev-kontext_fp8_scaled.safetensors",
+        "size_mb": 11000,
+        "category": "diffusion_models",
+        "engine_name": "flux1-dev-kontext_fp8_scaled.safetensors",
+        "family": "flux_kontext",
+    }
+    monkeypatch.setattr(cli, "resolve_generation_model", lambda _name: selected)
+
+    plan = cli.build_plan(
+        SimpleNamespace(
+            dry_run=True,
+            json=True,
+            model="flux1-dev-kontext_fp8_scaled.safetensors",
+            prompt="change shirt color",
+            negative_prompt="",
+            aspect_ratio=None,
+            width=None,
+            height=None,
+            seed=1,
+            image_number=1,
+            output=None,
+            performance="Speed",
+            steps=None,
+            cfg_scale=None,
+            sampler=None,
+            scheduler=None,
+            styles=None,
+            lora=[],
+            input_image="/tmp/source.png",
+            upscale_image=None,
+            upscale_method="RealESRGAN_x2",
+            edit_type="kontext",
+            edit_strength=0.8,
+            vram_profile="16gb",
+            style="image_edit",
+            brand_kit=None,
+            subject=None,
+            composition=None,
+            lighting=None,
+            camera=None,
+            brand_colors=None,
+            materials=None,
+            visual_style=None,
+            validate_output=False,
+            no_manifest=False,
+        )
+    )
+
+    assert plan["mode"] == "edit"
+    assert plan["mode_contract"]["model_policy"] == "preserve_user_model"
+    assert "edit_type" in plan["mode_contract"]["preserved_fields"]
+
+
+def test_inpaint_dry_run_reports_missing_image_and_mask(monkeypatch):
+    import dreamforge_cli_direct as cli
+
+    selected = {
+        "name": "flux-fill-dev.safetensors",
+        "stem": "flux-fill-dev",
+        "relative_path": "flux-fill-dev.safetensors",
+        "path": "/models/flux-fill-dev.safetensors",
+        "size_mb": 11000,
+        "category": "diffusion_models",
+        "engine_name": "flux-fill-dev.safetensors",
+        "family": "flux_fill",
+    }
+    monkeypatch.setattr(cli, "resolve_generation_model", lambda _name: selected)
+
+    plan = cli.build_plan(
+        SimpleNamespace(
+            dry_run=True,
+            json=True,
+            model="flux-fill-dev.safetensors",
+            prompt="replace this area",
+            negative_prompt="",
+            aspect_ratio=None,
+            width=None,
+            height=None,
+            seed=1,
+            image_number=1,
+            output=None,
+            performance="Speed",
+            steps=None,
+            cfg_scale=None,
+            sampler=None,
+            scheduler=None,
+            styles=None,
+            lora=[],
+            input_image=None,
+            inpaint_mask_path=None,
+            upscale_image=None,
+            upscale_method="RealESRGAN_x2",
+            edit_type="inpaint",
+            edit_strength=0.8,
+            vram_profile="16gb",
+            style="image_edit",
+            brand_kit=None,
+            subject=None,
+            composition=None,
+            lighting=None,
+            camera=None,
+            brand_colors=None,
+            materials=None,
+            visual_style=None,
+            validate_output=False,
+            no_manifest=False,
+        )
+    )
+
+    assert plan["mode"] == "inpaint"
+    assert plan["ready"] is False
+    assert "inpaint_repair" in plan["workflow_blueprint"]["template_ids"]
+    assert plan["workflow_blueprint"]["readiness"]["missing_inputs"] == ["input_image", "mask"]
 
 
 def test_dry_run_reports_companion_download_and_switch_actions(monkeypatch):

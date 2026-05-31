@@ -78,6 +78,37 @@ def _add_model_loader(g: dict[str, Any], args: dict[str, Any], *, start_id: int 
             vae_out = [str(i), 0]
             i += 1
             return model_out, clip_out, vae_out, i
+        if family.startswith("qwen"):
+            clip_name = str(args.get("clip") or args.get("clip_qwen") or "qwen_2.5_vl_7b_fp8_scaled.safetensors")
+            if clip_name.endswith(".gguf"):
+                g[str(i)] = _node("CLIPLoaderGGUF", {"clip_name": clip_name, "type": "qwen_image"})
+            else:
+                g[str(i)] = _node("CLIPLoader", {"clip_name": clip_name, "type": "qwen_image"})
+            clip_out = [str(i), 0]
+            i += 1
+            g[str(i)] = _node(
+                "VAELoader",
+                {"vae_name": str(args.get("vae") or "qwen_image_vae.safetensors")},
+            )
+            vae_out = [str(i), 0]
+            i += 1
+            return model_out, clip_out, vae_out, i
+        if family in ("hidream", "hidream_o1"):
+            g[str(i)] = _node(
+                "QuadrupleCLIPLoader",
+                {
+                    "clip_name1": str(args.get("clip_l") or "clip_l.safetensors"),
+                    "clip_name2": str(args.get("clip_g") or "clip_g.safetensors"),
+                    "clip_name3": str(args.get("t5") or "t5xxl_fp16.safetensors"),
+                    "clip_name4": str(args.get("llama") or "llama_3.1_8b_instruct_fp8_scaled.safetensors"),
+                },
+            )
+            clip_out = [str(i), 0]
+            i += 1
+            g[str(i)] = _node("VAELoader", {"vae_name": str(args.get("vae") or "ae.safetensors")})
+            vae_out = [str(i), 0]
+            i += 1
+            return model_out, clip_out, vae_out, i
         raise ValueError(f"Comfy split-diffusion loader is not configured for family '{family}'")
 
     g[str(i)] = _node("CheckpointLoaderSimple", {"ckpt_name": model_name})
@@ -271,6 +302,304 @@ def comfy_flux_kontext_edit(args: dict[str, Any]) -> dict[str, Any]:
     g["12"] = _node(
         "SaveImage",
         {"images": ["11", 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+    )
+    return g
+
+
+def _apply_qwen_model_sampling(model_out: list[str | int], g: dict[str, Any], start_id: int, args: dict[str, Any]):
+    """AuraFlow + CFGNorm prep used by native Comfy Qwen workflows."""
+    shift = float(args.get("shift", args.get("qwen_image_shift", 3.1)))
+    strength = float(
+        args.get("cfg_norm_strength", args.get("qwen_cfg_norm_strength", 1.0))
+    )
+    g[str(start_id)] = _node("ModelSamplingAuraFlow", {"model": model_out, "shift": shift})
+    g[str(start_id + 1)] = _node("CFGNorm", {"model": [str(start_id), 0], "strength": strength})
+    return [str(start_id + 1), 0]
+
+
+def _resolve_qwen_lightning_lora_name(args: dict[str, Any]) -> str | None:
+    """Match Krita/Comfy Qwen-Edit Lightning LoRAs when present under models/loras/."""
+    explicit = args.get("qwen_lightning_lora")
+    if explicit:
+        return str(explicit)
+    if not args.get("use_qwen_lightning_lora"):
+        return None
+    preferred = (
+        "Qwen-Image-Edit-2509-Lightning-4steps-V1.0-fp32.safetensors",
+        "Qwen-Image-Edit-2509-Lightning-8steps-V1.0-fp32.safetensors",
+        "Qwen-Image-Edit-Lightning-4steps-V1.0.safetensors",
+        "Qwen-Image-Edit-Lightning-8steps-V1.0.safetensors",
+    )
+    try:
+        from dreamforge_paths import MODELS_ROOT
+
+        lora_dir = MODELS_ROOT / "loras"
+        if not lora_dir.is_dir():
+            return None
+        on_disk = {
+            path.name.lower(): path.name
+            for path in lora_dir.iterdir()
+            if path.suffix.lower() in (".safetensors", ".gguf")
+        }
+        for name in preferred:
+            hit = on_disk.get(name.lower())
+            if hit:
+                return hit
+        for name in on_disk.values():
+            low = name.lower()
+            if "qwen" in low and "edit" in low and "lightning" in low:
+                return name
+    except Exception:
+        return None
+    return None
+
+
+def _apply_qwen_lightning_lora(
+    model_out: list[str | int],
+    g: dict[str, Any],
+    start_id: int,
+    args: dict[str, Any],
+) -> tuple[list[str | int], int]:
+    lora_name = _resolve_qwen_lightning_lora_name(args)
+    if not lora_name:
+        return model_out, start_id
+    g[str(start_id)] = _node(
+        "LoraLoaderModelOnly",
+        {
+            "model": model_out,
+            "lora_name": lora_name,
+            "strength_model": float(args.get("qwen_lightning_strength", 1.0)),
+        },
+    )
+    return [str(start_id), 0], start_id + 1
+
+
+def _maybe_scale_qwen_pixels(
+    g: dict[str, Any],
+    image_out: list[str | int],
+    start_id: int,
+    args: dict[str, Any],
+) -> tuple[list[str | int], int]:
+    raw = args.get("qwen_scale_megapixels")
+    if raw is None:
+        return image_out, start_id
+    try:
+        megapixels = float(raw)
+    except (TypeError, ValueError):
+        return image_out, start_id
+    if megapixels <= 0:
+        return image_out, start_id
+    g[str(start_id)] = _node(
+        "ImageScaleToTotalPixels",
+        {
+            "image": image_out,
+            "upscale_method": str(args.get("qwen_scale_method", "bicubic")),
+            "megapixels": megapixels,
+            "resolution_steps": int(args.get("qwen_resolution_steps", 1)),
+        },
+    )
+    return [str(start_id), 0], start_id + 1
+
+
+def _qwen_edit_sampler_nodes(
+    g: dict[str, Any],
+    *,
+    start_id: int,
+    model_sampled: list[str | int],
+    pos: list[str | int],
+    neg: list[str | int],
+    latent: list[str | int],
+    args: dict[str, Any],
+) -> int:
+    steps = int(args.get("steps", 20))
+    cfg = float(args.get("cfg", 2.5))
+    sampler = str(args.get("sampler_name", "euler"))
+    scheduler = str(args.get("scheduler", "beta"))
+    seed = int(args.get("seed", 0))
+    denoise = float(args.get("denoise", args.get("edit_strength", 1.0)))
+    g[str(start_id)] = _node(
+        "KSampler",
+        {
+            "model": model_sampled,
+            "positive": pos,
+            "negative": neg,
+            "latent_image": latent,
+            "seed": seed,
+            "steps": steps,
+            "cfg": cfg,
+            "sampler_name": sampler,
+            "scheduler": scheduler,
+            "denoise": denoise,
+        },
+    )
+    samp = str(start_id)
+    decode = str(start_id + 1)
+    save = str(start_id + 2)
+    g[decode] = _node("VAEDecode", {"samples": [samp, 0], "vae": args["_vae_out"]})
+    g[save] = _node(
+        "SaveImage",
+        {"images": [decode, 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+    )
+    return start_id + 3
+
+
+def comfy_qwen_image_edit(args: dict[str, Any]) -> dict[str, Any]:
+    """Qwen-Image-Edit via TextEncodeQwenImageEdit (Comfy native / Krita qwen_e)."""
+    ckpt = str(args["ckpt_name"])
+    prompt = str(args.get("prompt", ""))
+    negative = str(args.get("negative", ""))
+    image_filename = str(args["image"])
+    steps = int(args.get("steps", 20))
+    cfg = float(args.get("cfg", 2.5))
+    sampler = str(args.get("sampler_name", "euler"))
+    scheduler = str(args.get("scheduler", "beta"))
+    seed = int(args.get("seed", 0))
+    denoise = float(args.get("denoise", args.get("edit_strength", 1.0)))
+
+    g: dict[str, Any] = {}
+    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_sampled = _apply_qwen_model_sampling(model_out, g, n, args)
+    n += 2
+    model_sampled, n = _apply_qwen_lightning_lora(model_sampled, g, n, args)
+    g["1"] = _node("LoadImage", {"image": image_filename, "upload": "image"})
+    image_out, n = _maybe_scale_qwen_pixels(g, ["1", 0], n, args)
+    g[str(n)] = _node(
+        "TextEncodeQwenImageEdit",
+        {"clip": clip_out, "vae": vae_out, "image": image_out, "prompt": prompt},
+    )
+    pos = [str(n), 0]
+    n += 1
+    g[str(n)] = _node(
+        "TextEncodeQwenImageEdit",
+        {"clip": clip_out, "vae": vae_out, "image": image_out, "prompt": negative},
+    )
+    neg = [str(n), 0]
+    n += 1
+    g[str(n)] = _node("VAEEncode", {"pixels": image_out, "vae": vae_out})
+    latent = [str(n), 0]
+    n += 1
+    args_with_vae = {**args, "_vae_out": vae_out}
+    _qwen_edit_sampler_nodes(
+        g,
+        start_id=n,
+        model_sampled=model_sampled,
+        pos=pos,
+        neg=neg,
+        latent=latent,
+        args={
+            **args_with_vae,
+            "steps": steps,
+            "cfg": cfg,
+            "sampler_name": sampler,
+            "scheduler": scheduler,
+            "seed": seed,
+            "denoise": denoise,
+        },
+    )
+    return g
+
+
+def comfy_qwen_image_edit_plus(args: dict[str, Any]) -> dict[str, Any]:
+    """Qwen-Image-Edit Plus via TextEncodeQwenImageEditPlus (up to 3 images)."""
+    ckpt = str(args["ckpt_name"])
+    prompt = str(args.get("prompt", ""))
+    negative = str(args.get("negative", ""))
+    image_list = [str(x) for x in (args.get("images") or []) if x]
+    if not image_list and args.get("image"):
+        image_list = [str(args["image"])]
+    if not image_list:
+        raise ValueError("comfy_qwen_image_edit_plus requires at least one image")
+
+    g: dict[str, Any] = {}
+    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_sampled = _apply_qwen_model_sampling(model_out, g, n, args)
+    n += 2
+    model_sampled, n = _apply_qwen_lightning_lora(model_sampled, g, n, args)
+
+    image_links: dict[str, list[str | int]] = {}
+    for index, filename in enumerate(image_list[:3], start=1):
+        node_id = str(n)
+        g[node_id] = _node("LoadImage", {"image": filename, "upload": "image"})
+        image_links[f"image{index}"] = [node_id, 0]
+        n += 1
+
+    main_key = "image1"
+    if main_key in image_links:
+        scaled, n = _maybe_scale_qwen_pixels(g, image_links[main_key], n, args)
+        image_links[main_key] = scaled
+
+    def _encode_plus(text: str) -> list[str | int]:
+        nonlocal n
+        inputs: dict[str, Any] = {
+            "clip": clip_out,
+            "vae": vae_out,
+            "prompt": text,
+        }
+        for key in ("image1", "image2", "image3"):
+            if key in image_links:
+                inputs[key] = image_links[key]
+        g[str(n)] = _node("TextEncodeQwenImageEditPlus", inputs)
+        out = [str(n), 0]
+        n += 1
+        return out
+
+    pos = _encode_plus(prompt)
+    neg = _encode_plus(negative)
+    g[str(n)] = _node("VAEEncode", {"pixels": image_links["image1"], "vae": vae_out})
+    latent = [str(n), 0]
+    n += 1
+    _qwen_edit_sampler_nodes(
+        g,
+        start_id=n,
+        model_sampled=model_sampled,
+        pos=pos,
+        neg=neg,
+        latent=latent,
+        args={**args, "_vae_out": vae_out, "ckpt_name": ckpt},
+    )
+    return g
+
+
+def comfy_qwen_image_txt2img(args: dict[str, Any]) -> dict[str, Any]:
+    """Qwen-Image txt2img (EmptySD3LatentImage + standard CLIP encode)."""
+    ckpt = str(args["ckpt_name"])
+    prompt = str(args.get("prompt", ""))
+    negative = str(args.get("negative", ""))
+    width = int(args.get("width", 1024))
+    height = int(args.get("height", 1024))
+    steps = int(args.get("steps", 20))
+    cfg = float(args.get("cfg", 2.5))
+    sampler = str(args.get("sampler_name", "euler"))
+    scheduler = str(args.get("scheduler", "beta"))
+    seed = int(args.get("seed", 0))
+
+    g: dict[str, Any] = {}
+    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_sampled = _apply_qwen_model_sampling(model_out, g, n, args)
+    n += 2
+    model_sampled, n = _apply_qwen_lightning_lora(model_sampled, g, n, args)
+    g["2"] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
+    g["3"] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
+    g["4"] = _node("EmptySD3LatentImage", {"width": width, "height": height, "batch_size": 1})
+    g["5"] = _node(
+        "KSampler",
+        {
+            "model": model_sampled,
+            "positive": ["2", 0],
+            "negative": ["3", 0],
+            "latent_image": ["4", 0],
+            "seed": seed,
+            "steps": steps,
+            "cfg": cfg,
+            "sampler_name": sampler,
+            "scheduler": scheduler,
+            "denoise": 1.0,
+        },
+    )
+    g["6"] = _node("VAEDecode", {"samples": ["5", 0], "vae": vae_out})
+    g["7"] = _node(
+        "SaveImage",
+        {"images": ["6", 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
     )
     return g
 

@@ -20,9 +20,12 @@ HF_BASE_FLUX_TEXT = (
 HF_BASE_FLUX_VAE = (
     "https://huggingface.co/black-forest-labs/FLUX.1-schnell/resolve/main"
 )
-HF_BASE_QWEN = "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main"
+HF_BASE_QWEN = "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files"
 HF_BASE_QWEN_CLIP = (
     "https://huggingface.co/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main"
+)
+HF_BASE_QWEN_LIGHTNING = (
+    "https://huggingface.co/lightx2v/Qwen-Image-Lightning/resolve/main"
 )
 
 # Shared catalog keyed by dependency id (referenced from MODEL_DEPENDENCIES).
@@ -42,7 +45,7 @@ COMPANION_SOURCES: dict[str, dict[str, Any]] = {
         "min_bytes": 4 * 1024 * 1024 * 1024,
     },
     "clip_qwen25_vl_7b": {
-        "url": f"{HF_BASE_QWEN}/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "url": f"{HF_BASE_QWEN}/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
         "min_bytes": 6 * 1024 * 1024 * 1024,
     },
     "clip_qwen25_gguf_compatible": {
@@ -50,8 +53,15 @@ COMPANION_SOURCES: dict[str, dict[str, Any]] = {
         "min_bytes": 4 * 1024 * 1024 * 1024,
     },
     "vae_qwen_image": {
-        "url": f"{HF_BASE_QWEN}/qwen_image_vae.safetensors",
+        "url": f"{HF_BASE_QWEN}/vae/qwen_image_vae.safetensors",
         "min_bytes": 200 * 1024 * 1024,
+    },
+    "lora_qwen_edit_lightning_4step": {
+        "url": (
+            f"{HF_BASE_QWEN_LIGHTNING}/Qwen-Image-Edit-2509/"
+            "Qwen-Image-Edit-2509-Lightning-4steps-V1.0-fp32.safetensors"
+        ),
+        "min_bytes": 800 * 1024 * 1024,
     },
 }
 

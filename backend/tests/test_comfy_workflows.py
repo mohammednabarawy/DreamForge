@@ -25,6 +25,9 @@ from dreamforge_comfy_workflows import (
     comfy_hires_two_pass,
     comfy_inpaint_basic,
     comfy_outpaint_basic,
+    comfy_qwen_image_edit,
+    comfy_qwen_image_edit_plus,
+    comfy_qwen_image_txt2img,
 )
 from dreamforge_krita_resources import (
     composite_inpaint_result,
@@ -45,6 +48,90 @@ def test_kontext_workflow_uses_separate_reference_stitch():
     assert graph["2"]["inputs"]["image"] == "main.png"
     assert graph["13"]["inputs"]["image"] == "refs.png"
     assert graph["8"]["inputs"]["latent"] == ["15", 0]
+
+
+def test_qwen_edit_split_loaders_and_text_encode():
+    graph = comfy_qwen_image_edit(
+        {
+            "ckpt_name": "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+            "relative_path": "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+            "category": "diffusion_models",
+            "family": "qwen_image_edit",
+            "image": "input.png",
+            "prompt": "make the sky sunset",
+            "negative": "",
+        }
+    )
+    assert graph["30"]["class_type"] == "UNETLoader"
+    assert graph["31"]["class_type"] == "CLIPLoader"
+    assert graph["31"]["inputs"]["type"] == "qwen_image"
+    assert graph["32"]["class_type"] == "VAELoader"
+    text_nodes = [n for n in graph.values() if n.get("class_type") == "TextEncodeQwenImageEdit"]
+    assert len(text_nodes) == 2
+    cfg_norm = next(n for n in graph.values() if n.get("class_type") == "CFGNorm")
+    assert cfg_norm["inputs"]["strength"] == 1.0
+
+
+def test_qwen_edit_lightning_lora_when_requested():
+    graph = comfy_qwen_image_edit(
+        {
+            "ckpt_name": "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+            "relative_path": "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+            "category": "diffusion_models",
+            "family": "qwen_image_edit",
+            "image": "input.png",
+            "prompt": "make the sky sunset",
+            "negative": "",
+            "use_qwen_lightning_lora": True,
+            "qwen_lightning_lora": "Qwen-Image-Edit-Lightning-4steps-V1.0.safetensors",
+        }
+    )
+    lora_nodes = [n for n in graph.values() if n.get("class_type") == "LoraLoaderModelOnly"]
+    assert len(lora_nodes) == 1
+    assert "Lightning" in lora_nodes[0]["inputs"]["lora_name"]
+
+
+def test_qwen_edit_plus_multi_reference():
+    graph = comfy_qwen_image_edit_plus(
+        {
+            "ckpt_name": "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+            "relative_path": "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+            "category": "diffusion_models",
+            "family": "qwen_image_edit",
+            "images": ["main.png", "ref_a.png", "ref_b.png"],
+            "prompt": "combine styles",
+            "negative": "",
+            "qwen_scale_megapixels": 0.75,
+        }
+    )
+    plus_nodes = [n for n in graph.values() if n.get("class_type") == "TextEncodeQwenImageEditPlus"]
+    assert len(plus_nodes) == 2
+    assert "image1" in plus_nodes[0]["inputs"]
+    assert "image2" in plus_nodes[0]["inputs"]
+    assert "image3" in plus_nodes[0]["inputs"]
+    load_nodes = [n for n in graph.values() if n.get("class_type") == "LoadImage"]
+    assert len(load_nodes) == 3
+    scale_nodes = [n for n in graph.values() if n.get("class_type") == "ImageScaleToTotalPixels"]
+    assert len(scale_nodes) == 1
+
+
+def test_qwen_txt2img_uses_empty_sd3_latent():
+    graph = comfy_qwen_image_txt2img(
+        {
+            "ckpt_name": "qwen_image_fp8_e4m3fn.safetensors",
+            "relative_path": "qwen_image_fp8_e4m3fn.safetensors",
+            "category": "diffusion_models",
+            "family": "qwen_image",
+            "prompt": "a cat",
+            "negative": "",
+            "width": 768,
+            "height": 768,
+        }
+    )
+    assert graph["4"]["class_type"] == "EmptySD3LatentImage"
+    assert graph["31"]["class_type"] == "CLIPLoader"
+    cfg_norm = next(n for n in graph.values() if n.get("class_type") == "CFGNorm")
+    assert cfg_norm["inputs"]["strength"] == 1.0
 
 
 def test_flux_diffusion_model_uses_unet_clip_vae_loaders():

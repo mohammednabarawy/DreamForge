@@ -495,6 +495,14 @@ def from_exception(exc: BaseException, *, job_id: str | None = None) -> dict:
     if workflow_class_match:
         return unsupported_workflow_class(workflow_class_match.group(1).strip(" '\"."), msg, job_id=job_id)
 
+    winerror = getattr(exc, "winerror", None)
+    if (
+        winerror == 1455
+        or "paging file is too small" in msg_lower
+        or "os error 1455" in msg_lower
+    ):
+        return virtual_memory_low(f"{name}: {msg}", job_id=job_id)
+
     _comfy_crash_hints = (
         "connection could be made because the target machine actively refused",
         "comfyui server became unreachable",
@@ -503,7 +511,11 @@ def from_exception(exc: BaseException, *, job_id: str | None = None) -> dict:
         "connection refused",
         "[errno 111]",
     )
-    if any(hint in msg_lower for hint in _comfy_crash_hints) or name == "ComfyExecutionError":
+    if any(hint in msg_lower for hint in _comfy_crash_hints) or (
+        name == "ComfyExecutionError"
+        and "paging file" not in msg_lower
+        and "1455" not in msg_lower
+    ):
         return error(
             "comfy_server_crashed",
             "ComfyUI server crashed or became unreachable during generation. "
@@ -519,14 +531,6 @@ def from_exception(exc: BaseException, *, job_id: str | None = None) -> dict:
             recoverable=True,
             job_id=job_id,
         )
-
-    winerror = getattr(exc, "winerror", None)
-    if (
-        winerror == 1455
-        or "paging file is too small" in msg.lower()
-        or "os error 1455" in msg.lower()
-    ):
-        return virtual_memory_low(f"{name}: {msg}", job_id=job_id)
 
     if isinstance(exc, OSError) and getattr(exc, "errno", None) in {28,}:
         # ENOSPC -> disk full

@@ -92,6 +92,34 @@ def test_flux_fp8_16gb_gpu_no_false_vram_warning(tmp_path, monkeypatch):
     assert "low_system_ram" not in codes
 
 
+def test_insufficient_commit_budget_blocks_generation(tmp_path, monkeypatch):
+    models_dir = tmp_path / "models" / "diffusion_models"
+    _write_fake_safetensors(models_dir / "flux1-dev-kontext_fp8_scaled.safetensors")
+    monkeypatch.setattr(pf, "MODELS_ROOT", tmp_path / "models")
+    monkeypatch.setattr(pf, "DEFAULT_OUTPUT_ROOT", tmp_path / "outputs")
+    monkeypatch.setattr(pf, "_disk_free_gb", lambda _p: 50.0)
+    monkeypatch.setattr(pf, "_free_vram_gb", lambda: 14.8)
+    monkeypatch.setattr(
+        pf,
+        "_memory_status",
+        lambda: {
+            "total_phys_gb": 28.0,
+            "avail_phys_gb": 5.7,
+            "commit_limit_gb": 57.0,
+            "avail_commit_gb": 5.7,
+        },
+    )
+    model = {
+        "name": "flux1-dev-kontext_fp8_scaled.safetensors",
+        "category": "diffusion_models",
+        "family": "flux_kontext",
+        "size_mb": 11_353,
+    }
+    result = run_preflight(model)
+    assert result.has_errors
+    assert result.errors[0]["code"] == "virtual_memory_low"
+
+
 def test_vram_warning_when_estimate_exceeds_free(tmp_path, monkeypatch):
     models_dir = tmp_path / "models" / "diffusion_models"
     _write_fake_safetensors(models_dir / "flux1-dev-fp8.safetensors")

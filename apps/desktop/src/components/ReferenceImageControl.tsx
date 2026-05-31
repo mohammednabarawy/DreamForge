@@ -7,6 +7,8 @@ import {
   activeReferenceMode,
   activeReferencePath,
   basename,
+  defaultReferenceEditStrength,
+  effectiveReferenceEditStrength,
   readImagePathFromDrop,
   type ReferenceImageMode,
 } from "../lib/referenceImage";
@@ -15,21 +17,25 @@ import { pickImageFile } from "../lib/tauri-api";
 
 type Props = {
   settings: GenerationSettings;
+  modelFamily?: string;
   onAttach: (path: string, mode: ReferenceImageMode) => void;
   onAttachExtra?: (path: string) => void;
   onRemoveExtra?: (index: number) => void;
   onClear: () => void;
   onOpenInpaintMask?: () => void;
+  onEditStrengthChange?: (value: number) => void;
   disabled?: boolean;
 };
 
 export function ReferenceImageControl({
   settings,
+  modelFamily,
   onAttach,
   onAttachExtra,
   onRemoveExtra,
   onClear,
   onOpenInpaintMask,
+  onEditStrengthChange,
   disabled = false,
 }: Props) {
   const [open, setOpen] = useState(false);
@@ -49,6 +55,12 @@ export function ReferenceImageControl({
     Boolean(attachedPath) &&
     attachedMode === "reference" &&
     Boolean(onAttachExtra);
+  const showEditStrength =
+    Boolean(attachedPath) &&
+    attachedMode !== "upscale" &&
+    Boolean(onEditStrengthChange);
+  const editStrength = effectiveReferenceEditStrength(settings, modelFamily);
+  const editStrengthDefault = defaultReferenceEditStrength(settings, modelFamily);
 
   useEffect(() => {
     if (attachedPath) {
@@ -230,6 +242,28 @@ export function ReferenceImageControl({
             >
               Mask
             </button>
+          )}
+          {showEditStrength && (
+            <label
+              className="flex min-w-[88px] max-w-[120px] flex-1 flex-col gap-0.5"
+              title={`Edit strength (denoise). Default ${Math.round(editStrengthDefault * 100)}% for this model.`}
+            >
+              <span className="text-[9px] text-dfui-muted">
+                Edit {Math.round(editStrength * 100)}%
+              </span>
+              <input
+                type="range"
+                min={0.2}
+                max={1}
+                step={0.01}
+                disabled={disabled}
+                value={editStrength}
+                onChange={(e) =>
+                  onEditStrengthChange?.(Number(e.target.value))
+                }
+                className="h-1.5 w-full accent-dfui-accent"
+              />
+            </label>
           )}
           <button
             type="button"

@@ -85,6 +85,24 @@ def build_parser():
     parser.add_argument("--upscale-method", default="2x", help="Upscale method passed to DreamForge")
     parser.add_argument("--edit-type", default="auto", choices=["auto", "kontext", "inpaint", "img2img", "qwen_edit", "outpaint"], help="Type of image edit to perform")
     parser.add_argument("--edit-strength", type=float, default=None, help="Image edit denoise/strength, 0.0 preserves more and 1.0 changes more")
+    parser.add_argument(
+        "--qwen-edit-mode",
+        default="auto",
+        choices=["auto", "single", "plus"],
+        help="Qwen Image Edit graph: auto (plus when extra reference_images), single, or plus",
+    )
+    parser.add_argument(
+        "--qwen-image-shift",
+        type=float,
+        default=None,
+        help="ModelSamplingAuraFlow shift for Qwen Image / Edit (default 3.1)",
+    )
+    parser.add_argument(
+        "--qwen-scale-megapixels",
+        type=float,
+        default=None,
+        help="Scale edit input to this megapixel budget before VAE encode (e.g. 0.75 for 8GB VRAM)",
+    )
     parser.add_argument("--inpaint-mask-path", default=None, help="Mask image path for inpaint edits")
     parser.add_argument("--cn-selection", default="None", help="ControlNet preset selection; use Custom... for direct settings")
     parser.add_argument("--cn-type", default="None", help="ControlNet type: canny, depth, pose, openpose, lineart, scribble, tile")
@@ -448,10 +466,41 @@ def _apply_edit_recipe_settings(settings: dict, model: dict, job) -> dict:
     return out
 
 
+def _apply_generation_recipe_settings(settings: dict, model: dict, job) -> dict:
+    family = str(model.get("family") or "").lower()
+    has_input = bool(getattr(job, "input_image", None) or getattr(job, "upscale_image", None))
+    if has_input or family != "qwen_image":
+        return settings
+    explicit_sampling = any(
+        getattr(job, attr, None) is not None
+        for attr in ("steps", "cfg_scale", "sampler", "scheduler")
+    )
+    if explicit_sampling:
+        return settings
+    try:
+        from dreamforge_krita_recipes import generation_recipe
+    except ImportError:
+        return settings
+    recipe = generation_recipe(family)
+    if not recipe:
+        return settings
+    out = dict(settings)
+    out["steps"] = int(recipe.get("custom_steps", out.get("steps", 20)))
+    out["cfg"] = float(recipe.get("cfg", out.get("cfg", 2.5)))
+    out["sampler_name"] = recipe.get("sampler_name", out.get("sampler_name"))
+    out["scheduler"] = recipe.get("scheduler", out.get("scheduler"))
+    out["clip_skip"] = int(recipe.get("clip_skip", out.get("clip_skip", 1)))
+    return out
+
+
 def build_plan(base_args, data=None):
     job, model, prompt, negative, width, height, brand_kit = _compile_job(base_args, data)
-    settings = _apply_edit_recipe_settings(
-        _auto_settings(model, job, width, height, negative),
+    settings = _apply_generation_recipe_settings(
+        _apply_edit_recipe_settings(
+            _auto_settings(model, job, width, height, negative),
+            model,
+            job,
+        ),
         model,
         job,
     )

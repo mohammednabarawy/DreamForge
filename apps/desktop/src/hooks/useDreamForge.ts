@@ -13,6 +13,11 @@ import {
 } from "../lib/errors";
 import { parseInventoryResponse } from "../lib/inventory";
 import {
+  hydrateInventoryFromSnapshot,
+  readModelLibrarySnapshot,
+  writeModelLibrarySnapshot,
+} from "../lib/modelLibraryCache";
+import {
   findGalleryModel,
   modelBasename,
   modelMatches,
@@ -49,6 +54,7 @@ import {
   getLoraGallery,
   getModelGallery,
   getUiDefaults,
+  refreshModelLibraryCache,
   invokeGeneration,
   deleteOutput,
   deleteOutputImage,
@@ -78,6 +84,7 @@ import {
   restartGpuWorker,
   resolveModelProfile,
   type LoraGalleryItem,
+  type InventoryPayload,
   type ModelGalleryItem,
   type ModelDependencyItem,
   type UiDefaults,
@@ -129,6 +136,7 @@ import {
   appendExtraReferencePath,
   buildClearReferenceImagePatch,
   buildReferenceImagePatch,
+  defaultReferenceEditStrength,
   referenceStatusLabel,
   removeExtraReferenceAt,
   resolveGenerationImagePaths,
@@ -169,9 +177,10 @@ export function useDreamForge() {
   const [historyScrollToken, setHistoryScrollToken] = useState(0);
   const outputSearchRef = useRef(outputSearch);
   outputSearchRef.current = outputSearch;
-  const [inventory, setInventory] = useState(
-    parseInventoryResponse({ categories: {}, styles: [], style_groups: [] }),
-  );
+  const [inventory, setInventory] = useState(() => {
+    const hydrated = hydrateInventoryFromSnapshot(readModelLibrarySnapshot());
+    return hydrated ?? parseInventoryResponse({ categories: {}, styles: [], style_groups: [] });
+  });
   const [selected, setSelected] = useState<OutputItem | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [liveProgress, setLiveProgress] = useState<{
@@ -192,8 +201,12 @@ export function useDreamForge() {
   const [workerLogTail, setWorkerLogTail] = useState("");
   const [restarting, setRestarting] = useState(false);
   const [uiDefaults, setUiDefaults] = useState<UiDefaults | null>(null);
-  const [modelGalleryAll, setModelGalleryAll] = useState<ModelGalleryItem[]>([]);
-  const [loraGalleryAll, setLoraGalleryAll] = useState<LoraGalleryItem[]>([]);
+  const [modelGalleryAll, setModelGalleryAll] = useState<ModelGalleryItem[]>(
+    () => readModelLibrarySnapshot()?.modelGallery ?? [],
+  );
+  const [loraGalleryAll, setLoraGalleryAll] = useState<LoraGalleryItem[]>(
+    () => readModelLibrarySnapshot()?.loraGallery ?? [],
+  );
   const studioCatalogLoadedRef = useRef(false);
   const userPickedModelRef = useRef(false);
   const useCasesRef = useRef<UseCaseRecipe[]>([]);
@@ -259,6 +272,7 @@ export function useDreamForge() {
   }, []);
 
   const generatingRef = useRef(false);
+  const lightningPromptKeyRef = useRef("");
   const workerReadyRef = useRef(false);
   const vramProfileAutoAppliedRef = useRef(false);
   const prevVramProfileRef = useRef<string>("16gb");
@@ -269,6 +283,7 @@ export function useDreamForge() {
   const lastPreviewEventAtRef = useRef<number>(0);
   const previewUrlRef = useRef<string | null>(null);
   const canvasPreviewPathRef = useRef<string>("");
+  const lastSelectedKeyRef = useRef<string>("");
 
   const previewSignature = useCallback((url: string) => {
     if (!url.startsWith("data:")) return url;
@@ -426,6 +441,7 @@ export function useDreamForge() {
 
         if (opts?.selectNewest && page.items[0]) {
           setSelected(page.items[0]);
+          lastSelectedKeyRef.current = page.items[0].manifest_path;
           setHistoryScrollToken((t) => t + 1);
         } else if (!opts?.keepSelection) {
           setSelected((prev) => {
@@ -560,6 +576,10 @@ export function useDreamForge() {
     }
     setGalleryLoading(true);
     try {
+      if (force) {
+        await refreshModelLibraryCache().catch(() => {});
+      }
+      const fetchOpts = { forceRefresh: force };
       const [
         models,
         loras,
@@ -571,9 +591,9 @@ export function useDreamForge() {
         providers,
         styleProfile,
       ] = await Promise.all([
-        getModelGallery(""),
-        getLoraGallery(""),
-        getInventory(),
+        getModelGallery("", fetchOpts),
+        getLoraGallery("", fetchOpts),
+        getInventory(fetchOpts),
         getUiDefaults(),
         listUseCases(),
         getStudioSettings().catch(() => null),
@@ -583,9 +603,24 @@ export function useDreamForge() {
       ]);
       const recipes = (useCaseRes.use_cases ?? []) as UseCaseRecipe[];
       useCasesRef.current = recipes;
+      const inv = parseInventoryResponse(raw as Record<string, unknown>);
       setModelGalleryAll(models);
       setLoraGalleryAll(loras);
-      setInventory(parseInventoryResponse(raw as Record<string, unknown>));
+      setInventory(inv);
+      const rawInventory = raw as InventoryPayload & { models_root?: string };
+      writeModelLibrarySnapshot({
+        savedAt: Date.now(),
+        modelsRoot: rawInventory.models_root,
+        modelGallery: models,
+        loraGallery: loras,
+        inventory: {
+          categories: rawInventory.categories ?? {},
+          styles: inv.styles,
+          style_groups: inv.styleGroups,
+          presets: inv.presets,
+          models_root: rawInventory.models_root,
+        },
+      });
       setUiDefaults(defaults);
       let profileModel = "";
       setSettings((prev) => {
@@ -878,10 +913,13 @@ export function useDreamForge() {
   ]);
 
   useEffect(() => {
-    if (!workerReady) return;
     void loadStudioCatalog();
+  }, [loadStudioCatalog]);
+
+  useEffect(() => {
+    if (!workerReady) return;
     void refreshOutputs();
-  }, [workerReady, loadStudioCatalog, refreshOutputs]);
+  }, [workerReady, refreshOutputs]);
 
   const applyEngineStatus = useCallback((s: Awaited<ReturnType<typeof getEngineStatus>>) => {
     // eslint-disable-next-line no-console
@@ -1037,6 +1075,11 @@ export function useDreamForge() {
   useEffect(() => {
     if (generating) return;
     const path = selected?.images?.[0];
+    const selectionKey = selected?.manifest_path ?? path ?? "";
+    if (selectionKey === lastSelectedKeyRef.current) {
+      return;
+    }
+    lastSelectedKeyRef.current = selectionKey;
     if (!path) {
       if (!canvasPreviewPathRef.current) setCanvasPreview(null);
       return;
@@ -1604,6 +1647,21 @@ export function useDreamForge() {
         validate_output: true,
         use_comfy_server: true,
       };
+      const activeModel = findGalleryModel(modelGalleryAll, params.model ?? "");
+      const modelFamily = (activeModel?.family ?? "").toLowerCase();
+      if (modelFamily === "qwen_image_edit" && params.input_image?.trim()) {
+        if (params.edit_type !== "inpaint") {
+          params = {
+            ...params,
+            edit_type: "qwen_edit",
+            cn_selection: "None",
+            cn_type: "None",
+          };
+        }
+        if (params.edit_strength == null || params.edit_strength <= 0) {
+          params = { ...params, edit_strength: 1.0 };
+        }
+      }
       if (params.lora?.length && !params.lora_keywords?.trim()) {
         try {
           const kw = await aggregateLoraKeywords(params.lora);
@@ -1927,21 +1985,33 @@ export function useDreamForge() {
   const attachReferenceImage = useCallback(
     async (path: string, mode: ReferenceImageMode) => {
       const resolved = await resolveReferenceImagePath(path);
-      patchSettings(
-        buildReferenceImagePatch(resolved, mode, (suffix) =>
-          outputPathForSession(
-            activeSessionIdRef.current || DEFAULT_SESSION_ID,
-            suffix === "upscale"
-              ? "upscale"
-              : suffix === "inpaint"
-                ? "inpaint"
-                : "edit",
-          ),
+      const patch = buildReferenceImagePatch(resolved, mode, (suffix) =>
+        outputPathForSession(
+          activeSessionIdRef.current || DEFAULT_SESSION_ID,
+          suffix === "upscale"
+            ? "upscale"
+            : suffix === "inpaint"
+              ? "inpaint"
+              : "edit",
         ),
       );
+      if (mode !== "upscale") {
+        const activeModel = findGalleryModel(
+          modelGalleryAll,
+          settingsRef.current.model ?? "",
+        );
+        const family = activeModel?.family ?? "";
+        if (settingsRef.current.edit_strength == null || settingsRef.current.edit_strength <= 0) {
+          patch.edit_strength = defaultReferenceEditStrength(
+            { ...settingsRef.current, ...patch },
+            family,
+          );
+        }
+      }
+      patchSettings(patch);
       setStatus(`Attached ${referenceStatusLabel(mode, resolved)}`);
     },
-    [patchSettings],
+    [modelGalleryAll, patchSettings],
   );
 
   const clearReferenceImage = useCallback(() => {
@@ -1974,13 +2044,14 @@ export function useDreamForge() {
 
   const refreshModelDependencies = useCallback(async (modelName?: string) => {
     const model = (modelName ?? settingsRef.current.model ?? "").trim();
+    const performance = settingsRef.current.performance ?? null;
     if (!model) {
       const empty = { missing: [] as ModelDependencyItem[], ready: true };
       setModelDependencies(empty);
       return empty;
     }
     try {
-      const res = await checkModelDependencies(model);
+      const res = await checkModelDependencies(model, performance);
       const next = {
         missing: res.missing ?? [],
         ready: res.ready ?? (res.missing?.length ?? 0) === 0,
@@ -2091,7 +2162,10 @@ export function useDreamForge() {
     setStatus("Preparing companion download approval…");
     try {
       const res = model
-        ? await checkModelDependencies(model)
+        ? await checkModelDependencies(
+            model,
+            settingsRef.current.performance ?? null,
+          )
         : { missing: [] as ModelDependencyItem[], ready: true };
       const fromModel = res.missing ?? [];
       const fromStudio = studioResources.missing;
@@ -2138,6 +2212,7 @@ export function useDreamForge() {
           prev?.code === "missing_model_dependencies" ? null : prev,
         );
         setStatus("Companion files ready — you can generate now");
+        void loadStudioCatalog(true);
       } else if (companionDownload.phase === "error") {
         setStatus("Some companion downloads failed — see download log");
         setLastError(
@@ -2152,6 +2227,7 @@ export function useDreamForge() {
     companionDownload.phase,
     settings.model,
     refreshModelDependencies,
+    loadStudioCatalog,
   ]);
 
   const lowerVramProfile = useCallback(() => {
@@ -2164,7 +2240,48 @@ export function useDreamForge() {
 
   useEffect(() => {
     void refreshModelDependencies(settings.model);
-  }, [settings.model, refreshModelDependencies]);
+  }, [settings.model, settings.performance, refreshModelDependencies]);
+
+  useEffect(() => {
+    const model = settings.model?.trim();
+    if (!model) return;
+    const perf = (settings.performance ?? "").trim().toLowerCase();
+    if (!["speed", "lightning", "lcm"].includes(perf)) {
+      lightningPromptKeyRef.current = "";
+      return;
+    }
+    const activeModel = findGalleryModel(modelGalleryAll, model);
+    if ((activeModel?.family ?? "").toLowerCase() !== "qwen_image_edit") return;
+    if (companionDownload.open || companionDownload.busy) return;
+
+    const promptKey = `${model}|${perf}`;
+    void refreshModelDependencies(model).then((deps) => {
+      const lightningMissing = deps.missing.filter(
+        (item) => item.id === "lora_qwen_edit_lightning_4step",
+      );
+      if (lightningMissing.length === 0) {
+        lightningPromptKeyRef.current = "";
+        return;
+      }
+      if (lightningPromptKeyRef.current === promptKey) return;
+      lightningPromptKeyRef.current = promptKey;
+      companionDownload.start(model, lightningMissing);
+      setStatus("Qwen Speed/Lightning needs the Lightning LoRA — approve download");
+    });
+  }, [
+    settings.model,
+    settings.performance,
+    modelGalleryAll,
+    companionDownload.open,
+    companionDownload.busy,
+    companionDownload,
+    refreshModelDependencies,
+  ]);
+
+  const referenceModelFamily = useMemo(() => {
+    const item = findGalleryModel(modelGalleryAll, settings.model ?? "");
+    return item?.family ?? "";
+  }, [modelGalleryAll, settings.model]);
 
   const mentionTargets = useMemo(() => {
     const models = modelGalleryAll.map((m) => ({
@@ -2194,6 +2311,7 @@ export function useDreamForge() {
     patchSettings,
     setUseCase,
     activeModelLabel,
+    referenceModelFamily,
     inventory,
     generating,
     jobId,

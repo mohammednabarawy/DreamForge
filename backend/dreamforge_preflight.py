@@ -409,28 +409,35 @@ def run_preflight(
                     "Virtual memory → Change. Recommended max: at least "
                     f"{int((total_ram + needed_ram) * 1.5)} MB on a drive with free space, then reboot."
                 )
-            result.warnings.append(
-                error(
-                    "low_system_ram",
-                    (
-                        f"About {budget_gb:.1f} GB of {budget_label} is available, but loading "
-                        f"{name} may need up to ~{needed_ram:.1f} GB during startup "
-                        "(mostly the T5 text encoder on CPU). "
-                        "If load fails, you may see WinError 1455."
-                    ),
-                    suggestions=suggestions,
-                    details={
-                        "model": name,
-                        "model_file_gb": round(file_size_gb, 2),
-                        "available_ram_gb": round(avail_ram, 2) if avail_ram is not None else None,
-                        "available_commit_gb": round(avail_commit, 2) if avail_commit is not None else None,
-                        "needed_ram_gb": needed_ram,
-                        "loader": "unet_only" if _is_unet_only_family(_model_basename(model), str(model.get("family") or "")) else "checkpoint",
-                    },
-                    recoverable=True,
+            low_mem_message = (
+                f"About {budget_gb:.1f} GB of {budget_label} is available, but loading "
+                f"{name} may need up to ~{needed_ram:.1f} GB during startup "
+                "(mostly the T5 text encoder on CPU). "
+                "Continuing would likely crash ComfyUI with WinError 1455."
+            )
+            low_mem_details = {
+                "model": name,
+                "model_file_gb": round(file_size_gb, 2),
+                "available_ram_gb": round(avail_ram, 2) if avail_ram is not None else None,
+                "available_commit_gb": round(avail_commit, 2) if avail_commit is not None else None,
+                "needed_ram_gb": needed_ram,
+                "loader": "unet_only"
+                if _is_unet_only_family(_model_basename(model), str(model.get("family") or ""))
+                else "checkpoint",
+            }
+            result.errors.append(
+                virtual_memory_low(
+                    low_mem_message,
                     job_id=job_id,
                 )
             )
+            # Preserve the richer budget breakdown for the UI.
+            if result.errors:
+                result.errors[-1]["details"] = {
+                    **(result.errors[-1].get("details") or {}),
+                    **low_mem_details,
+                }
+                result.errors[-1]["suggestions"] = suggestions
 
     # 5) VRAM hint (generation phase, not load phase).
     estimated = _estimate_required_vram_gb(model)

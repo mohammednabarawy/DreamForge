@@ -136,6 +136,7 @@ export default function App() {
             onOpenInpaintMask={() => mc.setInpaintMaskOpen(true)}
             onOpenFullLog={() => setFullLogOpen(true)}
             activeModelLabel={mc.activeModelLabel}
+            referenceModelFamily={mc.referenceModelFamily}
           />
         </Panel>
         <PanelResizeHandle className="w-1 bg-dfui-border/50 transition hover:bg-dfui-accent/60" />

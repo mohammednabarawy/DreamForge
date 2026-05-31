@@ -319,71 +319,34 @@ def _resolve_cached_thumbnail(cache_subdir: str, model_filename: str, fallback: 
 
 
 def cmd_get_model_gallery(params: dict) -> dict:
-    """Gradio model_gallery rows: Civit/cache thumbnails + captions."""
-    from modules.model_ui_defaults import (
-        GALLERY_CATEGORIES,
-        engine_name_for_category,
-        gallery_caption,
-        infer_model_family,
-        scan_model_category,
-    )
+    from dreamforge_model_library_cache import get_cached_model_gallery
 
     needle = (params.get("filter") or "").lower()
-    items = []
-    for category in GALLERY_CATEGORIES:
-        for relative_name in scan_model_category(category):
-            haystack = f"{category} {relative_name}".lower()
-            if needle and needle not in haystack:
-                continue
-            filename = Path(relative_name).name
-            if filename.endswith(".merge"):
-                fallback = BACKEND_ROOT / "html" / "merge.jpeg"
-            else:
-                fallback = BACKEND_ROOT / "html" / "warning.jpeg"
-            items.append(
-                {
-                    "category": category,
-                    "relative_path": relative_name,
-                    "caption": gallery_caption(category, relative_name),
-                    "engine_name": engine_name_for_category(category, relative_name),
-                    "family": infer_model_family(filename),
-                    "thumbnail_path": _resolve_cached_thumbnail(
-                        "checkpoints", filename, fallback
-                    ),
-                }
-            )
-    return {"ok": True, "items": items, "count": len(items)}
+    force_refresh = bool(params.get("force_refresh"))
+    items, from_cache = get_cached_model_gallery(force_refresh=force_refresh)
+    if needle:
+        items = [
+            item
+            for item in items
+            if needle
+            in f"{item.get('category', '')} {item.get('caption', '')} {item.get('engine_name', '')}".lower()
+        ]
+    return {"ok": True, "items": items, "count": len(items), "from_cache": from_cache}
 
 
 def cmd_get_lora_gallery(params: dict) -> dict:
-    from dreamforge_cli_inventory import list_model_inventory
+    from dreamforge_model_library_cache import get_cached_lora_gallery
 
     needle = (params.get("filter") or "").lower()
-    inv = list_model_inventory()
-    loras = inv.get("categories", {}).get("loras", [])
-    fallback = BACKEND_ROOT / "html" / "warning.png"  # loras use warning.png per util.py
-    items = []
-    seen = set()
-    for entry in loras:
-        name = entry.get("name") or ""
-        relative_path = entry.get("relative_path") or name
-        if not name:
-            continue
-        if relative_path in seen:
-            continue
-        seen.add(relative_path)
-        haystack = name.lower()
-        if needle and needle not in f"{name} {relative_path}".lower():
-            continue
-        items.append(
-            {
-                "name": name,
-                "stem": entry.get("stem") or Path(name).stem,
-                "relative_path": relative_path,
-                "thumbnail_path": _resolve_cached_thumbnail("loras", name, fallback),
-            }
-        )
-    return {"ok": True, "items": items, "count": len(items)}
+    force_refresh = bool(params.get("force_refresh"))
+    items, from_cache = get_cached_lora_gallery(force_refresh=force_refresh)
+    if needle:
+        items = [
+            item
+            for item in items
+            if needle in f"{item.get('name', '')} {item.get('relative_path', '')}".lower()
+        ]
+    return {"ok": True, "items": items, "count": len(items), "from_cache": from_cache}
 
 
 def cmd_resolve_model_profile(params: dict) -> dict:
@@ -420,21 +383,23 @@ def cmd_resolve_model_profile(params: dict) -> dict:
 
 
 def cmd_get_inventory(params: dict) -> dict:
-    from dreamforge_cli_inventory import list_model_inventory, list_system_fonts
+    from dreamforge_cli_inventory import list_system_fonts
+    from dreamforge_model_library_cache import get_cached_inventory
 
-    inv = list_model_inventory()
-    style_data = _group_styles(inv.get("styles", []))
-    payload = {
-        "ok": True,
-        "models_root": inv.get("models_root"),
-        "categories": inv.get("categories", {}),
-        "presets": inv.get("presets", []),
-        "styles": style_data["selectable"],
-        "style_groups": style_data["groups"],
-    }
+    force_refresh = bool(params.get("force_refresh"))
+    payload, from_cache = get_cached_inventory(force_refresh=force_refresh)
     if params.get("include_fonts"):
+        payload = dict(payload)
         payload["fonts"] = list_system_fonts(font_filter=params.get("font_filter"))
+    payload["from_cache"] = from_cache
     return payload
+
+
+def cmd_refresh_model_library_cache(_params: dict) -> dict:
+    from dreamforge_model_library_cache import rebuild_model_library_cache
+
+    stats = rebuild_model_library_cache()
+    return {"ok": True, **stats}
 
 
 def cmd_list_outputs(params: dict) -> dict:
@@ -566,6 +531,10 @@ def cmd_organize_models(params: dict) -> dict:
         apply=apply,
         include_low_confidence=include_low,
     )
+    if apply:
+        from dreamforge_model_library_cache import invalidate_model_library_cache
+
+        invalidate_model_library_cache()
     payload["ok"] = True
     return payload
 
@@ -579,7 +548,10 @@ def cmd_check_model_dependencies(params: dict) -> dict:
     model = resolve_generation_model(model_name)
     if not model:
         return _error(f"model_not_found: {model_name}")
-    missing = check_model_dependencies(model)
+    missing = check_model_dependencies(
+        model,
+        performance=params.get("performance"),
+    )
     return {
         "ok": True,
         "model": model,
@@ -599,7 +571,10 @@ def cmd_download_model_companions(params: dict) -> dict:
     if not model:
         return _error(f"model_not_found: {model_name}")
 
-    missing = check_model_dependencies(model)
+    missing = check_model_dependencies(
+        model,
+        performance=params.get("performance"),
+    )
     ids = params.get("ids")
     if ids:
         wanted = {str(item) for item in ids}
@@ -610,6 +585,10 @@ def cmd_download_model_companions(params: dict) -> dict:
     payload = download_missing_companions(missing)
     payload["ok"] = not payload.get("errors")
     payload["model"] = model
+    if int(payload.get("downloaded") or 0) > 0:
+        from dreamforge_model_library_cache import invalidate_model_library_cache
+
+        invalidate_model_library_cache()
     return payload
 
 
@@ -800,6 +779,9 @@ def cmd_build_cli_argv(params: dict) -> dict:
     add("--upscale-method", params.get("upscale_method"))
     add("--edit-type", params.get("edit_type"))
     add("--edit-strength", params.get("edit_strength"))
+    add("--qwen-edit-mode", params.get("qwen_edit_mode"))
+    add("--qwen-image-shift", params.get("qwen_image_shift"))
+    add("--qwen-scale-megapixels", params.get("qwen_scale_megapixels"))
     add("--inpaint-mask-path", params.get("inpaint_mask_path"))
     add("--vram-profile", params.get("vram_profile"))
     add("--use-case", params.get("use_case"))
@@ -853,6 +835,7 @@ HANDLERS = {
     "get_inventory": cmd_get_inventory,
     "get_model_gallery": cmd_get_model_gallery,
     "get_lora_gallery": cmd_get_lora_gallery,
+    "refresh_model_library_cache": cmd_refresh_model_library_cache,
     "resolve_model_profile": cmd_resolve_model_profile,
     "list_outputs": cmd_list_outputs,
     "search_outputs": cmd_search_outputs,

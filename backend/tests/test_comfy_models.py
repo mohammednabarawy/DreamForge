@@ -10,6 +10,7 @@ from dreamforge_comfy_models import (
     ComfyModelResolutionError,
     _basename_match,
     _object_info_options,
+    _qwen_companion_basenames_on_disk,
     resolve_comfy_model_loader_args,
 )
 
@@ -92,6 +93,111 @@ def test_write_extra_model_paths_uses_resolved_absolute_base(tmp_path, monkeypat
     yaml_path = srv.write_dreamforge_extra_model_paths_config(tmp_path / "comfy")
     text = yaml_path.read_text(encoding="utf-8")
     assert target.as_posix() in text
+
+
+def test_resolve_qwen_split_loaders_from_object_info():
+    client = SimpleNamespace(
+        object_info=lambda: {
+            "UNETLoader": {
+                "input": {
+                    "required": {
+                        "unet_name": [["qwen_image_edit_2509_fp8_e4m3fn.safetensors"], {}],
+                    }
+                }
+            },
+            "CLIPLoader": {
+                "input": {
+                    "required": {
+                        "clip_name": [["qwen_2.5_vl_7b_fp8_scaled.safetensors"], {}],
+                    }
+                }
+            },
+            "VAELoader": {
+                "input": {
+                    "required": {
+                        "vae_name": [["qwen_image_vae.safetensors"], {}],
+                    }
+                }
+            },
+        }
+    )
+    model = {
+        "category": "diffusion_models",
+        "relative_path": "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+        "name": "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+        "family": "qwen_image_edit",
+    }
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("dreamforge_comfy_models.companion_file_present", lambda req: True)
+        mp.setattr(
+            "dreamforge_comfy_models._qwen_companion_basenames_on_disk",
+            lambda family: {
+                "clip": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+                "vae": "qwen_image_vae.safetensors",
+            },
+        )
+        mp.setattr("dreamforge_comfy_models.check_model_dependencies", lambda m: [])
+
+        args = resolve_comfy_model_loader_args(
+            client,
+            model=model,
+            model_family="qwen_image_edit",
+        )
+
+    assert args["unet_name"] == "qwen_image_edit_2509_fp8_e4m3fn.safetensors"
+    assert args["clip"] == "qwen_2.5_vl_7b_fp8_scaled.safetensors"
+    assert args["vae"] == "qwen_image_vae.safetensors"
+
+
+def test_qwen_companion_basenames_do_not_treat_vae_as_clip():
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("dreamforge_comfy_models.companion_file_present", lambda req: True)
+        result = _qwen_companion_basenames_on_disk("qwen_image_edit")
+    assert result.get("vae") == "qwen_image_vae.safetensors"
+    assert result.get("clip") == "qwen_2.5_vl_7b_fp8_scaled.safetensors"
+
+
+def test_resolve_qwen_edit_when_vae_on_disk_but_clip_missing_from_comfy():
+    client = SimpleNamespace(
+        object_info=lambda: {
+            "UNETLoader": {
+                "input": {
+                    "required": {
+                        "unet_name": [["qwen_image_edit_2509_fp8_e4m3fn.safetensors"], {}],
+                    }
+                }
+            },
+            "CLIPLoader": {"input": {"required": {"clip_name": [[], {}]}}},
+            "VAELoader": {
+                "input": {"required": {"vae_name": [["qwen_image_vae.safetensors"], {}]}}
+            },
+        }
+    )
+    model = {
+        "category": "diffusion_models",
+        "relative_path": "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+        "name": "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+        "family": "qwen_image_edit",
+    }
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("dreamforge_comfy_models.companion_file_present", lambda req: True)
+        mp.setattr(
+            "dreamforge_comfy_models._qwen_companion_basenames_on_disk",
+            lambda family: {
+                "clip": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+                "vae": "qwen_image_vae.safetensors",
+            },
+        )
+        mp.setattr("dreamforge_comfy_models.check_model_dependencies", lambda m: [])
+
+        with pytest.raises(ComfyModelResolutionError, match="Qwen CLIP"):
+            resolve_comfy_model_loader_args(
+                client,
+                model=model,
+                model_family="qwen_image_edit",
+            )
 
 
 def test_resolve_raises_when_comfy_sees_no_unets():

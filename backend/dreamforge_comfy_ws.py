@@ -28,11 +28,30 @@ _PREVIEW_IMAGE = 1
 _UNENCODED_PREVIEW_IMAGE = 2
 _PREVIEW_WITH_METADATA = 4
 
+_SAMPLER_NODE_TYPES = frozenset(
+    {
+        "KSampler",
+        "KSamplerAdvanced",
+        "SamplerCustom",
+        "SamplerCustomAdvanced",
+    }
+)
+
+# Krita Style.live_sampler_steps / live_cfg_scale defaults (style.py).
+DEFAULT_LIVE_SAMPLING: dict[str, Any] = {
+    "steps": 6,
+    "cfg": 1.8,
+    "sampler_name": "euler",
+    "scheduler": "simple",
+}
+
 # Must be the first JSON message after /ws connect (Comfy server.py websocket_handler).
 _COMFY_CLIENT_FEATURE_FLAGS = {
     "type": "feature_flags",
     "data": {"supports_preview_metadata": True},
 }
+
+_WS_CONNECT_ATTEMPTS = 3
 
 
 @dataclass
@@ -101,6 +120,44 @@ def count_comfy_prompt_nodes(prompt: dict[str, Any]) -> int:
     if not isinstance(prompt, dict):
         return 1
     return max(len(prompt), 1)
+
+
+def guess_sample_count_from_prompt(prompt: dict[str, Any], *, fallback: int = 20) -> int:
+    """Sum KSampler step counts from a Comfy API prompt (Krita guess_sample_count)."""
+    if not isinstance(prompt, dict):
+        return max(int(fallback), 1)
+    total = 0
+    for node in prompt.values():
+        if not isinstance(node, dict):
+            continue
+        class_type = str(node.get("class_type") or "")
+        if class_type not in _SAMPLER_NODE_TYPES:
+            continue
+        inputs = node.get("inputs") if isinstance(node.get("inputs"), dict) else {}
+        steps = inputs.get("steps")
+        if not isinstance(steps, (int, float)) or steps <= 0:
+            continue
+        if class_type == "KSamplerAdvanced":
+            start_at = inputs.get("start_at_step") or 0
+            try:
+                total += max(int(steps) - int(start_at), 1)
+            except (TypeError, ValueError):
+                total += int(steps)
+        else:
+            total += int(steps)
+    return max(total, int(fallback), 1)
+
+
+def prompt_id_from_job_id(job_id: str) -> str | None:
+    """Use DreamForge job UUID as Comfy prompt_id when possible (Krita client pattern)."""
+    value = str(job_id or "").strip()
+    if not value:
+        return None
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return None
+    return value
 
 
 def live_preview_path(job_id: str = "") -> Path:
@@ -252,6 +309,22 @@ def new_client_id() -> str:
     return str(uuid.uuid4())
 
 
+def verify_comfy_websocket(
+    base_url: str,
+    *,
+    client_id: str | None = None,
+    timeout_s: float = 10.0,
+) -> None:
+    """Probe Comfy /ws before generation (Krita ComfyClient.connect handshake)."""
+    ensure_websockets_available()
+    from websockets.sync.client import connect
+
+    cid = str(client_id or new_client_id())
+    uri = f"{_http_to_ws_url(base_url.rstrip('/'))}/ws?clientId={cid}"
+    with connect(uri, max_size=2**16, open_timeout=float(timeout_s)) as websocket:
+        websocket.send(json.dumps(_COMFY_CLIENT_FEATURE_FLAGS))
+
+
 class ComfyPromptStreamSession:
     """Listen on Comfy WebSocket before/while a prompt runs (Krita connect-first pattern)."""
 
@@ -348,72 +421,91 @@ class ComfyPromptStreamSession:
         )
 
     def _run(self) -> None:
+        uri = f"{_http_to_ws_url(self.base_url)}/ws?clientId={self.client_id}"
+        last_error: BaseException | None = None
+        for attempt in range(_WS_CONNECT_ATTEMPTS):
+            if self._done.is_set():
+                return
+            try:
+                self._listen_on_websocket(uri)
+                return
+            except Exception as exc:
+                last_error = exc
+                if self._done.is_set():
+                    return
+                if attempt + 1 >= _WS_CONNECT_ATTEMPTS:
+                    break
+                time.sleep(min(float(attempt + 1), 3.0))
+        self._error = last_error or RuntimeError("ComfyUI WebSocket connection failed")
+        self._connected.set()
+        self._done.set()
+
+    def _listen_on_websocket(self, uri: str) -> None:
         from websockets.sync.client import connect
 
-        uri = f"{_http_to_ws_url(self.base_url)}/ws?clientId={self.client_id}"
-        try:
-            with connect(uri, max_size=2**30, open_timeout=30) as websocket:
-                websocket.send(json.dumps(_COMFY_CLIENT_FEATURE_FLAGS))
-                self._connected.set()
-                deadline = time.time() + float(self.config.timeout_s)
-                while not self._done.is_set() and time.time() < deadline:
-                    if self._prompt_id is None:
-                        time.sleep(0.02)
-                        continue
-                    try:
-                        raw = websocket.recv(timeout=1.0)
-                    except TimeoutError:
-                        continue
-
-                    if isinstance(raw, (bytes, bytearray, memoryview)):
-                        parsed = extract_preview_image_bytes(raw)
-                        if parsed:
-                            image_bytes, fmt = parsed
-                            self._emit_preview(image_bytes, fmt)
-                        continue
-
-                    try:
-                        msg = json.loads(raw)
-                    except json.JSONDecodeError:
-                        continue
-
-                    msg_type = msg.get("type")
-                    data = msg.get("data") or {}
-                    pid = data.get("prompt_id")
-
-                    if msg_type == "execution_start" and self._prompt_id and pid == self._prompt_id:
-                        self._tracker = ComfyProgressTracker(
-                            sample_count=self.config.sample_count,
-                            node_count=self.config.node_count,
-                        )
-
-                    if msg_type == "execution_error" and pid == self._prompt_id:
-                        err = data.get("exception_message") or "ComfyUI execution_error"
-                        self._error = RuntimeError(str(err))
-                        self._done.set()
-                        break
-
-                    if self._prompt_id and pid not in (None, self._prompt_id):
-                        continue
-
-                    if msg_type == "execution_success" and self._prompt_id:
-                        self._done.set()
-                        break
-
-                    if msg_type == "progress_state" and self._prompt_id:
-                        self._tracker.handle_progress_state(msg, prompt_id=self._prompt_id)
-                        self._emit_progress()
-                    elif msg_type in ("execution_cached", "executing", "progress") and self._prompt_id:
-                        self._tracker.handle(msg, prompt_id=self._prompt_id)
-                        self._emit_progress()
-
-                    if msg_type == "executing" and data.get("node") is None:
-                        self._done.set()
-                        break
-        except Exception as exc:
-            self._error = exc
+        with connect(uri, max_size=2**30, open_timeout=30) as websocket:
+            websocket.send(json.dumps(_COMFY_CLIENT_FEATURE_FLAGS))
             self._connected.set()
-            self._done.set()
+            deadline = time.time() + float(self.config.timeout_s)
+            while not self._done.is_set() and time.time() < deadline:
+                if self._prompt_id is None:
+                    time.sleep(0.02)
+                    continue
+                try:
+                    raw = websocket.recv(timeout=1.0)
+                except TimeoutError:
+                    continue
+
+                if isinstance(raw, (bytes, bytearray, memoryview)):
+                    parsed = extract_preview_image_bytes(raw)
+                    if parsed:
+                        image_bytes, fmt = parsed
+                        self._emit_preview(image_bytes, fmt)
+                    continue
+
+                try:
+                    msg = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+
+                msg_type = msg.get("type")
+                data = msg.get("data") or {}
+                pid = data.get("prompt_id")
+
+                if msg_type == "execution_start" and self._prompt_id and pid == self._prompt_id:
+                    self._tracker = ComfyProgressTracker(
+                        sample_count=self.config.sample_count,
+                        node_count=self.config.node_count,
+                    )
+
+                if msg_type == "execution_error" and pid == self._prompt_id:
+                    err = data.get("exception_message") or "ComfyUI execution_error"
+                    self._error = RuntimeError(str(err))
+                    self._done.set()
+                    break
+
+                if msg_type == "execution_interrupted" and pid == self._prompt_id:
+                    self._error = RuntimeError("ComfyUI execution interrupted")
+                    self._done.set()
+                    break
+
+                if self._prompt_id and pid not in (None, self._prompt_id):
+                    continue
+
+                if msg_type == "execution_success" and self._prompt_id:
+                    self._done.set()
+                    break
+
+                if msg_type == "progress_state" and self._prompt_id:
+                    self._tracker.handle_progress_state(msg, prompt_id=self._prompt_id)
+                    self._emit_progress()
+                elif msg_type in ("execution_cached", "executing", "progress") and self._prompt_id:
+                    self._tracker.handle(msg, prompt_id=self._prompt_id)
+                    self._emit_progress()
+
+                if msg_type == "executing" and data.get("node") is None:
+                    self._done.set()
+                    break
 
 
 def wait_for_prompt_websocket(

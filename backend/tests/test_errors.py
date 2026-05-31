@@ -151,6 +151,18 @@ def test_from_exception_maps_windows_paging_file_to_virtual_memory_low():
     assert any("paging file" in s.lower() for s in payload["suggestions"])
 
 
+def test_from_exception_maps_comfy_execution_paging_file_to_virtual_memory_low():
+    class ComfyExecutionError(RuntimeError):
+        pass
+
+    payload = from_exception(
+        ComfyExecutionError(
+            "DualCLIPLoader: The paging file is too small for this operation to complete. (os error 1455)"
+        )
+    )
+    _is_error(payload, "virtual_memory_low")
+
+
 def test_from_exception_maps_enospc_to_disk_full():
     err = OSError(28, "No space left on device", "C:/outputs/x.png")
     payload = from_exception(err)

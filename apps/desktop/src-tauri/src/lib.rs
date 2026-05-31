@@ -13,7 +13,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 use uuid::Uuid;
 
 #[cfg(windows)]
@@ -34,6 +34,8 @@ const LOG_FULL_CHARS: usize = 100_000;
 /// Max wait for PyTorch / pipeline boot (first launch can take several minutes).
 const WORKER_BOOT_TIMEOUT_MS: u64 = 300_000;
 const WORKER_BOOT_POLL_MS: u64 = 500;
+const WORKER_SHUTDOWN_TIMEOUT_MS: u64 = 15_000;
+const WORKER_SHUTDOWN_POLL_MS: u64 = 100;
 const MAX_WORKER_AUTO_RESTARTS: u8 = 2;
 /// Max single-line JSON payload from the Python bridge (list_outputs with long prompts).
 const SIDECAR_MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
@@ -190,7 +192,7 @@ impl PythonSidecar {
     }
 }
 
-fn reset_bridge_sidecar(state: &Arc<AppState>) {
+fn reset_bridge_sidecar(state: &AppState) {
     let mut guard = match state.sidecar.lock() {
         Ok(g) => g,
         Err(_) => return,
@@ -1481,7 +1483,7 @@ fn spawn_boot_timeout_watcher(
     });
 }
 
-fn stop_gpu_worker(state: &AppState) -> Result<(), String> {
+fn reset_worker_runtime_state(state: &AppState) {
     if let Ok(mut ready) = state.worker_ready.lock() {
         *ready = false;
     }
@@ -1494,14 +1496,64 @@ fn stop_gpu_worker(state: &AppState) -> Result<(), String> {
     if let Ok(mut off) = state.worker_events_offset.lock() {
         *off = 0;
     }
+}
+
+fn request_worker_shutdown(worker: &GpuWorker) {
+    if !gpu_worker_alive(worker) {
+        return;
+    }
+    if let Ok(mut stdin) = worker.stdin.lock() {
+        let _ = writeln!(stdin, "{}", json!({ "cmd": "shutdown" }));
+        let _ = stdin.flush();
+    }
+}
+
+fn wait_for_worker_exit(child_arc: &Arc<Mutex<Child>>, timeout_ms: u64) {
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    while Instant::now() < deadline {
+        if let Ok(mut child) = child_arc.lock() {
+            if child.try_wait().ok().flatten().is_some() {
+                return;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(WORKER_SHUTDOWN_POLL_MS));
+    }
+}
+
+fn stop_gpu_worker(state: &AppState) -> Result<(), String> {
+    reset_worker_runtime_state(state);
+
+    let child_arc = {
+        let guard = state.worker.lock().map_err(|e| e.to_string())?;
+        guard.as_ref().and_then(|worker| {
+            if gpu_worker_alive(worker) {
+                request_worker_shutdown(worker);
+                Some(Arc::clone(&worker._child))
+            } else {
+                None
+            }
+        })
+    };
+
+    if let Some(child_arc) = child_arc {
+        wait_for_worker_exit(&child_arc, WORKER_SHUTDOWN_TIMEOUT_MS);
+    }
+
     let mut guard = state.worker.lock().map_err(|e| e.to_string())?;
     if let Some(worker) = guard.take() {
         if let Ok(mut child) = worker._child.lock() {
-            let _ = child.kill();
+            if child.try_wait().ok().flatten().is_none() {
+                let _ = child.kill();
+            }
             let _ = child.wait();
         }
     }
     Ok(())
+}
+
+fn shutdown_all_services(state: &AppState) {
+    let _ = stop_gpu_worker(state);
+    reset_bridge_sidecar(state);
 }
 
 async fn wait_for_worker_ready(app: &AppHandle, state: &Arc<AppState>) -> Result<(), String> {
@@ -1527,22 +1579,20 @@ async fn wait_for_worker_ready(app: &AppHandle, state: &Arc<AppState>) -> Result
 
 fn start_gpu_worker(app: AppHandle, root: &Path, state: &Arc<AppState>) -> Result<(), String> {
     let events_path = worker_events_path(root);
-    let mut guard = state.worker.lock().map_err(|e| e.to_string())?;
-    if guard.is_some() {
-        if guard.as_ref().map(gpu_worker_alive).unwrap_or(false) {
-            drain_worker_events_file(&app, state, &events_path);
-            return Ok(());
-        }
-        // Stale handle (process exited) — respawn below.
-        if let Some(worker) = guard.take() {
-            if let Ok(mut child) = worker._child.lock() {
-                let _ = child.kill();
-                let _ = child.wait();
+    {
+        let guard = state.worker.lock().map_err(|e| e.to_string())?;
+        if guard.is_some() {
+            if guard.as_ref().map(gpu_worker_alive).unwrap_or(false) {
+                drain_worker_events_file(&app, state, &events_path);
+                return Ok(());
             }
         }
     }
+    // Stale handle (process exited) — shut down cleanly before respawn.
+    stop_gpu_worker(state)?;
 
     let _ = app.emit("worker-status", json!({ "status": "booting" }));
+    let mut guard = state.worker.lock().map_err(|e| e.to_string())?;
     set_engine_health(&app, state, "booting");
     if let Ok(mut phase) = state.last_boot_phase.lock() {
         *phase = "starting".to_string();
@@ -1713,11 +1763,15 @@ async fn get_paths(state: State<'_, Arc<AppState>>) -> Result<Value, String> {
 async fn get_inventory(
     state: State<'_, Arc<AppState>>,
     include_fonts: Option<bool>,
+    force_refresh: Option<bool>,
 ) -> Result<Value, String> {
     bridge_request_async(
         state.inner(),
         "get_inventory",
-        json!({ "include_fonts": include_fonts.unwrap_or(false) }),
+        json!({
+            "include_fonts": include_fonts.unwrap_or(false),
+            "force_refresh": force_refresh.unwrap_or(false),
+        }),
     )
     .await
 }
@@ -1886,11 +1940,15 @@ async fn get_ui_defaults(state: State<'_, Arc<AppState>>) -> Result<Value, Strin
 async fn get_model_gallery(
     state: State<'_, Arc<AppState>>,
     filter: Option<String>,
+    force_refresh: Option<bool>,
 ) -> Result<Value, String> {
     bridge_request_async(
         state.inner(),
         "get_model_gallery",
-        json!({ "filter": filter.unwrap_or_default() }),
+        json!({
+            "filter": filter.unwrap_or_default(),
+            "force_refresh": force_refresh.unwrap_or(false),
+        }),
     )
     .await
 }
@@ -1899,13 +1957,22 @@ async fn get_model_gallery(
 async fn get_lora_gallery(
     state: State<'_, Arc<AppState>>,
     filter: Option<String>,
+    force_refresh: Option<bool>,
 ) -> Result<Value, String> {
     bridge_request_async(
         state.inner(),
         "get_lora_gallery",
-        json!({ "filter": filter.unwrap_or_default() }),
+        json!({
+            "filter": filter.unwrap_or_default(),
+            "force_refresh": force_refresh.unwrap_or(false),
+        }),
     )
     .await
+}
+
+#[tauri::command]
+async fn refresh_model_library_cache(state: State<'_, Arc<AppState>>) -> Result<Value, String> {
+    bridge_request_async(state.inner(), "refresh_model_library_cache", json!({})).await
 }
 
 #[tauri::command]
@@ -1920,11 +1987,12 @@ async fn resolve_model_profile(
 async fn check_model_dependencies(
     state: State<'_, Arc<AppState>>,
     model: String,
+    performance: Option<String>,
 ) -> Result<Value, String> {
     bridge_request_async(
         state.inner(),
         "check_model_dependencies",
-        json!({ "model": model }),
+        json!({ "model": model, "performance": performance }),
     )
     .await
 }
@@ -2566,6 +2634,7 @@ pub fn run() {
             get_ui_defaults,
             get_model_gallery,
             get_lora_gallery,
+            refresh_model_library_cache,
             resolve_model_profile,
             check_model_dependencies,
             download_model_companions,
@@ -2630,6 +2699,13 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let RunEvent::Exit = event {
+                if let Some(state) = app_handle.try_state::<Arc<AppState>>() {
+                    shutdown_all_services(state.inner());
+                }
+            }
+        });
 }

@@ -133,6 +133,7 @@ export function InspectorPanel({
     settings.performance === "Custom";
   const showAdvancedSampling = Boolean(appConfig?.ui.advanced_mode) || isCustomPerf;
   const showEditStrength = Boolean(settings.input_image) || ["kontext", "inpaint", "img2img", "qwen_edit"].includes(settings.edit_type ?? "");
+  const isQwenModel = (settings.model ?? activeModelLabel).toLowerCase().includes("qwen");
 
   const selectedCount = (settings.styles ?? []).length;
   const activeLoras = settings.lora ?? [];
@@ -962,6 +963,65 @@ export function InspectorPanel({
                     ))}
                   </select>
                 </label>
+                {isQwenModel && (
+                  <div className="space-y-2 rounded-lg border border-dfui-border/40 p-2">
+                    <p className="text-[10px] font-medium uppercase tracking-wide text-dfui-muted">
+                      Qwen Image defaults
+                    </p>
+                    <label className="block">
+                      <span className="text-xs text-dfui-muted">Edit graph</span>
+                      <select
+                        value={settings.qwen_edit_mode ?? "auto"}
+                        onChange={(e) =>
+                          onChange({
+                            qwen_edit_mode: e.target.value as GenerationSettings["qwen_edit_mode"],
+                          })
+                        }
+                        className="df-select mt-1 w-full px-2.5 py-2 text-xs"
+                      >
+                        <option value="auto">Auto (Plus when extra references)</option>
+                        <option value="single">Single (TextEncodeQwenImageEdit)</option>
+                        <option value="plus">Plus (TextEncodeQwenImageEditPlus)</option>
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="text-xs text-dfui-muted">
+                        AuraFlow shift — {settings.qwen_image_shift ?? 3.1}
+                      </span>
+                      <input
+                        type="range"
+                        min={1}
+                        max={6}
+                        step={0.1}
+                        value={settings.qwen_image_shift ?? 3.1}
+                        onChange={(e) =>
+                          onChange({ qwen_image_shift: Number(e.target.value) })
+                        }
+                        className="mt-1 w-full accent-dfui-accent"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-xs text-dfui-muted">
+                        Edit scale (MP) — {settings.qwen_scale_megapixels ?? "auto"}
+                      </span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={4}
+                        step={0.05}
+                        placeholder="auto (recipe / VRAM)"
+                        value={settings.qwen_scale_megapixels ?? ""}
+                        onChange={(e) => {
+                          const raw = e.target.value.trim();
+                          onChange({
+                            qwen_scale_megapixels: raw === "" ? undefined : Number(raw),
+                          });
+                        }}
+                        className="df-input mt-1 w-full px-2.5 py-1.5 font-mono text-xs"
+                      />
+                    </label>
+                  </div>
+                )}
               </>
             )}
             <label className="block">

@@ -194,3 +194,23 @@ export async function resolveGenerationImagePaths(
   }
   return next;
 }
+
+/** Optimal default edit strength for reference / inpaint workflows (Krita-aligned). */
+export function defaultReferenceEditStrength(
+  settings: GenerationSettings,
+  modelFamily?: string,
+): number {
+  const family = (modelFamily ?? "").toLowerCase();
+  if (family === "qwen_image_edit") return 1.0;
+  if (settings.edit_type === "inpaint") return 0.9;
+  return 0.98;
+}
+
+export function effectiveReferenceEditStrength(
+  settings: GenerationSettings,
+  modelFamily?: string,
+): number {
+  const value = settings.edit_strength;
+  if (value != null && value > 0) return value;
+  return defaultReferenceEditStrength(settings, modelFamily);
+}

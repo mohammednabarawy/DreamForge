@@ -35,6 +35,20 @@ def test_enrich_flux_clip_l_url():
     assert out["url"].endswith("clip_l.safetensors")
 
 
+def test_enrich_qwen_companion_urls():
+    clip = enrich_missing_dependency(
+        {
+            "id": "clip_qwen25_vl_7b",
+            "relative": "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        }
+    )
+    vae = enrich_missing_dependency(
+        {"id": "vae_qwen_image", "relative": "vae/qwen_image_vae.safetensors"}
+    )
+    assert "split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors" in clip["url"]
+    assert "split_files/vae/qwen_image_vae.safetensors" in vae["url"]
+
+
 def test_companion_present_clip_folder_t5(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "dreamforge_cli_inventory.MODELS_ROOT",

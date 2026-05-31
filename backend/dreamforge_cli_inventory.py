@@ -414,9 +414,15 @@ MODEL_DEPENDENCIES = {
     ],
     "qwen_image_edit": [
         {
+            "id": "clip_qwen25_vl_7b",
+            "relative": "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+            "note": "Required for Qwen Image Edit safetensors UNet (Comfy native).",
+        },
+        {
             "id": "clip_qwen25_gguf_compatible",
             "relative": "clip/Qwen2.5-VL-7B-Instruct-Q4_K_S.gguf",
             "note": "Recommended for Qwen_Image_Edit-*.gguf.",
+            "optional": True,
         },
         {
             "id": "clip_qwen25_edit_gguf",
@@ -481,6 +487,47 @@ MODEL_DEPENDENCIES = {
 }
 
 
+QWEN_EDIT_LIGHTNING_LORA = {
+    "id": "lora_qwen_edit_lightning_4step",
+    "relative": "loras/Qwen-Image-Edit-2509-Lightning-4steps-V1.0-fp32.safetensors",
+    "note": "Qwen Image Edit Lightning LoRA (4-step Speed/Lightning preset).",
+}
+
+_QWEN_LIGHTNING_PERFORMANCES = frozenset({"lightning", "speed", "lcm"})
+
+
+def qwen_lightning_lora_requested(performance: str | None) -> bool:
+    """True when Qwen Edit should use the Lightning LoRA fast path."""
+    perf = str(performance or "").strip().lower()
+    return perf in _QWEN_LIGHTNING_PERFORMANCES
+
+
+def qwen_lightning_lora_present(*, min_bytes: int = 800 * 1024 * 1024) -> bool:
+    """True if any known Qwen-Edit Lightning LoRA is on disk under models/loras/."""
+    req = dict(QWEN_EDIT_LIGHTNING_LORA)
+    if companion_file_present(req, min_bytes=min_bytes):
+        return True
+    for alt in COMPANION_ALTERNATE_PATHS.get(req["id"], []):
+        alt_req = {**req, "relative": alt}
+        if companion_file_present(alt_req, min_bytes=min_bytes):
+            return True
+    try:
+        lora_dir = MODELS_ROOT / "loras"
+        if not lora_dir.is_dir():
+            return False
+        for path in lora_dir.iterdir():
+            if path.suffix.lower() not in (".safetensors", ".gguf"):
+                continue
+            if path.stat().st_size < min_bytes:
+                continue
+            low = path.name.lower()
+            if "qwen" in low and "edit" in low and "lightning" in low:
+                return True
+    except OSError:
+        return False
+    return False
+
+
 def _dependency_path(relative: str) -> Path:
     folder, name = relative.split("/", 1) if "/" in relative else ("", relative)
     return MODELS_ROOT / folder / name if folder else MODELS_ROOT / name
@@ -498,6 +545,14 @@ COMPANION_ALTERNATE_PATHS: dict[str, list[str]] = {
     ],
     "vae_flux_ae": [
         "vae/flux_vae.safetensors",
+    ],
+    "clip_qwen25_vl_7b": [
+        "clip/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+    ],
+    "lora_qwen_edit_lightning_4step": [
+        "loras/Qwen-Image-Edit-Lightning-4steps-V1.0.safetensors",
+        "loras/Qwen-Image-Edit-2509-Lightning-8steps-V1.0-fp32.safetensors",
+        "loras/Qwen-Image-Edit-Lightning-8steps-V1.0.safetensors",
     ],
 }
 
@@ -523,29 +578,62 @@ def companion_file_present(req: dict, *, min_bytes: int = 1024 * 1024) -> bool:
     return False
 
 
-def check_model_dependencies(model):
+def check_model_dependencies(model, *, performance: str | None = None):
     """Return missing companion files for modern model families."""
     if not model:
         return []
     family = model.get("family")
     name = (model.get("name") or "").lower()
-    if family == "qwen_image_edit" and not name.endswith(".gguf"):
-        return []
-    if family == "qwen_image_edit":
+    if family == "qwen_image_edit" and name.endswith(".gguf"):
         compatible = _dependency_path("clip/Qwen2.5-VL-7B-Instruct-Q4_K_S.gguf")
         if compatible.exists():
             return []
     missing = []
-    for req in MODEL_DEPENDENCIES.get(family, []):
+    reqs = list(MODEL_DEPENDENCIES.get(family, []))
+    if family == "qwen_image_edit" and qwen_lightning_lora_requested(performance):
+        reqs = [*reqs, QWEN_EDIT_LIGHTNING_LORA]
+    for req in reqs:
         if req.get("optional"):
             continue
-        if companion_file_present(req):
+        if req.get("id") == QWEN_EDIT_LIGHTNING_LORA["id"]:
+            if qwen_lightning_lora_present():
+                continue
+        elif companion_file_present(req):
             continue
         path = _dependency_path(req["relative"])
         missing.append({**req, "expected_path": str(path)})
     from dreamforge_companion_download import enrich_missing_dependency
 
     return [enrich_missing_dependency(item) for item in missing]
+
+
+def ensure_model_companions_downloaded(model, *, progress_cb=None) -> dict:
+    """Download missing companion weights to MODELS_ROOT when URLs are known."""
+    from dreamforge_companion_download import download_missing_companions
+
+    missing = check_model_dependencies(model)
+    if not missing:
+        return {"status": "ready", "missing": [], "downloaded": 0, "errors": [], "results": []}
+
+    downloadable = [item for item in missing if item.get("url")]
+    if not downloadable:
+        return {"status": "missing", "missing": missing, "downloaded": 0, "errors": [], "results": []}
+
+    if progress_cb:
+        progress_cb(len(downloadable))
+
+    payload = download_missing_companions(downloadable)
+    still_missing = check_model_dependencies(model)
+    status = "ready" if not still_missing else "missing"
+    if payload.get("errors") and still_missing:
+        status = "missing"
+    return {
+        "status": status,
+        "missing": still_missing,
+        "downloaded": int(payload.get("downloaded") or 0),
+        "errors": list(payload.get("errors") or []),
+        "results": list(payload.get("results") or []),
+    }
 
 
 def check_studio_resources(studio_mode: str, *, upscale_method: str | None = None) -> list[dict]:

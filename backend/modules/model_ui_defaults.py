@@ -291,10 +291,10 @@ def _custom_sampling_for_family(family: str, model_name: str) -> dict:
     name = (model_name or "").lower()
     if family.startswith("qwen"):
         return {
-            "custom_steps": 20 if "lightning" in name else 30,
-            "cfg": 3.0,
+            "custom_steps": 20 if "lightning" in name else 20,
+            "cfg": 2.5,
             "sampler_name": "euler",
-            "scheduler": "simple",
+            "scheduler": "beta",
             "clip_skip": 1,
         }
     if family == "z_image":
@@ -372,8 +372,8 @@ def auto_generation_settings(
         sampler_name, scheduler, clip_skip = "euler", "normal", 1
         styles, negative = [], ""
     elif family.startswith("qwen"):
-        cfg, steps = 3.0, (20 if "lightning" in model_name.lower() else 30)
-        sampler_name, scheduler, clip_skip = "euler", "simple", 1
+        cfg, steps = 2.5, (20 if "lightning" in model_name.lower() else 20)
+        sampler_name, scheduler, clip_skip = "euler", "beta", 1
         styles, negative = [], ""
     elif family == "sd3":
         cfg, steps = 4.5, 28

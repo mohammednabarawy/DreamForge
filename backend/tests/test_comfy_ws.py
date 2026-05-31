@@ -96,6 +96,27 @@ def test_count_comfy_prompt_nodes():
     assert count_comfy_prompt_nodes({"1": {}, "2": {}, "3": {}}) == 3
 
 
+def test_guess_sample_count_from_prompt():
+    from dreamforge_comfy_ws import guess_sample_count_from_prompt
+
+    prompt = {
+        "1": {"class_type": "KSampler", "inputs": {"steps": 12}},
+        "2": {"class_type": "KSamplerAdvanced", "inputs": {"steps": 20, "start_at_step": 5}},
+        "3": {"class_type": "CLIPTextEncode", "inputs": {"text": "hello"}},
+    }
+    assert guess_sample_count_from_prompt(prompt, fallback=10) == 27
+    assert guess_sample_count_from_prompt({}, fallback=8) == 8
+
+
+def test_prompt_id_from_job_id():
+    from dreamforge_comfy_ws import prompt_id_from_job_id
+
+    job_uuid = "550e8400-e29b-41d4-a716-446655440000"
+    assert prompt_id_from_job_id(job_uuid) == job_uuid
+    assert prompt_id_from_job_id("not-a-uuid") is None
+    assert prompt_id_from_job_id("") is None
+
+
 def test_live_preview_path_is_job_scoped():
     from dreamforge_comfy_ws import live_preview_path
 

@@ -55,6 +55,7 @@ type Props = {
   onOpenInpaintMask?: () => void;
   onOpenFullLog: () => void;
   activeModelLabel: string;
+  referenceModelFamily?: string;
 };
 
 export function CanvasPanel({
@@ -98,6 +99,7 @@ export function CanvasPanel({
   onOpenInpaintMask,
   onOpenFullLog,
   activeModelLabel,
+  referenceModelFamily,
 }: Props) {
   return (
     <section className="flex h-full min-w-0 flex-col">
@@ -277,6 +279,7 @@ export function CanvasPanel({
         companionDownloadBusy={companionDownloadBusy}
         onDownloadCompanions={onDownloadCompanions}
         activeModelLabel={activeModelLabel}
+        referenceModelFamily={referenceModelFamily}
       />
     </section>
   );

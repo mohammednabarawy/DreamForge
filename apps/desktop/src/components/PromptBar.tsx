@@ -38,6 +38,7 @@ type Props = {
   onClearReferenceImage: () => void;
   onOpenInpaintMask?: () => void;
   activeModelLabel: string;
+  referenceModelFamily?: string;
 };
 
 export function PromptBar({
@@ -64,6 +65,7 @@ export function PromptBar({
   onClearReferenceImage,
   onOpenInpaintMask,
   activeModelLabel,
+  referenceModelFamily,
 }: Props) {
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [promptDragOver, setPromptDragOver] = useState(false);
@@ -208,11 +210,13 @@ export function PromptBar({
         <div className="sm:w-72 shrink-0">
           <ReferenceImageControl
             settings={settings}
+            modelFamily={referenceModelFamily}
             onAttach={onAttachReferenceImage}
             onAttachExtra={onAttachExtraReferenceImage}
             onRemoveExtra={onRemoveExtraReferenceImage}
             onClear={onClearReferenceImage}
             onOpenInpaintMask={onOpenInpaintMask}
+            onEditStrengthChange={(edit_strength) => onChange({ edit_strength })}
             disabled={generating}
           />
         </div>

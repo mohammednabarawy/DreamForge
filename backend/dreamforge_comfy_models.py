@@ -64,6 +64,55 @@ def _flux_companion_basenames_on_disk(family: str) -> dict[str, str]:
     return out
 
 
+def _qwen_companion_basenames_on_disk(family: str) -> dict[str, str]:
+    """Map Qwen loader keys to companion basenames on disk."""
+    dep_families = []
+    if family in MODEL_DEPENDENCIES:
+        dep_families.append(family)
+    if "qwen_image" not in dep_families:
+        dep_families.append("qwen_image")
+    out: dict[str, str] = {}
+    for dep_family in dep_families:
+        for req in MODEL_DEPENDENCIES.get(dep_family, []):
+            if req.get("optional") or not companion_file_present(req):
+                continue
+            relative = str(req.get("relative") or "")
+            basename = Path(relative).name
+            req_id = str(req.get("id") or "")
+            if "vae" in req_id or "vae" in basename.lower():
+                out["vae"] = basename
+            elif "clip" in req_id or "qwen" in basename.lower():
+                out["clip"] = basename
+    return out
+
+
+def _hidream_companion_basenames_on_disk(family: str) -> dict[str, str]:
+    """Map HiDream split-loader keys to companion basenames on disk."""
+    out: dict[str, str] = {}
+    for req in MODEL_DEPENDENCIES.get("hidream", []) + MODEL_DEPENDENCIES.get("hidream_o1", []):
+        if req.get("optional") or not companion_file_present(req):
+            continue
+        relative = str(req.get("relative") or "")
+        basename = Path(relative).name
+        req_id = str(req.get("id") or "")
+        if "clip_l" in req_id or basename.startswith("clip_l"):
+            out["clip_l"] = basename
+        elif "clip_g" in req_id or basename.startswith("clip_g"):
+            out["clip_g"] = basename
+        elif "t5" in req_id or "t5xxl" in basename.lower():
+            out["t5"] = basename
+        elif "llama" in req_id or "llama" in basename.lower():
+            out["llama"] = basename
+        elif "vae" in req_id or basename in ("ae.safetensors", "flux_vae.safetensors"):
+            out["vae"] = basename
+    if not out.get("vae"):
+        for alt in ("ae.safetensors",):
+            if companion_file_present({"relative": f"vae/{alt}"}):
+                out["vae"] = alt
+                break
+    return out
+
+
 class ComfyModelResolutionError(RuntimeError):
     """Raised when Comfy cannot load required weights for a workflow."""
 
@@ -173,15 +222,72 @@ def resolve_comfy_model_loader_args(
             for item in missing_deps[:4]:
                 problems.append(f"Missing companion: {item.get('relative')} — {item.get('note', '')}")
 
+    elif family.startswith("qwen"):
+        on_disk = _qwen_companion_basenames_on_disk(family)
+        clip_choices = _object_info_options(object_info, "CLIPLoader", "clip_name")
+        clip_choices += _object_info_options(object_info, "CLIPLoaderGGUF", "clip_name")
+        vae_choices = _object_info_options(object_info, "VAELoader", "vae_name")
+        default_clip = on_disk.get("clip", "qwen_2.5_vl_7b_fp8_scaled.safetensors")
+        clip = _basename_match(default_clip, clip_choices)
+        vae = _basename_match(on_disk.get("vae", "qwen_image_vae.safetensors"), vae_choices)
+        if clip:
+            args["clip"] = clip
+        elif on_disk.get("clip"):
+            problems.append(
+                f"Qwen CLIP '{on_disk['clip']}' exists under {Path(MODELS_ROOT).resolve()} "
+                "but ComfyUI does not list it for CLIPLoader."
+            )
+        elif not clip_choices:
+            problems.append("ComfyUI reports no Qwen text encoder files for CLIPLoader.")
+        if vae:
+            args["vae"] = vae
+        elif on_disk.get("vae"):
+            problems.append(
+                f"Qwen VAE '{on_disk['vae']}' exists under {MODELS_ROOT} but ComfyUI vae list is: {vae_choices!r}."
+            )
+        elif not vae_choices:
+            problems.append("ComfyUI reports no VAE files for Qwen workflows.")
+        missing_deps = check_model_dependencies(model)
+        if missing_deps:
+            for item in missing_deps[:4]:
+                problems.append(f"Missing companion: {item.get('relative')} — {item.get('note', '')}")
+
+    elif family in ("hidream", "hidream_o1"):
+        on_disk = _hidream_companion_basenames_on_disk(family)
+        quad = _object_info_options(object_info, "QuadrupleCLIPLoader", "clip_name1")
+        vae_choices = _object_info_options(object_info, "VAELoader", "vae_name")
+        clip_l = _basename_match(on_disk.get("clip_l", "clip_l.safetensors"), quad)
+        if clip_l:
+            args["clip_l"] = clip_l
+        vae = _basename_match(on_disk.get("vae", "ae.safetensors"), vae_choices)
+        if vae:
+            args["vae"] = vae
+        elif not vae_choices:
+            problems.append("ComfyUI reports no VAE files for HiDream workflows.")
+
     if problems:
         models_root = Path(MODELS_ROOT).resolve()
+        family_label = family or "model"
+        companion_hint = "Install required companion weights and restart the GPU engine."
+        if family.startswith("flux"):
+            companion_hint = "Install Flux companions under vae/, text_encoders/, and clip/ if missing."
+        elif family.startswith("qwen"):
+            companion_hint = (
+                "Install qwen_2.5_vl_7b_fp8_scaled.safetensors under text_encoders/ or clip/ "
+                "and qwen_image_vae.safetensors under vae/."
+            )
+        elif family.startswith("hidream"):
+            companion_hint = (
+                "HiDream split loaders need clip_l, clip_g, t5xxl, llama text encoders and ae.safetensors, "
+                "or use a full checkpoint under checkpoints/."
+            )
         suggestions = [
             f"Models folder resolves to: {models_root}",
             "Stop any other ComfyUI on port 8188, then click Restart GPU engine.",
-            "Install Flux companions under vae/, text_encoders/, and clip/ if missing.",
+            companion_hint,
         ]
         raise ComfyModelResolutionError(
-            "Cannot run this Flux workflow in ComfyUI until models are visible to the managed server.\n"
+            f"Cannot run this {family_label} workflow in ComfyUI until models are visible to the managed server.\n"
             + "\n".join(f"- {p}" for p in problems),
             missing=problems,
             suggestions=suggestions,

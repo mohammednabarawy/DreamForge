@@ -386,6 +386,7 @@ def _build_comfy_prompt_graph(
     reference_stitch_filename: str | None,
     grow_mask_by: int,
     model_loader_args: dict | None = None,
+    qwen_reference_filenames: list[str] | None = None,
 ):
     from dreamforge_comfy_workflow_import import (
         build_prompt_from_template,
@@ -402,6 +403,9 @@ def _build_comfy_prompt_graph(
         comfy_inpaint_basic,
         comfy_ipadapter_reference,
         comfy_outpaint_basic,
+        comfy_qwen_image_edit,
+        comfy_qwen_image_edit_plus,
+        comfy_qwen_image_txt2img,
         comfy_txt2img_basic,
         comfy_upscale_basic,
     )
@@ -587,6 +591,35 @@ def _build_comfy_prompt_graph(
                     "filename_prefix": "DreamForge",
                 }
             )
+        elif model_family == "qwen_image_edit":
+            from dreamforge_krita_recipes import resolve_qwen_edit_mode
+
+            qwen_common = {
+                **loader_args,
+                "prompt": prompt,
+                "negative": negative,
+                "steps": settings["steps"],
+                "cfg": settings["cfg"],
+                "sampler_name": settings["sampler_name"],
+                "scheduler": settings["scheduler"],
+                "seed": seed,
+                "denoise": edit_strength,
+                "filename_prefix": "DreamForge",
+                "qwen_image_shift": settings.get("qwen_image_shift"),
+                "qwen_scale_megapixels": settings.get("qwen_scale_megapixels"),
+                "use_qwen_lightning_lora": settings.get("use_qwen_lightning_lora"),
+                "qwen_lightning_lora": settings.get("qwen_lightning_lora"),
+            }
+            edit_mode = resolve_qwen_edit_mode(
+                model_family=model_family,
+                requested=getattr(job, "qwen_edit_mode", None),
+                extra_reference_count=len(qwen_reference_filenames or []),
+            )
+            if edit_mode == "plus":
+                images = [input_filename, *(qwen_reference_filenames or [])][:3]
+                graph = comfy_qwen_image_edit_plus({**qwen_common, "images": images})
+            else:
+                graph = comfy_qwen_image_edit({**qwen_common, "image": input_filename})
         else:
             graph = comfy_img2img_basic(
                 {
@@ -604,6 +637,23 @@ def _build_comfy_prompt_graph(
                     "filename_prefix": "DreamForge",
                 }
             )
+    elif (model_family or "").startswith("qwen"):
+        graph = comfy_qwen_image_txt2img(
+            {
+                **loader_args,
+                "prompt": prompt,
+                "negative": negative,
+                "width": settings["width"],
+                "height": settings["height"],
+                "steps": settings["steps"],
+                "cfg": settings["cfg"],
+                "sampler_name": settings["sampler_name"],
+                "scheduler": settings["scheduler"],
+                "seed": seed,
+                "filename_prefix": "DreamForge",
+                "qwen_image_shift": settings.get("qwen_image_shift"),
+            }
+        )
     elif (model_family or "").startswith("flux"):
         graph = comfy_flux_dev_txt2img(
             {
@@ -652,6 +702,41 @@ def emit_event(sink, payload: dict) -> None:
         handle.flush()
 
 
+_COMFY_RECOVER_CODES = frozenset(
+    {
+        "comfy_server_crashed",
+        "virtual_memory_low",
+        "out_of_memory",
+        "generation_failed",
+    }
+)
+
+
+def _maybe_recover_comfy_after_failure(exc: BaseException, err: dict) -> None:
+    """Restart managed ComfyUI when it died mid-job so the worker stays usable."""
+    code = str(err.get("code") or err.get("error") or "")
+    msg = str(exc).lower()
+    should_recover = code in _COMFY_RECOVER_CODES or any(
+        hint in msg
+        for hint in (
+            "comfyui server became unreachable",
+            "connection refused",
+            "winerror 10061",
+            "actively refused",
+            "paging file is too small",
+            "os error 1455",
+        )
+    )
+    if not should_recover:
+        return
+    try:
+        from dreamforge_comfy_server import recover_managed_comfy_server
+
+        recover_managed_comfy_server(timeout_s=90.0, reason=code or type(exc).__name__)
+    except Exception as recover_exc:
+        print(f"[DreamForge] ComfyUI auto-recover failed: {recover_exc}", file=sys.stderr)
+
+
 def run_generation(
     base_args,
     data=None,
@@ -668,7 +753,11 @@ def run_generation(
         write_manifest,
         validate_image,
     )
-    from dreamforge_cli_inventory import check_model_dependencies, model_fallback_actions
+    from dreamforge_cli_inventory import (
+        check_model_dependencies,
+        ensure_model_companions_downloaded,
+        model_fallback_actions,
+    )
     from dreamforge_model_registry import required_capabilities_for_request
 
     extend_sys_path()
@@ -677,10 +766,15 @@ def run_generation(
     try:
         job, model, prompt, negative, width, height, _brand_kit = _compile_job(base_args, data)
         model_family = str(model.get("family") or "").lower()
-        settings = _tune_edit_job_settings(
-            _apply_job_performance(
-                _auto_settings(model, job, width, height, negative),
+        settings = _apply_qwen_family_settings(
+            _tune_edit_job_settings(
+                _apply_job_performance(
+                    _auto_settings(model, job, width, height, negative),
+                    job,
+                ),
                 job,
+                model_family,
+                is_live=stream_sink is not None,
             ),
             job,
             model_family,
@@ -695,7 +789,34 @@ def run_generation(
         if seed == -1:
             seed = random.randint(0, 2**31 - 1)
 
-        missing_deps = check_model_dependencies(model)
+        missing_deps = check_model_dependencies(
+            model,
+            performance=getattr(job, "performance", None),
+        )
+        if missing_deps:
+            download_out = ensure_model_companions_downloaded(
+                model,
+                progress_cb=lambda count: emit_event(
+                    stream_sink,
+                    {
+                        "type": "progress",
+                        "job_id": job_id,
+                        "phase": "download",
+                        "message": f"Downloading {count} required companion file(s)…",
+                    },
+                ),
+            )
+            missing_deps = list(download_out.get("missing") or [])
+            if download_out.get("downloaded"):
+                emit_event(
+                    stream_sink,
+                    {
+                        "type": "progress",
+                        "job_id": job_id,
+                        "phase": "download",
+                        "message": f"Downloaded {download_out['downloaded']} companion file(s).",
+                    },
+                )
         if missing_deps:
             err = missing_model_dependencies(
                 missing_deps,
@@ -816,9 +937,14 @@ def run_generation(
                 return {"status": "error", **err}
 
         streaming = stream_sink is not None
+        default_edit_strength = 1.0
+        if not _checkpoint_is_flux_kontext(model, model_family) and (
+            model_family or ""
+        ).lower() != "qwen_image_edit":
+            default_edit_strength = 0.75
         edit_strength = _clamp_float(
             getattr(job, "edit_strength", None),
-            1.0 if _checkpoint_is_flux_kontext(model, model_family) else 0.75,
+            default_edit_strength,
             0.0,
             1.0,
         )
@@ -868,23 +994,41 @@ def run_generation(
         server = ensure_comfy_running(timeout_s=60.0)
         client = ComfyClient(server.base_url)
 
-        try:
-            resolved_loaders = resolve_comfy_model_loader_args(
+        def _resolve_loaders():
+            return resolve_comfy_model_loader_args(
                 client,
                 model=model,
                 model_family=model_family,
             )
-        except ComfyModelResolutionError as exc:
-            err = {
-                "type": "error",
-                "code": "comfy_models_unavailable",
-                "message": str(exc),
-                "job_id": job_id,
-                "recoverable": True,
-                "suggestions": list(exc.suggestions),
-            }
-            emit_event(stream_sink, err)
-            return {"status": "error", **err}
+
+        try:
+            resolved_loaders = _resolve_loaders()
+        except ComfyModelResolutionError as first_exc:
+            ensure_model_companions_downloaded(
+                model,
+                progress_cb=lambda count: emit_event(
+                    stream_sink,
+                    {
+                        "type": "progress",
+                        "job_id": job_id,
+                        "phase": "download",
+                        "message": f"Downloading {count} companion file(s) for ComfyUI…",
+                    },
+                ),
+            )
+            try:
+                resolved_loaders = _resolve_loaders()
+            except ComfyModelResolutionError as exc:
+                err = {
+                    "type": "error",
+                    "code": "comfy_models_unavailable",
+                    "message": str(exc),
+                    "job_id": job_id,
+                    "recoverable": True,
+                    "suggestions": list(exc.suggestions),
+                }
+                emit_event(stream_sink, err)
+                return {"status": "error", **err}
 
         inpaint_recipe = inpaint_mask_recipe_values(
             str(getattr(job, "edit_type", "inpaint") or "inpaint")
@@ -904,35 +1048,61 @@ def run_generation(
             input_filename = str(upload.get("name") or local_name)
 
         reference_stitch_filename = None
+        qwen_reference_filenames: list[str] = []
         extra_reference_paths = _coerce_reference_image_paths(job)
         if extra_reference_paths and input_path:
-            try:
-                from dreamforge_paths import resolve_image_path_or_raise
+            if model_family == "qwen_image_edit":
+                try:
+                    from dreamforge_paths import resolve_image_path_or_raise
 
-                main_img = Image.open(
-                    resolve_image_path_or_raise(str(input_path))
-                ).convert("RGB")
-                extras = [
-                    Image.open(resolve_image_path_or_raise(path)).convert("RGB")
-                    for path in extra_reference_paths
-                ]
-                stitched = stitch_kontext_reference_images([main_img, *extras])
-                stitch_name = f"{Path(str(input_path)).stem}_kontext_refs.png"
-                stitch_upload = client.upload_image(
-                    image_bytes=_pil_to_png_bytes(stitched),
-                    filename=stitch_name,
-                    folder_type="input",
-                    overwrite=True,
-                )
-                reference_stitch_filename = str(stitch_upload.get("name") or stitch_name)
-            except OSError as exc:
-                err = invalid_input_image(
-                    f"reference image: {exc}",
-                    path=str(extra_reference_paths),
-                    job_id=job_id,
-                )
-                emit_event(stream_sink, err)
-                return {"status": "error", **err}
+                    for ref_path in extra_reference_paths[:2]:
+                        resolved = resolve_image_path_or_raise(str(ref_path))
+                        ref_local_name = Path(resolved).name
+                        ref_upload = client.upload_image(
+                            image_bytes=Path(resolved).read_bytes(),
+                            filename=ref_local_name,
+                            folder_type="input",
+                            overwrite=True,
+                        )
+                        qwen_reference_filenames.append(
+                            str(ref_upload.get("name") or ref_local_name)
+                        )
+                except OSError as exc:
+                    err = invalid_input_image(
+                        f"reference image: {exc}",
+                        path=str(extra_reference_paths),
+                        job_id=job_id,
+                    )
+                    emit_event(stream_sink, err)
+                    return {"status": "error", **err}
+            else:
+                try:
+                    from dreamforge_paths import resolve_image_path_or_raise
+
+                    main_img = Image.open(
+                        resolve_image_path_or_raise(str(input_path))
+                    ).convert("RGB")
+                    extras = [
+                        Image.open(resolve_image_path_or_raise(path)).convert("RGB")
+                        for path in extra_reference_paths
+                    ]
+                    stitched = stitch_kontext_reference_images([main_img, *extras])
+                    stitch_name = f"{Path(str(input_path)).stem}_kontext_refs.png"
+                    stitch_upload = client.upload_image(
+                        image_bytes=_pil_to_png_bytes(stitched),
+                        filename=stitch_name,
+                        folder_type="input",
+                        overwrite=True,
+                    )
+                    reference_stitch_filename = str(stitch_upload.get("name") or stitch_name)
+                except OSError as exc:
+                    err = invalid_input_image(
+                        f"reference image: {exc}",
+                        path=str(extra_reference_paths),
+                        job_id=job_id,
+                    )
+                    emit_event(stream_sink, err)
+                    return {"status": "error", **err}
 
         reference_filename = input_filename
         ref_only_path = getattr(job, "reference_image", None)
@@ -1054,6 +1224,7 @@ def run_generation(
             reference_stitch_filename=reference_stitch_filename,
             grow_mask_by=grow_mask_by,
             model_loader_args=resolved_loaders,
+            qwen_reference_filenames=qwen_reference_filenames or None,
         )
 
         emit_event(
@@ -1079,12 +1250,16 @@ def run_generation(
             emit_event(stream_sink, payload)
 
         if streaming:
-            from dreamforge_comfy_ws import count_comfy_prompt_nodes
+            from dreamforge_comfy_ws import count_comfy_prompt_nodes, guess_sample_count_from_prompt
 
+            stream_sample_count = guess_sample_count_from_prompt(
+                prompt_graph,
+                fallback=sample_steps,
+            )
             _res, node = client.run_prompt_with_stream(
                 prompt_graph,
                 job_id=job_id or "",
-                sample_count=sample_steps,
+                sample_count=stream_sample_count,
                 node_count=count_comfy_prompt_nodes(prompt_graph),
                 timeout_s=60 * 30,
                 on_event=_comfy_stream_event,
@@ -1223,12 +1398,86 @@ def run_generation(
     except Exception as exc:
         traceback.print_exc(file=sys.stderr)
         err = from_exception(exc, job_id=job_id)
+        _maybe_recover_comfy_after_failure(exc, err)
         emit_event(stream_sink, err)
         return {"status": "error", **err}
 
 
 _GENERIC_SDXL_PRESETS = frozenset({"Speed", "Quality", "Lightning", "Lcm", "Pony XL"})
 _FAMILY_PRESETS = frozenset({"Flux", "HiDream", "HiDream Full", "SD3"})
+
+
+def _apply_qwen_family_settings(
+    settings: dict,
+    job,
+    model_family: str,
+    *,
+    is_live: bool = False,
+) -> dict:
+    """Apply Qwen txt2img/edit recipe defaults and advanced overrides."""
+    family = (model_family or "").lower()
+    if not family.startswith("qwen"):
+        return settings
+
+    out = dict(settings)
+    edit_type = str(getattr(job, "edit_type", "auto") or "auto").lower()
+    has_input = bool(getattr(job, "input_image", None) or getattr(job, "upscale_image", None))
+    custom_perf = str(getattr(job, "performance", "") or "").strip() in ("Custom...", "Custom")
+    explicit_sampling = any(
+        getattr(job, attr, None) is not None
+        for attr in ("steps", "cfg_scale", "sampler", "scheduler")
+    )
+
+    try:
+        from dreamforge_krita_recipes import edit_recipe, generation_recipe, qwen_model_params
+
+        params = qwen_model_params(
+            family,
+            edit_type=edit_type,
+            vram_profile=getattr(job, "vram_profile", "auto"),
+        )
+        recipe = edit_recipe(family, edit_type) if has_input and family == "qwen_image_edit" else generation_recipe(family)
+    except ImportError:
+        params = {}
+        recipe = None
+
+    if recipe and not custom_perf and not explicit_sampling and not is_live:
+        out["steps"] = int(recipe.get("custom_steps", out.get("steps", 20)))
+        out["cfg"] = float(recipe.get("cfg", out.get("cfg", 2.5)))
+        out["sampler_name"] = recipe.get("sampler_name", out.get("sampler_name"))
+        out["scheduler"] = recipe.get("scheduler", out.get("scheduler"))
+        out["clip_skip"] = int(recipe.get("clip_skip", out.get("clip_skip", 1)))
+
+    if getattr(job, "qwen_image_shift", None) is not None:
+        out["qwen_image_shift"] = float(job.qwen_image_shift)
+    elif params.get("qwen_image_shift") is not None:
+        out["qwen_image_shift"] = float(params["qwen_image_shift"])
+
+    if getattr(job, "qwen_scale_megapixels", None) is not None:
+        out["qwen_scale_megapixels"] = float(job.qwen_scale_megapixels)
+    elif (
+        params.get("qwen_scale_megapixels") is not None
+        and has_input
+        and family == "qwen_image_edit"
+    ):
+        out["qwen_scale_megapixels"] = float(params["qwen_scale_megapixels"])
+
+    perf = str(getattr(job, "performance", "") or "").strip().lower()
+    model_name = " ".join(
+        str(getattr(job, attr, "") or "")
+        for attr in ("model", "engine_name", "relative_path")
+    ).lower()
+    from dreamforge_cli_inventory import qwen_lightning_lora_requested
+
+    lightning_requested = qwen_lightning_lora_requested(perf) or "lightning" in model_name
+    if family == "qwen_image_edit" and lightning_requested:
+        out["use_qwen_lightning_lora"] = True
+        if not custom_perf and not explicit_sampling and not is_live:
+            out["steps"] = 4
+            out["cfg"] = 1.0
+            out["scheduler"] = "simple"
+
+    return out
 
 
 def _coerce_performance_preset(requested: str | None, family_preset: str | None) -> str | None:
@@ -1305,7 +1554,7 @@ def _tune_edit_job_settings(
     if not custom_perf:
         out["steps"] = min(int(out.get("steps", step_cap)), step_cap)
 
-    if is_live and not explicit_sampling and recipe:
+    if is_live and not explicit_sampling:
         try:
             from dreamforge_krita_recipes import live_sampling_params
 

@@ -41,6 +41,12 @@ export type GenerationSettings = {
   upscale_method?: string;
   edit_type?: "auto" | "kontext" | "inpaint" | "img2img" | "qwen_edit";
   edit_strength?: number;
+  /** Qwen edit graph: auto picks plus when reference_images are set. */
+  qwen_edit_mode?: "auto" | "single" | "plus";
+  /** ModelSamplingAuraFlow shift (Qwen Image / Edit). */
+  qwen_image_shift?: number;
+  /** Scale edit canvas to this megapixel budget before encode (VRAM). */
+  qwen_scale_megapixels?: number;
   input_image?: string;
   /** Additional Kontext/control reference images (Krita-style multi-reference). */
   reference_images?: string[];
@@ -227,26 +233,42 @@ export async function listUseCases() {
   return { use_cases: res.use_cases ?? [] };
 }
 
-export async function getInventory() {
-  return invoke<InventoryPayload & { ok?: boolean }>("get_inventory", {
-    include_fonts: false,
-  });
+export async function getInventory(opts?: { forceRefresh?: boolean }) {
+  return invoke<InventoryPayload & { ok?: boolean; from_cache?: boolean }>(
+    "get_inventory",
+    {
+      include_fonts: false,
+      force_refresh: Boolean(opts?.forceRefresh),
+    },
+  );
 }
 
-export async function getModelGallery(filter = "") {
-  const res = await invoke<{ ok?: boolean; items?: ModelGalleryItem[] }>(
+export async function getModelGallery(
+  filter = "",
+  opts?: { forceRefresh?: boolean },
+) {
+  const res = await invoke<{ ok?: boolean; items?: ModelGalleryItem[]; from_cache?: boolean }>(
     "get_model_gallery",
-    { filter },
+    { filter, force_refresh: Boolean(opts?.forceRefresh) },
   );
   return res.items ?? [];
 }
 
-export async function getLoraGallery(filter = "") {
-  const res = await invoke<{ ok?: boolean; items?: LoraGalleryItem[] }>(
+export async function getLoraGallery(
+  filter = "",
+  opts?: { forceRefresh?: boolean },
+) {
+  const res = await invoke<{ ok?: boolean; items?: LoraGalleryItem[]; from_cache?: boolean }>(
     "get_lora_gallery",
-    { filter },
+    { filter, force_refresh: Boolean(opts?.forceRefresh) },
   );
   return res.items ?? [];
+}
+
+export async function refreshModelLibraryCache() {
+  return invoke<{ ok?: boolean; rebuilt?: boolean; model_gallery?: number; lora_gallery?: number }>(
+    "refresh_model_library_cache",
+  );
 }
 
 export async function resolveModelProfile(params: {
@@ -661,14 +683,25 @@ export type DownloadCompanionsResult = {
   errors?: Array<{ id?: string; relative?: string; error?: string }>;
 };
 
-export async function checkModelDependencies(model: string) {
-  return invoke<ModelDependenciesResult>("check_model_dependencies", { model });
+export async function checkModelDependencies(
+  model: string,
+  performance?: string | null,
+) {
+  return invoke<ModelDependenciesResult>("check_model_dependencies", {
+    model,
+    performance: performance ?? null,
+  });
 }
 
-export async function downloadModelCompanions(model: string, ids?: string[]) {
+export async function downloadModelCompanions(
+  model: string,
+  ids?: string[],
+  performance?: string | null,
+) {
   return invoke<DownloadCompanionsResult>("download_model_companions", {
     model,
     ids: ids ?? null,
+    performance: performance ?? null,
   });
 }
 

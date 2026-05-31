@@ -144,14 +144,24 @@ class ComfyClient:
     def interrupt(self, *, timeout_s: float = 10.0) -> None:
         _http_json("POST", f"{self.base_url}/interrupt", {}, timeout_s=timeout_s)
 
-    def prompt(self, prompt: dict[str, Any], *, client_id: str | None = None) -> ComfyPromptResult:
+    def prompt(
+        self,
+        prompt: dict[str, Any],
+        *,
+        client_id: str | None = None,
+        prompt_id: str | None = None,
+    ) -> ComfyPromptResult:
         payload: dict[str, Any] = {"prompt": prompt}
         if client_id:
             payload["client_id"] = client_id
+        if prompt_id:
+            payload["prompt_id"] = str(prompt_id)
         out = _http_json("POST", f"{self.base_url}/prompt", payload)
         pid = out.get("prompt_id") or out.get("promptId") or out.get("id")
         if not pid:
             raise RuntimeError(f"Comfy /prompt returned no prompt_id: {out}")
+        if prompt_id and str(pid) != str(prompt_id):
+            _log.warning("Comfy prompt_id mismatch: got %s, expected %s", pid, prompt_id)
         return ComfyPromptResult(prompt_id=str(pid))
 
     def history(self, prompt_id: str) -> dict[str, Any]:
@@ -255,9 +265,10 @@ class ComfyClient:
         poll_s: float = 0.5,
     ) -> tuple[ComfyPromptResult, dict[str, Any]]:
         """Queue prompt after opening WebSocket (Krita-style), stream previews, return outputs."""
-        from dreamforge_comfy_ws import ComfyPromptStreamSession, new_client_id
+        from dreamforge_comfy_ws import ComfyPromptStreamSession, new_client_id, prompt_id_from_job_id
 
         cid = str(client_id or new_client_id())
+        requested_prompt_id = prompt_id_from_job_id(str(job_id or ""))
         submitted: ComfyPromptResult | None = None
         if on_event is not None:
             try:
@@ -271,7 +282,9 @@ class ComfyClient:
                     on_event=on_event,
                 )
                 session.start()
-                res = self.prompt(prompt, client_id=cid)
+                if requested_prompt_id:
+                    session.set_prompt_id(requested_prompt_id)
+                res = self.prompt(prompt, client_id=cid, prompt_id=requested_prompt_id)
                 submitted = res
                 session.set_prompt_id(res.prompt_id)
                 session.wait_until_done(history_poll=self.history_poll_state)

@@ -654,6 +654,7 @@ def build_plan(base_args, data=None):
         "identity_id": getattr(job, "identity_id", None),
         "identity_role": getattr(job, "identity_role", None),
     }
+    proposed_patch = {key: value for key, value in proposed_patch.items() if value not in (None, "")}
     try:
         from dreamforge_mode_contract import build_mode_contract
 
@@ -699,6 +700,7 @@ def build_plan(base_args, data=None):
         "mode_contract": mode_contract,
         "reference_pack": reference_pack,
         "identity_reference": identity_reference,
+        "proposed_patch": proposed_patch,
         "ready": len(missing_deps) == 0 and bool((workflow_blueprint or {}).get("readiness", {}).get("ready", True)),
     }
 

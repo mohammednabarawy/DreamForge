@@ -156,7 +156,8 @@ import {
   type ReferenceImageMode,
 } from "../lib/referenceImage";
 import {
-  planBlocksDirectGenerate,
+  buildPlanSnapshotFromDryRun,
+  canRunApprovedPlan,
   resolvePlannedSettings,
   computePlanSettingsSnapshot,
   editFamilyPlanState,
@@ -1918,29 +1919,7 @@ export function useDreamForge() {
       const source = res.provider_model
         ? `${res.provider ?? "provider"} / ${res.provider_model}`
         : res.source;
-      setAgentPlan({
-        source,
-        message: res.message,
-        mode: res.mode,
-        applied: applyPlan ? planPatch : undefined,
-        proposed: planPatch,
-        actions: res.actions,
-        downloads: res.downloads,
-        operations: res.operations,
-        dynamic_preset: res.dynamic_preset,
-        mode_contract: res.mode_contract,
-        workflow_plan: res.workflow_plan,
-        workflow_blueprint: res.workflow_blueprint,
-        readiness: res.readiness,
-        reference_pack:
-          typeof res.reference_pack === "object" && res.reference_pack
-            ? (res.reference_pack as AgentPlanSnapshot["reference_pack"])
-            : undefined,
-        identity_reference:
-          typeof res.identity_reference === "object" && res.identity_reference
-            ? (res.identity_reference as AgentPlanSnapshot["identity_reference"])
-            : undefined,
-      });
+      setAgentPlan(null);
       appendAgentTranscript({
         role: "assistant",
         text: res.message || "Agent planned a DreamForge workflow.",
@@ -1952,9 +1931,9 @@ export function useDreamForge() {
       setStatus(
         applyPlan
           ? res.mode && res.mode !== "agent"
-            ? `Agent configured ${res.mode} mode`
-            : res.message || "Agent configured the workflow"
-          : "Agent plan ready for review",
+            ? `Route applied in Settings (${res.mode}) — adjust if needed, then Generate`
+            : res.message || "Route applied in Settings — adjust if needed, then Generate"
+          : "Agent plan ready — use Generate to apply and run",
       );
     } catch (e) {
       appendAgentTranscript({
@@ -1971,77 +1950,6 @@ export function useDreamForge() {
     saveAppConfigPatch,
     selected,
   ]);
-
-  const runDryRun = useCallback(async () => {
-    if ((appConfig?.ui.studio_mode ?? "generate") === "agent") {
-      await runAgentInstruction(false);
-      return;
-    }
-    setStatus("Planning…");
-    try {
-      const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
-      const sanitized = sanitizeEditFamilySettings(
-        settingsRef.current,
-        studioMode,
-      );
-      const prepared = prepareGenerationFromAgentPrompt(sanitized, {
-        selectedImagePath: selected?.images?.[0],
-        modelGallery: modelGalleryAll,
-      });
-      if (prepared.applied.length) {
-        patchSettings(prepared.settings);
-      }
-      const res = await dryRun(prepared.settings);
-      const hint =
-        prepared.applied.length > 0
-          ? `Agent JSON mapped: ${prepared.applied.join(", ")}. `
-          : "";
-      const extra =
-        prepared.hints.length > 0 ? `${prepared.hints[0]} ` : "";
-      const planPayload =
-        typeof res.plan === "object" && res.plan
-          ? (res.plan as Record<string, unknown>)
-          : {};
-      const workflowBlueprint =
-        typeof planPayload.workflow_blueprint === "object" && planPayload.workflow_blueprint
-          ? (planPayload.workflow_blueprint as Record<string, unknown>)
-          : Object.keys(planPayload).length > 0
-            ? planPayload
-            : { raw: res.plan ?? res };
-      const readiness = dryRunReadinessSnapshot(planPayload, workflowBlueprint);
-      setAgentPlan({
-        source: "dry-run",
-        message: `${hint}${extra}`.trim() || "Dry-run plan",
-        mode: typeof planPayload.mode === "string" ? (planPayload.mode as StudioMode) : studioMode,
-        settings_snapshot: computePlanSettingsSnapshot(prepared.settings, studioMode),
-        proposed: prepared.settings,
-        operations: Array.isArray(planPayload.operations)
-          ? planPayload.operations.map((item) => String(item))
-          : undefined,
-        readiness,
-        mode_contract:
-          typeof planPayload.mode_contract === "object" && planPayload.mode_contract
-            ? (planPayload.mode_contract as AgentPlanSnapshot["mode_contract"])
-            : undefined,
-        reference_pack:
-          typeof planPayload.reference_pack === "object" && planPayload.reference_pack
-            ? (planPayload.reference_pack as AgentPlanSnapshot["reference_pack"])
-            : undefined,
-        identity_reference:
-          typeof planPayload.identity_reference === "object" && planPayload.identity_reference
-            ? (planPayload.identity_reference as AgentPlanSnapshot["identity_reference"])
-            : undefined,
-        workflow_blueprint: workflowBlueprint,
-      });
-      setStatus(
-        prepared.applied.length
-          ? `Dry-run ready (${prepared.applied.join(", ")})`
-          : "Dry-run ready",
-      );
-    } catch (e) {
-      setStatus(`Dry-run failed: ${String(e)}`);
-    }
-  }, [appConfig?.ui.studio_mode, runAgentInstruction, settings, selected, modelGalleryAll, patchSettings]);
 
   const startGeneration = useCallback(
     async (
@@ -2183,6 +2091,122 @@ export function useDreamForge() {
     ],
   );
 
+  const applyPlanSnapshot = useCallback(
+    async (plan: AgentPlanSnapshot) => {
+      const merged = resolvePlannedSettings(plan, settingsRef.current);
+      userPickedModelRef.current = false;
+      patchSettings(merged);
+      const targetMode =
+        plan.mode && plan.mode !== "agent"
+          ? plan.mode
+          : ((appConfig?.ui.studio_mode ?? "generate") as StudioMode);
+      if (plan.mode && plan.mode !== "agent" && plan.mode !== appConfig?.ui.studio_mode) {
+        await saveAppConfigPatch({ ui: { studio_mode: plan.mode } });
+        setAgentPlannedMode(null);
+      }
+      return { merged, targetMode };
+    },
+    [appConfig?.ui.studio_mode, patchSettings, saveAppConfigPatch],
+  );
+
+  const planApplyAndRun = useCallback(
+    async ({ run }: { run: boolean }) => {
+      const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+      setStatus(run ? "Planning and starting…" : "Planning route…");
+      setPlanRunBusy(true);
+      try {
+        const sanitized = sanitizeEditFamilySettings(settingsRef.current, studioMode);
+        const prepared = prepareGenerationFromAgentPrompt(sanitized, {
+          selectedImagePath: selected?.images?.[0],
+          modelGallery: modelGalleryAll,
+        });
+        if (prepared.applied.length) {
+          patchSettings(prepared.settings);
+        }
+        const res = await dryRun(prepared.settings);
+        const hint =
+          prepared.applied.length > 0
+            ? `Agent JSON mapped: ${prepared.applied.join(", ")}. `
+            : "";
+        const extra = prepared.hints.length > 0 ? `${prepared.hints[0]} ` : "";
+        const planPayload =
+          typeof res.plan === "object" && res.plan
+            ? (res.plan as Record<string, unknown>)
+            : {};
+        const workflowBlueprint =
+          typeof planPayload.workflow_blueprint === "object" && planPayload.workflow_blueprint
+            ? (planPayload.workflow_blueprint as Record<string, unknown>)
+            : Object.keys(planPayload).length > 0
+              ? planPayload
+              : { raw: res.plan ?? res };
+        const readiness = dryRunReadinessSnapshot(planPayload, workflowBlueprint);
+        const plan = buildPlanSnapshotFromDryRun({
+          planPayload,
+          workflowBlueprint,
+          baseSettings: prepared.settings,
+          studioMode,
+          readiness,
+          message: `${hint}${extra}`.trim() || "Dry-run plan",
+        });
+        setAgentPlan(null);
+        const { merged, targetMode } = await applyPlanSnapshot(plan);
+        const modelLabel = merged.model ? modelBasename(merged.model) : "route";
+        const blocked = canRunApprovedPlan(plan, readiness);
+
+        if (!run) {
+          setStatus(
+            blocked.ok
+              ? `Route applied in Settings (${modelLabel}) — press Generate to run`
+              : `Route applied — ${blocked.reason ?? "fix Settings, then Generate"}`,
+          );
+          return;
+        }
+        if (!blocked.ok) {
+          setStatus(blocked.reason ?? "Fix Settings, then Generate again");
+          return;
+        }
+
+        const finalPrepared = prepareGenerationFromAgentPrompt(settingsRef.current, {
+          selectedImagePath: selected?.images?.[0],
+          modelGallery: modelGalleryAll,
+        });
+        if (finalPrepared.applied.length || finalPrepared.hints.length) {
+          patchSettings(finalPrepared.settings);
+        }
+        const mapped =
+          finalPrepared.applied.length > 0
+            ? `mapped ${finalPrepared.applied.join(", ")}`
+            : undefined;
+        const runHint = finalPrepared.hints.length > 0 ? finalPrepared.hints[0] : undefined;
+        await startGeneration(finalPrepared.settings, {
+          mapped,
+          hint: runHint,
+          studioMode: targetMode,
+        });
+      } catch (e) {
+        setStatus(`Planning failed: ${String(e)}`);
+      } finally {
+        setPlanRunBusy(false);
+      }
+    },
+    [
+      appConfig?.ui.studio_mode,
+      applyPlanSnapshot,
+      modelGalleryAll,
+      patchSettings,
+      selected,
+      startGeneration,
+    ],
+  );
+
+  const runDryRun = useCallback(async () => {
+    if ((appConfig?.ui.studio_mode ?? "generate") === "agent") {
+      await runAgentInstruction(false);
+      return;
+    }
+    await planApplyAndRun({ run: false });
+  }, [appConfig?.ui.studio_mode, planApplyAndRun, runAgentInstruction]);
+
   const dismissAgentPlan = useCallback(() => {
     setAgentPlan(null);
     setAgentPlannedMode(null);
@@ -2195,137 +2219,22 @@ export function useDreamForge() {
       setStatus("No plan settings to apply");
       return;
     }
-    userPickedModelRef.current = false;
-    patchSettings(plan.proposed);
-    if (plan.mode && plan.mode !== "agent") {
-      await saveAppConfigPatch({ ui: { studio_mode: plan.mode } });
-      setAgentPlannedMode(null);
-    }
-    setAgentPlan({ ...plan, applied: plan.proposed });
-    setStatus(
-      plan.mode && plan.mode !== "agent"
-        ? `Plan applied — switched to ${plan.mode} mode`
-        : "Plan applied — click Run plan to start generation",
-    );
-  }, [patchSettings, saveAppConfigPatch]);
+    await applyPlanSnapshot(plan);
+    setAgentPlan(null);
+    setStatus("Route applied in Settings — adjust if needed, then Generate");
+  }, [applyPlanSnapshot]);
 
   const runApprovedPlan = useCallback(async () => {
-    const plan = agentPlanRef.current;
-    if (!plan) {
-      setStatus("No plan to run");
-      return;
-    }
-    if (plan.readiness?.ready === false) {
-      setStatus("Plan is not ready — resolve missing inputs or models first");
-      return;
-    }
-    setPlanRunBusy(true);
-    try {
-      const merged = resolvePlannedSettings(plan, settingsRef.current);
-      userPickedModelRef.current = false;
-      patchSettings(merged);
-      const targetMode =
-        plan.mode && plan.mode !== "agent"
-          ? plan.mode
-          : ((appConfig?.ui.studio_mode ?? "generate") as StudioMode);
-      if (plan.mode && plan.mode !== "agent" && plan.mode !== appConfig?.ui.studio_mode) {
-        await saveAppConfigPatch({ ui: { studio_mode: plan.mode } });
-        setAgentPlannedMode(null);
-      }
-      setAgentPlan({ ...plan, applied: merged });
-
-      const prepared = prepareGenerationFromAgentPrompt(merged, {
-        selectedImagePath: selected?.images?.[0],
-        modelGallery: modelGalleryAll,
-      });
-      if (prepared.applied.length || prepared.hints.length) {
-        patchSettings(prepared.settings);
-      }
-      const mapped =
-        prepared.applied.length > 0
-          ? `mapped ${prepared.applied.join(", ")}`
-          : undefined;
-      const hint = prepared.hints.length > 0 ? prepared.hints[0] : undefined;
-      await startGeneration(prepared.settings, {
-        mapped,
-        hint,
-        studioMode: targetMode,
-      });
-    } finally {
-      setPlanRunBusy(false);
-    }
-  }, [
-    appConfig?.ui.studio_mode,
-    modelGalleryAll,
-    patchSettings,
-    saveAppConfigPatch,
-    selected,
-    startGeneration,
-  ]);
+    await planApplyAndRun({ run: true });
+  }, [planApplyAndRun]);
 
   const runGenerate = useCallback(async () => {
     const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
     if (studioMode === "agent") {
       await runAgentInstruction(true);
-      return;
     }
-    if (isEditFamilyMode(studioMode)) {
-      const snapshot = computePlanSettingsSnapshot(
-        settingsRef.current,
-        studioMode,
-      );
-      const plan = agentPlanRef.current;
-      const planState = editFamilyPlanState(plan, studioMode, snapshot);
-      if (planState === "none" || planState === "stale") {
-        await runDryRun();
-        setStatus(
-          planState === "stale"
-            ? "Settings changed — review the updated plan card, then Run plan"
-            : "Review the routed plan on the canvas, then Run plan",
-        );
-        return;
-      }
-      if (planState === "not_ready") {
-        setStatus("Plan is not ready — resolve missing setup in the plan card");
-        return;
-      }
-      await runApprovedPlan();
-      return;
-    }
-    if (
-      planBlocksDirectGenerate(
-        agentPlanRef.current,
-        appConfig?.agent.approval_required,
-        { studioMode },
-      )
-    ) {
-      setStatus("Review the plan card — use Run plan to start generation");
-      return;
-    }
-    const prepared = prepareGenerationFromAgentPrompt(settingsRef.current, {
-      selectedImagePath: selected?.images?.[0],
-      modelGallery: modelGalleryAll,
-    });
-    if (prepared.applied.length || prepared.hints.length) {
-      patchSettings(prepared.settings);
-    }
-    const mapped =
-      prepared.applied.length > 0
-        ? `mapped ${prepared.applied.join(", ")}`
-        : undefined;
-    const hint = prepared.hints.length > 0 ? prepared.hints[0] : undefined;
-    await startGeneration(prepared.settings, { mapped, hint });
-  }, [
-    appConfig?.ui.studio_mode,
-    appConfig?.agent.approval_required,
-    runAgentInstruction,
-    runDryRun,
-    runApprovedPlan,
-    selected,
-    modelGalleryAll,
-    patchSettings,
-    startGeneration,
-  ]);
+    await planApplyAndRun({ run: true });
+  }, [appConfig?.ui.studio_mode, planApplyAndRun, runAgentInstruction]);
 
   const runRestartEngine = useCallback(async () => {
     setRestarting(true);
@@ -2428,22 +2337,7 @@ export function useDreamForge() {
       editPlanState,
     ],
   );
-  const planApprovalPending =
-    studioMode !== "agent" &&
-    planBlocksDirectGenerate(agentPlan, appConfig?.agent.approval_required, {
-      studioMode,
-      settingsSnapshot: planSettingsSnapshot,
-    });
-  const effectiveGenerateReadiness = useMemo(() => {
-    if (planApprovalPending && !isEditFamilyMode(studioMode)) {
-      return {
-        ok: false as const,
-        reason: "Review the plan card — use Run plan to start generation",
-        missingCompanions: false as const,
-      };
-    }
-    return generateReadiness;
-  }, [planApprovalPending, generateReadiness, studioMode]);
+  const effectiveGenerateReadiness = useMemo(() => generateReadiness, [generateReadiness]);
   const missingDownloadCount =
     modelDependencies.missing.length + studioResources.missing.length;
 

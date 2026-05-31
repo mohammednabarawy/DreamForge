@@ -2,7 +2,7 @@
 
 ## Identity-Aware Creative Operating System
 
-Last updated: 2026-05-31
+Last updated: 2026-05-27
 
 This document is the V2 product and implementation plan for DreamForge based on the current repository state, `docs/EDITING_ORCHESTRATION_PLAN.md`, `docs/DREAMFORGE_AI_OS_ROADMAP.md`, and the Cursor review pasted into this thread.
 
@@ -104,19 +104,32 @@ User workflow:
 
 ```text
 Open image
-Optional mask or target region
+Optional mask or target region (inpaint)
 Instruction
-Review routed plan/dependencies
 Generate
-Iterate from result
+  → dry-run plans route locally
+  → routed settings appear in Settings tab
+  → generation starts immediately
+Adjust Settings if result is wrong
+Generate again to replan and rerun
 ```
 
 Edit family modes should feel like a professional image editor, not a model picker.
+
+**Desktop orchestration rule (shipped):**
+
+- Do **not** block the user on a canvas plan card with separate Apply / Run plan buttons.
+- **Generate** is the single primary action: plan → apply routed settings to the Settings inspector → run when ready.
+- **Dry run** (non-agent modes) applies the routed settings to Settings only; it does not start GPU work.
+- If planning fails readiness (missing mask, companions, etc.), apply whatever settings are valid, show a clear status message, and let the user fix inputs in Settings before pressing Generate again.
+- Dry-run responses must include `proposed_patch` from the backend so routed model/edit/inpaint fields actually reach the UI (not just the pre-plan input snapshot).
 
 Primary surfaces:
 
 - Edit: global/context-aware edits, character consistency, style preservation
 - Inpaint: region edits, object removal, localized replacement, outpaint
+  - **Smart mask** toolbar: subject, background, clothes, face/body heuristics, tap-to-select
+  - **Mask UX:** user sees the full photo with a pale red quick-mask overlay on the selection; grayscale mask is internal/export-only for the inpaint pipeline
 - Upscale: detail, print, face, or creative enhancement
 
 Simple controls:
@@ -145,10 +158,9 @@ User workflow:
 ```text
 Describe goal
 Agent inspects context
-Agent proposes plan
-User approves settings/downloads/GPU run
-DreamForge executes locally
-Agent explains result and can iterate
+Agent applies routed settings to Settings tab
+Generate plans locally and runs (or Dry run / Ask agent applies settings only)
+Agent explains result in transcript; user adjusts Settings and regenerates if needed
 ```
 
 Agent mode should:
@@ -157,8 +169,8 @@ Agent mode should:
 - Detect Arabic/text needs
 - Detect identity/reference needs
 - Choose Generate/Edit/Inpaint/Upscale as tools
-- Build a reviewable plan
-- Surface required models/tools/downloads
+- Build a reviewable plan internally (dry-run / brain patch)
+- Surface required models/tools/downloads via status and Settings, not a blocking canvas card
 - Require approval for downloads and expensive GPU work in v1
 - Keep image execution local
 - Keep agent reasoning local with open-source models only
@@ -260,24 +272,26 @@ Work:
 - Formalize the mode contract around current `StudioMode`.
 - Ensure Generate preserves explicit model/settings unless Auto/Agent applies changes.
 - Ensure Edit/Inpaint/Upscale route through task-aware local plans.
-- Make dry-run/plan previews show:
+- Make dry-run/plan output drive the **Settings tab** before GPU work:
   - selected operation
   - selected local model/workflow
   - dependencies
   - fallback
   - expected mode
   - whether user settings were overridden
+- Return `proposed_patch` from `build_plan()` / dry-run so desktop applies routed model and edit fields correctly.
 - Align desktop, CLI, REST, MCP, and agent plan outputs.
 
 Primary files:
 
 - `backend/dreamforge_engine.py`
 - `backend/dreamforge_generation.py`
+- `backend/dreamforge_cli_direct.py` (`proposed_patch` in dry-run payload)
 - `backend/dreamforge_brain.py`
 - `backend/dreamforge_workflow_planner.py`
 - `backend/dreamforge_app_config.py`
-- `apps/desktop/src/hooks/useDreamForge.ts`
-- `apps/desktop/src/components/WorkflowPlanPanel.tsx`
+- `apps/desktop/src/hooks/useDreamForge.ts` (`planApplyAndRun`)
+- `apps/desktop/src/lib/workflowPlanActions.ts`
 
 Acceptance tests:
 
@@ -285,7 +299,8 @@ Acceptance tests:
 - Edit with input image defaults to Kontext when text editing is not requested.
 - Text/Arabic edit routes to Arabic hybrid or Qwen path only when suitable.
 - Inpaint requires image + mask or returns a clear missing-input plan.
-- Agent plan cannot run GPU work without approval when approval is required.
+- Generate in edit family applies dry-run settings to Settings and runs in one action (no canvas plan card gate).
+- Agent plan cannot run GPU work without approval when approval is required (downloads still approval-gated).
 
 ### M2 - Edit Mode V1 Product Polish
 
@@ -293,28 +308,35 @@ Goal: make Edit/Inpaint/Upscale feel like a finished guided product, using exist
 
 Work:
 
-- Edit: instruction box, preserve toggles, source image, plan card, revision/result actions.
-- Inpaint: mask workflow, feather/expand controls, dependency/readiness card.
-- Upscale: image target, quality goal, routed upscaler, dependency/readiness card.
+- Edit: instruction box, preserve toggles, source image, revision/result actions; routed values visible in Settings.
+- Inpaint: smart selection (`backend/dreamforge_inpaint_selection.py`), mask modal with photo + pale red overlay (not B&W mask preview), feather/expand controls.
+- Upscale: image target, quality goal, routed upscaler; missing assets via companion download flow.
+- **Generate flow:** `planApplyAndRun` — dry-run → patch Settings from `proposed_patch` → start generation when ready.
+- **Dry run flow:** same planning path, apply Settings only, no GPU run.
 - Hide raw model choice by default in edit family modes.
 - Keep expert override available behind advanced mode.
 - Use `CompanionDownloadModal` and `ReliabilityBanner` for missing edit assets.
 - Make "send to edit/inpaint/upscale" from canvas/gallery reliable.
+- Remove blocking canvas `WorkflowPlanPanel` from the default edit/generate path (Settings tab is the review surface).
 
 Primary files:
 
 - `apps/desktop/src/hooks/useDreamForge.ts`
+- `apps/desktop/src/lib/workflowPlanActions.ts`
 - `apps/desktop/src/App.tsx`
 - `apps/desktop/src/components/InspectorPanel.tsx`
 - `apps/desktop/src/components/InpaintMaskModal.tsx`
-- `apps/desktop/src/components/CanvasPanel.tsx`
+- `backend/dreamforge_inpaint_selection.py`
+- `backend/dreamforge_desktop_bridge.py`
 - `apps/desktop/src/components/CompanionDownloadModal.tsx`
 - `apps/desktop/src/components/ReliabilityBanner.tsx`
 
 Acceptance tests:
 
 - Desktop build passes.
-- Plan card appears before routed edit work.
+- Generate in edit/inpaint/upscale applies routed settings to Settings and runs without a plan-card stop.
+- Dry run applies routed settings without starting GPU work.
+- Inpaint smart mask shows photo + pale red selection overlay; exported mask remains grayscale internal-only.
 - Missing companion actions open the download approval modal.
 - Edit strength and manual sampling overrides actually reach runtime when enabled.
 - Kontext edit does not accidentally send stale `upscale_image`.
@@ -400,10 +422,10 @@ Work:
   - Ollama/LM Studio/llama.cpp server
 - Make runtime badges explicit: embedded local model or local server.
 - Use open-source reasoning models only.
-- Show a chat transcript and compact plan cards near the canvas.
+- Show a chat transcript near the canvas (no blocking plan card for routine runs).
 - Agent can inspect current session, propose setting changes, attach references, request downloads, and run approved jobs.
 - Agent must use DreamForge tools, not mutate UI invisibly.
-- Add "apply plan" and "run approved plan" flows that match current plan-preview behavior.
+- **Generate** in agent mode: apply brain patch → local dry-run → patch Settings → run when ready (same `planApplyAndRun` path after agent routing).
 
 Primary files:
 
@@ -412,7 +434,7 @@ Primary files:
 - `backend/dreamforge_app_config.py`
 - `backend/dreamforge_desktop_bridge.py`
 - `apps/desktop/src/hooks/useDreamForge.ts`
-- `apps/desktop/src/components/WorkflowPlanPanel.tsx`
+- `apps/desktop/src/components/AgentTranscriptPanel.tsx`
 - `apps/desktop/src/components/InspectorPanel.tsx`
 
 Acceptance tests:
@@ -494,8 +516,8 @@ These may become separate epics after V2 mode contracts, edit UX, reference pack
 ### UX
 
 - Generate remains default and complete.
-- Edit/Inpaint/Upscale become guided, routed, dependency-aware experiences.
-- Agent becomes a real mode with transcript, plan cards, local runtime state, and approval controls.
+- Edit/Inpaint/Upscale become guided, routed, dependency-aware experiences; Settings tab is where users review and tweak routed values.
+- Agent becomes a real mode with transcript, local runtime state, and approval controls for downloads/GPU when required.
 - Reference packs/identity are accessible from all modes.
 
 ### Orchestration
@@ -543,16 +565,29 @@ Mode-specific acceptance:
 | Edit | Input image, edit type, edit strength, reference state, and preview streaming are correct. |
 | Inpaint | Mask path, edit type, feather/expand settings, and fallback route are correct. |
 | Upscale | Uses upscale image, not stale input/edit image state. |
-| Agent | Plan-only is safe; execution/downloads require approval; local runtime state is visible. |
+| Agent | Ask agent applies settings; Generate plans and runs locally; downloads require approval; local runtime state is visible. |
 
 ## Immediate Next Steps
 
 1. Keep this plan as the V2 product plan and stop using the older Rust service snippets as implementation targets.
-2. Audit the current desktop V2 mode UX against M1/M2 and list only the missing polish items.
-3. Create/refresh tests for mode contracts where gaps exist.
-4. Implement reference packs as the next identity step before full embeddings/SQLite identity.
-5. Productize Agent mode around the existing brain/runtime rather than creating a separate planner.
-6. Generalize Arabic poster/text integration as the typography milestone.
+2. Continue M3 reference packs UI polish (dedicated panel vs inspector-only) and expand pack roles in planner output.
+3. Begin M4 Identity Registry V1 once reference-pack workflow is stable in daily use.
+4. Productize Agent mode transcript/history and local-runtime diagnostics (plan card removed from default path).
+5. Generalize Arabic poster/text integration as the typography milestone (M6).
+6. Add/refresh tests for `proposed_patch` dry-run application and inpaint selection overlay export paths.
+
+## Shipped UX Notes (2026-05-27)
+
+These behaviors are implemented and should be preserved in future milestones:
+
+| Behavior | Rule |
+| --- | --- |
+| Edit-family Generate | One click: dry-run → apply `proposed_patch` to Settings → run if ready. |
+| Dry run button | Plan and apply Settings only; no GPU run. |
+| Plan review surface | Settings inspector, not a canvas overlay card. |
+| Inpaint mask modal | Visible layer = photo + pale red tint on selection; offscreen grayscale mask for export/pipeline only. |
+| Smart mask | Backend selection via `dreamforge_inpaint_selection.py`; UI in `InpaintMaskModal.tsx`. |
+| Canvas overlay | Do not reintroduce blocking `WorkflowPlanPanel` for standard generate/edit flows. |
 
 ## Non-Negotiables
 

@@ -88,25 +88,124 @@ export function plannedModelLabel(plan: AgentPlanSnapshot): string | null {
   return modelBasename(model);
 }
 
+export function stripUndefinedPatch(
+  patch: Partial<GenerationSettings>,
+): Partial<GenerationSettings> {
+  const out: Partial<GenerationSettings> = {};
+  for (const [key, value] of Object.entries(patch)) {
+    if (value !== undefined && value !== null && value !== "") {
+      (out as Record<string, unknown>)[key] = value;
+    }
+  }
+  return out;
+}
+
+export function proposedPatchFromDryRunPlan(
+  planPayload: Record<string, unknown>,
+  baseSettings: GenerationSettings,
+): Partial<GenerationSettings> {
+  const raw = planPayload.proposed_patch ?? planPayload.proposed;
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    return stripUndefinedPatch({
+      ...baseSettings,
+      ...(raw as Partial<GenerationSettings>),
+    });
+  }
+
+  const modelField = planPayload.model;
+  let model: string | undefined;
+  if (typeof modelField === "string") {
+    model = modelField;
+  } else if (modelField && typeof modelField === "object") {
+    const record = modelField as Record<string, unknown>;
+    model = String(record.engine_name ?? record.name ?? "").trim() || undefined;
+  }
+
+  const settingsBlock =
+    typeof planPayload.settings === "object" && planPayload.settings
+      ? (planPayload.settings as Record<string, unknown>)
+      : undefined;
+
+  return stripUndefinedPatch({
+    ...baseSettings,
+    model: model ?? baseSettings.model,
+    negative_prompt:
+      typeof planPayload.negative_prompt === "string"
+        ? planPayload.negative_prompt
+        : baseSettings.negative_prompt,
+    steps:
+      typeof settingsBlock?.steps === "number"
+        ? settingsBlock.steps
+        : baseSettings.steps,
+    cfg_scale:
+      typeof settingsBlock?.cfg === "number"
+        ? settingsBlock.cfg
+        : baseSettings.cfg_scale,
+    sampler:
+      typeof settingsBlock?.sampler === "string"
+        ? settingsBlock.sampler
+        : baseSettings.sampler,
+    scheduler:
+      typeof settingsBlock?.scheduler === "string"
+        ? settingsBlock.scheduler
+        : baseSettings.scheduler,
+  });
+}
+
+export function buildPlanSnapshotFromDryRun(args: {
+  planPayload: Record<string, unknown>;
+  workflowBlueprint: Record<string, unknown>;
+  baseSettings: GenerationSettings;
+  studioMode: StudioMode;
+  readiness?: WorkflowReadiness;
+  message?: string;
+}): AgentPlanSnapshot {
+  const proposed = proposedPatchFromDryRunPlan(args.planPayload, args.baseSettings);
+  const mergedForSnapshot: GenerationSettings = { ...args.baseSettings, ...proposed };
+  const mode =
+    typeof args.planPayload.mode === "string"
+      ? (args.planPayload.mode as StudioMode)
+      : args.studioMode;
+
+  return {
+    source: "dry-run",
+    message: args.message ?? "Dry-run plan",
+    mode,
+    settings_snapshot: computePlanSettingsSnapshot(mergedForSnapshot, args.studioMode),
+    proposed,
+    operations: Array.isArray(args.planPayload.operations)
+      ? args.planPayload.operations.map((item) => String(item))
+      : undefined,
+    readiness: args.readiness,
+    mode_contract:
+      typeof args.planPayload.mode_contract === "object" && args.planPayload.mode_contract
+        ? (args.planPayload.mode_contract as AgentPlanSnapshot["mode_contract"])
+        : undefined,
+    reference_pack:
+      typeof args.planPayload.reference_pack === "object" && args.planPayload.reference_pack
+        ? (args.planPayload.reference_pack as AgentPlanSnapshot["reference_pack"])
+        : undefined,
+    identity_reference:
+      typeof args.planPayload.identity_reference === "object" &&
+      args.planPayload.identity_reference
+        ? (args.planPayload.identity_reference as AgentPlanSnapshot["identity_reference"])
+        : undefined,
+    workflow_blueprint: args.workflowBlueprint,
+    workflow_plan: Array.isArray(args.planPayload.workflow_plan)
+      ? (args.planPayload.workflow_plan as AgentPlanSnapshot["workflow_plan"])
+      : undefined,
+  };
+}
+
 export function planBlocksDirectGenerate(
-  plan: AgentPlanSnapshot | null,
-  approvalRequired: boolean | undefined,
-  options?: {
+  _plan: AgentPlanSnapshot | null,
+  _approvalRequired?: boolean,
+  _options?: {
     studioMode?: StudioMode;
     settingsSnapshot?: string;
   },
 ): boolean {
-  const studioMode = options?.studioMode ?? "generate";
-  if (isEditFamilyMode(studioMode)) {
-    const state = editFamilyPlanState(
-      plan,
-      studioMode,
-      options?.settingsSnapshot ?? "",
-    );
-    return state === "stale" || state === "not_ready";
-  }
-  if (!plan || approvalRequired === false) return false;
-  return true;
+  return false;
 }
 
 export function canRunApprovedPlan(

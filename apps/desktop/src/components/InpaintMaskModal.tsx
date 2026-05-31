@@ -36,84 +36,212 @@ const QUICK_SELECTS: { id: InpaintSelectionKind; label: string; icon?: typeof Us
   { id: "feet", label: "Feet" },
 ];
 
+/** Photoshop-style quick-mask tint (not exported). */
+const OVERLAY_R = 255;
+const OVERLAY_G = 96;
+const OVERLAY_B = 96;
+const OVERLAY_A = 97;
+
+function isMaskPixelSelected(data: Uint8ClampedArray, offset: number): boolean {
+  return (data[offset] + data[offset + 1] + data[offset + 2]) / 3 > 127;
+}
+
+function getOffscreenMask(w: number, h: number, maskRef: React.MutableRefObject<HTMLCanvasElement | null>) {
+  if (!maskRef.current) {
+    maskRef.current = document.createElement("canvas");
+  }
+  const mask = maskRef.current;
+  if (mask.width !== w || mask.height !== h) {
+    mask.width = w;
+    mask.height = h;
+    const ctx = mask.getContext("2d");
+    if (ctx) {
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, w, h);
+    }
+  }
+  return mask;
+}
+
 export function InpaintMaskModal({ imagePath, open, onClose, onSave }: Props) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [size, setSize] = useState({ w: 512, h: 512 });
+  /** Visible: photo + pale red selection preview. */
+  const viewCanvasRef = useRef<HTMLCanvasElement>(null);
+  /** Hidden: grayscale mask for inpaint export only. */
+  const maskRef = useRef<HTMLCanvasElement | null>(null);
+  /** Builds red tint from mask without touching unselected pixels. */
+  const overlayHelperRef = useRef<HTMLCanvasElement | null>(null);
+  const baseImageRef = useRef<HTMLImageElement | null>(null);
+  const dimsRef = useRef({ w: 512, h: 512 });
+
+  const [viewSize, setViewSize] = useState({ w: 512, h: 512 });
   const [brush, setBrush] = useState(24);
   const [tool, setTool] = useState<SelectTool>("paint");
   const [mergeMode, setMergeMode] = useState<"add" | "replace">("add");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
+  const [ready, setReady] = useState(false);
   const drawing = useRef(false);
+
+  const redrawView = useCallback(() => {
+    const view = viewCanvasRef.current;
+    const baseImage = baseImageRef.current;
+    const mask = maskRef.current;
+    if (!view || !baseImage || !mask) return;
+
+    const w = view.width;
+    const h = view.height;
+    const ctx = view.getContext("2d");
+    if (!ctx || w <= 0 || h <= 0) return;
+
+    ctx.clearRect(0, 0, w, h);
+    ctx.globalCompositeOperation = "source-over";
+    ctx.globalAlpha = 1;
+    ctx.drawImage(baseImage, 0, 0, w, h);
+
+    const maskCtx = mask.getContext("2d");
+    if (!maskCtx) return;
+    const maskData = maskCtx.getImageData(0, 0, w, h);
+
+    // Grayscale mask pixels are opaque black/white — use luminance, not alpha, for selection.
+    if (!overlayHelperRef.current) {
+      overlayHelperRef.current = document.createElement("canvas");
+    }
+    const overlay = overlayHelperRef.current;
+    if (overlay.width !== w || overlay.height !== h) {
+      overlay.width = w;
+      overlay.height = h;
+    }
+    const octx = overlay.getContext("2d");
+    if (!octx) return;
+
+    const overlayData = octx.createImageData(w, h);
+    for (let i = 0; i < maskData.data.length; i += 4) {
+      if (isMaskPixelSelected(maskData.data, i)) {
+        overlayData.data[i] = OVERLAY_R;
+        overlayData.data[i + 1] = OVERLAY_G;
+        overlayData.data[i + 2] = OVERLAY_B;
+        overlayData.data[i + 3] = OVERLAY_A;
+      }
+    }
+    octx.putImageData(overlayData, 0, 0);
+
+    ctx.globalCompositeOperation = "source-over";
+    ctx.globalAlpha = 1;
+    ctx.drawImage(overlay, 0, 0, w, h);
+  }, []);
+
+  const setupSession = useCallback(
+    (w: number, h: number, image: HTMLImageElement, attempt = 0) => {
+      baseImageRef.current = image;
+      dimsRef.current = { w, h };
+      setViewSize({ w, h });
+
+      const view = viewCanvasRef.current;
+      if (!view) {
+        if (attempt < 8) {
+          requestAnimationFrame(() => setupSession(w, h, image, attempt + 1));
+        }
+        return;
+      }
+
+      view.width = w;
+      view.height = h;
+      getOffscreenMask(w, h, maskRef);
+      setReady(true);
+      redrawView();
+    },
+    [redrawView],
+  );
 
   useEffect(() => {
     if (!open || !imagePath) return;
     let cancelled = false;
+    setReady(false);
     setStatus("");
+    baseImageRef.current = null;
+    if (maskRef.current) {
+      const ctx = maskRef.current.getContext("2d");
+      if (ctx) {
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0, 0, maskRef.current.width, maskRef.current.height);
+      }
+    }
+
     void readImagePreviewQueued(imagePath).then((r) => {
       if (cancelled) return;
-      setPreviewUrl(r.data_url);
       const img = new Image();
       img.onload = () => {
+        if (cancelled) return;
+        if (img.naturalWidth <= 0 || img.naturalHeight <= 0) {
+          setStatus("Could not load image preview");
+          return;
+        }
         const max = 768;
         let w = img.naturalWidth;
         let h = img.naturalHeight;
         const scale = Math.min(1, max / Math.max(w, h));
         w = Math.round(w * scale);
         h = Math.round(h * scale);
-        setSize({ w, h });
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-        ctx.fillStyle = "#000";
-        ctx.fillRect(0, 0, w, h);
+        requestAnimationFrame(() => {
+          if (cancelled) return;
+          setupSession(w, h, img);
+        });
+      };
+      img.onerror = () => {
+        if (!cancelled) setStatus("Could not load image preview");
       };
       img.src = r.data_url;
     });
+
     return () => {
       cancelled = true;
     };
-  }, [open, imagePath]);
+  }, [open, imagePath, setupSession]);
 
-  const paint = useCallback(
+  const pointerToMaskCoords = (clientX: number, clientY: number) => {
+    const view = viewCanvasRef.current;
+    if (!view) return null;
+    const rect = view.getBoundingClientRect();
+    const x = ((clientX - rect.left) / rect.width) * view.width;
+    const y = ((clientY - rect.top) / rect.height) * view.height;
+    return { x, y, view };
+  };
+
+  const paintMask = useCallback(
     (clientX: number, clientY: number) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const rect = canvas.getBoundingClientRect();
-      const x = ((clientX - rect.left) / rect.width) * canvas.width;
-      const y = ((clientY - rect.top) / rect.height) * canvas.height;
-      const ctx = canvas.getContext("2d");
+      const coords = pointerToMaskCoords(clientX, clientY);
+      if (!coords) return;
+      const mask = getOffscreenMask(dimsRef.current.w, dimsRef.current.h, maskRef);
+      const ctx = mask.getContext("2d");
       if (!ctx) return;
-      ctx.globalCompositeOperation = tool === "erase" ? "destination-out" : "source-over";
-      ctx.fillStyle = "#fff";
+
+      ctx.globalCompositeOperation = "source-over";
+      ctx.fillStyle = tool === "erase" ? "#000" : "#fff";
       ctx.beginPath();
-      ctx.arc(x, y, brush, 0, Math.PI * 2);
+      ctx.arc(coords.x, coords.y, brush, 0, Math.PI * 2);
       ctx.fill();
+      redrawView();
     },
-    [brush, tool],
+    [brush, redrawView, tool],
   );
 
   const clearMask = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
+    const mask = maskRef.current;
+    if (!mask) return;
+    const ctx = mask.getContext("2d");
     if (!ctx) return;
-    ctx.globalCompositeOperation = "source-over";
     ctx.fillStyle = "#000";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    setStatus("Mask cleared");
+    ctx.fillRect(0, 0, mask.width, mask.height);
+    redrawView();
+    setStatus("Selection cleared");
   };
 
   const applyMaskImageData = useCallback(
     async (maskPath: string, mode: "add" | "replace") => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const ctx = canvas.getContext("2d");
+      const mask = getOffscreenMask(dimsRef.current.w, dimsRef.current.h, maskRef);
+      const ctx = mask.getContext("2d");
       if (!ctx) return;
+
       const preview = await readImagePreviewQueued(maskPath);
       const img = new Image();
       await new Promise<void>((resolve, reject) => {
@@ -121,20 +249,22 @@ export function InpaintMaskModal({ imagePath, open, onClose, onSave }: Props) {
         img.onerror = () => reject(new Error("mask_preview_failed"));
         img.src = preview.data_url;
       });
+
       const temp = document.createElement("canvas");
-      temp.width = canvas.width;
-      temp.height = canvas.height;
+      temp.width = mask.width;
+      temp.height = mask.height;
       const tctx = temp.getContext("2d");
       if (!tctx) return;
-      tctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      const source = tctx.getImageData(0, 0, canvas.width, canvas.height);
+      tctx.drawImage(img, 0, 0, mask.width, mask.height);
+
+      const source = tctx.getImageData(0, 0, mask.width, mask.height);
       const target =
         mode === "replace"
-          ? ctx.createImageData(canvas.width, canvas.height)
-          : ctx.getImageData(0, 0, canvas.width, canvas.height);
+          ? ctx.createImageData(mask.width, mask.height)
+          : ctx.getImageData(0, 0, mask.width, mask.height);
+
       for (let i = 0; i < source.data.length; i += 4) {
-        const bright = source.data[i] > 127;
-        if (bright) {
+        if (isMaskPixelSelected(source.data, i)) {
           target.data[i] = 255;
           target.data[i + 1] = 255;
           target.data[i + 2] = 255;
@@ -147,8 +277,9 @@ export function InpaintMaskModal({ imagePath, open, onClose, onSave }: Props) {
         }
       }
       ctx.putImageData(target, 0, 0);
+      redrawView();
     },
-    [],
+    [redrawView],
   );
 
   const runSelection = useCallback(
@@ -182,29 +313,26 @@ export function InpaintMaskModal({ imagePath, open, onClose, onSave }: Props) {
     [applyMaskImageData, imagePath, mergeMode],
   );
 
-  const handleCanvasPointer = useCallback(
+  const handlePointer = useCallback(
     (clientX: number, clientY: number) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const rect = canvas.getBoundingClientRect();
-      const x = ((clientX - rect.left) / rect.width) * canvas.width;
-      const y = ((clientY - rect.top) / rect.height) * canvas.height;
+      const coords = pointerToMaskCoords(clientX, clientY);
+      if (!coords) return;
       if (tool === "tap_object" || tool === "tap_background") {
         void runSelection(tool, {
-          x: x / canvas.width,
-          y: y / canvas.height,
+          x: coords.x / coords.view.width,
+          y: coords.y / coords.view.height,
         });
         return;
       }
-      paint(clientX, clientY);
+      paintMask(clientX, clientY);
     },
-    [paint, runSelection, tool],
+    [paintMask, runSelection, tool],
   );
 
   const exportMask = async () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const dataUrl = canvas.toDataURL("image/png");
+    const mask = maskRef.current;
+    if (!mask) return;
+    const dataUrl = mask.toDataURL("image/png");
     const path = await writeTempPng(dataUrl);
     onSave(path);
     onClose();
@@ -217,9 +345,9 @@ export function InpaintMaskModal({ imagePath, open, onClose, onSave }: Props) {
       <div className="flex max-h-[92vh] w-full max-w-3xl flex-col rounded-xl border border-dfui-border/60 bg-dfui-panel shadow-2xl">
         <div className="flex items-center justify-between border-b border-dfui-border/40 px-3 py-2">
           <div>
-            <span className="text-sm font-medium text-dfui-fg">Inpaint mask</span>
+            <span className="text-sm font-medium text-dfui-fg">Inpaint selection</span>
             <p className="text-[10px] text-dfui-tertiary">
-              Smart select like Gallery Object Eraser, then refine with brush
+              Your image with a pale red tint on the selected area — the B&amp;W mask is only used internally
             </p>
           </div>
           <button type="button" onClick={onClose} className="text-dfui-muted hover:text-dfui-fg">
@@ -232,7 +360,7 @@ export function InpaintMaskModal({ imagePath, open, onClose, onSave }: Props) {
             <button
               key={id}
               type="button"
-              disabled={busy}
+              disabled={busy || !ready}
               onClick={() => void runSelection(id)}
               className="flex items-center gap-1 rounded border border-dfui-border/50 px-2 py-1 text-[10px] text-dfui-secondary hover:border-dfui-accent/40 hover:text-dfui-accent disabled:opacity-50"
             >
@@ -242,40 +370,38 @@ export function InpaintMaskModal({ imagePath, open, onClose, onSave }: Props) {
           ))}
         </div>
 
-        <div className="relative mx-auto overflow-hidden rounded-lg border border-dfui-border/50">
-          {previewUrl && (
-            <img
-              src={previewUrl}
-              alt=""
-              className="pointer-events-none absolute inset-0 h-full w-full object-contain opacity-40"
-              style={{ width: size.w, height: size.h }}
-            />
-          )}
+        <div
+          className="relative mx-auto overflow-hidden rounded-lg border border-dfui-border/50 bg-dfui-bg"
+          style={{ width: viewSize.w, height: viewSize.h }}
+        >
           <canvas
-            ref={canvasRef}
-            width={size.w}
-            height={size.h}
-            className={`relative z-10 max-w-full touch-none ${
+            ref={viewCanvasRef}
+            className={`block max-w-full touch-none ${
               tool === "tap_object" || tool === "tap_background"
                 ? "cursor-pointer"
                 : "cursor-crosshair"
             }`}
-            style={{ width: size.w, height: size.h }}
+            style={{ width: viewSize.w, height: viewSize.h }}
             onPointerDown={(e) => {
-              if (busy) return;
+              if (busy || !ready) return;
               drawing.current = tool === "paint" || tool === "erase";
               (e.target as HTMLCanvasElement).setPointerCapture(e.pointerId);
-              handleCanvasPointer(e.clientX, e.clientY);
+              handlePointer(e.clientX, e.clientY);
             }}
             onPointerMove={(e) => {
-              if (!drawing.current || busy) return;
+              if (!drawing.current || busy || !ready) return;
               if (tool !== "paint" && tool !== "erase") return;
-              paint(e.clientX, e.clientY);
+              paintMask(e.clientX, e.clientY);
             }}
             onPointerUp={() => {
               drawing.current = false;
             }}
           />
+          {!ready && (
+            <div className="absolute inset-0 flex items-center justify-center bg-dfui-bg/80 text-[10px] text-dfui-muted">
+              Loading image…
+            </div>
+          )}
         </div>
 
         <div className="space-y-2 border-t border-dfui-border/40 px-3 py-2">
@@ -332,8 +458,8 @@ export function InpaintMaskModal({ imagePath, open, onClose, onSave }: Props) {
               onChange={(e) => setMergeMode(e.target.value as "add" | "replace")}
               className="df-select px-2 py-1 text-[10px]"
             >
-              <option value="add">Add to mask</option>
-              <option value="replace">Replace mask</option>
+              <option value="add">Add to selection</option>
+              <option value="replace">Replace selection</option>
             </select>
             <button
               type="button"
@@ -347,11 +473,11 @@ export function InpaintMaskModal({ imagePath, open, onClose, onSave }: Props) {
           <div className="flex justify-end">
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || !ready}
               onClick={() => void exportMask()}
               className="rounded-lg bg-dfui-accent px-3 py-1.5 text-xs font-medium text-dfui-bg hover:opacity-90 disabled:opacity-50"
             >
-              Apply mask
+              Apply selection
             </button>
           </div>
         </div>

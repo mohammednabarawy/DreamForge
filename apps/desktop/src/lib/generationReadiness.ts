@@ -129,14 +129,7 @@ export function computeGenerateReadiness(args: {
   if (args.editPlanState === "not_ready") {
     return {
       ok: false,
-      reason: "Plan is not ready — resolve missing inputs in the plan card",
-      missingCompanions: false,
-    };
-  }
-  if (args.editPlanState === "stale") {
-    return {
-      ok: false,
-      reason: "Settings changed — click Generate to refresh the plan",
+      reason: "Resolve missing inputs in Settings, then Generate again",
       missingCompanions: false,
     };
   }

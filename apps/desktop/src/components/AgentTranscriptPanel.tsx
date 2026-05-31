@@ -39,7 +39,7 @@ export function AgentTranscriptPanel({ messages, runtimeLabel, onClear }: Props)
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
         {messages.length === 0 ? (
           <p className="text-[11px] leading-relaxed text-dfui-tertiary">
-            Ask the agent to plan a local workflow. Plans appear as review cards before anything runs.
+            Ask the agent what you want. Generate applies the route to Settings and runs it.
           </p>
         ) : (
           <div className="space-y-2">

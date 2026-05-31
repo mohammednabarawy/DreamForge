@@ -9,9 +9,7 @@ import { PromptBar } from "./PromptBar";
 import type { EngineState } from "../lib/engine";
 import type { GenerationSettings } from "../lib/tauri-api";
 import type { StudioMode } from "../lib/model-selection";
-import type { EditFamilyPlanState } from "../lib/generationReadiness";
-import { WorkflowPlanPanel } from "./WorkflowPlanPanel";
-import type { AgentPlanSnapshot, AgentTranscriptMessage } from "../lib/studioBridge";
+import type { AgentTranscriptMessage } from "../lib/studioBridge";
 import { AgentTranscriptPanel } from "./AgentTranscriptPanel";
 
 type Mention = { kind: "model" | "style"; label: string; value: string };
@@ -40,14 +38,8 @@ type Props = {
   mentions: Mention[];
   generating: boolean;
   generationLog: string;
-  agentPlan: AgentPlanSnapshot | null;
   agentTranscript?: AgentTranscriptMessage[];
   agentRuntimeLabel?: string;
-  planApprovalRequired?: boolean;
-  planRunBusy?: boolean;
-  onApplyAgentPlan?: () => void;
-  onRunApprovedPlan?: () => void;
-  onDismissAgentPlan?: () => void;
   onClearAgentTranscript?: () => void;
   onDryRun: () => void;
   onGenerate: () => void;
@@ -61,7 +53,6 @@ type Props = {
   onOpenFullLog: () => void;
   activeModelLabel: string;
   referenceModelFamily?: string;
-  editPlanState?: EditFamilyPlanState;
 };
 
 export function CanvasPanel({
@@ -88,14 +79,8 @@ export function CanvasPanel({
   mentions,
   generating,
   generationLog,
-  agentPlan,
   agentTranscript = [],
   agentRuntimeLabel,
-  planApprovalRequired,
-  planRunBusy,
-  onApplyAgentPlan,
-  onRunApprovedPlan,
-  onDismissAgentPlan,
   onClearAgentTranscript,
   onDryRun,
   onGenerate,
@@ -109,7 +94,6 @@ export function CanvasPanel({
   onOpenFullLog,
   activeModelLabel,
   referenceModelFamily,
-  editPlanState,
 }: Props) {
   return (
     <section className="flex h-full min-w-0 flex-col">
@@ -229,21 +213,6 @@ export function CanvasPanel({
             </div>
           </div>
         )}
-        {agentPlan && !generating && (
-          <WorkflowPlanPanel
-            plan={agentPlan}
-            applied={Boolean(agentPlan.applied && Object.keys(agentPlan.applied).length)}
-            approvalRequired={planApprovalRequired}
-            runBusy={planRunBusy}
-            canRunGeneration={workerReady && !generating}
-            runBlockReason={generateBlockReason}
-            onApply={onApplyAgentPlan}
-            onRun={onRunApprovedPlan}
-            onDismiss={onDismissAgentPlan}
-            onDownloadCompanions={onDownloadCompanions}
-            companionDownloadBusy={companionDownloadBusy}
-          />
-        )}
         {studioMode === "agent" && !generating && (
           <AgentTranscriptPanel
             messages={agentTranscript}
@@ -296,9 +265,8 @@ export function CanvasPanel({
         companionDownloadBusy={companionDownloadBusy}
         onDownloadCompanions={onDownloadCompanions}
         activeModelLabel={activeModelLabel}
-        referenceModelFamily={referenceModelFamily}
-        editPlanState={editPlanState}
-      />
+            referenceModelFamily={referenceModelFamily}
+          />
     </section>
   );
 }

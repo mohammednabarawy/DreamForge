@@ -117,14 +117,8 @@ export default function App() {
             mentions={mc.mentionTargets}
             generating={mc.generating}
             generationLog={mc.generationLog}
-            agentPlan={mc.agentPlan}
             agentTranscript={mc.agentTranscript}
             agentRuntimeLabel={mc.agentRuntimeLabel}
-            planApprovalRequired={mc.appConfig?.agent.approval_required}
-            planRunBusy={mc.planRunBusy}
-            onApplyAgentPlan={() => void mc.applyAgentPlan()}
-            onRunApprovedPlan={() => void mc.runApprovedPlan()}
-            onDismissAgentPlan={mc.dismissAgentPlan}
             onClearAgentTranscript={mc.clearAgentTranscript}
             onDryRun={() => void mc.runDryRun()}
             onGenerate={() => void mc.runGenerate()}
@@ -140,7 +134,6 @@ export default function App() {
             onOpenFullLog={() => setFullLogOpen(true)}
             activeModelLabel={mc.activeModelLabel}
             referenceModelFamily={mc.referenceModelFamily}
-            editPlanState={mc.editPlanState}
           />
         </Panel>
         <PanelResizeHandle className="w-1 bg-dfui-border/50 transition hover:bg-dfui-accent/60" />

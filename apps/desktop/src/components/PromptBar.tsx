@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import type { GenerationSettings } from "../lib/tauri-api";
 import type { StudioMode } from "../lib/model-selection";
-import type { EditFamilyPlanState } from "../lib/generationReadiness";
 import { detectAgentPromptHint } from "../lib/parseAgentPrompt";
 import {
   activeReferenceMode,
@@ -40,7 +39,6 @@ type Props = {
   onOpenInpaintMask?: () => void;
   activeModelLabel: string;
   referenceModelFamily?: string;
-  editPlanState?: EditFamilyPlanState;
 };
 
 export function PromptBar({
@@ -68,22 +66,11 @@ export function PromptBar({
   onOpenInpaintMask,
   activeModelLabel,
   referenceModelFamily,
-  editPlanState = "none",
 }: Props) {
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [promptDragOver, setPromptDragOver] = useState(false);
   const isAgentMode = studioMode === "agent";
-  const isEditFamily =
-    studioMode === "edit" || studioMode === "inpaint" || studioMode === "upscale";
-  const primaryActionLabel = isAgentMode
-    ? "Apply & open route"
-    : isEditFamily
-      ? editPlanState === "ready"
-        ? "Run plan"
-        : editPlanState === "stale"
-          ? "Refresh plan"
-          : "Plan run"
-      : "Generate";
+  const primaryActionLabel = "Generate";
   const canRunPrimary =
     isAgentMode && !generating
       ? Boolean((settings.prompt ?? "").trim())

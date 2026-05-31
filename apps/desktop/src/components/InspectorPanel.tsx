@@ -576,7 +576,8 @@ export function InspectorPanel({
                     <span className="font-mono text-dfui-fg">{routedModelLabel}</span>
                   </p>
                   <p className="mt-1 text-[10px] leading-snug text-dfui-tertiary">
-                    Generate builds a dry-run plan first. Review the plan card on the canvas, then Run plan.
+                    Generate plans the route, applies it in Settings, and runs immediately. Tweak
+                    values here and Generate again if the result needs adjustment.
                     {!powerUserInspector && " Enable Advanced mode in Settings to pick models manually."}
                   </p>
                 </div>
@@ -653,7 +654,7 @@ export function InspectorPanel({
                 </div>
                 {isInpaint && (
                   <p className="text-[10px] leading-snug text-dfui-tertiary">
-                    Open Smart mask to tap objects (Gallery-style), select subject/background/clothes/face, then refine with brush.
+                    Open Smart mask — selected areas appear as a pale red overlay (Photoshop-style), then refine with brush.
                   </p>
                 )}
                 {isInpaint && (

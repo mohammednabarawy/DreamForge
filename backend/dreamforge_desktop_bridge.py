@@ -398,18 +398,9 @@ def cmd_delete_session(params: dict) -> dict:
 
 
 def cmd_list_styles(_params: dict) -> dict:
-    from dreamforge_style_assets import resolve_style_thumbnail_path
-    from dreamforge_style_recipes import STYLE_RECIPES
+    from dreamforge_agent_tools import list_style_recipes_for_agent
 
-    recipes = []
-    for name, spec in sorted(STYLE_RECIPES.items()):
-        payload = {"id": name, **spec}
-        thumb = resolve_style_thumbnail_path(name, spec)
-        if thumb:
-            payload["thumbnail"] = thumb
-        else:
-            payload.pop("thumbnail", None)
-        recipes.append(payload)
+    recipes = list_style_recipes_for_agent(include_thumbnail=True)
     return {"ok": True, "styles": recipes}
 
 

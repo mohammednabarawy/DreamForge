@@ -18,26 +18,28 @@ This project (`D:\\DreamForge`) is an automation-friendly wrapper around **local
 
 | Rule | Action |
 | :--- | :--- |
-| Discover models | Use MCP `list_models()` or `recommend_model(use_case)` |
-| Plan before GPU | Use MCP `dry_run()` or `plan_workflow()` — check `ready` and `missing_dependencies` |
+| Discover capabilities | MCP `get_agent_catalog()` then `list_styles()` / `list_loras()` / `list_models()` |
+| Plan before GPU | MCP `dry_run()` or `plan_workflow()` — check `ready` and `missing_dependencies` |
+| Style presets | MCP/CLI `style=product_ad` (style **recipe id**; replaces legacy use_case) |
 | User preferences | Local style memory + `dynamic_preset` in brain plans (opt-in on disk) |
-| Image Editing | Use MCP `edit_image()` with `edit_type="kontext"` for Flux Kontext |
+| Image Editing | MCP `edit_image()` with `edit_type="kontext"` for Flux Kontext |
+| LoRA stacks | MCP `lora=["file.safetensors:0.6"]` or CLI `--lora file:weight` |
 | This machine (16 GB) | VRAM profile `16gb` |
 | Final assets | Outputs tracked via manifest JSONs; use `list_outputs()` |
-| Exact Arabic/text | Use `generate_arabic_poster()`, NOT raw SDXL prompts |
+| Exact Arabic/text | `generate_arabic_poster()`, NOT raw SDXL prompts |
 
 ---
 
-## Model Routing by Use Case
+## Model routing by style recipe
 
-| Use case | Recommended model | Family |
+| Style recipe | Typical model family | Notes |
 | :--- | :--- | :--- |
-| `product_ad` | `epicrealismXL_VXIAbeast4SLightning` / `RealVisXL` | sdxl |
-| `cinematic_scene` | `hidream_o1_image_dev_mxfp8` | hidream_o1 |
-| `infographic` | `flux1-schnell-fp8` | flux |
-| `fast_draft` | `z_image_turbo_fp8_e4m3fn` | z_image |
-| `image_edit` | `flux1-dev-kontext_fp8_scaled` | flux_kontext |
-| `concept_art` | `hidream_o1_image_dev_mxfp8` | hidream_o1 |
+| `product_ad` | sdxl | Commercial product shots; embedded SDXL style fragments |
+| `cinematic` / `cinematic_scene` | hidream_o1 / sdxl | Scene lighting; HiDream for hero frames |
+| `fast_draft` | z_image / flux | Iteration previews |
+| `infographic` / `mockup_ui` | flux | Layouts; minimal legacy styles |
+| `image_edit` | flux_kontext | Requires `--input-image` |
+| `concept_art` | hidream_o1 | Environment illustration defaults |
 
 **Important Notes:**
 - **Modern families** (Flux, HiDream, Qwen, Z-Image) disable legacy DreamForge styles.

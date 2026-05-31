@@ -121,3 +121,82 @@ def test_mcp_sessions_resource_is_structured(monkeypatch):
         {"id": "alpha", "output_count": 2},
         {"id": "beta", "output_count": 1},
     ]
+
+
+def test_mcp_get_agent_catalog_includes_styles_and_loras():
+    import dreamforge_mcp_server as mcp_server
+
+    payload = json.loads(mcp_server.get_agent_catalog(style_limit=5, lora_limit=5))
+
+    assert payload["status"] == "success"
+    assert payload["generation_parameters"]["style"]["example"] == "product_ad"
+    assert "product_ad" in payload["generation_parameters"]["style"]["values"]
+    assert payload["style_recipes"]["sample"]
+    assert "lora" in payload["generation_parameters"]
+    assert "list_styles" in payload["mcp_tools"]["discover"]
+
+
+def test_mcp_list_styles_returns_recipe_metadata():
+    import dreamforge_mcp_server as mcp_server
+
+    payload = json.loads(mcp_server.list_styles(limit=3))
+
+    assert payload["status"] == "success"
+    assert payload["parameter"] == "style"
+    assert len(payload["styles"]) <= 3
+    first = payload["styles"][0]
+    assert "id" in first
+    assert "label" in first
+
+
+def test_mcp_list_loras_reports_usage_format():
+    import dreamforge_mcp_server as mcp_server
+
+    payload = json.loads(mcp_server.list_loras(limit=1))
+
+    assert payload["status"] == "success"
+    assert payload["format"] == "filename.safetensors:weight"
+    if payload["loras"]:
+        assert "usage" in payload["loras"][0]
+
+
+def test_mcp_generate_passes_lora_stack(monkeypatch):
+    import dreamforge_mcp_server as mcp_server
+
+    captured = {}
+
+    def fake_execute(params):
+        captured["params"] = params
+        return {"status": "success"}
+
+    monkeypatch.setattr(mcp_server.DreamForgeEngine, "execute_job", fake_execute)
+
+    payload = json.loads(
+        mcp_server.generate_image(
+            "studio product",
+            style="product_ad",
+            lora=["detail_tweaker_xl.safetensors:0.5"],
+            approved=True,
+        )
+    )
+
+    assert payload["status"] == "success"
+    assert captured["params"]["lora"] == ["detail_tweaker_xl.safetensors:0.5"]
+    assert captured["params"]["style"] == "product_ad"
+
+
+def test_mcp_recommend_for_style_marks_recipe_models(monkeypatch):
+    import dreamforge_mcp_server as mcp_server
+
+    monkeypatch.setattr(
+        mcp_server,
+        "resolve_generation_model",
+        lambda query: {"name": query, "family": "sdxl"} if "RealVis" in query else None,
+    )
+
+    payload = json.loads(mcp_server.recommend_for_style(style="product_ad", limit=3))
+
+    assert payload["status"] == "success"
+    assert payload["style"] == "product_ad"
+    assert payload["recipe_models"]
+    assert any(item["requested"] for item in payload["recipe_models"])

@@ -11,7 +11,14 @@ extend_sys_path()
 from mcp.server.fastmcp import FastMCP
 
 from dreamforge_engine import DreamForgeEngine
-from dreamforge_agent_tools import STYLE_RECIPES, validate_image as _validate_image
+from dreamforge_agent_tools import (
+    STYLE_RECIPES,
+    build_agent_catalog,
+    list_loras_for_agent,
+    list_style_recipes_for_agent,
+    recommend_model_for_task,
+    validate_image as _validate_image,
+)
 from dreamforge_cli_inventory import (
     check_model_dependencies,
     model_setup_warnings,
@@ -60,6 +67,9 @@ def _mcp_status() -> dict:
         "execution_requires_approval": True,
         "arbitrary_shell": False,
         "arbitrary_filesystem": False,
+        "agent_guide_tool": "get_agent_catalog",
+        "style_parameter": "style",
+        "lora_format": "filename.safetensors:weight",
     }
 
 
@@ -179,6 +189,25 @@ def run_poster_pipeline(args: list) -> dict:
     return {"status": "error", "message": "No JSON output found in stdout", "stderr": result.stderr}
 
 # --- ACTIVE CONTEXT & OUTPUT MANAGEMENT TOOLS ---
+
+@mcp.tool()
+def get_agent_catalog(
+    style_limit: int = 40,
+    lora_limit: int = 80,
+    include_style_thumbnails: bool = False,
+) -> str:
+    """
+    Return the full DreamForge agent capability guide: style recipes, LoRAs, model
+    families, workflow modes, CLI/MCP parameters, and discovery tool index.
+    Call this first when planning creative image jobs.
+    """
+    catalog = build_agent_catalog(style_limit=style_limit, lora_limit=lora_limit)
+    if include_style_thumbnails:
+        catalog["style_recipes"]["sample"] = list_style_recipes_for_agent(
+            include_thumbnail=True,
+            limit=style_limit,
+        )
+    return json.dumps(catalog, ensure_ascii=False, indent=2)
 
 @mcp.tool()
 def get_mcp_capabilities() -> str:
@@ -301,14 +330,18 @@ def generate_image(
     reference_weight: float = 0.65,
     region_prompts: Optional[List[str]] = None,
     region_prompts_json: str = "",
+    lora: Optional[List[str]] = None,
+    prompt_enhancer: str = "none",
     approved: bool = False,
 ) -> str:
     """
     Generate an image using the local DreamForge engine.
 
     ``style`` selects a DreamForge style recipe (product_ad, cinematic, sai_enhance, …).
+    Use ``list_styles`` or ``get_agent_catalog`` to discover recipe ids, models, and aspect defaults.
     ``styles`` is an advanced override for embedded SDXL prompt fragments; usually leave unset
     so the recipe supplies them.
+    ``lora`` accepts entries like ``detail_tweaker_xl.safetensors:0.6`` (see ``list_loras``).
     """
     blocked = _execution_allowed("generate_image", approved)
     if blocked:
@@ -326,6 +359,8 @@ def generate_image(
         "reference_images": reference_images, "reference_mode": reference_mode,
         "reference_weight": reference_weight, "region_prompts": region_prompts,
         "region_prompts_json": region_prompts_json,
+        "lora": lora or [],
+        "prompt_enhancer": prompt_enhancer,
     }
     res = DreamForgeEngine.execute_job(params)
     return json.dumps(res, indent=2)
@@ -420,9 +455,11 @@ def dry_run(
     edit_type: str = "auto",
     reference_images: Optional[List[str]] = None,
     region_prompts: Optional[List[str]] = None,
+    lora: Optional[List[str]] = None,
 ) -> str:
     """
     Preview generation plan without loading GPU models. Checks dependencies and resolves parameters.
+    Pass ``style`` recipe id and optional ``lora`` stack before calling ``generate_image``.
     """
     denied = _require_mcp_capability("plan", "dry_run")
     if denied:
@@ -437,6 +474,7 @@ def dry_run(
         "edit_type": edit_type,
         "reference_images": reference_images,
         "region_prompts": region_prompts,
+        "lora": lora or [],
     }
     res = DreamForgeEngine.dry_run(params)
     return json.dumps(res, indent=2)
@@ -446,17 +484,19 @@ def dry_run(
 # --- DISCOVERY & INVENTORY TOOLS ---
 
 @mcp.tool()
-def list_models() -> str:
-    """Return a summary of installed models across all categories."""
+def list_models(include_metadata: bool = False) -> str:
+    """Return installed models across checkpoints, diffusion_models, loras, controlnet, etc."""
     denied = _require_mcp_capability("read", "list_models")
     if denied:
         return denied
     models = DreamForgeEngine.list_models()
+    if include_metadata:
+        return json.dumps({"status": "success", "categories": models}, indent=2)
     summary = {}
     for cat, items in models.items():
         if items:
             summary[cat] = [item["name"] for item in items]
-    return json.dumps(summary, indent=2)
+    return json.dumps({"status": "success", "categories": summary}, indent=2)
 
 @mcp.tool()
 def resolve_model(query: str) -> str:
@@ -506,9 +546,131 @@ def check_dependencies(model_name: str) -> str:
     }, indent=2)
 
 @mcp.tool()
-def list_styles() -> str:
-    """Return available professional recipes (styles)."""
-    return json.dumps({"styles": list(STYLE_RECIPES.keys())}, indent=2)
+def list_styles(
+    include_thumbnail: bool = False,
+    limit: int = 0,
+    query: str = "",
+) -> str:
+    """
+    List DreamForge style recipes (single-select presets for generate_image ``style``).
+    Each recipe may set default models, aspect ratio, performance tier, and SDXL style fragments.
+    """
+    denied = _require_mcp_capability("read", "list_styles")
+    if denied:
+        return denied
+    recipes = list_style_recipes_for_agent(include_thumbnail=include_thumbnail)
+    if query.strip():
+        needle = query.strip().lower()
+        recipes = [
+            item
+            for item in recipes
+            if needle in item["id"].lower() or needle in item.get("label", "").lower()
+        ]
+    if limit and limit > 0:
+        recipes = recipes[:limit]
+    return json.dumps(
+        {
+            "status": "success",
+            "count": len(recipes),
+            "parameter": "style",
+            "styles": recipes,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+@mcp.tool()
+def list_loras(limit: int = 0, query: str = "") -> str:
+    """
+    List installed LoRA files. Use entries as generate_image ``lora`` values:
+    ``relative_or_filename.safetensors:weight`` (example ``detail_tweaker_xl.safetensors:0.6``).
+    """
+    denied = _require_mcp_capability("read", "list_loras")
+    if denied:
+        return denied
+    items = list_loras_for_agent()
+    if query.strip():
+        needle = query.strip().lower()
+        items = [
+            item
+            for item in items
+            if needle in str(item.get("name", "")).lower()
+            or needle in str(item.get("stem", "")).lower()
+        ]
+    if limit and limit > 0:
+        items = items[:limit]
+    return json.dumps(
+        {
+            "status": "success",
+            "count": len(items),
+            "parameter": "lora",
+            "format": "filename.safetensors:weight",
+            "loras": items,
+        },
+        indent=2,
+    )
+
+@mcp.tool()
+def get_inventory(force_refresh: bool = False) -> str:
+    """
+    Return the cached desktop inventory: model categories, grouped style recipes, and presets.
+    Complements ``list_models`` / ``list_styles`` / ``list_loras`` with gallery-oriented grouping.
+    """
+    denied = _require_mcp_capability("read", "get_inventory")
+    if denied:
+        return denied
+    from dreamforge_model_library_cache import get_cached_inventory, get_cached_lora_gallery
+
+    inventory, from_cache = get_cached_inventory(force_refresh=force_refresh)
+    lora_gallery, lora_from_cache = get_cached_lora_gallery(force_refresh=force_refresh)
+    payload = dict(inventory)
+    payload["lora_gallery"] = lora_gallery
+    payload["from_cache"] = from_cache
+    payload["lora_from_cache"] = lora_from_cache
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+@mcp.tool()
+def recommend_for_style(
+    style: str = "product_ad",
+    vram_profile: str = "16gb",
+    prefer_speed: bool = False,
+    requires_input_image: bool = False,
+    limit: int = 5,
+) -> str:
+    """
+    Rank model families/checkpoints for a style recipe id or creative task name.
+    Also checks recipe ``models`` list against installed checkpoints when ``style`` is a recipe id.
+    """
+    denied = _require_mcp_capability("read", "recommend_for_style")
+    if denied:
+        return denied
+    recommendations = recommend_model_for_task(
+        style,
+        vram_profile=vram_profile,
+        prefer_speed=prefer_speed,
+        requires_input_image=requires_input_image,
+    )
+    recipe_models: list[dict[str, Any]] = []
+    if style in STYLE_RECIPES:
+        for candidate in STYLE_RECIPES[style].get("models") or []:
+            resolved = resolve_generation_model(candidate)
+            recipe_models.append(
+                {
+                    "requested": candidate,
+                    "installed": bool(resolved),
+                    "resolved_name": (resolved or {}).get("name"),
+                    "family": (resolved or {}).get("family"),
+                }
+            )
+    return json.dumps(
+        {
+            "status": "success",
+            "style": style,
+            "recipe_models": recipe_models,
+            "recommendations": recommendations[: max(limit, 1)],
+        },
+        indent=2,
+    )
 
 @mcp.tool()
 def validate_image(image_path: str, check_fake_text: bool = False) -> str:
@@ -522,6 +684,21 @@ def validate_image(image_path: str, check_fake_text: bool = False) -> str:
     return json.dumps(result, indent=2)
 
 # --- MCP RESOURCES ---
+
+@mcp.resource("capabilities://guide")
+def agent_catalog_resource() -> str:
+    """Structured DreamForge agent capability guide (style recipes, LoRAs, workflows)."""
+    return get_agent_catalog()
+
+@mcp.resource("styles://catalog")
+def styles_catalog_resource() -> str:
+    """Full style recipe catalog for generate_image ``style`` parameter."""
+    return list_styles()
+
+@mcp.resource("loras://list")
+def loras_list_resource() -> str:
+    """Installed LoRA files and usage format."""
+    return list_loras()
 
 @mcp.resource("models://list")
 def list_models_resource() -> str:
@@ -630,17 +807,30 @@ def analyze_project() -> str:
     Analyze and summarize the project directory state, outputs, and model availability.
     """
     try:
-        models_inv = json.loads(list_models())
+        models_payload = json.loads(list_models())
+        models_inv = models_payload.get("categories") or models_payload
         outputs_list = json.loads(list_outputs(limit=10))
         
         total_outputs = outputs_list.get("total", 0)
-        recent_images = outputs_list.get("results", [])
+        recent_images = outputs_list.get("projects") or outputs_list.get("results") or []
         
         summary = {
             "status": "success",
             "project_root": str(PROJECT_ROOT),
             "total_generations": total_outputs,
-            "installed_models_summary": {cat: len(items) for cat, items in models_inv.items()},
+            "installed_models_summary": {
+                cat: len(items) for cat, items in models_inv.items() if isinstance(items, list)
+            },
+            "style_recipe_count": len(STYLE_RECIPES),
+            "lora_count": len(list_loras_for_agent()),
+            "featured_style_recipes": [
+                "product_ad",
+                "cinematic",
+                "fast_draft",
+                "concept_art",
+                "fashion_editorial",
+            ],
+            "agent_guide_tool": "get_agent_catalog",
             "recent_generations": [
                 {
                     "prompt": item.get("prompt"),

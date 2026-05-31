@@ -44,6 +44,7 @@ class AgentRuntime:
             "arbitrary_shell": False,
             "arbitrary_filesystem": False,
             "tools": [
+                "get_agent_catalog",
                 "plan",
                 "execute",
                 "generate",
@@ -51,6 +52,8 @@ class AgentRuntime:
                 "inpaint",
                 "upscale",
                 "list_models",
+                "list_styles",
+                "list_loras",
                 "list_outputs",
                 "analyze_project",
             ],

@@ -445,6 +445,209 @@ def write_manifest(path: str, payload: dict[str, Any]) -> str:
         json.dump(payload, handle, ensure_ascii=False, indent=2)
     return str(manifest_path)
 
+
+def style_recipe_label(style_id: str, spec: dict[str, Any]) -> str:
+    original = str(spec.get("original_name") or "").strip()
+    if original:
+        return original
+    return style_id.replace("_", " ").strip().title()
+
+
+def summarize_style_recipe(
+    style_id: str,
+    spec: dict[str, Any] | None = None,
+    *,
+    include_thumbnail: bool = False,
+) -> dict[str, Any]:
+    """Agent-safe summary of one style recipe (no absolute paths unless thumbnail exists)."""
+    from dreamforge_style_assets import resolve_style_thumbnail_path
+
+    spec = spec if spec is not None else STYLE_RECIPES[style_id]
+    payload: dict[str, Any] = {
+        "id": style_id,
+        "label": style_recipe_label(style_id, spec),
+        "models": list(spec.get("models") or []),
+        "performance": spec.get("performance"),
+        "aspect_ratio": spec.get("aspect_ratio"),
+        "prompt_prefix": spec.get("prompt_prefix"),
+        "prompt_profile": spec.get("prompt_profile"),
+        "sdxl_styles": list(spec.get("styles") or []),
+        "notes": spec.get("notes"),
+    }
+    if include_thumbnail:
+        thumb = resolve_style_thumbnail_path(style_id, spec)
+        if thumb:
+            payload["thumbnail"] = thumb
+    return {key: value for key, value in payload.items() if value not in (None, [], "")}
+
+
+def list_style_recipes_for_agent(
+    *,
+    include_thumbnail: bool = False,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    recipes = [
+        summarize_style_recipe(style_id, spec, include_thumbnail=include_thumbnail)
+        for style_id, spec in sorted(STYLE_RECIPES.items(), key=lambda item: item[0].lower())
+    ]
+    if limit is not None and limit > 0:
+        return recipes[:limit]
+    return recipes
+
+
+def list_loras_for_agent(*, limit: int | None = None) -> list[dict[str, Any]]:
+    """Installed LoRA files under backend/models/loras."""
+    from dreamforge_cli_inventory import list_model_inventory
+
+    inv = list_model_inventory()
+    loras = inv.get("categories", {}).get("loras", [])
+    items = [
+        {
+            "name": entry.get("name"),
+            "stem": entry.get("stem"),
+            "relative_path": entry.get("relative_path"),
+            "size_mb": entry.get("size_mb"),
+            "usage": f'{entry.get("name")}:0.8',
+        }
+        for entry in loras
+        if entry.get("name")
+    ]
+    if limit is not None and limit > 0:
+        return items[:limit]
+    return items
+
+
+def build_agent_catalog(*, style_limit: int = 40, lora_limit: int = 80) -> dict[str, Any]:
+    """
+    Structured capability guide for MCP/CLI agents: models, style recipes, LoRAs,
+    workflow modes, and safe execution rules.
+    """
+    from _paths import PROJECT_ROOT
+    from dreamforge_cli_inventory import list_model_inventory
+    from dreamforge_desktop_bridge import _group_styles
+
+    inv = list_model_inventory()
+    style_groups = _group_styles(inv.get("styles", []))
+    loras = list_loras_for_agent(limit=lora_limit)
+    category_counts = {
+        cat: len(items or [])
+        for cat, items in (inv.get("categories") or {}).items()
+        if items
+    }
+
+    featured_styles = [
+        "product_ad",
+        "cinematic",
+        "fast_draft",
+        "concept_art",
+        "fashion_editorial",
+        "social_post",
+        "book_cover",
+        "mockup_ui",
+        "image_edit",
+    ]
+    featured = [
+        summarize_style_recipe(style_id)
+        for style_id in featured_styles
+        if style_id in STYLE_RECIPES
+    ]
+
+    return {
+        "status": "success",
+        "project_root": str(PROJECT_ROOT),
+        "local_only_image_backend": True,
+        "entry_points": {
+            "mcp_server": "backend/dreamforge_mcp_server.py (dreamforge-mcp.bat)",
+            "cli": "backend/dreamforge_cli_direct.py --json",
+            "desktop_bridge": "backend/dreamforge_desktop_bridge.py",
+        },
+        "execution_rules": {
+            "dry_run_first": True,
+            "approval_required_for_gpu": True,
+            "vram_profiles": ["16gb", "8gb", "5gb", "mps"],
+            "default_vram_profile": "16gb",
+        },
+        "generation_parameters": {
+            "style": {
+                "description": "Single style recipe id (replaces legacy use_case).",
+                "values": ["none", *sorted(STYLE_RECIPES.keys(), key=str.lower)],
+                "count": len(STYLE_RECIPES),
+                "example": "product_ad",
+            },
+            "creative_brief": [attr for _, attr in CREATIVE_FIELDS],
+            "lora": {
+                "cli_flag": "--lora",
+                "mcp_field": "lora",
+                "format": "filename.safetensors:weight",
+                "example": ["detail_tweaker_xl.safetensors:0.6"],
+            },
+            "sdxl_styles": {
+                "cli_flag": "--sdxl-styles",
+                "description": "Advanced override of embedded SDXL prompt fragments; usually leave unset when using --style.",
+            },
+            "prompt_enhancer": ["none", "flufferizer", "hyperprompt", "erniehancer"],
+        },
+        "workflow_modes": {
+            "generate": "Text-to-image; set prompt + style recipe.",
+            "edit": "edit_image with edit_type kontext|qwen_edit|img2img|auto.",
+            "inpaint": "edit_image/inpaint_image with inpaint_mask_path.",
+            "upscale": "upscale_image with upscale_method 2x.",
+            "hires": "generate_image with hires=true for two-pass refinement.",
+            "reference": "reference_images + reference_mode for IP-Adapter style guidance.",
+            "area_composition": "region_prompts for multi-region layouts.",
+            "arabic_poster": "generate_arabic_poster for exact RTL typography.",
+        },
+        "model_families": MODEL_FAMILY_HINTS,
+        "installed_inventory": {
+            "models_root": inv.get("models_root"),
+            "category_counts": category_counts,
+            "lora_count": len(loras),
+            "preset_count": len(inv.get("presets") or []),
+        },
+        "style_recipes": {
+            "selectable_ids": style_groups.get("selectable", []),
+            "groups": style_groups.get("groups", []),
+            "featured": featured,
+            "sample": list_style_recipes_for_agent(limit=style_limit),
+        },
+        "loras": {
+            "count": len(loras),
+            "items": loras,
+        },
+        "mcp_tools": {
+            "discover": [
+                "get_agent_catalog",
+                "get_mcp_capabilities",
+                "list_models",
+                "list_styles",
+                "list_loras",
+                "get_inventory",
+                "recommend_model",
+                "recommend_for_style",
+                "resolve_model",
+                "check_dependencies",
+            ],
+            "plan": ["dry_run", "plan_workflow", "create_workflow"],
+            "execute": [
+                "generate_image",
+                "edit_image",
+                "inpaint_image",
+                "remove_object",
+                "upscale_image",
+                "generate_arabic_poster",
+            ],
+            "history": [
+                "get_last_generation",
+                "list_outputs",
+                "search_outputs",
+                "get_generation_bundle",
+                "validate_image",
+                "analyze_project",
+            ],
+        },
+    }
+
+
 def recommend_model_for_task(style: str, vram_profile: str = "16gb", prefer_speed: bool = False, requires_input_image: bool = False) -> list[dict]:
     """Return ranked model recommendations with reasoning for a specific task."""
     recommendations = []

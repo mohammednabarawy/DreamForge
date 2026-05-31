@@ -1,3 +1,8 @@
+"""Legacy hand-authored presets — source for ``scripts/convert_styles.py`` only.
+
+Runtime code should import ``STYLE_RECIPES`` from ``dreamforge_style_recipes``.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -212,6 +217,69 @@ USE_CASE_RECIPES: dict[str, dict[str, Any]] = {
         "styles": ["Style: sai-enhance"],
         "models": ["juggernautXL_v8Rundiffusion.safetensors", "RealVisXL_V5.0_fp16.safetensors"],
         "performance": "Quality",
+    },
+    "isometric_design": {
+        "styles": ["Style: sai-isometric", "Style: sai-3d-model", "Style: sai-enhance"],
+        "positive": [
+            "vibrant isometric style",
+            "beautiful crisp intricate details",
+            "clean 3D render",
+        ],
+        "negative": ["deformed", "mutated", "ugly", "disfigured", "blur", "realistic", "photographic"],
+        "performance": "Quality",
+        "aspect_ratio": "1024x1024",
+        "prompt_prefix": "An isometric 3D design of",
+    },
+    "papercraft_art": {
+        "styles": ["Style: papercraft-papercut shadow box", "Style: sai-enhance"],
+        "positive": [
+            "3D papercut shadow box",
+            "layered dimensional depth",
+            "handmade silhouette shadow",
+            "high contrast papercut",
+        ],
+        "negative": ["painting", "drawing", "photo", "2D", "flat", "blurry", "noisy"],
+        "performance": "Quality",
+        "aspect_ratio": "1024x1024",
+        "prompt_prefix": "A beautiful papercraft artwork of",
+    },
+    "glitch_art": {
+        "styles": ["Style: misc-glitch art", "Style: sai-enhance"],
+        "positive": [
+            "breathtaking cinematic glitchy photo",
+            "surreal dreamworld",
+            "digital distortion",
+            "award-winning",
+        ],
+        "negative": ["boring", "plain", "standard", "low resolution"],
+        "performance": "Quality",
+        "aspect_ratio": "1152x896",
+        "prompt_prefix": "A glitch art representation of",
+    },
+    "analog_film": {
+        "styles": ["Style: sai-analog film", "Style: sai-photographic"],
+        "positive": [
+            "analog film photo",
+            "faded film desaturated",
+            "35mm photo grainy vignette vintage Kodachrome",
+            "highly detailed found footage",
+        ],
+        "negative": ["painting", "drawing", "illustration", "glitch", "deformed", "mutated"],
+        "performance": "Quality",
+        "aspect_ratio": "1152x896",
+        "prompt_prefix": "An analog film photograph of",
+    },
+    "digital_painting": {
+        "styles": ["Style: sai-digital art", "Style: sai-enhance"],
+        "positive": [
+            "concept art digital artwork",
+            "illustrative painterly",
+            "matte painting highly detailed",
+        ],
+        "negative": ["photo", "photorealistic", "realism", "ugly"],
+        "performance": "Quality",
+        "aspect_ratio": "1152x896",
+        "prompt_prefix": "A beautiful digital painting of",
     },
 }
 

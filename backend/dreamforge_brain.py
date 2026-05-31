@@ -450,7 +450,7 @@ def heuristic_brain_decision(
         from dreamforge_arabic_composite import extract_arabic_text
 
         patch.setdefault("workflow_mode", "arabic_text_composite")
-        patch.setdefault("use_case", "arabic_poster")
+        patch.setdefault("style", "arabic_poster")
         arabic_text = settings.get("arabic_text") or extract_arabic_text(user_intent)
         if arabic_text:
             patch.setdefault("arabic_text", arabic_text)

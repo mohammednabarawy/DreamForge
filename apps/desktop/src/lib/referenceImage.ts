@@ -64,7 +64,7 @@ export function buildReferenceImagePatch(
       cn_selection: "Custom...",
       cn_type: "upscale",
       upscale_method: "2x",
-      use_case: "image_edit",
+      style: "image_edit",
       output: outputFor("upscale"),
     };
   }
@@ -76,7 +76,7 @@ export function buildReferenceImagePatch(
       edit_type: "inpaint",
       cn_selection: "Custom...",
       cn_type: "inpaint",
-      use_case: "image_edit",
+      style: "image_edit",
       output: outputFor("inpaint"),
     };
   }
@@ -87,7 +87,7 @@ export function buildReferenceImagePatch(
     edit_type: "kontext",
     cn_selection: "None",
     cn_type: "None",
-    use_case: "image_edit",
+    style: "image_edit",
     output: outputFor("edit"),
   };
 }
@@ -103,7 +103,7 @@ export function buildClearReferenceImagePatch(): Partial<GenerationSettings> {
     edit_type: "auto",
     upscale_method: undefined,
     // Return to text-to-image defaults so a cleared reference does not keep edit routing.
-    use_case: "none",
+    style: "none",
   };
 }
 

@@ -1927,8 +1927,8 @@ async fn dry_run(state: State<'_, Arc<AppState>>, params: Value) -> Result<Value
 }
 
 #[tauri::command]
-async fn list_use_cases(state: State<'_, Arc<AppState>>) -> Result<Value, String> {
-    bridge_request_async(state.inner(), "list_use_cases", json!({})).await
+async fn list_styles(state: State<'_, Arc<AppState>>) -> Result<Value, String> {
+    bridge_request_async(state.inner(), "list_styles", json!({})).await
 }
 
 #[tauri::command]
@@ -2630,7 +2630,7 @@ pub fn run() {
             delete_session,
             reveal_path_in_explorer,
             dry_run,
-            list_use_cases,
+            list_styles,
             get_ui_defaults,
             get_model_gallery,
             get_lora_gallery,

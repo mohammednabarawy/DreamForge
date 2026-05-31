@@ -139,13 +139,13 @@ def _summary_from_manifest_entry(item, data, *, max_prompt_chars=8000):
 def list_outputs(
     since=None,
     model=None,
-    use_case=None,
+    style=None,
     limit=20,
     offset=0,
     session=None,
 ):
     """List recent outputs with pagination. Returns (items, total_matching)."""
-    del use_case  # reserved for future filters
+    del style  # reserved for future filters
     offset = max(0, int(offset or 0))
     limit = max(1, int(limit or 20))
     entries = _collect_manifest_entries(since=since, session=session)

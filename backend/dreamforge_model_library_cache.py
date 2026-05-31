@@ -105,15 +105,12 @@ def compute_library_fingerprint() -> dict[str, Any]:
         fingerprint["thumbnails"][label] = _dir_fingerprint(cache_root / label)
 
     fingerprint["meta"]["presets"] = _dir_fingerprint(BACKEND_ROOT / "presets")
-    fingerprint["meta"]["sdxl_styles"] = _dir_fingerprint(
-        BACKEND_ROOT / "sdxl_styles",
-        extensions={".json"},
+    fingerprint["meta"]["style_recipes"] = _file_fingerprint(
+        BACKEND_ROOT / "dreamforge_style_recipes.py"
     )
-    fingerprint["meta"]["styles_csv"] = _file_fingerprint(
-        BACKEND_ROOT / "settings" / "styles.csv"
-    )
-    fingerprint["meta"]["styles_default"] = _file_fingerprint(
-        BACKEND_ROOT / "settings" / "styles.default"
+    fingerprint["meta"]["style_thumbnails"] = _dir_fingerprint(
+        BACKEND_ROOT / "assets" / "style_thumbnails",
+        extensions={".jpg", ".jpeg", ".png", ".webp"},
     )
     return fingerprint
 

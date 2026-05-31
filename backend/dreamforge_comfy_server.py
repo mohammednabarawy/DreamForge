@@ -563,6 +563,8 @@ class ManagedComfyServer:
             str(self.config.port),
             "--extra-model-paths-config",
             str(extra_yaml.resolve()),
+            "--preview-method",
+            "auto",
         ]
 
         if self.config.output_directory:

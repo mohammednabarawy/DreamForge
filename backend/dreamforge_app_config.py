@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from _paths import OUTPUTS_ROOT
-from dreamforge_agent_tools import USE_CASE_RECIPES
+from dreamforge_agent_tools import STYLE_RECIPES
 
 
 CONFIG_ENV = "DREAMFORGE_APP_CONFIG_PATH"
@@ -428,7 +428,7 @@ def _provider_agent_plan(
             "model",
             "prompt",
             "negative_prompt",
-            "use_case",
+            "style",
             "edit_type",
             "edit_strength",
             "input_image",
@@ -570,7 +570,7 @@ def _heuristic_agent_plan(
         mode = "inpaint"
         patch.update(
             {
-                "use_case": "image_edit",
+                "style": "image_edit",
                 "edit_type": "inpaint",
                 "cn_selection": "Custom...",
                 "cn_type": "inpaint",
@@ -606,7 +606,7 @@ def _heuristic_agent_plan(
         if edit_type == "kontext":
             patch.update(
                 {
-                    "use_case": "image_edit",
+                    "style": "image_edit",
                     "edit_type": "kontext",
                     "cn_selection": "None",
                     "cn_type": "None",
@@ -616,7 +616,7 @@ def _heuristic_agent_plan(
         else:
             patch.update(
                 {
-                    "use_case": "image_edit",
+                    "style": "image_edit",
                     "edit_type": "qwen_edit",
                     "cn_selection": "Custom...",
                     "cn_type": "qwen_edit",
@@ -635,18 +635,18 @@ def _heuristic_agent_plan(
         actions.append("Attach or select an input image before running.")
 
     if "arabic" in text or "عربي" in instruction or "خط" in instruction:
-        patch["use_case"] = "arabic_poster" if mode == "generate" else "image_edit"
+        patch["style"] = "arabic_poster" if mode == "generate" else "image_edit"
         patch["negative_prompt"] = "fake Arabic, broken glyphs, unreadable text, random letters"
         actions.append("Use deterministic Arabic text/reference rendering before diffusion when text must be exact.")
 
     if "poster" in text:
         patch.setdefault("aspect_ratio", "896x1344")
-        patch.setdefault("use_case", "arabic_poster" if "arabic" in text else "book_cover")
+        patch.setdefault("style", "arabic_poster" if "arabic" in text else "book_cover")
     if any(word in text for word in ("product", "ad", "advertising")):
-        patch.setdefault("use_case", "product_ad")
+        patch.setdefault("style", "product_ad")
         patch.setdefault("aspect_ratio", "1152x896")
     if any(word in text for word in ("cinematic", "movie", "film")):
-        patch.setdefault("use_case", "cinematic_scene")
+        patch.setdefault("style", "cinematic_scene")
         patch.setdefault("performance", "Quality")
 
     model = _pick_model_for_mode(mode, model_gallery, edit_type=str(patch.get("edit_type") or ""))
@@ -711,7 +711,7 @@ _GENERATION_PATCH_KEYS = {
     "styles",
     "lora",
     "vram_profile",
-    "use_case",
+    "style",
     "performance",
     "image_number",
     "cn_selection",
@@ -780,9 +780,9 @@ def _filter_generation_patch(patch: dict[str, Any]) -> dict[str, Any]:
             filtered["performance"] = "Speed"
         else:
             filtered.pop("performance", None)
-    use_case = filtered.get("use_case")
-    if use_case is not None and use_case not in {"none", *USE_CASE_RECIPES.keys()}:
-        filtered["use_case"] = "image_edit" if filtered.get("input_image") else "none"
+    style = filtered.get("style")
+    if style is not None and style not in {"none", *STYLE_RECIPES.keys()}:
+        filtered["style"] = "image_edit" if filtered.get("input_image") else "none"
     return filtered
 
 
@@ -849,7 +849,7 @@ def _complete_patch_for_mode(
 ) -> dict[str, Any]:
     next_patch = dict(patch)
     if mode == "edit":
-        next_patch.setdefault("use_case", "image_edit")
+        next_patch.setdefault("style", "image_edit")
         next_patch.setdefault("edit_type", "kontext")
         if next_patch.get("edit_type") == "kontext":
             next_patch["cn_selection"] = "None"
@@ -865,7 +865,7 @@ def _complete_patch_for_mode(
         if selected_image:
             next_patch.setdefault("input_image", selected_image)
     elif mode == "inpaint":
-        next_patch.setdefault("use_case", "image_edit")
+        next_patch.setdefault("style", "image_edit")
         next_patch["edit_type"] = "inpaint"
         next_patch["cn_selection"] = "Custom..."
         next_patch["cn_type"] = "inpaint"

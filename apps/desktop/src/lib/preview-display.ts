@@ -20,11 +20,16 @@ function revokeObjectUrl() {
 }
 
 /** Prefer asset:// URLs (no base64 decode); fall back to data URLs from the worker. */
-export function pathToAssetUrl(path: string | undefined): string | undefined {
+export function pathToAssetUrl(
+  path: string | undefined,
+  cacheBust?: number,
+): string | undefined {
   if (!path?.trim()) return undefined;
   try {
     const normalized = path.replace(/\\/g, "/");
-    return convertFileSrc(normalized);
+    const asset = convertFileSrc(normalized);
+    if (cacheBust == null) return asset;
+    return `${asset}?v=${cacheBust}`;
   } catch {
     return undefined;
   }
@@ -37,20 +42,24 @@ export function pathToAssetUrl(path: string | undefined): string | undefined {
 export async function resolveCanvasPreviewUrl(
   source: PreviewSource,
 ): Promise<string | null> {
+  const cacheBust = source.final || source.live ? Date.now() : undefined;
+
   if (source.asset_url) {
     revokeObjectUrl();
-    return source.asset_url;
-  }
-
-  const asset = pathToAssetUrl(source.preview_path);
-  if (asset && (source.final || !source.data_url)) {
-    revokeObjectUrl();
-    return asset;
+    if (cacheBust == null) return source.asset_url;
+    const sep = source.asset_url.includes("?") ? "&" : "?";
+    return `${source.asset_url}${sep}v=${cacheBust}`;
   }
 
   if (source.data_url) {
     revokeObjectUrl();
     return source.data_url;
+  }
+
+  const asset = pathToAssetUrl(source.preview_path, cacheBust);
+  if (asset) {
+    revokeObjectUrl();
+    return asset;
   }
 
   if (source.preview_path) {
@@ -60,7 +69,9 @@ export async function resolveCanvasPreviewUrl(
       });
       if (r.asset_url) {
         revokeObjectUrl();
-        return r.asset_url;
+        if (cacheBust == null) return r.asset_url;
+        const sep = r.asset_url.includes("?") ? "&" : "?";
+        return `${r.asset_url}${sep}v=${cacheBust}`;
       }
       if (r.data_url) {
         revokeObjectUrl();
@@ -69,7 +80,7 @@ export async function resolveCanvasPreviewUrl(
     } catch {
       /* fall through */
     }
-    const fallbackAsset = pathToAssetUrl(source.preview_path);
+    const fallbackAsset = pathToAssetUrl(source.preview_path, cacheBust);
     if (fallbackAsset) {
       revokeObjectUrl();
       return fallbackAsset;
@@ -93,7 +104,7 @@ export function normalizePreviewPath(path: string | undefined): string {
 export async function finalPreviewUrlForPath(
   path: string,
 ): Promise<string | null> {
-  const asset = pathToAssetUrl(path);
+  const asset = pathToAssetUrl(path, Date.now());
   if (asset) return asset;
   return resolveCanvasPreviewUrl({ preview_path: path, final: true });
 }

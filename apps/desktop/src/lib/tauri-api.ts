@@ -32,7 +32,7 @@ export type GenerationSettings = {
   styles?: string[];
   lora?: string[];
   vram_profile?: "auto" | "16gb" | "8gb" | "5gb";
-  use_case?: string;
+  style?: string;
   performance?: string;
   image_number?: number;
   cn_selection?: string;
@@ -226,11 +226,11 @@ export async function getUiDefaults() {
   return invoke<UiDefaults & { ok?: boolean }>("get_ui_defaults");
 }
 
-export async function listUseCases() {
-  const res = await invoke<{ ok?: boolean; use_cases?: Array<{ id: string; models?: string[] }> }>(
-    "list_use_cases",
+export async function listStyles() {
+  const res = await invoke<{ ok?: boolean; styles?: Array<{ id: string; models?: string[] }> }>(
+    "list_styles",
   );
-  return { use_cases: res.use_cases ?? [] };
+  return { styles: res.styles ?? [] };
 }
 
 export async function getInventory(opts?: { forceRefresh?: boolean }) {

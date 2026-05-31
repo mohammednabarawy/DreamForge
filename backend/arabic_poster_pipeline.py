@@ -193,7 +193,7 @@ def _run_dreamforge_inprocess(
         "cn_selection": fields.get("cn_selection") or "None",
         "cn_type": fields.get("cn_type") or "None",
         "vram_profile": "auto",
-        "use_case": "none",
+        "style": "none",
     }
 
     prev_flag = os.environ.get("DREAMFORGE_IN_ARABIC_PIPELINE")
@@ -957,7 +957,7 @@ def run_full_pipeline(args):
         manifest_path = getattr(args, "manifest_path", None) or default_manifest_path(final_paths, os.path.join(PROJECT_ROOT, "outputs"))
         write_manifest(manifest_path, {
             "tool": "arabic-poster-cli",
-            "use_case": getattr(args, "use_case", "none"),
+            "style": getattr(args, "style", "none"),
             "brand_kit": args._brand_kit.get("_path") if isinstance(args._brand_kit, dict) else None,
             "preset": args.preset,
             "prompt_profile": args.prompt_profile,
@@ -1021,7 +1021,7 @@ def print_dry_run_plan(args):
 
     plan = {
         "preset": args.preset,
-        "use_case": args.use_case,
+        "style": args.style,
         "brand_kit": args._brand_kit.get("_path") if isinstance(args._brand_kit, dict) else None,
         "prompt_profile": args.prompt_profile,
         "base_model": args.base_model,

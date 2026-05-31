@@ -403,3 +403,20 @@ class ComfyClient:
         with urllib.request.urlopen(req, timeout=timeout_s) as resp:
             return resp.read()
 
+    def free_memory(
+        self,
+        *,
+        unload_models: bool = True,
+        free_memory: bool = True,
+        timeout_s: float = 10.0,
+    ) -> dict:
+        """Call ComfyUI's POST /free endpoint to unload models and free VRAM."""
+        url = f"{self.base_url}/free"
+        payload = {"unload_models": unload_models, "free_memory": free_memory}
+        try:
+            return _http_json("POST", url, payload, timeout_s=timeout_s)
+        except Exception as exc:
+            _log.warning("Failed to call ComfyUI /free endpoint: %s", exc)
+            return {"ok": False, "error": str(exc)}
+
+

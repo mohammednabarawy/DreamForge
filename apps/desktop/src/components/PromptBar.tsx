@@ -122,9 +122,7 @@ export function PromptBar({
     if (m.kind === "model") {
       onChange({ prompt: base, model: m.value });
     } else {
-      const styles = new Set(settings.styles ?? []);
-      styles.add(m.value);
-      onChange({ prompt: base, styles: [...styles] });
+      onChange({ prompt: base, style: m.value });
     }
     setMentionQuery(null);
   };

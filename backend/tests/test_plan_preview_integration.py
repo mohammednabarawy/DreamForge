@@ -22,7 +22,7 @@ def test_engine_plan_includes_dynamic_preset():
     )
     preset = decision.get("dynamic_preset")
     assert isinstance(preset, dict)
-    assert preset.get("applied", {}).get("use_case") == "product_ad"
+    assert preset.get("applied", {}).get("style") == "product_ad"
 
 
 def test_plan_user_intent_includes_dynamic_preset():
@@ -32,7 +32,7 @@ def test_plan_user_intent_includes_dynamic_preset():
     )
     preset = decision.get("dynamic_preset")
     assert isinstance(preset, dict)
-    assert preset.get("applied", {}).get("use_case") == "fast_draft"
+    assert preset.get("applied", {}).get("style") == "fast_draft"
 
 
 def test_desktop_bridge_brain_plan_returns_decision():
@@ -55,7 +55,7 @@ def test_agent_plan_instruction_includes_dynamic_preset(tmp_path, monkeypatch):
         }
     )
     assert result.get("ok") is True
-    assert result.get("dynamic_preset", {}).get("applied", {}).get("use_case") == "social_post"
+    assert result.get("dynamic_preset", {}).get("applied", {}).get("style") == "social_post"
 
 
 def test_rest_brain_plan_endpoint():
@@ -76,7 +76,7 @@ def test_rest_brain_plan_endpoint():
         assert body.get("schema_version") or body.get("workflow_plan") or body.get("patch")
         preset = body.get("dynamic_preset")
         assert isinstance(preset, dict)
-        assert preset.get("applied", {}).get("use_case") == "product_ad"
+        assert preset.get("applied", {}).get("style") == "product_ad"
     finally:
         server.shutdown()
         thread.join(timeout=5)
@@ -86,8 +86,8 @@ def test_ui_agent_plan_preset_hint():
     hint = _preset_hint(
         {
             "dynamic_preset": {
-                "applied": {"use_case": "product_ad", "aspect_ratio": "1152x896"},
-                "source": ["intent", "use_case_recipe"],
+                "applied": {"style": "product_ad", "aspect_ratio": "1152x896"},
+                "source": ["intent", "style_recipe"],
             }
         }
     )
@@ -100,5 +100,5 @@ def test_ui_request_plan_returns_hint_for_product_intent():
     plan_json, hint = _request_plan("Professional product advertisement for headphones")
     plan = json.loads(plan_json)
     assert isinstance(plan, dict)
-    assert plan.get("dynamic_preset", {}).get("applied", {}).get("use_case") == "product_ad"
+    assert plan.get("dynamic_preset", {}).get("applied", {}).get("style") == "product_ad"
     assert "product_ad" in hint

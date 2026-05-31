@@ -83,7 +83,7 @@ MODEL_FAMILY_HINTS: dict[str, dict[str, Any]] = {
 }
 
 
-from dreamforge_use_case_recipes import USE_CASE_RECIPES
+from dreamforge_style_recipes import STYLE_RECIPES
 
 
 CREATIVE_FIELDS = [
@@ -101,8 +101,8 @@ CREATIVE_FIELDS = [
 
 
 def add_agent_arguments(parser) -> None:
-    parser.add_argument("--use-case", default="none", choices=["none", *USE_CASE_RECIPES.keys()],
-                        help="Professional agent recipe to apply before generation")
+    parser.add_argument("--style", default="none", choices=["none", *STYLE_RECIPES.keys()],
+                        help="Professional style recipe to apply before generation")
     parser.add_argument("--brand-kit", default=None,
                         help="Path to brand JSON with colors, tone, typography, materials, forbidden terms, or logo path")
     parser.add_argument("--manifest-path", default=None,
@@ -297,11 +297,11 @@ def select_existing_model(candidates: list[str]) -> str | None:
 
 
 def apply_recipe_defaults(args, *, text_pipeline: bool = False):
-    use_case = getattr(args, "use_case", "none")
-    if use_case == "none":
+    style = getattr(args, "style", "none")
+    if not style or style == "none" or style not in STYLE_RECIPES:
         return args
 
-    recipe = USE_CASE_RECIPES[use_case]
+    recipe = STYLE_RECIPES[style]
 
     model_attr = "base_model" if hasattr(args, "base_model") else "model"
     if not getattr(args, model_attr, None):
@@ -309,8 +309,10 @@ def apply_recipe_defaults(args, *, text_pipeline: bool = False):
         if model:
             setattr(args, model_attr, model)
 
-    if hasattr(args, "styles") and (not args.styles or args.styles == ["DreamForge V2"]):
-        args.styles = recipe.get("styles", args.styles)
+    if hasattr(args, "styles") and not args.styles:
+        recipe_styles = recipe.get("styles")
+        if recipe_styles:
+            args.styles = list(recipe_styles)
 
     if hasattr(args, "performance") and getattr(args, "performance", "Speed") == "Speed":
         args.performance = recipe.get("performance", args.performance)
@@ -331,8 +333,8 @@ def apply_recipe_defaults(args, *, text_pipeline: bool = False):
 
 
 def compile_creative_prompt(base_prompt: str | None, args, brand_kit: dict[str, Any] | None = None) -> str:
-    use_case = getattr(args, "use_case", "none")
-    recipe = USE_CASE_RECIPES.get(use_case, {})
+    style = getattr(args, "style", "none")
+    recipe = STYLE_RECIPES.get(style, {})
     phrases = []
     phrases.extend(recipe.get("positive", []))
     for label, attr in CREATIVE_FIELDS:
@@ -344,8 +346,8 @@ def compile_creative_prompt(base_prompt: str | None, args, brand_kit: dict[str, 
 
 
 def compile_negative_prompt(base_negative: str | None, args, brand_kit: dict[str, Any] | None = None) -> str:
-    use_case = getattr(args, "use_case", "none")
-    recipe = USE_CASE_RECIPES.get(use_case, {})
+    style = getattr(args, "style", "none")
+    recipe = STYLE_RECIPES.get(style, {})
     phrases = []
     phrases.extend(recipe.get("negative", []))
     phrases.extend(_brand_negatives(brand_kit or {}))
@@ -443,7 +445,7 @@ def write_manifest(path: str, payload: dict[str, Any]) -> str:
         json.dump(payload, handle, ensure_ascii=False, indent=2)
     return str(manifest_path)
 
-def recommend_model_for_task(use_case: str, vram_profile: str = "16gb", prefer_speed: bool = False, requires_input_image: bool = False) -> list[dict]:
+def recommend_model_for_task(style: str, vram_profile: str = "16gb", prefer_speed: bool = False, requires_input_image: bool = False) -> list[dict]:
     """Return ranked model recommendations with reasoning for a specific task."""
     recommendations = []
     
@@ -456,9 +458,9 @@ def recommend_model_for_task(use_case: str, vram_profile: str = "16gb", prefer_s
         score = 0
         reasons = []
         
-        if use_case in data.get("best_for", []):
+        if style in data.get("best_for", []):
             score += 10
-            reasons.append(f"Best for {use_case}")
+            reasons.append(f"Best for {style}")
             
         if prefer_speed and family in ("flux", "z_image", "qwen_image"):
             score += 5

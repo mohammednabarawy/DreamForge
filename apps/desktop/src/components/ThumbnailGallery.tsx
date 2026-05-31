@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { readImagePreviewQueued } from "../lib/preview-queue";
+import { useCallback, useState } from "react";
+import { thumbnailAssetUrl } from "../lib/thumbnail-cache";
 
 export type GalleryTile = {
   key: string;
@@ -13,47 +13,34 @@ export type GalleryTile = {
 
 type Props = {
   items: GalleryTile[];
-  columns?: 2 | 3;
   emptyMessage?: string;
   onSelect: (key: string) => void;
   multiSelect?: boolean;
 };
 
 function TileThumb({ path, label }: { path?: string; label: string }) {
-  const [src, setSrc] = useState<string | null>(null);
+  const [broken, setBroken] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    if (!path) {
-      setSrc(null);
-      return;
-    }
-    void readImagePreviewQueued(path)
-      .then((res) => {
-        if (!cancelled) setSrc(res.data_url ?? null);
-      })
-      .catch(() => {
-        if (!cancelled) setSrc(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [path]);
+  const onError = useCallback(() => setBroken(true), []);
+
+  const src = broken ? null : thumbnailAssetUrl(path);
 
   if (src) {
     return (
       <img
         src={src}
         alt=""
-        className="h-full w-full object-contain bg-dfui-bg/80"
+        className="h-full w-full object-cover opacity-90 transition-opacity group-hover:opacity-75"
         loading="lazy"
+        decoding="async"
+        onError={onError}
       />
     );
   }
 
   const initial = label.trim().charAt(0).toUpperCase() || "?";
   return (
-    <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-dfui-bg to-dfui-surface-hover font-mono text-lg text-dfui-muted">
+    <div className="flex h-full w-full items-center justify-center bg-dfui-panel font-mono text-lg text-dfui-muted">
       {initial}
     </div>
   );
@@ -61,56 +48,48 @@ function TileThumb({ path, label }: { path?: string; label: string }) {
 
 export function ThumbnailGallery({
   items,
-  columns = 2,
   emptyMessage = "Nothing to show.",
   onSelect,
   multiSelect = false,
 }: Props) {
   if (items.length === 0) {
     return (
-      <p className="py-8 text-center text-xs text-dfui-muted">{emptyMessage}</p>
+      <p className="py-10 text-center text-xs text-dfui-muted">{emptyMessage}</p>
     );
   }
 
-  const gridClass =
-    columns === 3
-      ? "grid grid-cols-3 gap-1.5"
-      : "grid grid-cols-2 gap-1.5";
-
   return (
-    <div className={gridClass}>
+    <div className="df-gallery-grid">
       {items.map((item) => (
         <button
           key={item.key}
           type="button"
           title={item.label}
           onClick={() => onSelect(item.value ?? item.key)}
-          className={`group relative flex flex-col overflow-hidden rounded-lg border text-left transition ${
-            item.selected
-              ? "border-dfui-accent ring-1 ring-dfui-accent/60"
-              : "border-dfui-border/60 hover:border-dfui-accent/40"
+          className={`group df-gallery-tile ${
+            item.selected ? "df-gallery-tile-active" : "df-gallery-tile-idle"
           }`}
         >
-          <div className="aspect-square w-full overflow-hidden">
+          <div className="absolute inset-0">
             <TileThumb path={item.thumbnailPath} label={item.label} />
           </div>
-          <div className="border-t border-dfui-border/40 bg-dfui-bg/70 px-1.5 py-1">
-            <p className="truncate font-mono text-[9px] leading-tight text-dfui-fg">
+          <div className="df-gallery-tile-caption">
+            <p className="line-clamp-2 text-[11px] font-semibold leading-tight text-white">
               {item.label}
             </p>
             {item.sublabel && (
-              <p className="truncate text-[8px] text-dfui-tertiary">
+              <p className="mt-0.5 truncate text-[9px] text-gray-300">
                 {item.sublabel}
               </p>
             )}
           </div>
           {item.badge && (
-            <span className="absolute left-1 top-1 rounded bg-dfui-bg/90 px-1 py-0.5 font-mono text-[8px] text-dfui-accent">
+            <span className="absolute left-1.5 top-1.5 rounded bg-black/55 px-1.5 py-0.5 font-mono text-[8px] text-white backdrop-blur">
               {item.badge}
             </span>
           )}
           {multiSelect && item.selected && (
-            <span className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-dfui-accent text-[10px] font-bold text-dfui-bg">
+            <span className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-dfui-accent text-[10px] font-bold text-dfui-bg shadow-sm">
               ✓
             </span>
           )}

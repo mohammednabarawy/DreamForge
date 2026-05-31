@@ -6,7 +6,7 @@ Designed to be invoked from Rust without a separate HTTP server.
 Commands:
   ping, get_paths, get_inventory, get_model_gallery, get_lora_gallery,
   resolve_model_profile, list_outputs, search_outputs,
-  dry_run, build_cli_argv, list_use_cases, get_ui_defaults,
+  dry_run, build_cli_argv, list_styles, get_ui_defaults,
   classify_models, organize_models
 """
 
@@ -221,89 +221,7 @@ def cmd_get_ui_defaults(_params: dict) -> dict:
     }
 
 
-def _load_style_groups_from_csv() -> list[dict]:
-    """Preserve DreamForge styles.csv section order (>>>>>> headers + Style: rows)."""
-    import csv
 
-    groups: list[dict] = []
-    current_label = "General"
-    current_id = "general"
-    current_items: list[dict] = []
-
-    def flush() -> None:
-        if current_items:
-            groups.append(
-                {
-                    "id": current_id,
-                    "label": current_label,
-                    "items": current_items,
-                }
-            )
-
-    for style_table in (
-        BACKEND_ROOT / "settings" / "styles.csv",
-        BACKEND_ROOT / "settings" / "styles.default",
-    ):
-        if not style_table.exists():
-            continue
-        with style_table.open("r", encoding="utf-8", newline="") as handle:
-            for row in csv.DictReader(handle):
-                name = (row.get("name") or "").strip()
-                if not name:
-                    continue
-                if name.startswith(">>>>>>"):
-                    flush()
-                    current_items = []
-                    current_label = name.replace(">", "").strip() or "Section"
-                    current_id = current_label.lower().replace(" ", "-")
-                    continue
-                if not name.startswith("Style:"):
-                    continue
-                current_items.append(
-                    {
-                        "id": name,
-                        "label": name.replace("Style: ", "", 1),
-                    }
-                )
-        flush()
-        if groups:
-            break
-    return groups
-
-
-def _group_styles(styles: list) -> dict:
-    """Build grouped style presets for the inspector (CSV order + extras)."""
-    groups = _load_style_groups_from_csv()
-    seen = {item["id"] for group in groups for item in group["items"]}
-
-    extras: dict[str, list[dict]] = {}
-    for raw in styles:
-        name = (raw if isinstance(raw, str) else str(raw)).strip()
-        if not name or name in seen or name.startswith(">>>>>>"):
-            continue
-        if name.startswith("Style:"):
-            bucket = "Other styles"
-        elif name.startswith("Artify:"):
-            bucket = "Artify"
-        else:
-            bucket = "Presets"
-        extras.setdefault(bucket, []).append(
-            {"id": name, "label": name.replace("Style: ", "", 1)}
-        )
-        seen.add(name)
-
-    for label, items in sorted(extras.items()):
-        items.sort(key=lambda i: i["label"].lower())
-        groups.append(
-            {
-                "id": label.lower().replace(" ", "-"),
-                "label": label,
-                "items": items,
-            }
-        )
-
-    selectable = [item["id"] for group in groups for item in group["items"]]
-    return {"groups": groups, "selectable": selectable}
 
 
 def _resolve_cached_thumbnail(cache_subdir: str, model_filename: str, fallback: Path) -> str:
@@ -479,13 +397,57 @@ def cmd_delete_session(params: dict) -> dict:
     return {**result, "ok": True}
 
 
-def cmd_list_use_cases(_params: dict) -> dict:
-    from dreamforge_agent_tools import USE_CASE_RECIPES
+def cmd_list_styles(_params: dict) -> dict:
+    from dreamforge_style_assets import resolve_style_thumbnail_path
+    from dreamforge_style_recipes import STYLE_RECIPES
 
     recipes = []
-    for name, spec in sorted(USE_CASE_RECIPES.items()):
-        recipes.append({"id": name, **spec})
-    return {"ok": True, "use_cases": recipes}
+    for name, spec in sorted(STYLE_RECIPES.items()):
+        payload = {"id": name, **spec}
+        thumb = resolve_style_thumbnail_path(name, spec)
+        if thumb:
+            payload["thumbnail"] = thumb
+        else:
+            payload.pop("thumbnail", None)
+        recipes.append(payload)
+    return {"ok": True, "styles": recipes}
+
+
+def _style_recipe_label(style_id: str, spec: dict) -> str:
+    original = str(spec.get("original_name") or "").strip()
+    if original:
+        return original
+    return style_id.replace("_", " ").strip().title()
+
+
+def _group_styles(_legacy_style_names: list[str] | None = None) -> dict:
+    """Group ``STYLE_RECIPES`` for inventory cache (replaces SDXL CSV grouping)."""
+    from dreamforge_style_recipes import STYLE_RECIPES
+
+    buckets: dict[str, dict] = {
+        "presets": {"id": "presets", "label": "Presets", "items": []},
+        "classic": {"id": "classic", "label": "Classic SDXL", "items": []},
+        "artify": {"id": "artify", "label": "Artify", "items": []},
+        "other": {"id": "other", "label": "Other", "items": []},
+    }
+    selectable: list[str] = []
+    for style_id in sorted(STYLE_RECIPES.keys()):
+        spec = STYLE_RECIPES[style_id]
+        selectable.append(style_id)
+        item = {"id": style_id, "label": _style_recipe_label(style_id, spec)}
+        original = str(spec.get("original_name") or "").lower()
+        if spec.get("models"):
+            buckets["presets"]["items"].append(item)
+        elif original.startswith("artify"):
+            buckets["artify"]["items"].append(item)
+        elif original.startswith("style:") or original:
+            buckets["classic"]["items"].append(item)
+        else:
+            buckets["other"]["items"].append(item)
+    return {
+        "selectable": selectable,
+        "groups": [group for group in buckets.values() if group["items"]],
+    }
 
 
 def cmd_classify_models(_params: dict) -> dict:
@@ -784,7 +746,8 @@ def cmd_build_cli_argv(params: dict) -> dict:
     add("--qwen-scale-megapixels", params.get("qwen_scale_megapixels"))
     add("--inpaint-mask-path", params.get("inpaint_mask_path"))
     add("--vram-profile", params.get("vram_profile"))
-    add("--use-case", params.get("use_case"))
+    add("--style", params.get("style"))
+    add("--sdxl-styles", params.get("styles"))
     add("--brand-kit", params.get("brand_kit"))
     add("--subject", params.get("subject"))
     add("--composition", params.get("composition"))
@@ -809,9 +772,7 @@ def cmd_build_cli_argv(params: dict) -> dict:
         argv.append("--validate-output")
     if params.get("no_manifest"):
         argv.append("--no-manifest")
-    for style in params.get("styles") or []:
-        argv.extend(["--style", style])
-    for lora in params.get("lora") or []:
+    for lora in params.get("loras") or []:
         argv.extend(["--lora", lora])
     if params.get("dry_run"):
         argv.append("--dry-run")
@@ -845,7 +806,7 @@ HANDLERS = {
     "dry_run": cmd_dry_run,
     "brain_plan": cmd_brain_plan,
     "build_cli_argv": cmd_build_cli_argv,
-    "list_use_cases": cmd_list_use_cases,
+    "list_styles": cmd_list_styles,
     "get_ui_defaults": cmd_get_ui_defaults,
     "classify_models": cmd_classify_models,
     "organize_models": cmd_organize_models,

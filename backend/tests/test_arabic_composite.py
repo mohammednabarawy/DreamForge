@@ -18,12 +18,12 @@ def test_extract_arabic_text_from_quoted_string():
 
 
 def test_arabic_composite_requested_by_workflow_mode():
-    job = SimpleNamespace(workflow_mode="arabic_text_composite", use_case="none")
+    job = SimpleNamespace(workflow_mode="arabic_text_composite", style="none")
     assert arabic_composite_requested(job) is True
 
 
-def test_arabic_composite_requested_for_arabic_poster_use_case():
-    job = SimpleNamespace(use_case="arabic_poster", arabic_text="اختبار")
+def test_arabic_composite_requested_for_arabic_poster_style():
+    job = SimpleNamespace(style="arabic_poster", arabic_text="اختبار")
     assert arabic_composite_requested(job) is True
 
 

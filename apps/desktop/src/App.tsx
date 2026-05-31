@@ -156,12 +156,12 @@ export default function App() {
             galleryLoading={mc.galleryLoading}
             onSelectModel={(item) => void mc.selectModelGallery(item)}
             onToggleLora={mc.toggleLoraGallery}
-            styleGroups={mc.inventory.styleGroups}
+            stylesList={mc.styleRecipes}
             aspectPresets={mc.aspectPresets}
             uiDefaults={mc.uiDefaults}
             activeModelLabel={mc.activeModelLabel}
             studioMode={mc.studioMode}
-            onUseCaseChange={mc.setUseCase}
+            onStyleChange={mc.setStyle}
             onRefreshInventory={mc.refreshStudioCatalog}
             modelDependencies={mc.modelDependencies}
             companionDownloadBusy={mc.companionDownloadBusy}

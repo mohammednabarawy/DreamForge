@@ -59,3 +59,11 @@ git clone --depth 1 https://github.com/runew0lf/RuinedFooocus.git .research/Ruin
 ```
 
 Use the clone only for diffing upstream behavior; production code lives under `backend/dreamforge_prompt/` and `backend/modules/`.
+
+## Style thumbnails
+
+Preview images follow Fooocus `sdxl_styles/samples/` naming and live in `backend/assets/style_thumbnails/`. Sync with:
+
+```powershell
+python scripts/sync_style_thumbnails.py --download
+```

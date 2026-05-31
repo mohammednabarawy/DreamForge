@@ -905,7 +905,7 @@ def run_generation(
         # jobs do not silently become "upscale the original image".
         is_upscale_job = bool(upscale_input_path) and not explicit_input_path
         input_path = explicit_input_path or upscale_input_path
-        use_case = str(getattr(job, "use_case", "none") or "none").lower()
+        style = str(getattr(job, "style", "none") or "none").lower()
 
         if not input_path:
             if cn_selection == "Custom...":

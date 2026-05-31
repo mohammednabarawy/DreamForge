@@ -46,13 +46,13 @@ def resolve_arabic_text(job: Any) -> str | None:
 
 def arabic_composite_requested(job: Any) -> bool:
     mode = str(getattr(job, "workflow_mode", "") or "").strip().lower()
-    use_case = str(getattr(job, "use_case", "") or "").strip().lower()
+    style = str(getattr(job, "style", "") or "").strip().lower()
     edit_type = str(getattr(job, "edit_type", "") or "").strip().lower()
     if mode in {"arabic_text_composite", "text_integrate", "arabic_poster"}:
         return True
     if edit_type in {"text_integrate", "arabic_text_composite"}:
         return True
-    if use_case == "arabic_poster" and resolve_arabic_text(job):
+    if style == "arabic_poster" and resolve_arabic_text(job):
         return True
     return False
 
@@ -116,7 +116,7 @@ def _pipeline_args(
         "line_spacing": getattr(job, "line_spacing", 1.4),
         "max_lines": getattr(job, "max_lines", None),
         "random_font": bool(getattr(job, "random_font", False)),
-        "use_case": getattr(job, "use_case", "arabic_poster"),
+        "style": getattr(job, "style", "arabic_poster"),
         "brand_kit": getattr(job, "brand_kit", None),
         "validate_output": bool(getattr(job, "validate_output", False)),
         "no_manifest": bool(getattr(job, "no_manifest", False)),

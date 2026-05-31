@@ -61,8 +61,12 @@ def build_parser():
     parser.add_argument("--cfg-scale", type=float, default=None, help="Guidance scale")
     parser.add_argument("--sampler", default=None, help="Sampler name")
     parser.add_argument("--scheduler", default=None, help="Scheduler name")
-    parser.add_argument("--styles", nargs="+", default=None, help="DreamForge style names")
-    parser.add_argument("--style", dest="styles", action="append", help="DreamForge style name; can be repeated")
+    parser.add_argument(
+        "--sdxl-styles",
+        nargs="+",
+        default=None,
+        help="Advanced: override SDXL prompt style fragments applied after the selected style recipe",
+    )
     parser.add_argument(
         "--prompt-enhancer",
         dest="prompt_enhancer",
@@ -229,7 +233,7 @@ def parse_cli(argv=None):
         if argv and not argv[0].startswith("-"):
             img_val = argv.pop(0)
             argv.extend(["--upscale-image", img_val])
-        argv.extend(["--use-case", "image_edit"])
+        argv.extend(["--style", "image_edit"])
         argv.extend(["--use-comfy-server"])
     elif subcommand == "plan":
         if "--prompt" not in argv:
@@ -249,16 +253,17 @@ def parse_cli(argv=None):
 
     parser = build_parser()
     args, unknown_args = parser.parse_known_args(argv)
+    args.styles = list(getattr(args, "sdxl_styles", None) or [])
     args.subcommand = subcommand
     return args, unknown_args
 
 
 def _normalize_styles(styles):
     if not styles:
-        return ["Style: sai-enhance", "Style: sai-photographic"]
+        return []
     if len(styles) == 1 and isinstance(styles[0], list):
         return styles[0]
-    return styles
+    return list(styles)
 
 
 def _default_prompt_enhancer(model_family: str) -> str:

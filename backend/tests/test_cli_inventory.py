@@ -121,7 +121,7 @@ def test_prompt_presets_compile():
         materials=None,
         text_role="headline",
         typography="bold modern Arabic headline",
-        use_case="none",
+        style="none",
         brand_kit=None,
         manifest_path=None,
         no_manifest=False,
@@ -154,7 +154,7 @@ def test_prompt_presets_compile():
         assert plan["font_resolved"], "font alias did not resolve"
 
     args = Namespace(**base)
-    args.use_case = "product_ad"
+    args.style = "product_ad"
     args.prompt = "wireless headphones"
     args.aspect_ratio = "1152×896"
     apply_recipe_defaults(args)
@@ -205,7 +205,7 @@ def test_hidream_o1_family_and_dependencies():
         cfg_scale=None,
         sampler=None,
         scheduler=None,
-        use_case="none",
+        style="none",
         brand_kit=None,
         input_image=None,
         upscale_image=None,

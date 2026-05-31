@@ -169,8 +169,8 @@ def test_agent_plan_includes_dynamic_preset_for_product_intent(tmp_path: Path, m
     assert result["ok"] is True
     preset = result.get("dynamic_preset")
     assert isinstance(preset, dict)
-    assert preset.get("applied", {}).get("use_case") == "product_ad"
-    assert result["patch"].get("use_case") == "product_ad"
+    assert preset.get("applied", {}).get("style") == "product_ad"
+    assert result["patch"].get("style") == "product_ad"
 
 
 def test_provider_plan_uses_schema_then_text_fallback(tmp_path: Path, monkeypatch):
@@ -238,7 +238,7 @@ def test_generation_patch_drops_invalid_provider_values():
             "aspect_ratio": "auto",
             "edit_type": "image_edit",
             "performance": "high",
-            "use_case": "made_up",
+            "style": "made_up",
             "input_image": "D:/x.png",
             "unknown": True,
         }
@@ -246,7 +246,7 @@ def test_generation_patch_drops_invalid_provider_values():
     assert patch == {
         "prompt": "hello",
         "performance": "Quality",
-        "use_case": "image_edit",
+        "style": "image_edit",
         "input_image": "D:/x.png",
     }
 

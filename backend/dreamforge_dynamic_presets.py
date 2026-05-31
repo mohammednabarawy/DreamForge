@@ -22,13 +22,13 @@ INTENT_USE_CASE_KEYWORDS: dict[str, tuple[str, ...]] = {
 }
 
 
-def infer_use_case_from_intent(intent: str) -> str | None:
+def infer_style_from_intent(intent: str) -> str | None:
     text = (intent or "").lower()
     if not text.strip():
         return None
-    for use_case, keywords in INTENT_USE_CASE_KEYWORDS.items():
+    for style, keywords in INTENT_USE_CASE_KEYWORDS.items():
         if any(keyword in text for keyword in keywords):
-            return use_case
+            return style
     return None
 
 
@@ -48,7 +48,7 @@ def apply_dynamic_preset(
     current_settings: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """
-    Merge intent + UserStyleProfile + use-case recipe defaults into settings.
+    Merge intent + UserStyleProfile + style recipe defaults into settings.
 
     Only fills fields the caller has not already set. Returns (settings, preset_meta).
     """
@@ -63,37 +63,37 @@ def apply_dynamic_preset(
     if profile.enabled and profile.generation_count:
         meta["source"].append("user_style_profile")
 
-    use_case = settings.get("use_case")
-    if _is_unset("use_case", settings):
-        inferred = infer_use_case_from_intent(intent)
+    style = settings.get("style")
+    if _is_unset("style", settings):
+        inferred = infer_style_from_intent(intent)
         if inferred:
-            settings["use_case"] = inferred
-            use_case = inferred
+            settings["style"] = inferred
+            style = inferred
             meta["source"].append("intent")
-            meta["applied"]["use_case"] = inferred
+            meta["applied"]["style"] = inferred
 
-    if use_case and use_case != "none":
-        from dreamforge_use_case_recipes import USE_CASE_RECIPES
+    if style and style != "none":
+        from dreamforge_style_recipes import STYLE_RECIPES
 
-        if use_case in USE_CASE_RECIPES:
-            recipe = USE_CASE_RECIPES[use_case]
+        if style in STYLE_RECIPES:
+            recipe = STYLE_RECIPES[style]
             if _is_unset("model", settings) and recipe.get("models"):
                 model = str(recipe["models"][0])
                 settings["model"] = model
                 meta["applied"]["model"] = model
-                meta["source"].append("use_case_recipe")
+                meta["source"].append("style_recipe")
             for key in ("styles", "performance", "aspect_ratio"):
                 if _is_unset(key, settings) and recipe.get(key):
                     settings[key] = recipe[key]
                     meta["applied"][key] = recipe[key]
-                    meta["source"].append("use_case_recipe")
+                    meta["source"].append("style_recipe")
             prefix = recipe.get("prompt_prefix")
             if prefix and _is_unset("prompt", settings):
                 existing = str(settings.get("prompt") or intent or "").strip()
                 if not existing or existing == intent:
                     settings["prompt"] = f"{prefix}, {intent}".strip(", ").strip()
                     meta["applied"]["prompt_prefix"] = prefix
-                    meta["source"].append("use_case_recipe")
+                    meta["source"].append("style_recipe")
 
     meta["source"] = sorted(set(meta["source"]))
     return settings, meta

@@ -69,6 +69,39 @@ body {
   @apply text-dfui-secondary/80 hover:text-dfui-fg hover:bg-dfui-surface-hover/50 border border-transparent scale-100;
 }
 
+.df-tab-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.df-tab-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.df-gallery-grid {
+  @apply grid grid-cols-2 gap-2;
+}
+
+.df-gallery-tile {
+  @apply relative min-h-64 overflow-hidden rounded-md border border-dfui-border/40 bg-black text-left transition;
+}
+
+.df-gallery-tile-active {
+  @apply border-dfui-accent ring-1 ring-dfui-accent/60;
+}
+
+.df-gallery-tile-idle {
+  @apply hover:border-dfui-accent/40;
+}
+
+.df-gallery-tile-caption {
+  @apply absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent p-2 pt-8;
+}
+
+.df-gallery-pane {
+  @apply min-h-0 flex-1 overflow-y-auto rounded-lg border border-dfui-border/50 bg-dfui-bg/25 p-1.5;
+}
+
 .text-dreamforge {
   @apply bg-df-brand bg-clip-text font-display font-extrabold tracking-tight text-transparent;
 }

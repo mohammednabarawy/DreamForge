@@ -73,7 +73,7 @@ def test_heuristic_brain_maps_arabic_text_integrate():
 
     assert "text_integrate" in decision["operations"]
     assert decision["patch"]["workflow_mode"] == "arabic_text_composite"
-    assert decision["patch"]["use_case"] == "arabic_poster"
+    assert decision["patch"]["style"] == "arabic_poster"
     assert decision["patch"]["arabic_text"] == "مرحبا"
     assert "arabic_text_composite" in decision["workflow_blueprint"]["template_ids"]
 

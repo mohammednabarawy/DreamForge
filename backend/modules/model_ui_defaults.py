@@ -358,7 +358,7 @@ def auto_generation_settings(
     sampler_name = "dpmpp_2m_sde_gpu"
     scheduler = "karras"
     clip_skip = 2
-    styles = user_styles if user_styles is not None else ["Style: sai-enhance", "Style: sai-photographic"]
+    styles = list(user_styles) if user_styles is not None else []
     negative = negative_prompt
 
     if family.startswith("flux"):

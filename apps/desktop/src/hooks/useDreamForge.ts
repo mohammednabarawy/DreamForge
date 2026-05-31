@@ -24,7 +24,7 @@ import {
   resolveActiveModel,
   selectCuratedModelForMode,
   type StudioMode,
-  type UseCaseRecipe,
+  type StyleRecipe,
 } from "../lib/model-selection";
 import { excerptPrompt, HISTORY_PAGE_SIZE } from "../lib/historyUtils";
 import {
@@ -62,7 +62,7 @@ import {
   listOutputsPage,
   revealPathInExplorer,
   searchOutputsPage,
-  listUseCases,
+  listStyles,
   notifyDone,
   onGenerationFinished,
   onGenerationPreview,
@@ -90,6 +90,7 @@ import {
   type UiDefaults,
   type RepairAction,
 } from "../lib/tauri-api";
+import { clearThumbnailCache } from "../lib/thumbnail-cache";
 import {
   cleanupCanvasPreviewUrls,
   finalPreviewUrlForPath,
@@ -209,7 +210,7 @@ export function useDreamForge() {
   );
   const studioCatalogLoadedRef = useRef(false);
   const userPickedModelRef = useRef(false);
-  const useCasesRef = useRef<UseCaseRecipe[]>([]);
+  const [styleRecipes, setStyleRecipes] = useState<StyleRecipe[]>([]);
   const [modelFilter, setModelFilter] = useState("");
   const [loraFilter, setLoraFilter] = useState("");
   const [lockFamilyDefaults, setLockFamilyDefaults] = useState(true);
@@ -284,31 +285,45 @@ export function useDreamForge() {
   const previewUrlRef = useRef<string | null>(null);
   const canvasPreviewPathRef = useRef<string>("");
   const lastSelectedKeyRef = useRef<string>("");
+  const previewGenerationRef = useRef(0);
+  const finalPreviewAppliedRef = useRef(false);
 
   const previewSignature = useCallback((url: string) => {
     if (!url.startsWith("data:")) return url;
     return `${url.length}:${url.slice(-256)}`;
   }, []);
 
-  const setCanvasPreview = useCallback((url: string | null, path?: string) => {
-    if (url && url === previewUrlRef.current) return;
-    previewUrlRef.current = url;
-    if (path) {
-      canvasPreviewPathRef.current = normalizePreviewPath(path);
-    } else if (!url) {
-      canvasPreviewPathRef.current = "";
-    }
-    setPreviewUrl(url);
-  }, []);
+  const setCanvasPreview = useCallback(
+    (
+      url: string | null,
+      path?: string,
+      opts?: { force?: boolean },
+    ) => {
+      if (url && url === previewUrlRef.current && !opts?.force) return;
+      previewUrlRef.current = url;
+      if (path) {
+        canvasPreviewPathRef.current = normalizePreviewPath(path);
+      } else if (!url) {
+        canvasPreviewPathRef.current = "";
+      }
+      setPreviewUrl(url);
+    },
+    [],
+  );
 
   const setCanvasPreviewFromPath = useCallback(
-    async (path: string) => {
+    async (path: string, opts?: { force?: boolean }) => {
       const norm = normalizePreviewPath(path);
-      if (norm && norm === canvasPreviewPathRef.current && previewUrlRef.current) {
+      if (
+        !opts?.force &&
+        norm &&
+        norm === canvasPreviewPathRef.current &&
+        previewUrlRef.current
+      ) {
         return;
       }
       const url = await finalPreviewUrlForPath(path);
-      if (url) setCanvasPreview(url, path);
+      if (url) setCanvasPreview(url, path, { force: opts?.force });
     },
     [setCanvasPreview],
   );
@@ -330,10 +345,15 @@ export function useDreamForge() {
       const previewJobId = (p.job_id ?? "").trim();
       const activeJob =
         previewJobId &&
+        generatingRef.current &&
         (jobId === previewJobId || lastJobId === previewJobId);
+      if (finalPreviewAppliedRef.current && !isFinal) {
+        return;
+      }
       if (!generatingRef.current && !isFinal && !activeJob) {
         return;
       }
+      const generation = previewGenerationRef.current;
       if (p.percentage != null || p.title) {
         setLiveProgress({
           percentage: p.percentage ?? 0,
@@ -347,21 +367,38 @@ export function useDreamForge() {
         live: !isFinal,
         final: isFinal,
       });
-      if (url) {
-        lastPreviewSigRef.current = previewSignature(url);
-        lastPreviewEventAtRef.current = Date.now();
-        setCanvasPreview(url, p.preview_path);
+      if (generation !== previewGenerationRef.current) {
         return;
       }
-      if (p.has_preview && !isFinal) {
+      if (url) {
+        if (isFinal) {
+          finalPreviewAppliedRef.current = true;
+        } else if (finalPreviewAppliedRef.current) {
+          return;
+        }
+        lastPreviewSigRef.current = previewSignature(url);
+        lastPreviewEventAtRef.current = Date.now();
+        setCanvasPreview(url, p.preview_path, { force: isFinal });
+        return;
+      }
+      if (p.has_preview && !isFinal && generatingRef.current) {
         try {
           const r = await readLivePreview();
+          if (generation !== previewGenerationRef.current) {
+            return;
+          }
+          if (finalPreviewAppliedRef.current) {
+            return;
+          }
           const fallback = await resolveCanvasPreviewUrl({
             data_url: r.data_url,
             preview_path: r.path,
             live: true,
           });
-          if (fallback) {
+          if (generation !== previewGenerationRef.current) {
+            return;
+          }
+          if (fallback && !finalPreviewAppliedRef.current) {
             lastPreviewSigRef.current = previewSignature(fallback);
             lastPreviewEventAtRef.current = Date.now();
             setCanvasPreview(fallback, r.path);
@@ -374,13 +411,40 @@ export function useDreamForge() {
     [setCanvasPreview, jobId, lastJobId, previewSignature],
   );
 
+  const applyFinalCanvasPreview = useCallback(
+    async (payload: {
+      data_url?: string;
+      preview_path?: string;
+      asset_url?: string;
+      result?: { images?: Array<{ path: string }> };
+    }) => {
+      finalPreviewAppliedRef.current = true;
+      const paths =
+        payload.result?.images?.map((i) => i.path).filter(Boolean) ?? [];
+      const primary = paths[0] ?? payload.preview_path;
+      const url = await resolveCanvasPreviewUrl({
+        data_url: payload.data_url,
+        preview_path: payload.preview_path,
+        asset_url: payload.asset_url,
+        final: true,
+      });
+      if (url) {
+        setCanvasPreview(url, payload.preview_path || primary, { force: true });
+        return;
+      }
+      if (primary) {
+        await setCanvasPreviewFromPath(primary, { force: true });
+      }
+    },
+    [setCanvasPreview, setCanvasPreviewFromPath],
+  );
+
   const [settings, setSettings] = useState<GenerationSettings>({
     prompt: "Premium product hero shot, studio lighting, clean negative space",
     model: "",
     vram_profile: "16gb",
     aspect_ratio: "1024x1024",
-    styles: ["Style: sai-enhance", "Style: sai-photographic"],
-    use_case: "product_ad",
+    style: "product_ad",
     image_number: 1,
     negative_prompt: "",
     steps: 20,
@@ -441,7 +505,6 @@ export function useDreamForge() {
 
         if (opts?.selectNewest && page.items[0]) {
           setSelected(page.items[0]);
-          lastSelectedKeyRef.current = page.items[0].manifest_path;
           setHistoryScrollToken((t) => t + 1);
         } else if (!opts?.keepSelection) {
           setSelected((prev) => {
@@ -577,6 +640,7 @@ export function useDreamForge() {
     setGalleryLoading(true);
     try {
       if (force) {
+        clearThumbnailCache();
         await refreshModelLibraryCache().catch(() => {});
       }
       const fetchOpts = { forceRefresh: force };
@@ -585,7 +649,7 @@ export function useDreamForge() {
         loras,
         raw,
         defaults,
-        useCaseRes,
+        styleIdRes,
         studio,
         app,
         providers,
@@ -595,14 +659,14 @@ export function useDreamForge() {
         getLoraGallery("", fetchOpts),
         getInventory(fetchOpts),
         getUiDefaults(),
-        listUseCases(),
+        listStyles(),
         getStudioSettings().catch(() => null),
         getAppConfig().catch(() => null),
         listAgentProviders().catch(() => []),
         getUserStyleProfile().catch(() => null),
       ]);
-      const recipes = (useCaseRes.use_cases ?? []) as UseCaseRecipe[];
-      useCasesRef.current = recipes;
+      const recipes = (styleIdRes.styles ?? []) as StyleRecipe[];
+      setStyleRecipes(recipes);
       const inv = parseInventoryResponse(raw as Record<string, unknown>);
       setModelGalleryAll(models);
       setLoraGalleryAll(loras);
@@ -618,7 +682,6 @@ export function useDreamForge() {
           styles: inv.styles,
           style_groups: inv.styleGroups,
           presets: inv.presets,
-          models_root: rawInventory.models_root,
         },
       });
       setUiDefaults(defaults);
@@ -627,7 +690,7 @@ export function useDreamForge() {
         const nextModel = resolveActiveModel(
           models,
           prev.model,
-          prev.use_case,
+          prev.style,
           recipes,
           userPickedModelRef.current,
         );
@@ -829,6 +892,8 @@ export function useDreamForge() {
       if (p.job_id) setLastJobId(p.job_id);
       setGenerationLog("Sampling…\n");
       setLiveProgress({ percentage: 0, title: "Starting generation…" });
+      previewGenerationRef.current += 1;
+      finalPreviewAppliedRef.current = false;
       canvasPreviewPathRef.current = "";
       previewUrlRef.current = null;
       setLastError(null);
@@ -863,23 +928,13 @@ export function useDreamForge() {
         setLastError(null);
         void refreshUserStyleProfile();
         void notifyDone("DreamForge", "Your image finished rendering.");
-        const result = (p as { result?: { images?: Array<{ path: string }> } })
-          .result;
-        const paths =
-          result?.images?.map((i) => i.path).filter(Boolean) ?? [];
-        const primary = paths[0] ?? p.preview_path;
-        if (primary) {
-          void setCanvasPreviewFromPath(primary);
-        } else {
-          void (async () => {
-            const url = await resolveCanvasPreviewUrl({
-              data_url: p.data_url,
-              preview_path: p.preview_path,
-              final: true,
-            });
-            if (url) setCanvasPreview(url, p.preview_path);
-          })();
-        }
+        await applyFinalCanvasPreview({
+          data_url: p.data_url,
+          preview_path: p.preview_path,
+          asset_url: p.asset_url,
+          result: (p as { result?: { images?: Array<{ path: string }> } })
+            .result,
+        });
         void refreshOutputs({ selectNewest: true });
       } else {
         const friendly = describeError(p);
@@ -909,7 +964,7 @@ export function useDreamForge() {
     stopLogPoll,
     refreshWorkerLog,
     applyPreviewPayload,
-    setCanvasPreviewFromPath,
+    applyFinalCanvasPreview,
   ]);
 
   useEffect(() => {
@@ -1046,16 +1101,22 @@ export function useDreamForge() {
         })
         .catch(() => {});
       const staleMs = Date.now() - lastPreviewEventAtRef.current;
-      if (staleMs < 900) {
+      if (staleMs < 900 || finalPreviewAppliedRef.current) {
         return;
       }
       void readLivePreview()
         .then(async (r) => {
+          if (finalPreviewAppliedRef.current) {
+            return;
+          }
           const url = await resolveCanvasPreviewUrl({
             data_url: r.data_url,
             preview_path: r.path,
             live: true,
           });
+          if (finalPreviewAppliedRef.current) {
+            return;
+          }
           const sig = url ? previewSignature(url) : "";
           if (url && sig !== lastPreviewSigRef.current) {
             lastPreviewSigRef.current = sig;
@@ -1339,22 +1400,37 @@ export function useDreamForge() {
     [appConfig?.ui.advanced_mode, appConfig?.ui.studio_mode, applyModelProfile, patchSettings],
   );
 
-  const setUseCase = useCallback(
-    (use_case: string) => {
-      const patch: Partial<GenerationSettings> = { use_case };
-      if (!userPickedModelRef.current && use_case) {
+  const setStyle = useCallback(
+    (style: string) => {
+      const recipe = styleRecipes.find((item) => item.id === style);
+      const patch: Partial<GenerationSettings> = { style };
+      if (recipe?.styles?.length) {
+        patch.styles = [...recipe.styles];
+      } else {
+        patch.styles = [];
+      }
+      if (recipe?.performance) {
+        patch.performance = recipe.performance;
+      }
+      if (recipe?.aspect_ratio) {
+        patch.aspect_ratio = recipe.aspect_ratio.replace("×", "x");
+      }
+      if (recipe?.prompt_prefix && !settings.prompt?.trim()) {
+        patch.prompt = recipe.prompt_prefix;
+      }
+      if (!userPickedModelRef.current && style) {
         const model = resolveActiveModel(
           modelGalleryAll,
           settings.model,
-          use_case,
-          useCasesRef.current,
+          style,
+          styleRecipes,
           false,
         );
         if (model) patch.model = model;
       }
       patchSettings(patch);
     },
-    [modelGalleryAll, patchSettings, settings.model],
+    [modelGalleryAll, patchSettings, settings.model, settings.prompt, styleRecipes],
   );
 
   const activeModelLabel = useMemo(() => {
@@ -2085,7 +2161,7 @@ export function useDreamForge() {
       );
       const patch: Partial<GenerationSettings> = {
         model: routedModel,
-        use_case: "image_edit",
+        style: "image_edit",
         performance: "Flux",
       };
       if (mode === "edit") {
@@ -2115,7 +2191,7 @@ export function useDreamForge() {
         if (src.trim()) patch.input_image = src.trim();
       }
       if (mode === "upscale") {
-        patch.use_case = "image_edit";
+        patch.style = "image_edit";
         patch.edit_type = "auto";
         patch.input_image = undefined;
         patch.inpaint_mask_path = undefined;
@@ -2289,13 +2365,15 @@ export function useDreamForge() {
       label: modelBasename(m.caption),
       value: m.engine_name,
     }));
-    const styles = inventory.styles.slice(0, 150).map((s) => ({
+    const styles = styleRecipes.slice(0, 150).map((recipe) => ({
       kind: "style" as const,
-      label: s.replace(/^Style:\s*/, ""),
-      value: s,
+      label: recipe.original_name
+        ? recipe.original_name.replace(/^Style:\s*/, "")
+        : recipe.id.replace(/_/g, " "),
+      value: recipe.id,
     }));
     return [...models, ...styles];
-  }, [modelGalleryAll, inventory]);
+  }, [modelGalleryAll, styleRecipes]);
 
   return {
     outputs,
@@ -2309,7 +2387,7 @@ export function useDreamForge() {
     liveProgress,
     settings,
     patchSettings,
-    setUseCase,
+    setStyle,
     activeModelLabel,
     referenceModelFamily,
     inventory,
@@ -2369,6 +2447,7 @@ export function useDreamForge() {
     refreshUserStyleProfile,
     selectModelGallery,
     toggleLoraGallery,
+    styleRecipes,
     aspectPresets: uiDefaults?.aspect_ratios?.map((a) =>
       a.replace("×", "x"),
     ) ?? ASPECT_PRESETS,

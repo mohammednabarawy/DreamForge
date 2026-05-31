@@ -98,43 +98,20 @@ def list_model_inventory():
     if presets_root.exists():
         presets = sorted(path.stem for path in presets_root.glob("*") if path.is_file() and path.suffix.lower() in {".json", ".png"})
 
-    styles = []
-    styles_root = BACKEND_ROOT / "sdxl_styles"
-    if styles_root.exists():
-        for style_file in sorted(styles_root.glob("*.json")):
-            try:
-                data = json.loads(style_file.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            if isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict) and item.get("name"):
-                        styles.append(item["name"])
-            elif isinstance(data, dict):
-                for key, value in data.items():
-                    if isinstance(value, dict) and value.get("name"):
-                        styles.append(value["name"])
-                    else:
-                        styles.append(key)
-    for style_table in (BACKEND_ROOT / "settings" / "styles.csv", BACKEND_ROOT / "settings" / "styles.default"):
-        if not style_table.exists():
-            continue
-        try:
-            with style_table.open("r", encoding="utf-8", newline="") as handle:
-                for row in csv.DictReader(handle):
-                    name = (row.get("name") or "").strip()
-                    if not name or name.startswith(">>>>>>"):
-                        continue
-                    styles.append(name)
-        except Exception:
-            continue
+    styles = _list_style_recipe_ids()
 
     return {
         "models_root": str(MODELS_ROOT),
         "categories": categories,
         "presets": presets,
-        "styles": sorted(set(styles), key=str.lower),
+        "styles": styles,
     }
+
+
+def _list_style_recipe_ids() -> list[str]:
+    from dreamforge_style_recipes import STYLE_RECIPES
+
+    return sorted(STYLE_RECIPES.keys(), key=str.lower)
 
 
 def list_system_fonts(font_filter=None):
@@ -1035,12 +1012,16 @@ def handle_inventory_arguments(args):
         if args.list_fonts or args.list_inventory:
             payload["fonts"] = list_system_fonts(font_filter=args.font_filter)
         if args.list_styles:
-            payload["styles"] = list_model_inventory()["styles"]
+            from dreamforge_cli_inventory import _list_style_recipe_ids
+
+            payload["styles"] = _list_style_recipe_ids()
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return True
 
     if args.list_styles:
-        for style in list_model_inventory()["styles"][:args.inventory_limit or None]:
+        from dreamforge_cli_inventory import _list_style_recipe_ids
+
+        for style in _list_style_recipe_ids()[: args.inventory_limit or None]:
             print(style)
         return True
 

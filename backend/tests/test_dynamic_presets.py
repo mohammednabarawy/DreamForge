@@ -10,21 +10,21 @@ if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
 from dreamforge_desktop_bridge import handle_request
-from dreamforge_dynamic_presets import apply_dynamic_preset, infer_use_case_from_intent
+from dreamforge_dynamic_presets import apply_dynamic_preset, infer_style_from_intent
 from dreamforge_workflow_planner import assess_custom_node_pack, custom_node_pack_present
 
 
-def test_infer_use_case_from_intent_product_ad():
-    assert infer_use_case_from_intent("Create a premium product ad for sneakers") == "product_ad"
+def test_infer_style_from_intent_product_ad():
+    assert infer_style_from_intent("Create a premium product ad for sneakers") == "product_ad"
 
 
 def test_apply_dynamic_preset_merges_recipe_without_overriding_explicit_model():
     settings, meta = apply_dynamic_preset(
         "cinematic movie still with dramatic lighting",
-        {"model": "my-custom-model.safetensors", "use_case": "none"},
+        {"model": "my-custom-model.safetensors", "style": "none"},
     )
     assert settings["model"] == "my-custom-model.safetensors"
-    assert meta["applied"].get("use_case") == "cinematic_scene"
+    assert meta["applied"].get("style") == "cinematic_scene"
     assert settings.get("performance") == "HiDream"
 
 
@@ -57,4 +57,4 @@ def test_suggest_dynamic_preset_bridge():
         '{"cmd":"suggest_dynamic_preset","params":{"intent":"product advertisement photo","settings":{}}}'
     )
     assert payload.get("ok") is True
-    assert payload["dynamic_preset"]["applied"].get("use_case") == "product_ad"
+    assert payload["dynamic_preset"]["applied"].get("style") == "product_ad"

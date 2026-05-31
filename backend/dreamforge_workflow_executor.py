@@ -52,7 +52,7 @@ def patch_for_step(step: Any, *, prior_paths: list[str]) -> dict[str, Any]:
         patch["workflow_mode"] = "face_detail"
     elif op == "text_integrate":
         patch["workflow_mode"] = "arabic_text_composite"
-        patch.setdefault("use_case", "arabic_poster")
+        patch.setdefault("style", "arabic_poster")
     elif op == "reference_guidance":
         patch["workflow_mode"] = "ipadapter"
     elif op == "controlnet_structure":

@@ -2,16 +2,176 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import re
 from pathlib import Path
 from typing import Any
 
 from dreamforge_cli_inventory import (
     MODEL_DEPENDENCIES,
+    MODEL_EXTENSIONS,
     MODELS_ROOT,
     check_model_dependencies,
     companion_file_present,
 )
+
+_log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Hash-based fallback (ported from RuinedFooocus model_handler)
+# ---------------------------------------------------------------------------
+_CACHE_DIR: Path | None = None
+
+
+def _get_cache_dir() -> Path | None:
+    """Resolve the CivitAI metadata cache directory (lazy, best-effort)."""
+    global _CACHE_DIR
+    if _CACHE_DIR is not None:
+        return _CACHE_DIR if _CACHE_DIR.is_dir() else None
+    try:
+        from modules.path import PathManager
+        pm = PathManager()
+        _CACHE_DIR = Path(pm.model_paths.get("cache_path", ""))
+    except Exception:
+        _CACHE_DIR = MODELS_ROOT / ".cache"
+    return _CACHE_DIR if _CACHE_DIR.is_dir() else None
+
+
+def _build_hash_index(category: str) -> dict[str, str]:
+    """
+    Scan CivitAI JSON cache files to build a SHA256 → relative-path index.
+
+    The cache stores ``{model_basename}.json`` files containing CivitAI API
+    responses with ``files[0].hashes.SHA256``.  We correlate each hash back
+    to the actual model file on disk under the category folder.
+    """
+    index: dict[str, str] = {}
+    cache_dir = _get_cache_dir()
+
+    # --- Strategy 1: scan cache dir ---
+    if cache_dir:
+        cat_cache = cache_dir / category
+        if cat_cache.is_dir():
+            for jf in cat_cache.glob("*.json"):
+                try:
+                    data = json.loads(jf.read_text(encoding="utf-8"))
+                    sha = (
+                        data.get("files", [{}])[0]
+                        .get("hashes", {})
+                        .get("SHA256", "")
+                        .upper()
+                    )
+                    if not sha:
+                        continue
+                    # The model file has the same stem as the cache json
+                    model_stem = jf.stem
+                    cat_dir = MODELS_ROOT / category
+                    if cat_dir.is_dir():
+                        for ext in MODEL_EXTENSIONS:
+                            candidate = cat_dir / f"{model_stem}{ext}"
+                            if candidate.is_file():
+                                index[sha] = candidate.name
+                                break
+                except Exception:
+                    continue
+
+    # --- Strategy 2: scan sidecar .json next to model files ---
+    cat_dir = MODELS_ROOT / category
+    if cat_dir.is_dir():
+        for model_file in cat_dir.rglob("*"):
+            if not model_file.is_file() or model_file.suffix.lower() not in MODEL_EXTENSIONS:
+                continue
+            sidecar = model_file.with_suffix(".json")
+            if not sidecar.is_file():
+                continue
+            try:
+                data = json.loads(sidecar.read_text(encoding="utf-8"))
+                sha = (
+                    data.get("files", [{}])[0]
+                    .get("hashes", {})
+                    .get("SHA256", "")
+                    .upper()
+                )
+                if sha and sha not in index:
+                    index[sha] = model_file.name
+            except Exception:
+                continue
+
+    return index
+
+
+def _hash_fallback_match(
+    wanted: str,
+    choices: list[str],
+    category: str,
+) -> str | None:
+    """
+    Try to match a missing model by its SHA256 hash.
+
+    If the ``wanted`` name is not in ``choices``, look for a sidecar/cache
+    ``.json`` for the wanted model, extract its SHA256, then scan the on-disk
+    models for one with the same hash.  If found, return the new filename
+    that IS in ``choices``.
+    """
+    if not wanted or not choices:
+        return None
+
+    # Try to find the hash of the wanted model from its cache/sidecar json
+    wanted_stem = Path(wanted).stem
+    wanted_hash: str | None = None
+
+    # Check sidecar json
+    cat_dir = MODELS_ROOT / category
+    for ext in MODEL_EXTENSIONS:
+        sidecar = cat_dir / f"{wanted_stem}{ext}"
+        sidecar_json = sidecar.with_suffix(".json")
+        if sidecar_json.is_file():
+            try:
+                data = json.loads(sidecar_json.read_text(encoding="utf-8"))
+                wanted_hash = (
+                    data.get("files", [{}])[0]
+                    .get("hashes", {})
+                    .get("SHA256", "")
+                    .upper()
+                )
+            except Exception:
+                pass
+            if wanted_hash:
+                break
+
+    # Also check cache dir
+    if not wanted_hash:
+        cache_dir = _get_cache_dir()
+        if cache_dir:
+            cache_json = cache_dir / category / f"{wanted_stem}.json"
+            if cache_json.is_file():
+                try:
+                    data = json.loads(cache_json.read_text(encoding="utf-8"))
+                    wanted_hash = (
+                        data.get("files", [{}])[0]
+                        .get("hashes", {})
+                        .get("SHA256", "")
+                        .upper()
+                    )
+                except Exception:
+                    pass
+
+    if not wanted_hash:
+        return None
+
+    # Now build an index of all on-disk models' hashes and look for a match
+    hash_index = _build_hash_index(category)
+    matched_name = hash_index.get(wanted_hash)
+    if matched_name and matched_name in choices:
+        _log.info(
+            "Hash fallback: '%s' resolved to '%s' via SHA256 %s…",
+            wanted, matched_name, wanted_hash[:12],
+        )
+        return matched_name
+
+    return None
 
 
 def _object_info_options(object_info: dict[str, Any], node_class: str, input_name: str) -> list[str]:
@@ -145,6 +305,9 @@ def resolve_comfy_model_loader_args(
     if category not in ("diffusion_models", "unet"):
         ckpt_choices = _object_info_options(object_info, "CheckpointLoaderSimple", "ckpt_name")
         matched = _basename_match(str(args["ckpt_name"]), ckpt_choices)
+        if not matched:
+            # Hash-based fallback: model may have been renamed on disk
+            matched = _hash_fallback_match(str(args["ckpt_name"]), ckpt_choices, "checkpoints")
         if matched:
             args["ckpt_name"] = matched
         elif ckpt_choices and basename not in ckpt_choices:
@@ -161,6 +324,9 @@ def resolve_comfy_model_loader_args(
 
     unet_choices = _object_info_options(object_info, "UNETLoader", "unet_name")
     matched_unet = _basename_match(basename, unet_choices)
+    if not matched_unet:
+        # Hash-based fallback: model may have been renamed on disk
+        matched_unet = _hash_fallback_match(basename, unet_choices, category)
     if not matched_unet:
         matched_unet = basename
 

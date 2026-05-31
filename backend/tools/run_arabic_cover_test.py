@@ -81,7 +81,7 @@ def main() -> int:
         workflow_mode=None,
         reference_mode="",
         vram_profile="16gb",
-        use_case="image_edit",
+        style="image_edit",
         validate_output=True,
         json=True,
         dry_run=False,

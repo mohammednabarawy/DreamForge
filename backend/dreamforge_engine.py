@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import gc
 import json
 import os
+import queue
 import sys
 import threading
+import time
 import traceback
+from dataclasses import dataclass, field
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from pathlib import Path
 
 from _paths import BACKEND_ROOT, PROJECT_ROOT, extend_sys_path
@@ -17,7 +21,86 @@ import dreamforge_generation
 from dreamforge_brain import plan_user_intent
 from dreamforge_cli_inventory import list_model_inventory
 
-_GPU_LOCK = threading.Lock()
+
+# ---------------------------------------------------------------------------
+# Job queue & background daemon worker (ported from RuinedFooocus async_worker)
+# ---------------------------------------------------------------------------
+@dataclass
+class _Job:
+    """Internal representation of a queued GPU job."""
+    params: dict
+    stream_sink: Any = None
+    job_id: Optional[str] = None
+    done: threading.Event = field(default_factory=threading.Event)
+    result: Optional[dict] = None
+
+
+_job_queue: queue.Queue[_Job] = queue.Queue()
+_worker_thread: Optional[threading.Thread] = None
+_worker_lock = threading.Lock()  # guards one-shot thread start
+
+
+def _free_comfy_vram() -> None:
+    """Best-effort call to ComfyUI's /free endpoint + Python GC."""
+    try:
+        from dreamforge_comfy_client import ComfyClient
+        from dreamforge_comfy_server import ManagedComfyServer
+        server = ManagedComfyServer.instance()
+        if server and server.base_url:
+            client = ComfyClient(server.base_url)
+            client.free_memory(unload_models=False, free_memory=True)
+    except Exception as exc:
+        print(f"[DreamForge Engine] VRAM cleanup note: {exc}", file=sys.stderr)
+    gc.collect()
+
+
+def _worker_loop() -> None:
+    """Daemon thread: pull jobs from the queue, execute, clean up VRAM."""
+    print("[DreamForge Engine] Background worker started.", file=sys.stderr)
+    while True:
+        job: _Job = _job_queue.get()  # blocks until a job arrives
+        print(f"[DreamForge Engine] Worker picked up job (id={job.job_id}).", file=sys.stderr)
+        t0 = time.monotonic()
+        try:
+            result = dreamforge_generation.run_generation(
+                DreamForgeEngine._to_namespace(job.params),
+                job.params,
+                stream_sink=job.stream_sink,
+                job_id=job.job_id,
+            )
+            if result.get("status") == "success":
+                try:
+                    from dreamforge_user_style_profile import record_successful_job
+                    record_successful_job(job.params, result)
+                except Exception:
+                    pass
+            job.result = result
+        except Exception as e:
+            print(f"[DreamForge Engine Error] Job failed: {e}", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
+            job.result = {
+                "status": "error",
+                "message": f"Execution failed: {e}",
+                "traceback": traceback.format_exc(),
+            }
+        finally:
+            elapsed = time.monotonic() - t0
+            print(f"[DreamForge Engine] Job done in {elapsed:.1f}s. Cleaning VRAM.", file=sys.stderr)
+            _free_comfy_vram()
+            job.done.set()
+            _job_queue.task_done()
+
+
+def _ensure_worker() -> None:
+    """Lazily start the daemon worker thread on first use."""
+    global _worker_thread
+    if _worker_thread is not None and _worker_thread.is_alive():
+        return
+    with _worker_lock:
+        if _worker_thread is not None and _worker_thread.is_alive():
+            return
+        _worker_thread = threading.Thread(target=_worker_loop, daemon=True, name="DreamForgeWorker")
+        _worker_thread.start()
 
 class DreamForgeEngine:
     """
@@ -88,7 +171,7 @@ class DreamForgeEngine:
             "region_prompts_json": "region_prompts_json",
             "composition_regions": "composition_regions",
             "vram_profile": "vram_profile",
-            "use_case": "use_case",
+            "style": "style",
             "brand_kit": "brand_kit",
             "subject": "subject",
             "composition": "composition",
@@ -180,7 +263,7 @@ class DreamForgeEngine:
             "workflow_plan": None,
             "detail_target": None,
             "detail_prompt": None,
-            "use_case": "none",
+            "style": "none",
             "json": True,
         }
         for key, attr in mapping.items():
@@ -191,37 +274,32 @@ class DreamForgeEngine:
     @classmethod
     def execute_job(cls, params: dict, *, stream_sink=None, job_id: Optional[str] = None) -> dict:
         """
-        Normalized execution with a single-flight GPU lock to avoid concurrency conflicts.
-        """
-        base_args = cls._to_namespace(params)
-        
-        # Enforce single-flight GPU generation execution
-        print(f"[DreamForge Engine] Acquiring GPU execution lock...", file=sys.stderr)
-        with _GPU_LOCK:
-            print(f"[DreamForge Engine] GPU lock acquired. Executing job.", file=sys.stderr)
-            try:
-                result = dreamforge_generation.run_generation(base_args, params, stream_sink=stream_sink, job_id=job_id)
-                if result.get("status") == "success":
-                    try:
-                        from dreamforge_user_style_profile import record_successful_job
+        Submit a generation job to the background worker queue.
 
-                        record_successful_job(params, result)
-                    except Exception:
-                        pass
-                return result
-            except Exception as e:
-                print(f"[DreamForge Engine Error] Execution failed: {e}", file=sys.stderr)
-                traceback.print_exc(file=sys.stderr)
-                return {
-                    "status": "error",
-                    "message": f"Execution failed: {e}",
-                    "traceback": traceback.format_exc()
-                }
+        Backward-compatible: blocks the calling thread on a threading.Event
+        until the single daemon GPU worker completes (or errors), then returns
+        the result dict.  This ensures all four entry points (CLI, REST, MCP,
+        Desktop Bridge) serialize GPU work safely without holding a Lock that
+        could deadlock on crash.
+        """
+        _ensure_worker()
+
+        job = _Job(params=params, stream_sink=stream_sink, job_id=job_id)
+        qsize = _job_queue.qsize()
+        if qsize > 0:
+            print(f"[DreamForge Engine] Queuing job (id={job_id}), {qsize} ahead in queue.", file=sys.stderr)
+        else:
+            print(f"[DreamForge Engine] Submitting job (id={job_id}) to worker.", file=sys.stderr)
+
+        _job_queue.put(job)
+        job.done.wait()  # block caller until the worker thread completes
+
+        return job.result
 
     @classmethod
     def generate(cls, prompt: str, **kwargs) -> dict:
         """Text-to-image generation."""
-        params = {"prompt": prompt, "use_case": "none", **kwargs}
+        params = {"prompt": prompt, "style": "none", **kwargs}
         return cls.execute_job(params)
 
     @classmethod
@@ -230,7 +308,7 @@ class DreamForgeEngine:
         params = {
             "input_image": input_image,
             "prompt": prompt,
-            "use_case": "image_edit",
+            "style": "image_edit",
             "edit_type": kwargs.get("edit_type", "auto"),
             "use_comfy_server": True,
             **kwargs
@@ -244,7 +322,7 @@ class DreamForgeEngine:
             "input_image": input_image,
             "inpaint_mask_path": mask_image,
             "prompt": prompt,
-            "use_case": "image_edit",
+            "style": "image_edit",
             "edit_type": "inpaint",
             "use_comfy_server": True,
             **kwargs
@@ -256,7 +334,7 @@ class DreamForgeEngine:
         """Resolution upscaling."""
         params = {
             "upscale_image": image_path,
-            "use_case": "image_edit",
+            "style": "image_edit",
             "cn_type": "upscale",
             "use_comfy_server": True,
             **kwargs
@@ -301,10 +379,10 @@ class DreamForgeEngine:
         """Normalized listing of project history and gallery manifests."""
         since = kwargs.get("since")
         model = kwargs.get("model")
-        use_case = kwargs.get("use_case")
+        style = kwargs.get("style")
         
         items, total = dreamforge_output_index.list_outputs(
-            since=since, model=model, use_case=use_case, limit=limit, offset=offset
+            since=since, model=model, style=style, limit=limit, offset=offset
         )
         return {
             "projects": items,

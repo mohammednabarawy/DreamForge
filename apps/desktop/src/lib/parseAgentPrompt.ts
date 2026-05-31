@@ -43,7 +43,7 @@ const PASSTHROUGH_KEYS: (keyof GenerationSettings)[] = [
   "lora",
   "performance",
   "vram_profile",
-  "use_case",
+  "style",
   "edit_type",
   "edit_strength",
   "subject",
@@ -199,7 +199,7 @@ function mergeAgentPromptDict(
     patch.edit_type = "kontext";
     patch.cn_selection = "Custom...";
     patch.cn_type = "img2img";
-    patch.use_case = patch.use_case ?? "image_edit";
+    patch.style = patch.style ?? "image_edit";
   }
 
   return patch;
@@ -231,7 +231,7 @@ function applyEditDefaults(
   patch.edit_type = patch.edit_type ?? "kontext";
   patch.cn_selection = "Custom...";
   patch.cn_type = patch.cn_type ?? "img2img";
-  patch.use_case = patch.use_case ?? "image_edit";
+  patch.style = patch.style ?? "image_edit";
 }
 
 function applyIdentityDefaults(
@@ -307,7 +307,7 @@ function collectAppliedFields(
   for (const key of [
     "aspect_ratio",
     "seed",
-    "use_case",
+    "style",
     "edit_type",
   ] as const) {
     note(key.replace("_", " "), after[key] !== before[key]);
@@ -367,7 +367,7 @@ export function generationNeedsReferenceImage(
     return true;
   }
   const editType = settings.edit_type ?? "auto";
-  if (settings.use_case === "image_edit" && editType !== "auto") {
+  if (settings.style === "image_edit" && editType !== "auto") {
     return true;
   }
   if (

@@ -1,8 +1,15 @@
 import type { ModelGalleryItem } from "./tauri-api";
 
-export type UseCaseRecipe = {
+export type StyleRecipe = {
   id: string;
   models?: string[];
+  thumbnail?: string;
+  original_name?: string;
+  styles?: string[];
+  performance?: string;
+  aspect_ratio?: string;
+  prompt_prefix?: string;
+  notes?: string;
 };
 
 export type StudioMode = "generate" | "edit" | "inpaint" | "upscale" | "agent";
@@ -45,13 +52,13 @@ export function findGalleryModel(
   );
 }
 
-export function pickUseCaseModel(
+export function pickStyleModel(
   gallery: ModelGalleryItem[],
-  useCase: string | undefined,
-  recipes: UseCaseRecipe[],
+  styleId: string | undefined,
+  recipes: StyleRecipe[],
 ): string | undefined {
-  if (!useCase || useCase === "none") return undefined;
-  const recipe = recipes.find((r) => r.id === useCase);
+  if (!styleId || styleId === "none") return undefined;
+  const recipe = recipes.find((r) => r.id === styleId);
   if (!recipe?.models?.length) return undefined;
   for (const candidate of recipe.models) {
     const hit = findGalleryModel(gallery, candidate);
@@ -60,17 +67,20 @@ export function pickUseCaseModel(
   return undefined;
 }
 
+/** @deprecated Use pickStyleModel */
+export const pickUseCaseModel = pickStyleModel;
+
 export function resolveActiveModel(
   gallery: ModelGalleryItem[],
   current: string | undefined,
-  useCase: string | undefined,
-  recipes: UseCaseRecipe[],
+  styleId: string | undefined,
+  recipes: StyleRecipe[],
   userPicked: boolean,
 ): string {
   if (userPicked && current && findGalleryModel(gallery, current)) {
     return findGalleryModel(gallery, current)!.engine_name;
   }
-  const fromRecipe = pickUseCaseModel(gallery, useCase, recipes);
+  const fromRecipe = pickStyleModel(gallery, styleId, recipes);
   if (fromRecipe) return fromRecipe;
   if (current && findGalleryModel(gallery, current)) {
     return findGalleryModel(gallery, current)!.engine_name;

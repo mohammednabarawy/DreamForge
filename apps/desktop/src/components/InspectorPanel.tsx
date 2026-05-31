@@ -2,15 +2,18 @@ import {
   Bot,
   Boxes,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Globe,
+  Layers,
   Palette,
   ShieldCheck,
   SlidersHorizontal,
   XCircle,
 } from "lucide-react";
-import { useMemo, useState } from "react";
-import type { StyleGroup } from "../lib/inventory";
-import { modelMatches } from "../lib/model-selection";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { modelMatches, type StyleRecipe } from "../lib/model-selection";
+import { ThumbnailGallery, type GalleryTile } from "./ThumbnailGallery";
 import type {
   GenerationSettings,
   LoraGalleryItem,
@@ -18,7 +21,6 @@ import type {
   UiDefaults,
 } from "../lib/tauri-api";
 import { StyleThumbnailGrid } from "./StyleThumbnailGrid";
-import { ThumbnailGallery, type GalleryTile } from "./ThumbnailGallery";
 import { MarketplaceTab } from "./MarketplaceTab";
 import { LoraStackPanel } from "./LoraStackPanel";
 import {
@@ -32,7 +34,7 @@ import {
 } from "../lib/studioBridge";
 import { DEFAULT_MAX_LORA_STACK } from "../lib/loraStack";
 
-type Tab = "discover" | "models" | "styles" | "settings";
+type Tab = "discover" | "models" | "loras" | "styles" | "settings";
 
 type Props = {
   settings: GenerationSettings;
@@ -49,13 +51,13 @@ type Props = {
   galleryLoading?: boolean;
   onSelectModel: (item: ModelGalleryItem) => void;
   onToggleLora: (name: string) => void;
-  styleGroups: StyleGroup[];
+  stylesList: StyleRecipe[];
   aspectPresets: string[];
   uiDefaults: UiDefaults | null;
   onRefreshInventory: () => void;
   activeModelLabel: string;
   studioMode: string;
-  onUseCaseChange: (useCase: string) => void;
+  onStyleChange: (styleId: string) => void;
   modelDependencies?: { missing: Array<{ id?: string; relative?: string; note?: string }>; ready: boolean };
   companionDownloadBusy?: boolean;
   onDownloadCompanions?: () => void;
@@ -93,13 +95,13 @@ export function InspectorPanel({
   galleryLoading,
   onSelectModel,
   onToggleLora,
-  styleGroups,
+  stylesList,
   aspectPresets,
   uiDefaults,
   onRefreshInventory,
   activeModelLabel,
   studioMode,
-  onUseCaseChange,
+  onStyleChange,
   modelDependencies,
   companionDownloadBusy,
   onDownloadCompanions,
@@ -135,7 +137,7 @@ export function InspectorPanel({
   const showEditStrength = Boolean(settings.input_image) || ["kontext", "inpaint", "img2img", "qwen_edit"].includes(settings.edit_type ?? "");
   const isQwenModel = (settings.model ?? activeModelLabel).toLowerCase().includes("qwen");
 
-  const selectedCount = (settings.styles ?? []).length;
+  const activeStyleId = settings.style;
   const activeLoras = settings.lora ?? [];
   const activeProvider = agentProviders.find(
     (p) => p.id === appConfig?.agent.provider,
@@ -176,44 +178,197 @@ export function InspectorPanel({
     [loraGallery, activeLoras],
   );
 
-  const toggleStyle = (styleId: string) => {
-    const set = new Set(settings.styles ?? []);
-    if (set.has(styleId)) set.delete(styleId);
-    else set.add(styleId);
-    onChange({ styles: [...set] });
+  const tabs: { id: Tab; label: string; icon: typeof Boxes }[] = useMemo(
+    () => [
+      { id: "discover", label: "Discover", icon: Globe },
+      { id: "models", label: "Models", icon: Boxes },
+      ...(!isUpscale
+        ? [{ id: "loras" as const, label: "LoRAs", icon: Layers }]
+        : []),
+      { id: "styles", label: "Styles", icon: Palette },
+      { id: "settings", label: "Settings", icon: SlidersHorizontal },
+    ],
+    [isUpscale],
+  );
+
+  const tabScrollRef = useRef<HTMLDivElement>(null);
+  const [canScrollTabsLeft, setCanScrollTabsLeft] = useState(false);
+  const [canScrollTabsRight, setCanScrollTabsRight] = useState(false);
+
+  const updateTabScrollHints = useCallback(() => {
+    const el = tabScrollRef.current;
+    if (!el) return;
+    setCanScrollTabsLeft(el.scrollLeft > 4);
+    setCanScrollTabsRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
+  }, []);
+
+  useEffect(() => {
+    if (isUpscale && tab === "loras") {
+      setTab("models");
+    }
+  }, [isUpscale, tab]);
+
+  useEffect(() => {
+    const el = tabScrollRef.current;
+    if (!el) return;
+    updateTabScrollHints();
+    el.addEventListener("scroll", updateTabScrollHints, { passive: true });
+    const ro = new ResizeObserver(updateTabScrollHints);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener("scroll", updateTabScrollHints);
+      ro.disconnect();
+    };
+  }, [updateTabScrollHints, tabs.length]);
+
+  useEffect(() => {
+    const el = tabScrollRef.current?.querySelector(
+      `[data-tab-id="${tab}"]`,
+    ) as HTMLElement | null;
+    el?.scrollIntoView({ behavior: "smooth", inline: "nearest", block: "nearest" });
+    window.requestAnimationFrame(updateTabScrollHints);
+  }, [tab, updateTabScrollHints, tabs.length]);
+
+  const scrollTabs = (direction: -1 | 1) => {
+    tabScrollRef.current?.scrollBy({
+      left: direction * 112,
+      behavior: "smooth",
+    });
   };
 
-  const tabs: { id: Tab; label: string; icon: typeof Boxes }[] = [
-    { id: "discover", label: "Discover", icon: Globe },
-    { id: "models", label: "Models", icon: Boxes },
-    { id: "styles", label: "Styles", icon: Palette },
-    { id: "settings", label: "Settings", icon: SlidersHorizontal },
-  ];
+  const loraTabContent = !isUpscale ? (
+    <div className="flex h-full min-h-0 flex-col gap-2">
+      <div className="shrink-0 space-y-2">
+        <div className="rounded-lg border border-dfui-accent/25 bg-dfui-accent/5 px-2.5 py-2">
+          <p className="text-[10px] uppercase tracking-wide text-dfui-muted">
+            Active stack
+          </p>
+          <p className="text-xs text-dfui-secondary">
+            {activeLoras.length === 0
+              ? "No LoRAs selected — pick tiles below or add from a style recipe."
+              : `${activeLoras.length} LoRA${activeLoras.length === 1 ? "" : "s"} in stack`}
+          </p>
+        </div>
+        {activeLoras.length > 0 && (
+          <div className="max-h-40 overflow-y-auto rounded-lg border border-dfui-border/40 bg-dfui-bg/20">
+            <LoraStackPanel
+              lora={activeLoras}
+              loraMin={studioSettings?.lora_min ?? 0}
+              loraMax={studioSettings?.lora_max ?? 2}
+              maxStack={DEFAULT_MAX_LORA_STACK}
+              loraKeywords={settings.lora_keywords ?? ""}
+              onLoraKeywordsChange={(lora_keywords) =>
+                onChange({ lora_keywords })
+              }
+              onSyncKeywordsFromStack={async () => {
+                const kw = await aggregateLoraKeywords(activeLoras);
+                onChange({ lora_keywords: kw });
+              }}
+              onChange={(lora) => onChange({ lora })}
+            />
+          </div>
+        )}
+        <div className="flex items-center justify-between gap-2">
+          <input
+            value={loraFilter}
+            onChange={(e) => onLoraFilterChange(e.target.value)}
+            placeholder="Filter LoRAs…"
+            className="df-input min-w-0 flex-1 px-2.5 py-1.5 text-xs"
+          />
+          {galleryLoading && (
+            <span className="shrink-0 font-mono text-[9px] text-dfui-tertiary">
+              loading…
+            </span>
+          )}
+          {activeLoras.length > 0 && (
+            <button
+              type="button"
+              className="shrink-0 text-[10px] text-dfui-tertiary hover:text-dfui-fg"
+              onClick={() => onChange({ lora: [] })}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="df-gallery-pane">
+        <ThumbnailGallery
+          items={loraTiles}
+          multiSelect
+          emptyMessage="No LoRAs found."
+          onSelect={(name) => onToggleLora(name)}
+        />
+      </div>
+    </div>
+  ) : null;
 
   return (
     <aside className="flex h-full min-w-0 flex-col glass-panel rounded-none border-y-0 border-r-0">
-      <div className="flex gap-1.5 border-b border-dfui-border/40 p-2 bg-dfui-panel/40 backdrop-blur-md">
-        {tabs.map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setTab(id)}
-            className={`flex flex-1 items-center justify-center gap-1.5 py-2 px-3 text-xs font-medium rounded-lg transition-all duration-200 ${
-              tab === id ? "df-tab-active" : "df-tab"
-            }`}
-          >
-            <Icon size={14} />
-            {label}
-            {id === "styles" && selectedCount > 0 && (
-              <span className="rounded-full bg-dfui-accent/20 px-1.5 font-mono text-[9px] text-dfui-accent">
-                {selectedCount}
-              </span>
-            )}
-          </button>
-        ))}
+      <div className="relative flex items-stretch border-b border-dfui-border/40 bg-dfui-panel/40 backdrop-blur-md">
+        {canScrollTabsLeft && (
+          <>
+            <div
+              className="pointer-events-none absolute left-8 top-0 z-[1] h-full w-6 bg-gradient-to-r from-dfui-panel/95 to-transparent"
+              aria-hidden
+            />
+            <button
+              type="button"
+              aria-label="Show previous tabs"
+              onClick={() => scrollTabs(-1)}
+              className="relative z-[2] flex w-8 shrink-0 items-center justify-center text-dfui-secondary transition hover:bg-dfui-surface-hover/60 hover:text-dfui-fg"
+            >
+              <ChevronLeft size={16} strokeWidth={2.25} />
+            </button>
+          </>
+        )}
+        <div
+          ref={tabScrollRef}
+          className="df-tab-scroll flex min-w-0 flex-1 gap-1 overflow-x-auto scroll-smooth px-2 py-2"
+        >
+          {tabs.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              data-tab-id={id}
+              onClick={() => setTab(id)}
+              className={`flex shrink-0 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition-all duration-200 ${
+                tab === id ? "df-tab-active" : "df-tab"
+              }`}
+            >
+              <Icon size={14} />
+              {label}
+              {id === "styles" && activeStyleId && activeStyleId !== "none" && (
+                <span className="rounded-full bg-dfui-accent/20 px-1.5 font-mono text-[9px] text-dfui-accent">
+                  1
+                </span>
+              )}
+              {id === "loras" && activeLoras.length > 0 && (
+                <span className="rounded-full bg-dfui-accent/20 px-1.5 font-mono text-[9px] text-dfui-accent">
+                  {activeLoras.length}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+        {canScrollTabsRight && (
+          <>
+            <button
+              type="button"
+              aria-label="Show more tabs"
+              onClick={() => scrollTabs(1)}
+              className="relative z-[2] flex w-8 shrink-0 items-center justify-center text-dfui-secondary transition hover:bg-dfui-surface-hover/60 hover:text-dfui-fg"
+            >
+              <ChevronRight size={16} strokeWidth={2.25} />
+            </button>
+            <div
+              className="pointer-events-none absolute right-8 top-0 z-[1] h-full w-6 bg-gradient-to-l from-dfui-panel/95 to-transparent"
+              aria-hidden
+            />
+          </>
+        )}
       </div>
 
-      <div className="flex-1 overflow-y-auto p-3 text-sm">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3 text-sm">
         {tab === "discover" && (
           <MarketplaceTab
             civitaiApiKey={settings.civitai_api_key ?? ""}
@@ -223,182 +378,127 @@ export function InspectorPanel({
         )}
 
         {tab === "models" && (
-          <div className="space-y-3">
-            <label className="flex items-center gap-2 text-[11px] text-dfui-muted">
-              <input
-                type="checkbox"
-                checked={lockFamilyDefaults}
-                onChange={(e) => onLockFamilyDefaultsChange(e.target.checked)}
-                className="accent-dfui-accent"
-              />
-              Apply model family defaults (like web UI)
-            </label>
+          <InspectorGalleryPane
+            footer={
+              profileHints.length > 0 ? (
+                <ul className="space-y-0.5 rounded-lg border border-dfui-accent/20 bg-dfui-accent/5 px-2 py-1.5">
+                  {profileHints.map((h) => (
+                    <li
+                      key={h}
+                      className="text-[10px] leading-snug text-dfui-secondary"
+                    >
+                      {h}
+                    </li>
+                  ))}
+                </ul>
+              ) : undefined
+            }
+            header={
+              <>
+                <label className="flex items-center gap-2 text-[11px] text-dfui-muted">
+                  <input
+                    type="checkbox"
+                    checked={lockFamilyDefaults}
+                    onChange={(e) =>
+                      onLockFamilyDefaultsChange(e.target.checked)
+                    }
+                    className="accent-dfui-accent"
+                  />
+                  Apply model family defaults (like web UI)
+                </label>
 
-            <div className="rounded-lg border border-dfui-accent/25 bg-dfui-accent/5 px-2.5 py-2">
-              <p className="text-[10px] uppercase tracking-wide text-dfui-muted">
-                Active model
-              </p>
-              <p className="truncate font-mono text-xs text-dfui-fg">
-                {activeModelLabel}
-              </p>
-              {modelDependencies && !modelDependencies.ready && (
-                <div className="mt-2 space-y-1.5 border-t border-dfui-border/30 pt-2">
-                  <p className="text-[10px] text-amber-200/90">
-                    Missing companion files ({modelDependencies.missing.length})
+                <div className="rounded-lg border border-dfui-accent/25 bg-dfui-accent/5 px-2.5 py-2">
+                  <p className="text-[10px] uppercase tracking-wide text-dfui-muted">
+                    Active model
                   </p>
-                  <ul className="max-h-24 space-y-0.5 overflow-y-auto text-[9px] text-dfui-tertiary">
-                    {modelDependencies.missing.map((m) => (
-                      <li key={m.id ?? m.relative} className="font-mono truncate">
-                        {m.relative ?? m.id}
-                      </li>
-                    ))}
-                  </ul>
-                  <div className="flex flex-wrap gap-1.5 pt-0.5">
-                    {onDownloadCompanions && (
-                      <button
-                        type="button"
-                        disabled={companionDownloadBusy}
-                        onClick={() => onDownloadCompanions()}
-                        className="rounded-md border border-dfui-accent/40 bg-dfui-accent/10 px-2 py-1 text-[10px] font-medium text-dfui-accent hover:bg-dfui-accent/20 disabled:opacity-50"
-                      >
-                        {companionDownloadBusy ? "Downloading…" : "Download missing companions"}
-                      </button>
-                    )}
-                    {onRefreshModelDependencies && (
-                      <button
-                        type="button"
-                        onClick={() => onRefreshModelDependencies()}
-                        className="rounded-md border border-dfui-border/50 px-2 py-1 text-[10px] text-dfui-muted hover:text-dfui-fg"
-                      >
-                        Recheck
-                      </button>
-                    )}
-                  </div>
+                  <p className="truncate font-mono text-xs text-dfui-fg">
+                    {activeModelLabel}
+                  </p>
+                  {modelDependencies && !modelDependencies.ready && (
+                    <div className="mt-2 space-y-1.5 border-t border-dfui-border/30 pt-2">
+                      <p className="text-[10px] text-amber-200/90">
+                        Missing companion files ({modelDependencies.missing.length})
+                      </p>
+                      <ul className="max-h-24 space-y-0.5 overflow-y-auto text-[9px] text-dfui-tertiary">
+                        {modelDependencies.missing.map((m) => (
+                          <li
+                            key={m.id ?? m.relative}
+                            className="font-mono truncate"
+                          >
+                            {m.relative ?? m.id}
+                          </li>
+                        ))}
+                      </ul>
+                      <div className="flex flex-wrap gap-1.5 pt-0.5">
+                        {onDownloadCompanions && (
+                          <button
+                            type="button"
+                            disabled={companionDownloadBusy}
+                            onClick={() => onDownloadCompanions()}
+                            className="rounded-md border border-dfui-accent/40 bg-dfui-accent/10 px-2 py-1 text-[10px] font-medium text-dfui-accent hover:bg-dfui-accent/20 disabled:opacity-50"
+                          >
+                            {companionDownloadBusy
+                              ? "Downloading…"
+                              : "Download missing companions"}
+                          </button>
+                        )}
+                        {onRefreshModelDependencies && (
+                          <button
+                            type="button"
+                            onClick={() => onRefreshModelDependencies()}
+                            className="rounded-md border border-dfui-border/50 px-2 py-1 text-[10px] text-dfui-muted hover:text-dfui-fg"
+                          >
+                            Recheck
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
 
-            <div>
-              <div className="mb-1 flex items-center justify-between">
-                <span className="text-xs text-dfui-muted">Base models</span>
-                {galleryLoading && (
-                  <span className="font-mono text-[9px] text-dfui-tertiary">
-                    loading…
-                  </span>
-                )}
-              </div>
-              <input
-                value={modelFilter}
-                onChange={(e) => onModelFilterChange(e.target.value)}
-                placeholder="Filter checkpoints, Flux, HiDream…"
-                className="df-input mb-1.5 w-full px-2.5 py-1.5 text-xs"
-              />
-              <div className="max-h-[min(42vh,360px)] overflow-y-auto rounded-lg border border-dfui-border/50 bg-dfui-bg/25 p-1.5">
-                <ThumbnailGallery
-                  items={modelTiles}
-                  columns={2}
-                  emptyMessage="No models match. Add checkpoints under models/ or refresh."
-                  onSelect={(key) => {
-                    const item = modelGallery.find(
-                      (m) => `${m.category}:${m.relative_path}` === key,
-                    );
-                    if (item) void onSelectModel(item);
-                  }}
-                />
-              </div>
-            </div>
-
-            {profileHints.length > 0 && (
-              <ul className="space-y-0.5 rounded-lg border border-dfui-accent/20 bg-dfui-accent/5 px-2 py-1.5">
-                {profileHints.map((h) => (
-                  <li
-                    key={h}
-                    className="text-[10px] leading-snug text-dfui-secondary"
-                  >
-                    {h}
-                  </li>
-                ))}
-              </ul>
-            )}
-
-            {!isUpscale && (
-              <label className="block">
-                <span className="text-xs text-dfui-muted">Use case recipe</span>
-                <select
-                  value={settings.use_case ?? ""}
-                  onChange={(e) => onUseCaseChange(e.target.value)}
-                  className="df-select mt-1 w-full px-2.5 py-2 text-xs"
-                >
-                  <option value="">—</option>
-                  <option value="product_ad">product_ad</option>
-                  <option value="cinematic_scene">cinematic_scene</option>
-                  <option value="social_post">social_post</option>
-                  <option value="arabic_poster">arabic_poster</option>
-                  <option value="fast_draft">fast_draft</option>
-                  <option value="image_edit">image_edit</option>
-                </select>
-              </label>
-            )}
-
-            {!isUpscale && (
-            <div>
-              <span className="text-xs text-dfui-muted">LoRAs</span>
-              <input
-                value={loraFilter}
-                onChange={(e) => onLoraFilterChange(e.target.value)}
-                placeholder="Filter LoRAs…"
-                className="df-input mt-1 mb-1.5 w-full px-2.5 py-1.5 text-xs"
-              />
-              <div className="max-h-[min(28vh,220px)] overflow-y-auto rounded-lg border border-dfui-border/50 bg-dfui-bg/25 p-1.5">
-                <ThumbnailGallery
-                  items={loraTiles}
-                  columns={3}
-                  multiSelect
-                  emptyMessage="No LoRAs found."
-                  onSelect={(name) => onToggleLora(name)}
-                />
-              </div>
-              <LoraStackPanel
-                lora={activeLoras}
-                loraMin={studioSettings?.lora_min ?? 0}
-                loraMax={studioSettings?.lora_max ?? 2}
-                maxStack={DEFAULT_MAX_LORA_STACK}
-                loraKeywords={settings.lora_keywords ?? ""}
-                onLoraKeywordsChange={(lora_keywords) =>
-                  onChange({ lora_keywords })
-                }
-                onSyncKeywordsFromStack={async () => {
-                  const kw = await aggregateLoraKeywords(activeLoras);
-                  onChange({ lora_keywords: kw });
-                }}
-                onChange={(lora) => onChange({ lora })}
-              />
-              {activeLoras.length > 0 && (
-                <button
-                  type="button"
-                  className="mt-1 text-[10px] text-dfui-tertiary hover:text-dfui-fg"
-                  onClick={() => onChange({ lora: [] })}
-                >
-                  Clear {activeLoras.length} LoRA
-                  {activeLoras.length === 1 ? "" : "s"}
-                </button>
-              )}
-            </div>
-            )}
-          </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    value={modelFilter}
+                    onChange={(e) => onModelFilterChange(e.target.value)}
+                    placeholder="Filter checkpoints, Flux, HiDream…"
+                    className="df-input min-w-0 flex-1 px-2.5 py-1.5 text-xs"
+                  />
+                  {galleryLoading && (
+                    <span className="shrink-0 font-mono text-[9px] text-dfui-tertiary">
+                      loading…
+                    </span>
+                  )}
+                </div>
+              </>
+            }
+          >
+            <ThumbnailGallery
+              items={modelTiles}
+              emptyMessage="No models match. Add checkpoints under models/ or refresh."
+              onSelect={(key) => {
+                const item = modelGallery.find(
+                  (m) => `${m.category}:${m.relative_path}` === key,
+                );
+                if (item) void onSelectModel(item);
+              }}
+            />
+          </InspectorGalleryPane>
         )}
+
+        {tab === "loras" && loraTabContent}
 
         {tab === "styles" && (
           <StyleThumbnailGrid
-            groups={styleGroups}
-            selected={settings.styles ?? []}
+            styles={stylesList}
             filter={styleFilter}
             onFilterChange={setStyleFilter}
-            onToggle={toggleStyle}
+            onSelect={onStyleChange}
+            activeStyle={settings.style}
           />
         )}
 
         {tab === "settings" && (
+          <div className="h-full min-h-0 overflow-y-auto">
           <div className="space-y-3">
             {userStyleProfile && onUserStyleMemoryEnabledChange && (
               <div className="space-y-2 rounded-lg border border-dfui-border/50 bg-dfui-bg/30 p-2.5">
@@ -1082,9 +1182,28 @@ export function InspectorPanel({
               />
             </label>
           </div>
+          </div>
         )}
       </div>
     </aside>
+  );
+}
+
+function InspectorGalleryPane({
+  header,
+  footer,
+  children,
+}: {
+  header: ReactNode;
+  footer?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-2">
+      <div className="shrink-0 space-y-2">{header}</div>
+      <div className="df-gallery-pane">{children}</div>
+      {footer ? <div className="shrink-0">{footer}</div> : null}
+    </div>
   );
 }
 

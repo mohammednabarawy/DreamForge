@@ -163,7 +163,7 @@ export function MarketplaceTab({
   };
 
   return (
-    <div className="flex h-full flex-col gap-3">
+    <div className="flex h-full min-h-0 flex-col gap-3">
       <div className="space-y-2">
         <div className="flex gap-1.5">
           {(["Checkpoint", "LORA"] as MarketplaceType[]).map((mode) => (
@@ -218,8 +218,8 @@ export function MarketplaceTab({
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto rounded-lg border border-dfui-border/50 bg-dfui-bg/25 p-1.5">
-        <div className="grid grid-cols-2 gap-2">
+      <div className="df-gallery-pane">
+        <div className="df-gallery-grid">
           {visibleModels.map((m) => {
             const picked = pickModelFile(m);
             if (!picked) return null;
@@ -233,7 +233,7 @@ export function MarketplaceTab({
             return (
               <article
                 key={`${m.id}-${version.id}`}
-                className="group relative min-h-64 overflow-hidden rounded-md border border-dfui-border/40 bg-black"
+                className="group df-gallery-tile df-gallery-tile-idle"
               >
                 {image ? (
                   <img
@@ -259,7 +259,7 @@ export function MarketplaceTab({
                     <ExternalLink size={12} />
                   </a>
                 </div>
-                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent p-2 pt-10">
+                <div className="df-gallery-tile-caption">
                   <p className="line-clamp-2 text-[11px] font-semibold leading-tight text-white">
                     {m.name}
                   </p>

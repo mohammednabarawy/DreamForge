@@ -11,7 +11,7 @@ extend_sys_path()
 from mcp.server.fastmcp import FastMCP
 
 from dreamforge_engine import DreamForgeEngine
-from dreamforge_agent_tools import USE_CASE_RECIPES, validate_image as _validate_image
+from dreamforge_agent_tools import STYLE_RECIPES, validate_image as _validate_image
 from dreamforge_cli_inventory import (
     check_model_dependencies,
     model_setup_warnings,
@@ -202,14 +202,14 @@ def get_last_generation() -> str:
     return json.dumps(state, indent=2)
 
 @mcp.tool()
-def list_outputs(since: Optional[int] = None, model: Optional[str] = None, use_case: Optional[str] = None, limit: int = 20) -> str:
+def list_outputs(since: Optional[int] = None, model: Optional[str] = None, style: Optional[str] = None, limit: int = 20) -> str:
     """
-    List recent outputs, optionally filtered by timestamp (unix ms), model name, or use_case.
+    List recent outputs, optionally filtered by timestamp (unix ms), model name, or style.
     """
     denied = _require_mcp_capability("read", "list_outputs")
     if denied:
         return denied
-    res = DreamForgeEngine.list_outputs(limit=limit, since=since, model=model, use_case=use_case)
+    res = DreamForgeEngine.list_outputs(limit=limit, since=since, model=model, style=style)
     return json.dumps(res, indent=2)
 
 @mcp.tool()
@@ -269,7 +269,7 @@ def plan_workflow(
 def generate_image(
     prompt: str,
     model: Optional[str] = None,
-    use_case: str = "none",
+    style: str = "none",
     negative_prompt: str = "",
     aspect_ratio: Optional[str] = None,
     width: Optional[int] = None,
@@ -304,13 +304,17 @@ def generate_image(
     approved: bool = False,
 ) -> str:
     """
-    Generate an image using the local DreamForge engine. Supports SDXL, Flux, HiDream, Qwen, etc.
+    Generate an image using the local DreamForge engine.
+
+    ``style`` selects a DreamForge style recipe (product_ad, cinematic, sai_enhance, …).
+    ``styles`` is an advanced override for embedded SDXL prompt fragments; usually leave unset
+    so the recipe supplies them.
     """
     blocked = _execution_allowed("generate_image", approved)
     if blocked:
         return blocked
     params = {
-        "prompt": prompt, "model": model, "use_case": use_case, "negative_prompt": negative_prompt,
+        "prompt": prompt, "model": model, "style": style, "negative_prompt": negative_prompt,
         "aspect_ratio": aspect_ratio, "width": width, "height": height, "performance": performance,
         "image_number": image_number, "styles": styles, "seed": seed, "steps": steps, "cfg_scale": cfg_scale,
         "vram_profile": vram_profile, "subject": subject, "composition": composition, "lighting": lighting,
@@ -349,7 +353,7 @@ def edit_image(
     params = {
         "input_image": input_image, "prompt": prompt, "model": model, "edit_type": edit_type,
         "inpaint_mask_path": inpaint_mask_path, "vram_profile": vram_profile, "output": output,
-        "use_comfy_server": True, "use_case": "image_edit"
+        "use_comfy_server": True, "style": "image_edit"
     }
     res = DreamForgeEngine.execute_job(params)
     return json.dumps(res, indent=2)
@@ -400,7 +404,7 @@ def upscale_image(
         return blocked
     params = {
         "upscale_image": image_path, "upscale_method": method, "prompt": prompt,
-        "use_comfy_server": True, "use_case": "image_edit", "cn_type": "upscale"
+        "use_comfy_server": True, "style": "image_edit", "cn_type": "upscale"
     }
     res = DreamForgeEngine.execute_job(params)
     return json.dumps(res, indent=2)
@@ -409,7 +413,7 @@ def upscale_image(
 def dry_run(
     prompt: str,
     model: Optional[str] = None,
-    use_case: str = "none",
+    style: str = "none",
     vram_profile: str = "16gb",
     input_image: Optional[str] = None,
     workflow_mode: str = "",
@@ -426,7 +430,7 @@ def dry_run(
     params = {
         "prompt": prompt,
         "model": model,
-        "use_case": use_case,
+        "style": style,
         "vram_profile": vram_profile,
         "input_image": input_image,
         "workflow_mode": workflow_mode,
@@ -503,14 +507,8 @@ def check_dependencies(model_name: str) -> str:
 
 @mcp.tool()
 def list_styles() -> str:
-    """Return a list of available style presets."""
-    inv = list_model_inventory()
-    return json.dumps({"styles": inv["styles"]}, indent=2)
-
-@mcp.tool()
-def list_use_cases() -> str:
-    """Return available professional recipes (use_cases)."""
-    return json.dumps({"use_cases": list(USE_CASE_RECIPES.keys())}, indent=2)
+    """Return available professional recipes (styles)."""
+    return json.dumps({"styles": list(STYLE_RECIPES.keys())}, indent=2)
 
 @mcp.tool()
 def validate_image(image_path: str, check_fake_text: bool = False) -> str:

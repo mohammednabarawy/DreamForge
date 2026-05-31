@@ -97,7 +97,7 @@ def _build_generation_args(*, performance: str, prompt: str, negative: str, outp
         workflow_mode=None,
         reference_mode="",
         vram_profile="16gb",
-        use_case="image_edit",
+        style="image_edit",
         validate_output=True,
         no_manifest=False,
         json=True,

@@ -1307,7 +1307,11 @@ export function useDreamForge() {
   );
 
   const createReferencePackFromCurrent = useCallback(
-    async (name: string, type: ReferencePack["type"] = "style") => {
+    async (
+      name: string,
+      type: ReferencePack["type"] = "style",
+      meta?: { tags?: string[]; notes?: string },
+    ) => {
       const imagePaths = [
         settingsRef.current.input_image,
         settingsRef.current.upscale_image,
@@ -1323,7 +1327,8 @@ export function useDreamForge() {
           name,
           type,
           image_paths: imagePaths,
-          tags: [],
+          tags: meta?.tags ?? [],
+          notes: meta?.notes ?? "",
           preferred_use_cases: [type],
         });
         setReferencePacks((prev) => [pack, ...prev.filter((item) => item.id !== pack.id)]);

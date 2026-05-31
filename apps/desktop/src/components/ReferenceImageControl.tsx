@@ -242,9 +242,9 @@ export function ReferenceImageControl({
               disabled={disabled}
               onClick={onOpenInpaintMask}
               className="rounded border border-dfui-border/50 px-1.5 py-0.5 text-[9px] text-dfui-accent hover:border-dfui-accent/50"
-              title="Paint inpaint mask"
+              title="Paint inpaint mask with smart selection"
             >
-              Mask
+              Smart mask
             </button>
           )}
           {showEditStrength && (

@@ -645,6 +645,26 @@ def cmd_delete_reference_pack(params: dict) -> dict:
     return {"ok": True, "deleted": deleted}
 
 
+def cmd_generate_inpaint_selection_mask(params: dict) -> dict:
+    from dreamforge_inpaint_selection import generate_inpaint_selection_mask
+
+    image_path = str(params.get("image_path") or params.get("imagePath") or "").strip()
+    selection = str(params.get("selection") or params.get("kind") or "").strip()
+    if not image_path:
+        return {"ok": False, "error": "image_path_required"}
+    tap_x = params.get("tap_x", params.get("tapX"))
+    tap_y = params.get("tap_y", params.get("tapY"))
+    output_path = params.get("output_path") or params.get("outputPath")
+    result = generate_inpaint_selection_mask(
+        image_path,
+        selection,
+        tap_x=float(tap_x) if tap_x is not None else None,
+        tap_y=float(tap_y) if tap_y is not None else None,
+        output_path=str(output_path).strip() if output_path else None,
+    )
+    return result
+
+
 def cmd_list_identities(params: dict) -> dict:
     from dreamforge_identity_registry import list_identities, search_identities
 
@@ -869,6 +889,7 @@ HANDLERS = {
     "list_reference_packs": cmd_list_reference_packs,
     "save_reference_pack": cmd_save_reference_pack,
     "delete_reference_pack": cmd_delete_reference_pack,
+    "generate_inpaint_selection_mask": cmd_generate_inpaint_selection_mask,
     "list_identities": cmd_list_identities,
     "save_identity": cmd_save_identity,
     "delete_identity": cmd_delete_identity,

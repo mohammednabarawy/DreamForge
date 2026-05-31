@@ -469,3 +469,42 @@ export async function deleteIdentity(id: string) {
 export async function writeTempPng(dataUrl: string) {
   return invoke<string>("write_temp_png", { dataBase64: dataUrl });
 }
+
+export type InpaintSelectionKind =
+  | "subject"
+  | "background"
+  | "person"
+  | "clothes"
+  | "face"
+  | "eyes"
+  | "hands"
+  | "legs"
+  | "feet"
+  | "tap_object"
+  | "tap_background";
+
+export type InpaintSelectionResult = {
+  ok: boolean;
+  mask_path?: string;
+  selection?: string;
+  method?: string;
+  coverage?: number;
+  error?: string;
+};
+
+export async function generateInpaintSelectionMask(args: {
+  imagePath: string;
+  selection: InpaintSelectionKind;
+  tapX?: number;
+  tapY?: number;
+}) {
+  return bridgeInvoke<InpaintSelectionResult>(
+    "generate_inpaint_selection_mask",
+    {
+      image_path: args.imagePath,
+      selection: args.selection,
+      tap_x: args.tapX,
+      tap_y: args.tapY,
+    },
+  );
+}

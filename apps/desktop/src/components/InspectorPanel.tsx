@@ -78,7 +78,11 @@ type Props = {
   userStyleProfilePath?: string;
   referencePacks?: ReferencePack[];
   onAttachReferencePack?: (packId: string) => void;
-  onCreateReferencePack?: (name: string, type: ReferencePack["type"]) => void | Promise<void>;
+  onCreateReferencePack?: (
+    name: string,
+    type: ReferencePack["type"],
+    meta?: { tags?: string[]; notes?: string },
+  ) => void | Promise<void>;
   onDeleteReferencePack?: (packId: string) => void | Promise<void>;
   onRefreshReferencePacks?: () => void | Promise<void>;
   identities?: IdentityRecord[];
@@ -148,6 +152,8 @@ export function InspectorPanel({
   const [styleFilter, setStyleFilter] = useState("");
   const [newPackName, setNewPackName] = useState("");
   const [newPackType, setNewPackType] = useState<ReferencePack["type"]>("style");
+  const [newPackTags, setNewPackTags] = useState("");
+  const [newPackNotes, setNewPackNotes] = useState("");
   const [newIdentityName, setNewIdentityName] = useState("");
   const [newIdentityType, setNewIdentityType] = useState<IdentityRecord["type"]>("person");
 
@@ -646,6 +652,11 @@ export function InspectorPanel({
                   ))}
                 </div>
                 {isInpaint && (
+                  <p className="text-[10px] leading-snug text-dfui-tertiary">
+                    Open Smart mask to tap objects (Gallery-style), select subject/background/clothes/face, then refine with brush.
+                  </p>
+                )}
+                {isInpaint && (
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                     <label className="block">
                       <span className="text-[10px] text-dfui-muted">
@@ -743,8 +754,10 @@ export function InspectorPanel({
                 )}
                 {settings.reference_pack_id && (
                   <div className="flex items-center gap-1.5 rounded border border-dfui-accent/25 bg-dfui-accent/5 px-2 py-1">
-                    <p className="min-w-0 flex-1 truncate font-mono text-[9px] text-dfui-secondary">
-                      Attached: {settings.reference_pack_id}
+                    <p className="min-w-0 flex-1 truncate text-[9px] text-dfui-secondary">
+                      Attached:{" "}
+                      {referencePacks.find((p) => p.id === settings.reference_pack_id)?.name ??
+                        settings.reference_pack_id}
                       {settings.reference_pack_role ? ` · ${settings.reference_pack_role}` : ""}
                     </p>
                     {onDeleteReferencePack && (
@@ -778,14 +791,38 @@ export function InspectorPanel({
                       <option value="product">product</option>
                       <option value="brand">brand</option>
                     </select>
+                    <input
+                      value={newPackTags}
+                      onChange={(e) => setNewPackTags(e.target.value)}
+                      placeholder="Tags (comma separated)"
+                      className="df-input col-span-2 px-2 py-1.5 text-xs"
+                    />
+                    <textarea
+                      value={newPackNotes}
+                      onChange={(e) => setNewPackNotes(e.target.value)}
+                      placeholder="Notes for planner / future you"
+                      rows={2}
+                      className="df-input col-span-2 resize-none px-2 py-1.5 text-xs"
+                    />
                     <button
                       type="button"
                       onClick={() => {
                         const name = newPackName.trim();
                         if (!name) return;
-                        void Promise.resolve(onCreateReferencePack(name, newPackType)).then(() =>
-                          setNewPackName(""),
-                        );
+                        const tags = newPackTags
+                          .split(",")
+                          .map((t) => t.trim())
+                          .filter(Boolean);
+                        void Promise.resolve(
+                          onCreateReferencePack(name, newPackType, {
+                            tags,
+                            notes: newPackNotes.trim(),
+                          }),
+                        ).then(() => {
+                          setNewPackName("");
+                          setNewPackTags("");
+                          setNewPackNotes("");
+                        });
                       }}
                       disabled={!newPackName.trim()}
                       className="col-span-2 rounded-md border border-dfui-accent/40 bg-dfui-accent/10 px-2 py-1.5 text-[10px] text-dfui-accent hover:bg-dfui-accent/15 disabled:cursor-not-allowed disabled:opacity-50"

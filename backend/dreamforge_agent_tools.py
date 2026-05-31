@@ -168,6 +168,8 @@ def _sanitize_param_value(key: str, value: Any) -> Any:
             return [part.strip() for part in value.split(",") if part.strip()]
         if isinstance(value, list):
             return [str(item).strip() for item in value if str(item).strip()]
+    if key in ("prompt_enhancer", "prompt_enhance"):
+        return str(value or "none").strip().lower()
     return value
 
 

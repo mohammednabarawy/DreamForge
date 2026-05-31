@@ -63,6 +63,13 @@ def build_parser():
     parser.add_argument("--scheduler", default=None, help="Scheduler name")
     parser.add_argument("--styles", nargs="+", default=None, help="DreamForge style names")
     parser.add_argument("--style", dest="styles", action="append", help="DreamForge style name; can be repeated")
+    parser.add_argument(
+        "--prompt-enhancer",
+        dest="prompt_enhancer",
+        default=None,
+        choices=["none", "flufferizer", "hyperprompt", "erniehancer"],
+        help="RuinedFooocus-style prompt enhancer (Flufferizer expansion, Hyperprompt, Erniehancer)",
+    )
     parser.add_argument("--lora", action="append", default=[], help='LoRA as "filename:weight"')
     parser.add_argument("--input-image", default=None, help="Input image for img2img, Flux Kontext, or Qwen-Image-Edit")
     parser.add_argument(
@@ -254,6 +261,18 @@ def _normalize_styles(styles):
     return styles
 
 
+def _default_prompt_enhancer(model_family: str) -> str:
+    from dreamforge_prompt import default_prompt_enhancer
+
+    return default_prompt_enhancer(model_family)
+
+
+def _is_modern_family_for_enhancer(family: str | None) -> bool:
+    fam = (family or "").lower()
+    modern = ("flux", "qwen", "hidream", "sd3")
+    return any(fam == item or fam.startswith(f"{item}_") for item in modern)
+
+
 def _auto_detect_platform():
     try:
         import torch
@@ -409,6 +428,8 @@ def _compile_job(base_args, data=None):
     prompt = compile_creative_prompt(getattr(job, "prompt", ""), job, brand_kit)
     negative = compile_negative_prompt(getattr(job, "negative_prompt", ""), job, brand_kit)
     model = _resolve_model(getattr(job, "model", None), getattr(job, "vram_profile", "auto"), vars(job))
+    if getattr(job, "prompt_enhancer", None) in (None, ""):
+        job.prompt_enhancer = _default_prompt_enhancer(model.get("family"))
     width, height = _parse_aspect_ratio(
         getattr(job, "aspect_ratio", None),
         getattr(job, "width", None),

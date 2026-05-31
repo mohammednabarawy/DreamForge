@@ -423,6 +423,7 @@ def _build_comfy_prompt_graph(
     }
     if model_loader_args:
         loader_args.update(model_loader_args)
+    loras = list(settings.get("comfy_loras") or [])
     bindings = {
         **loader_args,
         "prompt": prompt,
@@ -438,6 +439,7 @@ def _build_comfy_prompt_graph(
         "filename_prefix": "DreamForge",
         "upscale_model": cn_upscale,
         "grow_mask_by": grow_mask_by,
+        "loras": loras,
     }
     if input_filename:
         bindings["image"] = input_filename
@@ -463,6 +465,7 @@ def _build_comfy_prompt_graph(
         "filename_prefix": "DreamForge",
         "width": settings["width"],
         "height": settings["height"],
+        "loras": loras,
     }
 
     if mode == "hires":
@@ -785,6 +788,23 @@ def run_generation(
                 settings["clip_skip"] = int(job.clip_skip)
             except (TypeError, ValueError):
                 pass
+
+        from dreamforge_prompt import prepare_generation_prompts
+
+        prepared = prepare_generation_prompts(job, model, prompt, negative, settings)
+        prompt = prepared["prompt"]
+        negative = prepared["negative"]
+        settings = dict(settings)
+        settings["negative"] = negative
+        settings["comfy_loras"] = prepared.get("comfy_loras") or []
+        settings["prompt_pipeline"] = {
+            "prompt_enhancer": prepared.get("prompt_enhancer"),
+            "expansion_available": prepared.get("expansion_available"),
+            "styles_applied": prepared.get("styles_applied", []),
+            "parsed_lora_count": len(prepared.get("loras") or []),
+            "comfy_lora_count": len(settings["comfy_loras"]),
+        }
+
         seed = int(getattr(job, "seed", -1))
         if seed == -1:
             seed = random.randint(0, 2**31 - 1)
@@ -1215,7 +1235,7 @@ def run_generation(
             model_family=model_family,
             settings=settings,
             prompt=prompt,
-            negative=settings["negative"],
+            negative=negative,
             seed=seed,
             edit_strength=edit_strength,
             cn_upscale=cn_upscale,

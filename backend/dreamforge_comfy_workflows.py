@@ -44,6 +44,59 @@ def _model_category(args: dict[str, Any]) -> str:
     return "checkpoints"
 
 
+def _apply_user_lora_stack(
+    g: dict[str, Any],
+    model_out: list[str | int],
+    clip_out: list[str | int] | None,
+    loras: Any,
+    start_id: int,
+    *,
+    clip_lora: bool,
+) -> tuple[list[str | int], list[str | int] | None, int]:
+    """Chain user-selected LoRAs after the base model loader (RuinedFooocus parity)."""
+    from dreamforge_prompt.loras import resolve_lora_on_disk
+
+    node_id = start_id
+    for raw in loras or []:
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get("name") or "").strip()
+        if not name:
+            continue
+        try:
+            weight = float(raw.get("weight", 1.0))
+        except (TypeError, ValueError):
+            weight = 1.0
+        lora_name = resolve_lora_on_disk(name)
+        if not lora_name:
+            continue
+        if clip_lora and clip_out is not None:
+            g[str(node_id)] = _node(
+                "LoraLoader",
+                {
+                    "model": model_out,
+                    "clip": clip_out,
+                    "lora_name": lora_name,
+                    "strength_model": weight,
+                    "strength_clip": weight,
+                },
+            )
+            model_out = [str(node_id), 0]
+            clip_out = [str(node_id), 1]
+        else:
+            g[str(node_id)] = _node(
+                "LoraLoaderModelOnly",
+                {
+                    "model": model_out,
+                    "lora_name": lora_name,
+                    "strength_model": weight,
+                },
+            )
+            model_out = [str(node_id), 0]
+        node_id += 1
+    return model_out, clip_out, node_id
+
+
 def _add_model_loader(g: dict[str, Any], args: dict[str, Any], *, start_id: int = 30):
     """Add either checkpoint or split-diffusion loaders.
 
@@ -55,6 +108,7 @@ def _add_model_loader(g: dict[str, Any], args: dict[str, Any], *, start_id: int 
     family = str(args.get("family") or "").lower()
     model_name = _comfy_model_name(args)
     i = start_id
+    clip_lora = category == "checkpoints"
     if category in ("diffusion_models", "unet"):
         unet_name = str(args.get("unet_name") or model_name)
         if unet_name.endswith(".gguf"):
@@ -77,6 +131,9 @@ def _add_model_loader(g: dict[str, Any], args: dict[str, Any], *, start_id: int 
             g[str(i)] = _node("VAELoader", {"vae_name": str(args.get("vae") or "ae.safetensors")})
             vae_out = [str(i), 0]
             i += 1
+            model_out, clip_out, i = _apply_user_lora_stack(
+                g, model_out, clip_out, args.get("loras"), i, clip_lora=False
+            )
             return model_out, clip_out, vae_out, i
         if family.startswith("qwen"):
             clip_name = str(args.get("clip") or args.get("clip_qwen") or "qwen_2.5_vl_7b_fp8_scaled.safetensors")
@@ -92,6 +149,9 @@ def _add_model_loader(g: dict[str, Any], args: dict[str, Any], *, start_id: int 
             )
             vae_out = [str(i), 0]
             i += 1
+            model_out, clip_out, i = _apply_user_lora_stack(
+                g, model_out, clip_out, args.get("loras"), i, clip_lora=False
+            )
             return model_out, clip_out, vae_out, i
         if family in ("hidream", "hidream_o1"):
             g[str(i)] = _node(
@@ -108,11 +168,21 @@ def _add_model_loader(g: dict[str, Any], args: dict[str, Any], *, start_id: int 
             g[str(i)] = _node("VAELoader", {"vae_name": str(args.get("vae") or "ae.safetensors")})
             vae_out = [str(i), 0]
             i += 1
+            model_out, clip_out, i = _apply_user_lora_stack(
+                g, model_out, clip_out, args.get("loras"), i, clip_lora=False
+            )
             return model_out, clip_out, vae_out, i
         raise ValueError(f"Comfy split-diffusion loader is not configured for family '{family}'")
 
     g[str(i)] = _node("CheckpointLoaderSimple", {"ckpt_name": model_name})
-    return [str(i), 0], [str(i), 1], [str(i), 2], i + 1
+    model_out = [str(i), 0]
+    clip_out = [str(i), 1]
+    vae_out = [str(i), 2]
+    i += 1
+    model_out, clip_out, i = _apply_user_lora_stack(
+        g, model_out, clip_out, args.get("loras"), i, clip_lora=True
+    )
+    return model_out, clip_out, vae_out, i
 
 
 def comfy_txt2img_basic(args: dict[str, Any]) -> dict[str, Any]:

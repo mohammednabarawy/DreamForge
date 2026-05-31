@@ -17,6 +17,7 @@ import math
 
 
 dreamforge_expansion_path = "prompt_expansion"
+_expansion_load_failed = False
 
 SEED_LIMIT_NUMPY = 2**32
 neg_inf = -8192.0
@@ -44,10 +45,22 @@ class DreamForgeExpansion:
 
     @classmethod
     def load_model_and_tokenizer(cls, model_path):
+        global _expansion_load_failed
         if cls.tokenizer is None or cls.model is None:
+            if not os.path.isdir(model_path):
+                _expansion_load_failed = True
+                raise FileNotFoundError(f"Prompt expansion folder not found: {model_path}")
+            weight_files = ("pytorch_model.bin", "model.safetensors")
+            if not any(os.path.isfile(os.path.join(model_path, name)) for name in weight_files):
+                _expansion_load_failed = True
+                raise FileNotFoundError(
+                    f"Prompt expansion weights missing in {model_path} "
+                    f"(expected one of: {', '.join(weight_files)})"
+                )
             cls.tokenizer = AutoTokenizer.from_pretrained(model_path)
             cls.model = AutoModelForCausalLM.from_pretrained(model_path)
             cls.model.to("cpu")
+            _expansion_load_failed = False
 
     def __call__(self, prompt, seed):
         seed = int(seed) % SEED_LIMIT_NUMPY
@@ -110,9 +123,24 @@ class PromptExpansion:
     @staticmethod
     @torch.no_grad()
     def expand_prompt(text):
-        expansion = DreamForgeExpansion()
-
         prompt = remove_empty_str([safe_str(text)], default="")[0]
+        if _expansion_load_failed:
+            return prompt
+
+        try:
+            from dreamforge_prompt import configure_prompt_expansion_path
+
+            if configure_prompt_expansion_path() is None:
+                return prompt
+        except Exception:
+            if not os.path.isdir(dreamforge_expansion_path):
+                return prompt
+
+        try:
+            expansion = DreamForgeExpansion()
+        except Exception as exc:
+            print(f"[Flufferizer] Prompt expansion unavailable: {exc}")
+            return prompt
 
         max_seed = int(1024 * 1024 * 1024)
         seed = random.randint(1, max_seed)
@@ -120,10 +148,11 @@ class PromptExpansion:
             seed = -seed
         seed = seed % max_seed
 
-        expansion_text = expansion(prompt, seed)
-        final_prompt = expansion_text
-
-        return final_prompt
+        try:
+            return expansion(prompt, seed)
+        except Exception as exc:
+            print(f"[Flufferizer] Prompt expansion failed: {exc}")
+            return prompt
 
 
 class Erniehancer:

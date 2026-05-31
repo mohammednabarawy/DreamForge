@@ -151,7 +151,10 @@ def apply_style(style, prompt, negative_prompt, lora_keywords):
         output_prompt = prompt_expansion.expand_prompt(output_prompt)
 
     if bErniehancer:
-        output_prompt = Erniehancer().execute(output_prompt)
+        try:
+            output_prompt = Erniehancer().execute(output_prompt)
+        except Exception as exc:
+            print(f"[Erniehancer] Prompt enhancement unavailable: {exc}")
 
     if lora_keywords is not None:
         output_prompt = output_prompt.replace("{lora_keywords}", lora_keywords)

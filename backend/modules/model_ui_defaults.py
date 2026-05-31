@@ -364,17 +364,17 @@ def auto_generation_settings(
     if family.startswith("flux"):
         cfg, steps = 3.0, 20
         sampler_name, scheduler, clip_skip = "euler", "beta", 1
-        styles, negative = [], ""
+        styles = []
     elif family in ("hidream", "hidream_o1"):
         dev = hidream_is_dev_variant(model_name)
         cfg = 1.0 if dev else 5.0
         steps = 28 if dev else 50
         sampler_name, scheduler, clip_skip = "euler", "normal", 1
-        styles, negative = [], ""
+        styles = []
     elif family.startswith("qwen"):
         cfg, steps = 2.5, (20 if "lightning" in model_name.lower() else 20)
         sampler_name, scheduler, clip_skip = "euler", "beta", 1
-        styles, negative = [], ""
+        styles = []
     elif family == "sd3":
         cfg, steps = 4.5, 28
         sampler_name, scheduler, clip_skip = "dpmpp_2m", "sgm_uniform", 1

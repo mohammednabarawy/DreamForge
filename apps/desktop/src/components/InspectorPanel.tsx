@@ -174,6 +174,9 @@ export function InspectorPanel({
   const powerUserInspector = Boolean(appConfig?.ui.advanced_mode);
   const isUpscale = studioMode === "upscale";
   const isInpaint = studioMode === "inpaint";
+  /** Inpaint exposes Models / LoRAs / Styles like Generate; edit/upscale stay routed unless advanced. */
+  const editFamilyInspectorLocked = isEditFamily && !powerUserInspector && !isInpaint;
+  const showGenerateLikeSettings = !isEditFamily || powerUserInspector || isInpaint;
   const activeStyleId = settings.style;
   const activeLoras = settings.lora ?? [];
   const activeProvider = agentProviders.find(
@@ -182,13 +185,16 @@ export function InspectorPanel({
 
   const routedModelLabel = useMemo(() => {
     if (!isEditFamily) return activeModelLabel;
+    if (isInpaint && settings.model?.trim()) {
+      return activeModelLabel;
+    }
     const routed = selectCuratedModelForMode(
       studioMode as StudioMode,
       modelGallery,
       settings.model,
     );
     return modelBasename(routed || settings.model || activeModelLabel);
-  }, [isEditFamily, studioMode, modelGallery, settings.model, activeModelLabel]);
+  }, [isEditFamily, isInpaint, studioMode, modelGallery, settings.model, activeModelLabel]);
 
   const modelTiles: GalleryTile[] = useMemo(
     () =>
@@ -233,7 +239,7 @@ export function InspectorPanel({
         { id: "styles", label: "Styles", icon: Palette },
         { id: "settings", label: "Settings", icon: SlidersHorizontal },
       ];
-      if (isEditFamily && !powerUserInspector) {
+      if (editFamilyInspectorLocked) {
         return full.filter((t) => t.id === "settings");
       }
       if (isEditFamily && powerUserInspector) {
@@ -241,7 +247,7 @@ export function InspectorPanel({
       }
       return full;
     },
-    [isEditFamily, isUpscale, powerUserInspector],
+    [editFamilyInspectorLocked, isEditFamily, isUpscale, powerUserInspector],
   );
 
   const tabScrollRef = useRef<HTMLDivElement>(null);
@@ -262,10 +268,10 @@ export function InspectorPanel({
   }, [isUpscale, tab]);
 
   useEffect(() => {
-    if (isEditFamily && tab !== "settings" && !powerUserInspector) {
+    if (editFamilyInspectorLocked && tab !== "settings") {
       setTab("settings");
     }
-  }, [isEditFamily, powerUserInspector, tab]);
+  }, [editFamilyInspectorLocked, tab]);
 
   useEffect(() => {
     if (isEditFamily && !tabs.some((t) => t.id === tab)) {
@@ -578,7 +584,11 @@ export function InspectorPanel({
                   <p className="mt-1 text-[10px] leading-snug text-dfui-tertiary">
                     Generate plans the route, applies it in Settings, and runs immediately. Tweak
                     values here and Generate again if the result needs adjustment.
-                    {!powerUserInspector && " Enable Advanced mode in Settings to pick models manually."}
+                    {isInpaint
+                      ? " Use Models, LoRAs, and Styles tabs to override the auto route."
+                      : editFamilyInspectorLocked
+                        ? " Enable Advanced mode in Settings to pick models manually."
+                        : ""}
                   </p>
                 </div>
                 {isUpscale && (
@@ -598,7 +608,7 @@ export function InspectorPanel({
                     </select>
                   </label>
                 )}
-                {showEditStrength && !isUpscale && (
+                {showEditStrength && !isUpscale && editFamilyInspectorLocked && (
                   <label className="block">
                     <span className="text-xs text-dfui-muted">
                       Edit strength — {Math.round((settings.edit_strength ?? 0.98) * 100)}%
@@ -1218,7 +1228,7 @@ export function InspectorPanel({
                 </select>
               </label>
             )}
-            {!isUpscale && (!isEditFamily || powerUserInspector) && (
+            {!isUpscale && showGenerateLikeSettings && (
               <label className="block">
                 <span className="text-xs text-dfui-muted">Aspect ratio</span>
                 <select
@@ -1234,7 +1244,7 @@ export function InspectorPanel({
                 </select>
               </label>
             )}
-            {!isUpscale && (!isEditFamily || powerUserInspector) && (
+            {!isUpscale && showGenerateLikeSettings && (
               <label className="block">
                 <span className="text-xs text-dfui-muted">
                   Image count — {settings.image_number ?? 1}
@@ -1394,7 +1404,7 @@ export function InspectorPanel({
                 className="df-input mt-1 w-full px-2.5 py-1.5 text-xs resize-none"
               />
             </label>
-            {showEditStrength && (!isEditFamily || powerUserInspector) && (
+            {showEditStrength && showGenerateLikeSettings && (
               <label className="block">
                 <span className="text-xs text-dfui-muted">
                   Edit strength — {Math.round((settings.edit_strength ?? 0.98) * 100)}%
@@ -1412,7 +1422,7 @@ export function InspectorPanel({
                 />
               </label>
             )}
-            {showAdvancedSampling && (!isEditFamily || powerUserInspector) && (
+            {showAdvancedSampling && showGenerateLikeSettings && (
               <>
                 {!isCustomPerf && (
                   <p className="rounded-md border border-dfui-border/40 bg-dfui-bg/40 px-2 py-1 text-[10px] leading-snug text-dfui-tertiary">

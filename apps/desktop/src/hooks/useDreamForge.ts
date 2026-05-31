@@ -1701,9 +1701,13 @@ export function useDreamForge() {
   const selectModelGallery = useCallback(
     async (item: ModelGalleryItem) => {
       const mode = appConfig?.ui.studio_mode ?? "generate";
-      if (mode !== "generate" && !appConfig?.ui.advanced_mode) {
+      if (
+        mode !== "generate" &&
+        mode !== "inpaint" &&
+        !appConfig?.ui.advanced_mode
+      ) {
         setStatus(
-          "Switch to Generate mode or enable advanced mode to override routed edit models",
+          "Switch to Generate or Inpaint mode, or enable advanced mode to override routed edit models",
         );
         return;
       }
@@ -2093,8 +2097,21 @@ export function useDreamForge() {
 
   const applyPlanSnapshot = useCallback(
     async (plan: AgentPlanSnapshot) => {
-      const merged = resolvePlannedSettings(plan, settingsRef.current);
-      userPickedModelRef.current = false;
+      const base = settingsRef.current;
+      const merged = resolvePlannedSettings(plan, base);
+      const preserveModel = userPickedModelRef.current && Boolean(base.model?.trim());
+      const preserveLoras = (base.lora?.length ?? 0) > 0;
+      const preserveStyle =
+        Boolean(base.style?.trim()) &&
+        base.style !== "image_edit" &&
+        base.style !== merged.style;
+      if (preserveModel) merged.model = base.model;
+      if (preserveLoras) merged.lora = base.lora;
+      if (preserveStyle) {
+        merged.style = base.style;
+        merged.styles = base.styles;
+      }
+      userPickedModelRef.current = preserveModel;
       patchSettings(merged);
       const targetMode =
         plan.mode && plan.mode !== "agent"
@@ -2514,7 +2531,10 @@ export function useDreamForge() {
       userPickedModelRef.current = false;
       patchSettings(patch);
       if (routedModel) void refreshModelDependencies(routedModel);
-      const defaultStatus = `${mode[0].toUpperCase()}${mode.slice(1)} mode - DreamForge will auto-route curated tools`;
+      const defaultStatus =
+        mode === "inpaint"
+          ? "Inpaint mode — auto-routes fill/inpaint tools; override model, LoRAs, and styles in the inspector"
+          : `${mode[0].toUpperCase()}${mode.slice(1)} mode - DreamForge will auto-route curated tools`;
       setStatus(defaultStatus);
     },
     [

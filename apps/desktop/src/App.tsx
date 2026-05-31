@@ -207,6 +207,7 @@ export default function App() {
         open={mc.inpaintMaskOpen}
         imagePath={mc.settings.input_image ?? ""}
         onClose={() => mc.setInpaintMaskOpen(false)}
+        onMaskChange={(path) => mc.setInpaintMaskPath(path)}
         onSave={(path) => {
           mc.setInpaintMaskPath(path);
           mc.setInpaintMaskOpen(false);

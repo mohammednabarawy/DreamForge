@@ -1,4 +1,6 @@
 import {
+  ChevronDown,
+  ChevronUp,
   Eraser,
   MousePointer2,
   Paintbrush,
@@ -21,6 +23,8 @@ type Props = {
   open: boolean;
   onClose: () => void;
   onSave: (maskPath: string) => void;
+  /** Called whenever the mask bitmap changes (grow/shrink, paint, etc.). */
+  onMaskChange?: (maskPath: string) => void;
 };
 
 type SelectTool = "paint" | "erase" | "tap_object" | "tap_background";
@@ -46,6 +50,90 @@ function isMaskPixelSelected(data: Uint8ClampedArray, offset: number): boolean {
   return (data[offset] + data[offset + 1] + data[offset + 2]) / 3 > 127;
 }
 
+function readMaskBinary(data: Uint8ClampedArray, width: number, height: number): Uint8Array {
+  const binary = new Uint8Array(width * height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      binary[y * width + x] = isMaskPixelSelected(data, i) ? 1 : 0;
+    }
+  }
+  return binary;
+}
+
+function writeMaskImageData(
+  target: ImageData,
+  binary: Uint8Array,
+  width: number,
+  height: number,
+) {
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = y * width + x;
+      const i = idx * 4;
+      const v = binary[idx] ? 255 : 0;
+      target.data[i] = v;
+      target.data[i + 1] = v;
+      target.data[i + 2] = v;
+      target.data[i + 3] = 255;
+    }
+  }
+}
+
+/** Morphological grow (dilate) or shrink (erode) by N pixels on an 8-connected grid. */
+function morphMaskBinary(
+  binary: Uint8Array,
+  width: number,
+  height: number,
+  pixels: number,
+  grow: boolean,
+): Uint8Array {
+  const steps = Math.max(0, Math.floor(pixels));
+  if (steps === 0) return binary;
+
+  let current = binary;
+  for (let step = 0; step < steps; step++) {
+    const next = new Uint8Array(width * height);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const idx = y * width + x;
+        if (grow) {
+          let selected = current[idx] === 1;
+          if (!selected) {
+            for (let dy = -1; dy <= 1 && !selected; dy++) {
+              for (let dx = -1; dx <= 1 && !selected; dx++) {
+                const nx = x + dx;
+                const ny = y + dy;
+                if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+                if (current[ny * width + nx] === 1) selected = true;
+              }
+            }
+          }
+          next[idx] = selected ? 1 : 0;
+        } else {
+          let selected = current[idx] === 1;
+          if (selected) {
+            for (let dy = -1; dy <= 1 && selected; dy++) {
+              for (let dx = -1; dx <= 1 && selected; dx++) {
+                const nx = x + dx;
+                const ny = y + dy;
+                if (nx < 0 || nx >= width || ny < 0 || ny >= height) {
+                  selected = false;
+                  break;
+                }
+                if (current[ny * width + nx] !== 1) selected = false;
+              }
+            }
+          }
+          next[idx] = selected ? 1 : 0;
+        }
+      }
+    }
+    current = next;
+  }
+  return current;
+}
+
 function getOffscreenMask(w: number, h: number, maskRef: React.MutableRefObject<HTMLCanvasElement | null>) {
   if (!maskRef.current) {
     maskRef.current = document.createElement("canvas");
@@ -63,7 +151,7 @@ function getOffscreenMask(w: number, h: number, maskRef: React.MutableRefObject<
   return mask;
 }
 
-export function InpaintMaskModal({ imagePath, open, onClose, onSave }: Props) {
+export function InpaintMaskModal({ imagePath, open, onClose, onSave, onMaskChange }: Props) {
   /** Visible: photo + pale red selection preview. */
   const viewCanvasRef = useRef<HTMLCanvasElement>(null);
   /** Hidden: grayscale mask for inpaint export only. */
@@ -77,6 +165,8 @@ export function InpaintMaskModal({ imagePath, open, onClose, onSave }: Props) {
   const [brush, setBrush] = useState(24);
   const [tool, setTool] = useState<SelectTool>("paint");
   const [mergeMode, setMergeMode] = useState<"add" | "replace">("add");
+  const [morphPixels, setMorphPixels] = useState(1);
+  const [morphPixelsInput, setMorphPixelsInput] = useState("1");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [ready, setReady] = useState(false);
@@ -129,6 +219,52 @@ export function InpaintMaskModal({ imagePath, open, onClose, onSave }: Props) {
     ctx.globalAlpha = 1;
     ctx.drawImage(overlay, 0, 0, w, h);
   }, []);
+
+  const publishMask = useCallback(async () => {
+    const mask = maskRef.current;
+    if (!mask) return;
+    const dataUrl = mask.toDataURL("image/png");
+    const path = await writeTempPng(dataUrl);
+    onMaskChange?.(path);
+    return path;
+  }, [onMaskChange]);
+
+  const morphMask = useCallback(
+    (grow: boolean) => {
+      const mask = maskRef.current;
+      if (!mask) return;
+      const ctx = mask.getContext("2d");
+      if (!ctx) return;
+
+      const parsed = Number.parseInt(morphPixelsInput, 10);
+      const pixels = Number.isFinite(parsed)
+        ? Math.max(1, Math.min(64, parsed))
+        : Math.max(1, Math.min(64, morphPixels));
+      setMorphPixels(pixels);
+      setMorphPixelsInput(String(pixels));
+
+      const image = ctx.getImageData(0, 0, mask.width, mask.height);
+      const binary = readMaskBinary(image.data, mask.width, mask.height);
+      const morphed = morphMaskBinary(binary, mask.width, mask.height, pixels, grow);
+      writeMaskImageData(image, morphed, mask.width, mask.height);
+      ctx.putImageData(image, 0, 0);
+      redrawView();
+      void publishMask();
+      setStatus(grow ? `Grew selection by ${pixels}px` : `Shrunk selection by ${pixels}px`);
+    },
+    [morphPixels, morphPixelsInput, publishMask, redrawView],
+  );
+
+  const commitMorphPixelsInput = useCallback(() => {
+    const parsed = Number.parseInt(morphPixelsInput, 10);
+    if (!Number.isFinite(parsed)) {
+      setMorphPixelsInput(String(morphPixels));
+      return;
+    }
+    const clamped = Math.max(1, Math.min(64, parsed));
+    setMorphPixels(clamped);
+    setMorphPixelsInput(String(clamped));
+  }, [morphPixels, morphPixelsInput]);
 
   const setupSession = useCallback(
     (w: number, h: number, image: HTMLImageElement, attempt = 0) => {
@@ -330,10 +466,8 @@ export function InpaintMaskModal({ imagePath, open, onClose, onSave }: Props) {
   );
 
   const exportMask = async () => {
-    const mask = maskRef.current;
-    if (!mask) return;
-    const dataUrl = mask.toDataURL("image/png");
-    const path = await writeTempPng(dataUrl);
+    const path = await publishMask();
+    if (!path) return;
     onSave(path);
     onClose();
   };
@@ -461,6 +595,44 @@ export function InpaintMaskModal({ imagePath, open, onClose, onSave }: Props) {
               <option value="add">Add to selection</option>
               <option value="replace">Replace selection</option>
             </select>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-dfui-muted">Grow/decrease mask</span>
+              <button
+                type="button"
+                disabled={busy || !ready}
+                aria-label="Grow mask"
+                onClick={() => morphMask(true)}
+                className="rounded border border-dfui-border/50 p-1 text-dfui-secondary hover:border-dfui-accent/40 hover:text-dfui-accent disabled:opacity-50"
+              >
+                <ChevronUp size={14} />
+              </button>
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={morphPixelsInput}
+                disabled={busy || !ready}
+                onChange={(e) => setMorphPixelsInput(e.target.value.replace(/[^\d]/g, ""))}
+                onBlur={commitMorphPixelsInput}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    commitMorphPixelsInput();
+                    (e.target as HTMLInputElement).blur();
+                  }
+                }}
+                className="df-input w-12 px-1 py-0.5 text-center font-mono text-[10px]"
+                aria-label="Mask grow or shrink pixels"
+              />
+              <button
+                type="button"
+                disabled={busy || !ready}
+                aria-label="Decrease mask"
+                onClick={() => morphMask(false)}
+                className="rounded border border-dfui-border/50 p-1 text-dfui-secondary hover:border-dfui-accent/40 hover:text-dfui-accent disabled:opacity-50"
+              >
+                <ChevronDown size={14} />
+              </button>
+            </div>
             <button
               type="button"
               onClick={clearMask}

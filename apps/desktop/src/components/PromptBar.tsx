@@ -11,6 +11,7 @@ import {
 import { detectAgentPromptHint } from "../lib/parseAgentPrompt";
 import {
   activeReferenceMode,
+  handleImagePathDragOver,
   readImagePathFromDrop,
   type ReferenceImageMode,
 } from "../lib/referenceImage";
@@ -211,13 +212,17 @@ export function PromptBar({
       className={`df-command-deck relative shrink-0 border-t border-dfui-border/60 bg-dfui-panel/90 px-3 py-2 backdrop-blur-glass transition-colors ${
         promptDragOver ? "ring-1 ring-inset ring-df-blue/30" : ""
       }`}
+      onDragEnterCapture={(event) => {
+        if (handleImagePathDragOver(event, generating)) setPromptDragOver(true);
+      }}
+      onDragOverCapture={(event) => {
+        if (handleImagePathDragOver(event, generating)) setPromptDragOver(true);
+      }}
       onDragEnter={(event) => {
-        event.preventDefault();
-        if (!generating) setPromptDragOver(true);
+        if (handleImagePathDragOver(event, generating)) setPromptDragOver(true);
       }}
       onDragOver={(event) => {
-        event.preventDefault();
-        if (!generating) setPromptDragOver(true);
+        if (handleImagePathDragOver(event, generating)) setPromptDragOver(true);
       }}
       onDragLeave={(event) => {
         if (!(event.currentTarget as HTMLElement).contains(

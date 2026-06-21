@@ -66,12 +66,7 @@ function DraggableHistoryThumb({
       onDragStart={(event) => {
         setImagePathDragData(event.dataTransfer, path);
         event.stopPropagation();
-        const img = event.currentTarget.querySelector("img");
-        if (img instanceof HTMLImageElement && img.complete && img.naturalWidth > 0) {
-          const w = Math.min(img.naturalWidth, 96);
-          const h = Math.min(img.naturalHeight, 96);
-          event.dataTransfer.setDragImage(img, w / 2, h / 2);
-        }
+        // Avoid setDragImage(<img>) — WebView2 treats it as a native file drag and drops custom MIME.
       }}
       onDragEnd={() => scheduleClearImagePathDragSession()}
       className={`group/thumb relative shrink-0 cursor-grab overflow-hidden rounded-md border border-transparent active:cursor-grabbing hover:border-df-blue/40 ${className}`}

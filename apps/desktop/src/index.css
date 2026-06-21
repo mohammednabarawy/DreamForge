@@ -201,6 +201,15 @@ kbd {
   @apply font-mono text-[10px];
 }
 
+/* Frameless window drag (Tauri / WebView2) */
+[data-tauri-drag-region] {
+  -webkit-app-region: drag;
+}
+
+[data-tauri-drag-region="false"] {
+  -webkit-app-region: no-drag;
+}
+
 /* Smooth appearance for elements */
 .fade-in {
   animation: fadeIn 0.3s ease-out;

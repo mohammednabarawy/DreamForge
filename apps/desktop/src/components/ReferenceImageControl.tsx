@@ -9,7 +9,7 @@ import {
   basename,
   defaultReferenceEditStrength,
   effectiveReferenceEditStrength,
-  canAcceptImagePathDrag,
+  handleImagePathDragOver,
   readImagePathFromDrop,
   upscaleMethodLabel,
   type ReferenceImageMode,
@@ -175,20 +175,17 @@ export function ReferenceImageControl({
 
   return (
     <motion.div
+      onDragEnterCapture={(event) => {
+        if (handleImagePathDragOver(event, disabled)) setDragOver(true);
+      }}
+      onDragOverCapture={(event) => {
+        if (handleImagePathDragOver(event, disabled)) setDragOver(true);
+      }}
       onDragEnter={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!disabled && canAcceptImagePathDrag(event.dataTransfer)) {
-          setDragOver(true);
-        }
+        if (handleImagePathDragOver(event, disabled)) setDragOver(true);
       }}
       onDragOver={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!disabled && canAcceptImagePathDrag(event.dataTransfer)) {
-          event.dataTransfer.dropEffect = "copy";
-          setDragOver(true);
-        }
+        if (handleImagePathDragOver(event, disabled)) setDragOver(true);
       }}
       onDragLeave={(event) => {
         event.stopPropagation();

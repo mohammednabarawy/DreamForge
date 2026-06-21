@@ -36,6 +36,7 @@ function ExperienceToggle({
   const isEasy = experience === "simple";
   return (
     <div
+      data-tauri-drag-region={false}
       className="flex rounded-lg border border-dfui-border/55 bg-dfui-bg/50 p-0.5 shadow-sm"
       role="group"
       aria-label="Interface experience"
@@ -97,11 +98,11 @@ export function TitleBar({
   };
 
   return (
-    <header className="grid h-12 shrink-0 grid-cols-[1fr_auto_1fr] items-center border-b border-dfui-border/60 bg-dfui-panel/80 px-3 backdrop-blur-glass">
-      <div
-        data-tauri-drag-region
-        className="flex min-w-0 cursor-default items-center gap-2.5"
-      >
+    <header
+      data-tauri-drag-region
+      className="grid h-12 shrink-0 grid-cols-[1fr_auto_1fr] items-center border-b border-dfui-border/60 bg-dfui-panel/80 px-3 backdrop-blur-glass select-none"
+    >
+      <div className="flex min-w-0 cursor-default items-center gap-2.5">
         <img
           src={BRAND.logoIcon}
           alt=""
@@ -151,6 +152,7 @@ export function TitleBar({
             {onOpenAppSettings && (
               <button
                 type="button"
+                data-tauri-drag-region={false}
                 onClick={onOpenAppSettings}
                 className="inline-flex items-center gap-1 rounded-md border border-dfui-border/50 bg-dfui-bg/40 px-2 py-1 text-[10px] font-medium text-dfui-secondary transition hover:border-dfui-accent/40 hover:text-dfui-fg"
                 title="App settings"
@@ -162,7 +164,7 @@ export function TitleBar({
             )}
           </div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1" data-tauri-drag-region={false}>
           <button
             type="button"
             className="rounded-md p-1.5 text-dfui-muted hover:bg-dfui-surface-hover hover:text-dfui-fg"

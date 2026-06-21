@@ -374,14 +374,63 @@ export function setImagePathDragData(dataTransfer: DataTransfer, path: string) {
   }
 }
 
+function dragTransferTypes(dataTransfer: DataTransfer): string[] {
+  return Array.from(dataTransfer.types ?? []).map((type) => type.toLowerCase());
+}
+
 export function canAcceptImagePathDrag(dataTransfer: DataTransfer): boolean {
   if (getDraggingImagePath()) return true;
-  const types = Array.from(dataTransfer.types ?? []);
+  const types = dragTransferTypes(dataTransfer);
   return (
-    types.includes(DREAMFORGE_IMAGE_PATH_MIME) ||
+    types.includes(DREAMFORGE_IMAGE_PATH_MIME.toLowerCase()) ||
     types.includes("text/plain") ||
     types.includes("text/uri-list") ||
-    types.includes("Files")
+    types.includes("files")
+  );
+}
+
+/** Call on dragenter/dragover (incl. capture) so nested buttons don't show a blocked cursor. */
+export function handleImagePathDragOver(
+  event: Pick<DragEvent, "preventDefault" | "stopPropagation" | "dataTransfer">,
+  disabled = false,
+): boolean {
+  event.preventDefault();
+  event.stopPropagation();
+  if (disabled) return false;
+  const accepted = canAcceptImagePathDrag(event.dataTransfer);
+  if (accepted) {
+    event.dataTransfer.dropEffect = "copy";
+  }
+  return accepted;
+}
+
+let dragDropBridgeInstalled = false;
+
+/** WebView2/Tauri: keep internal image drags droppable (requires dragDropEnabled: false). */
+export function installImagePathDragDropBridge() {
+  if (typeof window === "undefined" || dragDropBridgeInstalled) return;
+  dragDropBridgeInstalled = true;
+
+  window.addEventListener(
+    "dragover",
+    (event) => {
+      if (canAcceptImagePathDrag(event.dataTransfer)) {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+      }
+    },
+    { capture: true },
+  );
+
+  window.addEventListener(
+    "dragenter",
+    (event) => {
+      if (canAcceptImagePathDrag(event.dataTransfer)) {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+      }
+    },
+    { capture: true },
   );
 }
 

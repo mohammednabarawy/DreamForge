@@ -2,7 +2,7 @@ import { FolderOpen, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   basename,
-  canAcceptImagePathDrag,
+  handleImagePathDragOver,
   readImagePathFromDrop,
 } from "../lib/referenceImage";
 import { pickImageFile } from "../lib/tauri-api";
@@ -60,20 +60,17 @@ export function RegistryImagePicker({
           ? "border-df-blue/60 bg-df-blue/10 ring-1 ring-df-blue/25"
           : "border-dfui-border/50"
       }`}
+      onDragEnterCapture={(event) => {
+        if (handleImagePathDragOver(event, disabled)) setDragOver(true);
+      }}
+      onDragOverCapture={(event) => {
+        if (handleImagePathDragOver(event, disabled)) setDragOver(true);
+      }}
       onDragEnter={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!disabled && canAcceptImagePathDrag(event.dataTransfer)) {
-          setDragOver(true);
-        }
+        if (handleImagePathDragOver(event, disabled)) setDragOver(true);
       }}
       onDragOver={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!disabled && canAcceptImagePathDrag(event.dataTransfer)) {
-          event.dataTransfer.dropEffect = "copy";
-          setDragOver(true);
-        }
+        if (handleImagePathDragOver(event, disabled)) setDragOver(true);
       }}
       onDragLeave={(event) => {
         event.stopPropagation();

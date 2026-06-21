@@ -54,6 +54,7 @@ export async function openIdeogramLayoutWindow(settings: GenerationSettings): Pr
     resizable: true,
     decorations: true,
     focus: true,
+    dragDropEnabled: false,
   });
 
   return new Promise((resolve) => {

@@ -3,7 +3,10 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { IdeogramLayoutWindow } from "./components/IdeogramLayoutWindow";
+import { installImagePathDragDropBridge } from "./lib/referenceImage";
 import "./index.css";
+
+installImagePathDragDropBridge();
 
 const rootComponent =
   new URLSearchParams(window.location.search).get("tool") === "ideogram-layout" ? (

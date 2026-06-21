@@ -1,6 +1,5 @@
 import { motion } from "framer-motion";
 import {
-  Move,
   RotateCcw,
   SplitSquareHorizontal,
   ZoomIn,
@@ -29,6 +28,8 @@ import { CanvasMaskEditor } from "./CanvasMaskEditor";
 
 type Mention = { kind: "model" | "style"; label: string; value: string };
 type CompareMode = "before" | "after" | "split";
+
+const CANVAS_ZOOM_STEP = 1.25;
 
 type Props = {
   previewUrl: string | null;
@@ -152,6 +153,7 @@ export function CanvasPanel({
   const [canvasPan, setCanvasPan] = useState({ x: 0, y: 0 });
   const [isCanvasPanning, setIsCanvasPanning] = useState(false);
   const compareImageRef = useRef<HTMLDivElement | null>(null);
+  const canvasShellRef = useRef<HTMLDivElement | null>(null);
   const canvasViewportRef = useRef<HTMLDivElement | null>(null);
   const compareModeRef = useRef<CompareMode>(compareMode);
   compareModeRef.current = compareMode;
@@ -217,20 +219,34 @@ export function CanvasPanel({
   };
 
   useEffect(() => {
-    const el = canvasViewportRef.current;
-    if (!el || !showCompareCanvas) return;
+    const el = canvasShellRef.current;
+    if (!el || !showCompareCanvas || showInlineMask) return;
+
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
-      const delta = event.deltaY < 0 ? 0.12 : -0.12;
+      event.stopPropagation();
+
+      const factor =
+        event.deltaMode === WheelEvent.DOM_DELTA_PIXEL
+          ? Math.exp(-event.deltaY * 0.002)
+          : event.deltaY < 0
+            ? CANVAS_ZOOM_STEP
+            : 1 / CANVAS_ZOOM_STEP;
+
       setCanvasZoom((current) => {
-        const zoom = clampCanvasZoom(current * (1 + delta));
-        if (zoom <= 1) setCanvasPan({ x: 0, y: 0 });
+        const zoom = clampCanvasZoom(current * factor);
+        if (zoom <= 1) {
+          setCanvasPan({ x: 0, y: 0 });
+        } else {
+          setCanvasPan((pan) => clampCanvasPan(pan, zoom));
+        }
         return zoom;
       });
     };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, [showCompareCanvas]);
+
+    el.addEventListener("wheel", onWheel, { passive: false, capture: true });
+    return () => el.removeEventListener("wheel", onWheel, { capture: true });
+  }, [showCompareCanvas, showInlineMask]);
 
   const setZoomKeepingPan = (nextZoom: number) => {
     const zoom = clampCanvasZoom(nextZoom);
@@ -320,7 +336,10 @@ export function CanvasPanel({
 
   return (
     <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-      <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center overflow-hidden p-4">
+      <div
+        ref={canvasShellRef}
+        className="relative flex min-h-0 flex-1 flex-col items-center justify-center overflow-hidden p-4"
+      >
         <EngineBootOverlay
           engineState={engineState}
           bootMessage={bootMessage}
@@ -559,7 +578,7 @@ export function CanvasPanel({
             </button>
             <button
               type="button"
-              onClick={() => setZoomKeepingPan(canvasZoom / 1.25)}
+              onClick={() => setZoomKeepingPan(canvasZoom / CANVAS_ZOOM_STEP)}
               className="rounded-md p-1.5 text-dfui-muted transition hover:bg-dfui-surface hover:text-dfui-fg"
               title="Zoom out"
             >
@@ -570,21 +589,12 @@ export function CanvasPanel({
             </div>
             <button
               type="button"
-              onClick={() => setZoomKeepingPan(canvasZoom * 1.25)}
+              onClick={() => setZoomKeepingPan(canvasZoom * CANVAS_ZOOM_STEP)}
               className="rounded-md p-1.5 text-dfui-muted transition hover:bg-dfui-surface hover:text-dfui-fg"
               title="Zoom in"
             >
               <ZoomIn size={13} />
             </button>
-            {canvasZoom > 1 && (
-              <span
-                className="hidden items-center gap-1 px-1.5 text-dfui-tertiary sm:inline-flex"
-                title="Drag the image to pan while zoomed"
-              >
-                <Move size={12} />
-                Drag
-              </span>
-            )}
           </div>
         )}
         {canCompare && studioMode === "inpaint" && compareMode !== "before" && inputImagePath && (

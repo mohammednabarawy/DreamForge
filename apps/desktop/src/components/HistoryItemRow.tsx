@@ -99,6 +99,7 @@ export function HistoryItemRow({
   onDeleteImage,
 }: Props) {
   const rowRef = useRef<HTMLLIElement>(null);
+  const lastScrolledTokenRef = useRef<number | undefined>(undefined);
   const [menuOpen, setMenuOpen] = useState(false);
   const images = item.images.filter(Boolean);
   const thumb = images[0];
@@ -108,9 +109,10 @@ export function HistoryItemRow({
   const promptExcerpt = excerptPrompt(item.prompt);
 
   useEffect(() => {
-    if (scrollToken && active && rowRef.current) {
-      rowRef.current.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    }
+    if (!scrollToken || !active || !rowRef.current) return;
+    if (lastScrolledTokenRef.current === scrollToken) return;
+    lastScrolledTokenRef.current = scrollToken;
+    rowRef.current.scrollIntoView({ block: "nearest", behavior: "auto" });
   }, [scrollToken, active]);
 
   const openPath = thumb ?? item.manifest_path;

@@ -117,7 +117,7 @@ function DreamForgeStudio() {
             onCreateSession={(name) => mc.createSession(name)}
             selected={mc.selected}
             onSelect={mc.setSelected}
-            onRefresh={() => void mc.refreshOutputs()}
+            onRefresh={() => void mc.refreshOutputs({ keepSelection: true })}
             onLoadMore={
               mc.outputsHasMore ? () => mc.loadMoreOutputs() : undefined
             }

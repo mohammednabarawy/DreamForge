@@ -9,7 +9,7 @@ import {
   Star,
   Trash2,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   loadCollapsedDateGroups,
   loadFavoriteManifests,
@@ -98,6 +98,8 @@ export function HistoryPanel({
   );
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [newSessionName, setNewSessionName] = useState("");
+  const onRefreshRef = useRef(onRefresh);
+  onRefreshRef.current = onRefresh;
 
   const activeLabel = useMemo(() => {
     const s = sessions.find((x) => x.id === activeSessionId);
@@ -151,9 +153,9 @@ export function HistoryPanel({
   };
 
   useEffect(() => {
-    const t = window.setTimeout(() => onRefresh(), 280);
+    const t = window.setTimeout(() => onRefreshRef.current(), 280);
     return () => window.clearTimeout(t);
-  }, [outputSearch, onRefresh]);
+  }, [outputSearch]);
 
   return (
     <aside className="flex h-full min-h-0 min-w-0 flex-col glass-panel rounded-none border-y-0 border-l-0">

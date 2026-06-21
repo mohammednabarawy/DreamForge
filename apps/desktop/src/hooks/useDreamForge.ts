@@ -679,6 +679,9 @@ export function useDreamForge() {
     [outputs, sessionRegistry, activeSessionId],
   );
 
+  const outputsLengthRef = useRef(0);
+  outputsLengthRef.current = outputs.length;
+
   const refreshOutputs = useCallback(
     async (opts?: {
       keepSelection?: boolean;
@@ -689,7 +692,9 @@ export function useDreamForge() {
       setOutputsLoading(true);
       try {
         const q = outputSearchRef.current.trim();
-        const offset = opts?.append ? outputs.length : (opts?.offset ?? 0);
+        const offset = opts?.append
+          ? outputsLengthRef.current
+          : (opts?.offset ?? 0);
         const page = q
           ? await searchOutputsPage(q, {
               limit: HISTORY_PAGE_SIZE,
@@ -738,9 +743,6 @@ export function useDreamForge() {
             }
             return page.items[0] ?? null;
           });
-          if (restored) {
-            setHistoryScrollToken((t) => t + 1);
-          }
         }
       } catch (e) {
         setStatus(`Outputs error: ${String(e)}`);
@@ -748,7 +750,7 @@ export function useDreamForge() {
         setOutputsLoading(false);
       }
     },
-    [outputs.length],
+    [],
   );
 
   const loadMoreOutputs = useCallback(() => {

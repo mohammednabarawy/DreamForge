@@ -1,0 +1,286 @@
+"""Legacy hand-authored presets — source for ``scripts/convert_styles.py`` only.
+
+Runtime code should import ``STYLE_RECIPES`` from ``dreamforge_style_recipes``.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+USE_CASE_RECIPES: dict[str, dict[str, Any]] = {
+    "image_edit": {
+        "models": ["flux1-dev-kontext_fp8_scaled.safetensors"],
+        "notes": "Requires --input-image. Uses Flux Kontext for high-quality edits.",
+    },
+    "concept_art": {
+        "styles": [],
+        "performance": "Lightning",
+        "aspect_ratio": "896x704",
+        "prompt_prefix": "Concept art illustration, detailed environment design",
+        "models": ["hidream_o1_image_dev_mxfp8.safetensors"],
+    },
+    "fast_draft": {
+        "models": ["z_image_turbo_fp8_e4m3fn.safetensors", "flux1-schnell-fp8.safetensors"],
+        "performance": "Lightning",
+        "notes": "Fastest possible generation for iteration/previews.",
+    },
+    "mockup_ui": {
+        "models": ["flux1-schnell-fp8.safetensors"],
+        "styles": [],
+        "performance": "Lightning",
+        "prompt_prefix": "Clean modern UI mockup, app interface design",
+    },
+    "product_ad": {
+        "prompt_profile": "product_ad",
+        "positive": [
+            "premium product advertising campaign",
+            "clear hero product",
+            "intentional negative space",
+            "commercial studio lighting",
+            "high-end editorial composition",
+        ],
+        "styles": ["Style: ads-advertising", "Style: sai-photographic", "Style: sai-enhance"],
+        "models": ["juggernautXL_v8Rundiffusion.safetensors", "RealVisXL_V5.0_fp16.safetensors", "realisticStockPhoto_v20.safetensors"],
+        "performance": "Quality",
+        "aspect_ratio": "896x704",
+        "prompt_prefix": "A professional product advertisement photograph, high-end commercial styling",
+    },
+    "book_cover": {
+        "styles": ["Style: sai-cinematic", "Style: sai-enhance", "Style: artstyle-typography"],
+        "performance": "Quality",
+        "aspect_ratio": "896x1344",
+        "prompt_prefix": "An award-winning book cover illustration, dramatic composition",
+    },
+    "cinematic": {
+        "styles": ["Style: sai-cinematic", "Style: photo-film noir", "Style: sai-enhance"],
+        "performance": "Quality",
+        "aspect_ratio": "896x704",
+        "prompt_prefix": "A cinematic movie still, 8k resolution, dramatic lighting, shot on 35mm lens",
+    },
+    "avatar_portrait": {
+        "styles": ["Style: sai-photographic", "Style: sai-enhance"],
+        "performance": "Quality",
+        "aspect_ratio": "768x768",
+        "prompt_prefix": "A professional avatar portrait, studio lighting, highly detailed face",
+    },
+    "logo_mockup": {
+        "styles": ["Style: ads-corporate", "Style: sai-enhance"],
+        "performance": "Quality",
+        "aspect_ratio": "768x768",
+        "prompt_prefix": "A realistic corporate logo mockup, elegant minimal background",
+    },
+    "fashion_editorial": {
+        "styles": ["Style: ads-fashion editorial", "Style: sai-photographic"],
+        "performance": "Quality",
+        "aspect_ratio": "704x896",
+        "prompt_prefix": "High fashion editorial photography, Vogue magazine style",
+    },
+    "real_estate": {
+        "styles": ["Style: ads-real estate", "Style: misc-architectural", "Style: sai-photographic"],
+        "performance": "Quality",
+        "aspect_ratio": "960x640",
+        "prompt_prefix": "Professional architectural photography, luxury real estate interior/exterior",
+    },
+    "game_asset": {
+        "styles": ["Style: sai-fantasy art", "Style: game-rpg fantasy game", "Style: sai-enhance"],
+        "performance": "Quality",
+        "aspect_ratio": "768x768",
+        "prompt_prefix": "A high-quality 2D game asset illustration, isolated, detailed concept art",
+    },
+    "youtube_thumbnail": {
+        "styles": ["Style: sai-enhance", "Style: sai-digital art"],
+        "performance": "Lightning",
+        "aspect_ratio": "1024x576",
+        "prompt_prefix": "An engaging YouTube thumbnail background, vibrant colors, high contrast",
+    },
+    "pattern_texture": {
+        "styles": ["Style: sai-texture", "Style: sai-enhance"],
+        "performance": "Quality",
+        "aspect_ratio": "768x768",
+        "prompt_prefix": "A seamless texture pattern, flat lighting, perfect tiling",
+    },
+    "anime_illustration": {
+        "styles": ["Style: sai-anime", "Style: sai-enhance"],
+        "performance": "Quality",
+        "aspect_ratio": "704x896",
+        "prompt_prefix": "A high-quality anime illustration, studio ghibli style, detailed background",
+    },
+    "3d_render": {
+        "styles": ["Style: sai-3d-model", "Style: sai-enhance"],
+        "performance": "Quality",
+        "aspect_ratio": "768x768",
+        "prompt_prefix": "A high quality 3D render, octane render, unreal engine 5, ray tracing",
+    },
+    "app_icon": {
+        "styles": ["Style: sai-digital art", "Style: sai-enhance"],
+        "performance": "Quality",
+        "aspect_ratio": "768x768",
+        "prompt_prefix": "A modern flat mobile app icon design, clear silhouette, minimal",
+    },
+    "sticker_design": {
+        "styles": ["Style: sai-digital art", "Style: sai-enhance"],
+        "performance": "Quality",
+        "aspect_ratio": "768x768",
+        "prompt_prefix": "A die-cut vinyl sticker design, white border contour, flat colors",
+    },
+    "arabic_poster": {
+        "prompt_profile": "nano_banana_pro",
+        "positive": [
+            "professional Arabic poster design",
+            "clean readable headline area",
+            "premium visual hierarchy",
+            "blank surfaces reserved for exact text",
+        ],
+        "negative": [
+            "fake Arabic",
+            "random Latin letters",
+            "duplicate text",
+            "watermark",
+            "logo unless provided",
+        ],
+        "styles": ["Style: sai-enhance"],
+        "models": ["RealVisXL_V5.0_fp16.safetensors", "juggernautXL_v8Rundiffusion.safetensors"],
+        "preset": "pro_text",
+        "performance": "Quality",
+        "steps": 45,
+    },
+    "social_post": {
+        "prompt_profile": "image2",
+        "positive": [
+            "polished social media campaign visual",
+            "bold central subject",
+            "clean space for caption overlay",
+            "high contrast composition",
+        ],
+        "negative": ["unreadable text", "watermark", "clutter", "low quality"],
+        "styles": ["Style: sai-enhance", "Style: sai-photographic"],
+        "models": ["juggernautXL_v8Rundiffusion.safetensors", "RealVisXL_V5.0_fp16.safetensors"],
+        "aspect_ratio": "768x768",
+        "performance": "Lightning",
+    },
+    "thumbnail": {
+        "prompt_profile": "image2",
+        "positive": [
+            "high-impact thumbnail composition",
+            "large clear subject",
+            "dramatic contrast",
+            "simple readable background",
+        ],
+        "negative": ["tiny details", "unreadable text", "watermark", "busy background"],
+        "styles": ["Style: sai-enhance"],
+        "models": ["juggernautXL_v8Rundiffusion.safetensors", "epicrealismXL_vxiAbeast.safetensors"],
+        "aspect_ratio": "960x576",
+        "performance": "Lightning",
+    },
+    "cinematic_scene": {
+        "prompt_profile": "cinematic",
+        "positive": [
+            "cinematic film still",
+            "strong atmosphere",
+            "professional color grading",
+            "controlled depth of field",
+        ],
+        "negative": ["flat lighting", "watermark", "low quality", "bad anatomy"],
+        "styles": [],
+        "models": [
+            "hidream_o1_image_dev_mxfp8.safetensors",
+            "epicrealismXL_vxiAbeast.safetensors",
+            "juggernautXL_v8Rundiffusion.safetensors",
+        ],
+        "aspect_ratio": "896x704",
+        "performance": "Lightning",
+        "steps": 28,
+    },
+    "infographic": {
+        "prompt_profile": "infographic",
+        "positive": [
+            "organized infographic background",
+            "clear sections",
+            "generous spacing",
+            "clean modern layout",
+        ],
+        "negative": ["random text", "fake labels", "messy diagram", "watermark"],
+        "styles": ["Style: sai-enhance"],
+        "models": ["RealVisXL_V5.0_fp16.safetensors", "juggernautXL_v8Rundiffusion.safetensors"],
+        "aspect_ratio": "896x704",
+        "performance": "Lightning",
+    },
+    "signage": {
+        "prompt_profile": "signage",
+        "positive": [
+            "realistic physical sign surface",
+            "clear readable sign area",
+            "believable reflections and shadows",
+            "integrated environment",
+        ],
+        "negative": ["gibberish text", "extra letters", "duplicate text", "watermark"],
+        "styles": ["Style: sai-enhance"],
+        "models": ["juggernautXL_v8Rundiffusion.safetensors", "RealVisXL_V5.0_fp16.safetensors"],
+        "performance": "Quality",
+    },
+    "isometric_design": {
+        "styles": ["Style: sai-isometric", "Style: sai-3d-model", "Style: sai-enhance"],
+        "positive": [
+            "vibrant isometric style",
+            "beautiful crisp intricate details",
+            "clean 3D render",
+        ],
+        "negative": ["deformed", "mutated", "ugly", "disfigured", "blur", "realistic", "photographic"],
+        "performance": "Quality",
+        "aspect_ratio": "768x768",
+        "prompt_prefix": "An isometric 3D design of",
+    },
+    "papercraft_art": {
+        "styles": ["Style: papercraft-papercut shadow box", "Style: sai-enhance"],
+        "positive": [
+            "3D papercut shadow box",
+            "layered dimensional depth",
+            "handmade silhouette shadow",
+            "high contrast papercut",
+        ],
+        "negative": ["painting", "drawing", "photo", "2D", "flat", "blurry", "noisy"],
+        "performance": "Quality",
+        "aspect_ratio": "768x768",
+        "prompt_prefix": "A beautiful papercraft artwork of",
+    },
+    "glitch_art": {
+        "styles": ["Style: misc-glitch art", "Style: sai-enhance"],
+        "positive": [
+            "breathtaking cinematic glitchy photo",
+            "surreal dreamworld",
+            "digital distortion",
+            "award-winning",
+        ],
+        "negative": ["boring", "plain", "standard", "low resolution"],
+        "performance": "Quality",
+        "aspect_ratio": "896x704",
+        "prompt_prefix": "A glitch art representation of",
+    },
+    "analog_film": {
+        "styles": ["Style: sai-analog film", "Style: sai-photographic"],
+        "positive": [
+            "analog film photo",
+            "faded film desaturated",
+            "35mm photo grainy vignette vintage Kodachrome",
+            "highly detailed found footage",
+        ],
+        "negative": ["painting", "drawing", "illustration", "glitch", "deformed", "mutated"],
+        "performance": "Quality",
+        "aspect_ratio": "896x704",
+        "prompt_prefix": "An analog film photograph of",
+    },
+    "digital_painting": {
+        "styles": ["Style: sai-digital art", "Style: sai-enhance"],
+        "positive": [
+            "concept art digital artwork",
+            "illustrative painterly",
+            "matte painting highly detailed",
+        ],
+        "negative": ["photo", "photorealistic", "realism", "ugly"],
+        "performance": "Quality",
+        "aspect_ratio": "896x704",
+        "prompt_prefix": "A beautiful digital painting of",
+    },
+}
+
+

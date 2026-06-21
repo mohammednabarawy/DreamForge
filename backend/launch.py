@@ -1,0 +1,344 @@
+import os
+import sys
+import version
+import warnings
+from pathlib import Path
+import ssl
+from tempfile import gettempdir
+from modules.shared_functions import broken_torch_platforms
+
+os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+os.environ["DO_NOT_TRACK"] = "1"
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["CMAKE_POLICY_VERSION_MINIMUM"] = "3.5"
+
+ssl._create_default_https_context = ssl._create_unverified_context
+
+warnings.filterwarnings("ignore", category=FutureWarning, module="insightface")
+warnings.filterwarnings("ignore", category=FutureWarning, module="transformers")
+warnings.filterwarnings("ignore", category=FutureWarning, module="kornia")
+warnings.filterwarnings("ignore", category=FutureWarning, module="timm")
+warnings.filterwarnings("ignore", category=UserWarning, module="torchvision")
+warnings.filterwarnings("ignore", category=UserWarning, module="gradio")
+warnings.filterwarnings("ignore", category=UserWarning, module="torchsde")
+warnings.filterwarnings("ignore", category=UserWarning)
+
+warnings.filterwarnings(
+    "ignore", category=UserWarning, module="torchvision.transforms.functional_tensor"
+)
+warnings.filterwarnings(
+    "ignore", category=UserWarning, message="TypedStorage is deprecated"
+)
+
+from modules.launch_util import (
+    is_installed,
+    run,
+    python,
+    run_pip,
+    pip_rm,
+    repo_dir,
+    requirements_met,
+    script_path,
+    dir_repos,
+)
+
+
+git_repos = [
+    {
+        "name": "ComfyUI",
+        "path": "ComfyUI",
+        "url": "https://github.com/comfyanonymous/ComfyUI",
+        "hash": "ba9ffa0a2b70250a2945e7cdca5d72febc53df51",
+        "add_path": "ComfyUI",
+    },
+#    {
+#        "name": "Calcuis-GGUF",
+#        "path": "calcuis_gguf",
+#        "url": "https://github.com/calcuis/gguf",
+#        "hash": "34a4e030afea0137c5e781e07400bdbe00e9d524",
+#        "add_path": "",
+#    },
+    {
+        "name": "ComfyUI-GGUF",
+        "path": "comfyui_gguf",
+        "url": "https://github.com/city96/ComfyUI-GGUF",
+        "hash": "6ea2651e7df66d7585f6ffee804b20e92fb38b8a",
+        "add_path": "",
+    },
+]
+
+
+TORCH_MIN_VERSION = "2.4.0"
+
+
+def _darwin_x86_python() -> bool:
+    import platform
+
+    return platform.system() == "Darwin" and platform.machine() == "x86_64"
+
+
+def ensure_torch_minimum_version(min_version=TORCH_MIN_VERSION):
+    """Upgrade stale torch wheels so pip/modules.txt (e.g. txtai) can resolve."""
+    if _darwin_x86_python():
+        print(
+            "macOS x86_64 Python detected (often Rosetta): PyPI torch is capped at 2.2.x; "
+            "using txtai 8.4.0. For Apple Silicon, recreate venv with native arm64 Python "
+            "(see docs/TROUBLESHOOTING.md)."
+        )
+        return
+
+    try:
+        import packaging.version as pv
+        import torch
+
+        installed = pv.parse(torch.__version__.split("+", 1)[0])
+        required = pv.parse(min_version)
+        if installed >= required:
+            return
+        print(
+            f"Upgrading torch {torch.__version__} -> >={min_version} "
+            "(required by DreamForge dependencies)"
+        )
+    except Exception:
+        print(f"Installing torch >={min_version} for DreamForge dependencies")
+
+    run_pip(
+        f'install --upgrade "torch>={min_version}" torchvision torchaudio',
+        "torch stack upgrade",
+    )
+
+
+def ensure_torchaudio_matches_torch(torch_platform):
+    """Keep torchaudio ABI-compatible with the installed torch wheel."""
+    try:
+        import torch
+        import torchaudio
+    except Exception:
+        torch = None
+        torchaudio = None
+
+    if torch is None:
+        return
+
+    torch_version = torch.__version__
+    base_version = torch_version.split("+", 1)[0]
+    cuda_suffix = torch_version.split("+", 1)[1] if "+" in torch_version else None
+    current_audio = getattr(torchaudio, "__version__", "") if torchaudio else ""
+    expected_prefix = f"{base_version}+{cuda_suffix}" if cuda_suffix else base_version
+
+    if current_audio.startswith(expected_prefix):
+        return
+
+    try:
+        import packaging.version as pv
+
+        torch_base = pv.parse(base_version)
+        audio_base = pv.parse(current_audio.split("+", 1)[0])
+        if audio_base.major == torch_base.major and torch_base.minor - audio_base.minor <= 1:
+            return
+    except Exception:
+        pass
+
+    if cuda_suffix and cuda_suffix.startswith("cu"):
+        index_url = f"https://download.pytorch.org/whl/{cuda_suffix}"
+        spec = f"torchaudio=={base_version}+{cuda_suffix}"
+        run_pip(f"install --force-reinstall --no-deps {spec} --index-url {index_url}", "compatible torchaudio")
+    else:
+        run_pip(
+            f"install --upgrade torchaudio torchvision",
+            "compatible torchaudio",
+        )
+
+
+def prepare_environment(offline=False):
+    print(f"Python {sys.version}")
+    print(f"DreamForge version: {version.version}")
+
+    requirements_file = "requirements_versions.txt"
+
+    modules_file = "pip/modules.txt"
+
+    if offline:
+        print("Skip pip check.")
+    else:
+        run(
+            f'"{python}" -m pip install --upgrade pip',
+            "Check pip",
+            "Couldn't check pip",
+            live=False,
+        )
+        run(
+            f'"{python}" -m pip install -r "{requirements_file}"',
+            "Check pre-requirements",
+            "Couldn't check pre-reqs",
+            live=False,
+        )
+        run(
+            f'"{python}" -m pip uninstall -y llama-cpp-python',
+            "Check for old modules",
+            "Couldn't check old modules",
+            live=False,
+        )
+
+
+        import torchruntime
+        import platform
+        gpus = torchruntime.device_db.get_gpus()
+        if "TORCH_PLATFORM" in os.environ:
+            torch_platform = os.environ["TORCH_PLATFORM"]
+        else:
+            torch_platform = torchruntime.platform_detection.get_torch_platform(gpus)
+        os_platform = platform.system()
+
+        # Some platform checks
+        torch_platform, os_platform = broken_torch_platforms(torch_platform, os_platform)
+
+        print(f"Torch platform: {os_platform}: {torch_platform}") # Some debug output
+
+    if offline:
+        print("Skip check of required modules.")
+    else:
+        os.environ["FLASH_ATTENTION_SKIP_CUDA_BUILD"] = "TRUE"
+
+        # Run torchruntime install
+        cmds = torchruntime.installer.get_install_commands(torch_platform, [])
+        if REINSTALL_ALL or REINSTALL_TORCH:
+            for idx in range(len(cmds)):
+                cmds[idx].insert(0, "--force-reinstall")
+        cmds = torchruntime.installer.get_pip_commands(cmds)
+        torchruntime.installer.run_commands(cmds)
+        torchruntime.configure()
+        ensure_torch_minimum_version()
+        ensure_torchaudio_matches_torch(torch_platform)
+
+        if REINSTALL_ALL or not requirements_met(modules_file):
+            print("This next step may take a while")
+            run_pip(f'install -r "{modules_file}"', "required modules")
+
+        try:
+            xlc_version = "xllamacpp==0.2.7"
+            if platform.system() == "Darwin":
+                print("Skipping xllamacpp on macOS (not supported)")
+            elif REINSTALL_ALL or not is_installed(xlc_version):
+                platform_index = {
+                    'cu124': 'https://xorbitsai.github.io/xllamacpp/whl/cu124',
+                    'cu128': 'https://xorbitsai.github.io/xllamacpp/whl/cu128',
+                    'rocm6.3': 'https://xorbitsai.github.io/xllamacpp/whl/rocm-6.3.4',
+                    'rocm6.4': 'https://xorbitsai.github.io/xllamacpp/whl/rocm-6.4.1',
+                    'cpu': 'https://pypi.org/simple'
+                }
+                if torch_platform not in platform_index:
+                    torch_platform = 'cpu'
+                run_pip(f'install {xlc_version} --index-url {platform_index[torch_platform]}', "XLlamacpp")
+        except Exception as e:
+            print("WARNING: Failed to install/update llm modules.")
+            print(e)
+
+def clone_git_repos(offline=False):
+    from modules.launch_util import git_clone
+
+    for repo in git_repos:
+        if not offline:
+            git_clone(repo["url"], repo_dir(repo["path"]), repo["name"], hash=repo["hash"])
+        add_path = str(Path(script_path) / dir_repos / repo["add_path"])
+        if add_path not in sys.path:
+            sys.path.append(add_path)
+
+
+def download_models():
+    from modules.util import load_file_from_url
+    from shared import path_manager
+
+    model_filenames = [
+        (
+            path_manager.model_paths["vae_approx_path"],
+            "taesdxl_decoder",
+            "https://github.com/madebyollin/taesd/raw/main/taesdxl_decoder.pth",
+        ),
+        (
+            "prompt_expansion",
+            "pytorch_model.bin",
+            "https://huggingface.co/lllyasviel/misc/resolve/main/fooocus_expansion.bin",
+        ),
+    ]
+
+    for model_dir, file_name, url in model_filenames:
+        try:
+            load_file_from_url(
+                url=url,
+                model_dir=model_dir,
+                file_name=file_name,
+            )
+        except Exception as e:
+            print(f"WARNING: Could not download {file_name} from {url}: {e}")
+
+
+from argparser import args
+
+REINSTALL_ALL = False
+if os.path.exists("reinstall"):
+    REINSTALL_ALL = True
+REINSTALL_TORCH = False
+if os.path.exists("reinstalltorch"):
+    REINSTALL_TORCH = True
+
+if args.gpu_device_id is not None:
+    try:
+        import torch
+        if torch.cuda.is_available():
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_device_id)
+            print("Set CUDA device to:", args.gpu_device_id)
+        else:
+            print(f"Note: --gpu-device-id={args.gpu_device_id} ignored (no CUDA available)")
+    except ImportError:
+        pass
+
+offline = os.environ.get("RF_OFFLINE") == "1" or "--offline" in sys.argv or "--iINSTallLEDmYOwNPaCKaGeS" in sys.argv
+
+if offline:
+    print("Skip checking python modules.")
+
+prepare_environment(offline)
+
+if os.path.exists("reinstall"):
+    try:
+        os.remove("reinstall")
+    except:
+        print("ERROR: Failed to remove 'reinstall'. Pleae remove manually.")
+if os.path.exists("reinstalltorch"):
+    try:
+        os.remove("reinstalltorch")
+    except:
+        print("ERROR: Failed to remove 'reinstalltorch'. Pleae remove manually.")
+
+try:
+    clone_git_repos(offline)
+except:
+    print(f"WARNING: Failed checking git-repos. Trying to start without update.")
+
+if not offline:
+    download_models()
+
+gradio_cache = os.path.join(gettempdir(), 'DreamForge_cache')
+os.environ['GRADIO_TEMP_DIR'] = gradio_cache
+# Delete old data
+import shutil
+try:
+    if args.clean_cache and gradio_cache.endswith('DreamForge_cache'):
+        shutil.rmtree(gradio_cache)
+except FileNotFoundError:
+    pass
+except PermissionError:
+    pass
+except Exception as e:
+    print(f"An error occurred: {str(e)}")
+
+def launch_ui():
+    print("Starting webui")
+    import webui
+
+
+if args.setup_only:
+    print("DreamForge environment setup complete.")
+else:
+    launch_ui()

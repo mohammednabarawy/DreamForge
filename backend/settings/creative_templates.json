@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "templates": {
+    "create.default": {
+      "studio_mode": "generate",
+      "label": "Create",
+      "defaults": {
+        "steps": 20,
+        "performance": "Lightning"
+      },
+      "companions": [],
+      "chain": {}
+    },
+    "edit.kontext": {
+      "studio_mode": "edit",
+      "label": "Edit (Kontext)",
+      "model_pick": {
+        "edit_type": "kontext",
+        "family": "flux_kontext"
+      },
+      "defaults": {
+        "style": "image_edit",
+        "edit_type": "kontext",
+        "cn_selection": "None",
+        "cn_type": "None",
+        "edit_strength": 1.0,
+        "steps": 20
+      },
+      "companions": ["diffusion_flux_kontext_fp8_scaled"],
+      "chain": {}
+    },
+    "edit.kontext.enhance2x": {
+      "extends": "edit.kontext",
+      "label": "Edit + Ultimate SD Upscale",
+      "chain": {
+        "post_upscale": "ultimate_sd_upscale"
+      }
+    },
+    "inpaint.flux_fill": {
+      "studio_mode": "inpaint",
+      "label": "Fix region (Flux Fill)",
+      "model_pick": {
+        "edit_type": "inpaint",
+        "family": "flux_fill"
+      },
+      "defaults": {
+        "style": "image_edit",
+        "edit_type": "inpaint",
+        "cn_selection": "Custom...",
+        "cn_type": "inpaint",
+        "edit_strength": 0.9,
+        "steps": 20
+      },
+      "companions": ["diffusion_flux_fill_dev"],
+      "krita_recipe": "flux_inpaint",
+      "chain": {}
+    },
+    "inpaint.flux_fill.enhance2x": {
+      "extends": "inpaint.flux_fill",
+      "label": "Fix region + Ultimate SD Upscale",
+      "chain": {
+        "post_upscale": "ultimate_sd_upscale"
+      }
+    },
+    "enhance.ultimate_sd": {
+      "studio_mode": "upscale",
+      "label": "Enhance (Ultimate SD Upscale)",
+      "model_pick": {
+        "family": "sdxl",
+        "category": "checkpoints"
+      },
+      "defaults": {
+        "style": "image_edit",
+        "edit_type": "auto",
+        "cn_selection": "Custom...",
+        "cn_type": "upscale",
+        "performance": "Custom...",
+        "steps": 20,
+        "cfg": 6,
+        "sampler_name": "euler",
+        "scheduler": "normal",
+        "upscale_method": "ultimate_sd_upscale",
+        "upscale_by": 2,
+        "upscale_denoise": 0.25,
+        "upscale_tile_width": 1024,
+        "upscale_tile_height": 1024,
+        "upscale_tile_padding": 64,
+        "upscale_mask_blur": 8,
+        "upscale_seam_fix_mode": "None",
+        "upscale_mode_type": "Chess"
+      },
+      "companions": ["upscaler_ultrasharp_legacy"],
+      "chain": {}
+    },
+    "create.z_image": {
+      "studio_mode": "generate",
+      "label": "Create (Z-Image)",
+      "model_pick": {
+        "family": "z-image"
+      },
+      "defaults": {
+        "steps": 20,
+        "performance": "Lightning"
+      },
+      "companions": ["z_image_turbo_nvfp4", "z_image_qwen3_4b_fp4", "z_image_ae_vae"],
+      "chain": {}
+    },
+    "create.chroma_hd": {
+      "studio_mode": "generate",
+      "label": "Create (Chroma HD)",
+      "model_pick": {
+        "family": "chroma"
+      },
+      "defaults": {
+        "steps": 20,
+        "performance": "Quality"
+      },
+      "companions": [],
+      "chain": {}
+    },
+    "create.kandinsky5": {
+      "studio_mode": "generate",
+      "label": "Create (Kandinsky 5)",
+      "model_pick": {
+        "family": "kandinsky5"
+      },
+      "defaults": {
+        "steps": 20,
+        "performance": "Lightning"
+      },
+      "companions": [],
+      "chain": {}
+    },
+    "create.qwen": {
+      "studio_mode": "generate",
+      "label": "Create (Qwen)",
+      "model_pick": {
+        "family": "qwen"
+      },
+      "defaults": {
+        "steps": 20,
+        "performance": "Quality"
+      },
+      "companions": [],
+      "chain": {}
+    },
+    "extract.default": {
+      "studio_mode": "extract",
+      "label": "Extract Features",
+      "defaults": {
+        "style": "image_edit",
+        "edit_type": "extract",
+        "cn_selection": "Custom...",
+        "cn_type": "extract"
+      },
+      "companions": [],
+      "chain": {}
+    }
+  },
+  "default_template_by_mode": {
+    "generate": "create.default",
+    "edit": "edit.kontext",
+    "inpaint": "inpaint.flux_fill",
+    "upscale": "enhance.ultimate_sd",
+    "extract": "extract.default"
+  }
+}

@@ -1,0 +1,565 @@
+"""Resolve ComfyUI loader inputs against object_info and on-disk companions."""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+from pathlib import Path
+from typing import Any
+
+from dreamforge_cli_inventory import (
+    MODEL_DEPENDENCIES,
+    MODEL_EXTENSIONS,
+    MODELS_ROOT,
+    check_model_dependencies,
+    companion_file_present,
+)
+
+_log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Hash-based fallback (ported from RuinedFooocus model_handler)
+# ---------------------------------------------------------------------------
+_CACHE_DIR: Path | None = None
+
+
+def _get_cache_dir() -> Path | None:
+    """Resolve the CivitAI metadata cache directory (lazy, best-effort)."""
+    global _CACHE_DIR
+    if _CACHE_DIR is not None:
+        return _CACHE_DIR if _CACHE_DIR.is_dir() else None
+    try:
+        from modules.path import PathManager
+        pm = PathManager()
+        _CACHE_DIR = Path(pm.model_paths.get("cache_path", ""))
+    except Exception:
+        _CACHE_DIR = MODELS_ROOT / ".cache"
+    return _CACHE_DIR if _CACHE_DIR.is_dir() else None
+
+
+def _build_hash_index(category: str) -> dict[str, str]:
+    """
+    Scan CivitAI JSON cache files to build a SHA256 → relative-path index.
+
+    The cache stores ``{model_basename}.json`` files containing CivitAI API
+    responses with ``files[0].hashes.SHA256``.  We correlate each hash back
+    to the actual model file on disk under the category folder.
+    """
+    index: dict[str, str] = {}
+    cache_dir = _get_cache_dir()
+
+    # --- Strategy 1: scan cache dir ---
+    if cache_dir:
+        cat_cache = cache_dir / category
+        if cat_cache.is_dir():
+            for jf in cat_cache.glob("*.json"):
+                try:
+                    data = json.loads(jf.read_text(encoding="utf-8"))
+                    sha = (
+                        data.get("files", [{}])[0]
+                        .get("hashes", {})
+                        .get("SHA256", "")
+                        .upper()
+                    )
+                    if not sha:
+                        continue
+                    # The model file has the same stem as the cache json
+                    model_stem = jf.stem
+                    cat_dir = MODELS_ROOT / category
+                    if cat_dir.is_dir():
+                        for ext in MODEL_EXTENSIONS:
+                            candidate = cat_dir / f"{model_stem}{ext}"
+                            if candidate.is_file():
+                                index[sha] = candidate.name
+                                break
+                except Exception:
+                    continue
+
+    # --- Strategy 2: scan sidecar .json next to model files ---
+    cat_dir = MODELS_ROOT / category
+    if cat_dir.is_dir():
+        for model_file in cat_dir.rglob("*"):
+            if not model_file.is_file() or model_file.suffix.lower() not in MODEL_EXTENSIONS:
+                continue
+            sidecar = model_file.with_suffix(".json")
+            if not sidecar.is_file():
+                continue
+            try:
+                data = json.loads(sidecar.read_text(encoding="utf-8"))
+                sha = (
+                    data.get("files", [{}])[0]
+                    .get("hashes", {})
+                    .get("SHA256", "")
+                    .upper()
+                )
+                if sha and sha not in index:
+                    index[sha] = model_file.name
+            except Exception:
+                continue
+
+    return index
+
+
+def _hash_fallback_match(
+    wanted: str,
+    choices: list[str],
+    category: str,
+) -> str | None:
+    """
+    Try to match a missing model by its SHA256 hash.
+
+    If the ``wanted`` name is not in ``choices``, look for a sidecar/cache
+    ``.json`` for the wanted model, extract its SHA256, then scan the on-disk
+    models for one with the same hash.  If found, return the new filename
+    that IS in ``choices``.
+    """
+    if not wanted or not choices:
+        return None
+
+    # Try to find the hash of the wanted model from its cache/sidecar json
+    wanted_stem = Path(wanted).stem
+    wanted_hash: str | None = None
+
+    # Check sidecar json
+    cat_dir = MODELS_ROOT / category
+    for ext in MODEL_EXTENSIONS:
+        sidecar = cat_dir / f"{wanted_stem}{ext}"
+        sidecar_json = sidecar.with_suffix(".json")
+        if sidecar_json.is_file():
+            try:
+                data = json.loads(sidecar_json.read_text(encoding="utf-8"))
+                wanted_hash = (
+                    data.get("files", [{}])[0]
+                    .get("hashes", {})
+                    .get("SHA256", "")
+                    .upper()
+                )
+            except Exception:
+                pass
+            if wanted_hash:
+                break
+
+    # Also check cache dir
+    if not wanted_hash:
+        cache_dir = _get_cache_dir()
+        if cache_dir:
+            cache_json = cache_dir / category / f"{wanted_stem}.json"
+            if cache_json.is_file():
+                try:
+                    data = json.loads(cache_json.read_text(encoding="utf-8"))
+                    wanted_hash = (
+                        data.get("files", [{}])[0]
+                        .get("hashes", {})
+                        .get("SHA256", "")
+                        .upper()
+                    )
+                except Exception:
+                    pass
+
+    if not wanted_hash:
+        return None
+
+    # Now build an index of all on-disk models' hashes and look for a match
+    hash_index = _build_hash_index(category)
+    matched_name = hash_index.get(wanted_hash)
+    if matched_name and matched_name in choices:
+        _log.info(
+            "Hash fallback: '%s' resolved to '%s' via SHA256 %s…",
+            wanted, matched_name, wanted_hash[:12],
+        )
+        return matched_name
+
+    return None
+
+
+def _object_info_options(object_info: dict[str, Any], node_class: str, input_name: str) -> list[str]:
+    node = object_info.get(node_class) or {}
+    inputs = node.get("input") or {}
+    cfg = (inputs.get("required") or {}).get(input_name)
+    if cfg is None:
+        cfg = (inputs.get("optional") or {}).get(input_name)
+    if cfg is None:
+        return []
+    choices = cfg[0] if isinstance(cfg, (list, tuple)) and cfg else cfg
+    if isinstance(choices, list):
+        return [str(item) for item in choices]
+    return []
+
+
+def _unet_loader_class_for_name(name: str) -> str:
+    return "UnetLoaderGGUF" if Path(str(name)).suffix.lower() == ".gguf" else "UNETLoader"
+
+
+def _basename_match(wanted: str, choices: list[str]) -> str | None:
+    if not wanted or not choices:
+        return None
+    name = Path(str(wanted)).name
+    if name in choices:
+        return name
+    lower = name.lower()
+    for choice in choices:
+        if choice.lower() == lower:
+            return choice
+    stem = Path(name).stem.lower()
+    for choice in choices:
+        if Path(choice).stem.lower() == stem:
+            return choice
+    # Smart fallback for Qwen 3 4B text encoders
+    if "qwen" in lower and "3" in lower and "4b" in lower:
+        for choice in choices:
+            choice_lower = choice.lower()
+            if "qwen" in choice_lower and "3" in choice_lower and "4b" in choice_lower:
+                return choice
+    return None
+
+
+def _flux_companion_basenames_on_disk(family: str) -> dict[str, str]:
+    """Map flux loader keys to basenames of files present under MODELS_ROOT."""
+    dep_family = family if family in MODEL_DEPENDENCIES else "flux"
+    out: dict[str, str] = {}
+    for req in MODEL_DEPENDENCIES.get(dep_family, MODEL_DEPENDENCIES.get("flux", [])):
+        if req.get("optional") or not companion_file_present(req):
+            continue
+        relative = str(req.get("relative") or "")
+        basename = Path(relative).name
+        req_id = str(req.get("id") or "")
+        if "clip_l" in req_id or basename.startswith("clip_l"):
+            out["clip_l"] = basename
+        elif "t5" in req_id or "t5xxl" in basename.lower():
+            out["t5"] = basename
+        elif "vae" in req_id or basename in ("ae.safetensors", "flux_vae.safetensors"):
+            out["vae"] = basename
+    return out
+
+
+def _qwen_companion_basenames_on_disk(family: str) -> dict[str, str]:
+    """Map Qwen loader keys to companion basenames on disk."""
+    dep_families = []
+    if family in MODEL_DEPENDENCIES:
+        dep_families.append(family)
+    if "qwen_image" not in dep_families:
+        dep_families.append("qwen_image")
+    out: dict[str, str] = {}
+    for dep_family in dep_families:
+        for req in MODEL_DEPENDENCIES.get(dep_family, []):
+            if req.get("optional") or not companion_file_present(req):
+                continue
+            relative = str(req.get("relative") or "")
+            basename = Path(relative).name
+            req_id = str(req.get("id") or "")
+            if "vae" in req_id or "vae" in basename.lower():
+                out["vae"] = basename
+            elif "clip" in req_id or "qwen" in basename.lower():
+                out["clip"] = basename
+    return out
+
+
+def _hidream_companion_basenames_on_disk(family: str) -> dict[str, str]:
+    """Map HiDream split-loader keys to companion basenames on disk."""
+    out: dict[str, str] = {}
+    for req in MODEL_DEPENDENCIES.get("hidream", []) + MODEL_DEPENDENCIES.get("hidream_o1", []):
+        if req.get("optional") or not companion_file_present(req):
+            continue
+        relative = str(req.get("relative") or "")
+        basename = Path(relative).name
+        req_id = str(req.get("id") or "")
+        if "clip_l" in req_id or basename.startswith("clip_l"):
+            out["clip_l"] = basename
+        elif "clip_g" in req_id or basename.startswith("clip_g"):
+            out["clip_g"] = basename
+        elif "t5" in req_id or "t5xxl" in basename.lower():
+            out["t5"] = basename
+        elif "llama" in req_id or "llama" in basename.lower():
+            out["llama"] = basename
+        elif "vae" in req_id or basename in ("ae.safetensors", "flux_vae.safetensors"):
+            out["vae"] = basename
+    if not out.get("vae"):
+        for alt in ("ae.safetensors",):
+            if companion_file_present({"relative": f"vae/{alt}"}):
+                out["vae"] = alt
+                break
+    return out
+
+
+class ComfyModelResolutionError(RuntimeError):
+    """Raised when Comfy cannot load required weights for a workflow."""
+
+    def __init__(self, message: str, *, missing: list[str] | None = None, suggestions: list[str] | None = None):
+        super().__init__(message)
+        self.missing = list(missing or [])
+        self.suggestions = list(suggestions or [])
+
+
+def resolve_comfy_model_loader_args(
+    client: Any,
+    *,
+    model: dict[str, Any],
+    model_family: str,
+) -> dict[str, Any]:
+    """Return workflow args with Comfy-valid loader names (unet/clip/vae/checkpoint)."""
+    object_info = client.object_info()
+    category = str(model.get("category") or "checkpoints").lower()
+    rel = str(model.get("relative_path") or model.get("name") or "")
+    family = str(model_family or model.get("family") or "").lower()
+    basename = Path(rel).name
+
+    args: dict[str, Any] = {
+        "category": category,
+        "relative_path": basename,
+        "family": family,
+        "ckpt_name": model.get("name") or basename,
+    }
+
+    if category not in ("diffusion_models", "unet"):
+        ckpt_choices = _object_info_options(object_info, "CheckpointLoaderSimple", "ckpt_name")
+        matched = _basename_match(str(args["ckpt_name"]), ckpt_choices)
+        if not matched:
+            # Hash-based fallback: model may have been renamed on disk
+            matched = _hash_fallback_match(str(args["ckpt_name"]), ckpt_choices, "checkpoints")
+        if matched:
+            args["ckpt_name"] = matched
+        elif ckpt_choices and basename not in ckpt_choices:
+            raise ComfyModelResolutionError(
+                f"Checkpoint '{basename}' is not visible to ComfyUI. "
+                f"Place it under {MODELS_ROOT / 'checkpoints'} and restart the GPU engine.",
+                missing=[basename],
+                suggestions=[
+                    f"Models root: {MODELS_ROOT}",
+                    "Restart GPU engine after adding files.",
+                ],
+            )
+        if family.startswith("qwen"):
+            on_disk = _qwen_companion_basenames_on_disk(family)
+            clip_choices = _object_info_options(object_info, "CLIPLoader", "clip_name")
+            clip_choices += _object_info_options(object_info, "CLIPLoaderGGUF", "clip_name")
+            vae_choices = _object_info_options(object_info, "VAELoader", "vae_name")
+            default_clip = on_disk.get("clip", "qwen_2.5_vl_7b_fp8_scaled.safetensors")
+            clip = _basename_match(default_clip, clip_choices)
+            vae = _basename_match(on_disk.get("vae", "qwen_image_vae.safetensors"), vae_choices)
+            problems: list[str] = []
+            if clip:
+                args["clip"] = clip
+            elif on_disk.get("clip"):
+                problems.append(
+                    f"Qwen CLIP '{on_disk['clip']}' exists under {Path(MODELS_ROOT).resolve()} "
+                    "but ComfyUI does not list it for CLIPLoader."
+                )
+            elif not clip_choices:
+                problems.append("ComfyUI reports no Qwen text encoder files for CLIPLoader.")
+            if vae:
+                args["vae"] = vae
+            elif on_disk.get("vae"):
+                problems.append(
+                    f"Qwen VAE '{on_disk['vae']}' exists under {MODELS_ROOT} but ComfyUI vae list is: {vae_choices!r}."
+                )
+            elif not vae_choices:
+                problems.append("ComfyUI reports no VAE files for Qwen workflows.")
+            missing_deps = check_model_dependencies(model)
+            if missing_deps:
+                for item in missing_deps[:4]:
+                    problems.append(f"Missing companion: {item.get('relative')} — {item.get('note', '')}")
+            if problems:
+                models_root = Path(MODELS_ROOT).resolve()
+                raise ComfyModelResolutionError(
+                    "Cannot run this Qwen checkpoint workflow in ComfyUI until companion models are visible.\n"
+                    + "\n".join(f"- {p}" for p in problems),
+                    missing=problems,
+                    suggestions=[
+                        f"Models folder resolves to: {models_root}",
+                        "Stop any other ComfyUI on port 8188, then click Restart GPU engine.",
+                        "Install qwen_2.5_vl_7b_fp8_scaled.safetensors under text_encoders/ or clip/ "
+                        "and qwen_image_vae.safetensors under vae/.",
+                    ],
+                )
+        return args
+
+    unet_loader_class = _unet_loader_class_for_name(basename)
+    unet_choices = _object_info_options(object_info, unet_loader_class, "unet_name")
+    matched_unet = _basename_match(basename, unet_choices)
+    if not matched_unet:
+        # Hash-based fallback: model may have been renamed on disk
+        matched_unet = _hash_fallback_match(basename, unet_choices, category)
+    if not matched_unet:
+        matched_unet = basename
+
+    args["unet_name"] = matched_unet
+    args["relative_path"] = matched_unet
+    args["ckpt_name"] = matched_unet
+
+    problems: list[str] = []
+    if not unet_choices:
+        problems.append(
+            f"ComfyUI reports no UNet/diffusion_models files (expected '{basename}' under "
+            f"{Path(MODELS_ROOT).resolve() / 'diffusion_models'} or {Path(MODELS_ROOT).resolve() / 'unet'} "
+            f"via {unet_loader_class})."
+        )
+    elif matched_unet not in unet_choices:
+        problems.append(
+            f"UNet '{basename}' is on disk for DreamForge but ComfyUI cannot see it "
+            f"(got {len(unet_choices)} file(s) from {unet_loader_class})."
+        )
+
+    if family.startswith("flux"):
+        on_disk = _flux_companion_basenames_on_disk(family)
+        clip1_choices = _object_info_options(object_info, "DualCLIPLoader", "clip_name1")
+        clip2_choices = _object_info_options(object_info, "DualCLIPLoader", "clip_name2")
+        vae_choices = _object_info_options(object_info, "VAELoader", "vae_name")
+
+        clip_l = _basename_match(on_disk.get("clip_l", "clip_l.safetensors"), clip1_choices)
+        t5 = _basename_match(on_disk.get("t5", "t5xxl_fp8_e4m3fn_scaled.safetensors"), clip2_choices)
+        vae = _basename_match(on_disk.get("vae", "ae.safetensors"), vae_choices)
+        if not vae and "pixel_space" in vae_choices:
+            vae = "pixel_space"
+
+        if clip_l:
+            args["clip_l"] = clip_l
+        elif on_disk.get("clip_l"):
+            problems.append(
+                f"CLIP-L '{on_disk['clip_l']}' exists under {Path(MODELS_ROOT).resolve()} but ComfyUI clip/text_encoders list is empty."
+            )
+        elif not clip1_choices:
+            problems.append("ComfyUI reports no CLIP/text encoder files for DualCLIPLoader.")
+
+        if t5:
+            args["t5"] = t5
+        elif on_disk.get("t5"):
+            problems.append(
+                f"T5 '{on_disk['t5']}' exists under {Path(MODELS_ROOT).resolve()} but ComfyUI does not list it for DualCLIPLoader."
+            )
+
+        if vae:
+            args["vae"] = vae
+        elif on_disk.get("vae"):
+            problems.append(
+                f"VAE '{on_disk['vae']}' exists under {MODELS_ROOT} but ComfyUI vae list is: {vae_choices!r}."
+            )
+        elif not vae_choices:
+            problems.append("ComfyUI reports no VAE files.")
+
+        missing_deps = check_model_dependencies(model)
+        if missing_deps:
+            for item in missing_deps[:4]:
+                problems.append(f"Missing companion: {item.get('relative')} — {item.get('note', '')}")
+
+    elif family.startswith("qwen") or family in ("z-image", "z_image"):
+        is_z = family in ("z-image", "z_image")
+        on_disk = _qwen_companion_basenames_on_disk(family)
+        clip_choices = _object_info_options(object_info, "CLIPLoader", "clip_name")
+        clip_choices += _object_info_options(object_info, "CLIPLoaderGGUF", "clip_name")
+        vae_choices = _object_info_options(object_info, "VAELoader", "vae_name")
+        default_clip = on_disk.get("clip", "qwen_3_4b_fp4_mixed.safetensors" if is_z else "qwen_2.5_vl_7b_fp8_scaled.safetensors")
+        clip = _basename_match(default_clip, clip_choices)
+        vae = _basename_match(on_disk.get("vae", "ae.safetensors" if is_z else "qwen_image_vae.safetensors"), vae_choices)
+        if clip:
+            args["clip"] = clip
+        elif on_disk.get("clip"):
+            problems.append(
+                f"CLIP '{on_disk['clip']}' exists under {Path(MODELS_ROOT).resolve()} "
+                "but ComfyUI does not list it for CLIPLoader."
+            )
+        elif not clip_choices:
+            problems.append("ComfyUI reports no text encoder files for CLIPLoader.")
+        if vae:
+            args["vae"] = vae
+        elif on_disk.get("vae"):
+            problems.append(
+                f"VAE '{on_disk['vae']}' exists under {MODELS_ROOT} but ComfyUI vae list is: {vae_choices!r}."
+            )
+        elif not vae_choices:
+            problems.append("ComfyUI reports no VAE files for workflows.")
+        missing_deps = check_model_dependencies(model)
+        if missing_deps:
+            for item in missing_deps[:4]:
+                problems.append(f"Missing companion: {item.get('relative')} — {item.get('note', '')}")
+
+    elif family in ("hidream", "hidream_o1"):
+        on_disk = _hidream_companion_basenames_on_disk(family)
+        quad = _object_info_options(object_info, "QuadrupleCLIPLoader", "clip_name1")
+        vae_choices = _object_info_options(object_info, "VAELoader", "vae_name")
+        clip_l = _basename_match(on_disk.get("clip_l", "clip_l.safetensors"), quad)
+        if clip_l:
+            args["clip_l"] = clip_l
+        vae = _basename_match(on_disk.get("vae", "ae.safetensors"), vae_choices)
+        if vae:
+            args["vae"] = vae
+        elif not vae_choices:
+            problems.append("ComfyUI reports no VAE files for HiDream workflows.")
+
+    if problems:
+        models_root = Path(MODELS_ROOT).resolve()
+        family_label = family or "model"
+        companion_hint = "Install required companion weights and restart the GPU engine."
+        if family.startswith("flux"):
+            companion_hint = "Install Flux companions under vae/, text_encoders/, and clip/ if missing."
+        elif family.startswith("qwen"):
+            companion_hint = (
+                "Install qwen_2.5_vl_7b_fp8_scaled.safetensors under text_encoders/ or clip/ "
+                "and qwen_image_vae.safetensors under vae/."
+            )
+        elif family.startswith("hidream"):
+            companion_hint = (
+                "HiDream split loaders need clip_l, clip_g, t5xxl, llama text encoders and ae.safetensors, "
+                "or use a full checkpoint under checkpoints/."
+            )
+        suggestions = [
+            f"Models folder resolves to: {models_root}",
+            "Stop any other ComfyUI on port 8188, then click Restart GPU engine.",
+            companion_hint,
+        ]
+        raise ComfyModelResolutionError(
+            f"Cannot run this {family_label} workflow in ComfyUI until models are visible to the managed server.\n"
+            + "\n".join(f"- {p}" for p in problems),
+            missing=problems,
+            suggestions=suggestions,
+        )
+
+    return args
+
+
+def verify_comfy_model_paths_loaded(
+    client: Any,
+    *,
+    models_root: Path | None = None,
+) -> None:
+    """Fail fast at boot when Comfy cannot see weights that exist on disk."""
+    root = Path(models_root or MODELS_ROOT).resolve()
+    object_info = client.object_info()
+    unet_choices = _object_info_options(object_info, "UNETLoader", "unet_name")
+    gguf_unet_choices = _object_info_options(object_info, "UnetLoaderGGUF", "unet_name")
+    te_choices = _object_info_options(object_info, "DualCLIPLoader", "clip_name1")
+
+    diffusion_dir = root / "diffusion_models"
+    on_disk_unets = (
+        list(diffusion_dir.glob("*.safetensors"))
+        + list(diffusion_dir.glob("*.gguf"))
+        + list((root / "unet").glob("*.safetensors"))
+        + list((root / "unet").glob("*.gguf"))
+        if diffusion_dir.is_dir() or (root / "unet").is_dir()
+        else []
+    )
+    te_dir = root / "text_encoders"
+    on_disk_te = list(te_dir.glob("*.safetensors")) if te_dir.is_dir() else []
+
+    problems: list[str] = []
+    if on_disk_unets and not (unet_choices or gguf_unet_choices):
+        problems.append(
+            f"Found {len(on_disk_unets)} UNet file(s) under {root} but ComfyUI lists none "
+            f"(likely attached to a foreign Comfy without DreamForge extra_model_paths)."
+        )
+    if on_disk_te and not te_choices:
+        problems.append(
+            f"Found {len(on_disk_te)} text encoder file(s) under {te_dir} but ComfyUI lists none."
+        )
+
+    if problems:
+        raise ComfyModelResolutionError(
+            "Managed ComfyUI started but cannot see DreamForge models.\n"
+            + "\n".join(f"- {p}" for p in problems),
+            missing=problems,
+            suggestions=[
+                f"Resolved models root: {root}",
+                "Close other ComfyUI instances, then Restart GPU engine in DreamForge.",
+            ],
+        )

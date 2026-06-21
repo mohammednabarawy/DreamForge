@@ -1,0 +1,109 @@
+{
+  "templates": [
+    {
+      "id": "product_hero",
+      "label": "Product hero",
+      "description": "Single product on a clean studio background",
+      "aspect_ratio": "1:1",
+      "caption": {
+        "aspect_ratio": "1:1",
+        "high_level_description": "Premium product hero shot on a seamless studio backdrop with soft commercial lighting.",
+        "style_description": {
+          "aesthetics": "clean commercial product photography",
+          "lighting": "soft key light with gentle fill",
+          "photo": "85mm lens, shallow depth of field",
+          "medium": "studio photograph"
+        },
+        "compositional_deconstruction": {
+          "background": "neutral seamless studio backdrop with subtle gradient",
+          "elements": [
+            {
+              "type": "obj",
+              "bbox": [280, 220, 720, 780],
+              "desc": "Hero product centered and angled slightly toward camera, crisp edges, realistic materials, subtle ground shadow."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "poster_with_headline",
+      "label": "Poster with headline",
+      "description": "Layout with large headline text and supporting visual",
+      "aspect_ratio": "2:3",
+      "caption": {
+        "aspect_ratio": "2:3",
+        "high_level_description": "Bold vertical poster with a large headline and a supporting hero visual.",
+        "compositional_deconstruction": {
+          "background": "rich color field with subtle texture",
+          "elements": [
+            {
+              "type": "text",
+              "bbox": [80, 80, 220, 920],
+              "text": "HEADLINE",
+              "desc": "Large bold sans-serif headline, high contrast, centered in upper third."
+            },
+            {
+              "type": "obj",
+              "bbox": [320, 120, 880, 880],
+              "desc": "Supporting hero visual occupying lower two-thirds, strong silhouette, poster-friendly composition."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "portrait_environment",
+      "label": "Portrait in environment",
+      "description": "Character portrait with environmental context",
+      "aspect_ratio": "4:5",
+      "caption": {
+        "aspect_ratio": "4:5",
+        "high_level_description": "Cinematic portrait of a person in a detailed environment with natural light.",
+        "compositional_deconstruction": {
+          "background": "softly blurred environment with readable context",
+          "elements": [
+            {
+              "type": "obj",
+              "bbox": [120, 180, 880, 980],
+              "desc": "Person from chest up, natural expression, defined hair and wardrobe colors, facing camera with relaxed posture."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "transparent_cutout",
+      "label": "Transparent cutout",
+      "description": "Subject isolated on transparent background",
+      "aspect_ratio": "1:1",
+      "caption": {
+        "aspect_ratio": "1:1",
+        "high_level_description": "Single subject isolated on a transparent background for compositing.",
+        "compositional_deconstruction": {
+          "background": "transparent background",
+          "elements": [
+            {
+              "type": "obj",
+              "bbox": [150, 150, 850, 850],
+              "desc": "Single subject with clean silhouette, crisp edges, no floor shadow, centered composition."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "landscape_scene",
+      "label": "Landscape scene",
+      "description": "Wide environmental scene without separate subject boxes",
+      "aspect_ratio": "16:9",
+      "caption": {
+        "aspect_ratio": "16:9",
+        "high_level_description": "Wide cinematic landscape with layered depth, atmospheric perspective, and a clear focal area.",
+        "compositional_deconstruction": {
+          "background": "expansive outdoor environment with foreground, midground, and distant horizon"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "1:1": {"width": 768, "height": 768},
+  "1:1 896": {"width": 896, "height": 896},
+  "1:1 1024": {"width": 1024, "height": 1024},
+  "4:3": {"width": 896, "height": 672},
+  "3:2": {"width": 960, "height": 640},
+  "16:9": {"width": 1024, "height": 576},
+  "21:9": {"width": 1024, "height": 448},
+  "3:4": {"width": 672, "height": 896},
+  "2:3": {"width": 704, "height": 1056},
+  "9:16": {"width": 576, "height": 1024},
+  "9:21": {"width": 448, "height": 1024},
+  "4:3 Large": {"width": 1152, "height": 896},
+  "3:4 Large": {"width": 896, "height": 1152},
+  "16:9 Large": {"width": 1344, "height": 768},
+  "9:16 Large": {"width": 768, "height": 1344}
+}

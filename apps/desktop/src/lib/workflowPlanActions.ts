@@ -22,10 +22,6 @@ export function computePlanSettingsSnapshot(
     edit_type: settings.edit_type,
     edit_strength: settings.edit_strength,
     model: (settings.model ?? "").trim(),
-    reference_pack_id: settings.reference_pack_id,
-    reference_pack_role: settings.reference_pack_role,
-    identity_id: settings.identity_id,
-    identity_role: settings.identity_role,
     identity_mode: settings.identity_mode,
     face_preservation: settings.face_preservation,
     inpaint_grow: settings.inpaint_grow,
@@ -188,15 +184,6 @@ export function buildPlanSnapshotFromDryRun(args: {
     mode_contract:
       typeof args.planPayload.mode_contract === "object" && args.planPayload.mode_contract
         ? (args.planPayload.mode_contract as AgentPlanSnapshot["mode_contract"])
-        : undefined,
-    reference_pack:
-      typeof args.planPayload.reference_pack === "object" && args.planPayload.reference_pack
-        ? (args.planPayload.reference_pack as AgentPlanSnapshot["reference_pack"])
-        : undefined,
-    identity_reference:
-      typeof args.planPayload.identity_reference === "object" &&
-      args.planPayload.identity_reference
-        ? (args.planPayload.identity_reference as AgentPlanSnapshot["identity_reference"])
         : undefined,
     workflow_blueprint: args.workflowBlueprint,
     workflow_plan: Array.isArray(args.planPayload.workflow_plan)

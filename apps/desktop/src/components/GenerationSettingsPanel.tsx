@@ -38,8 +38,6 @@ type Props = {
   showEditStrength: boolean;
   routedModelLabel: string;
   editRouteSubtitle?: string;
-  referencePackSubtitle?: string;
-  identitySubtitle?: string;
   isQwenModel: boolean;
   activeModelLabel: string;
   advancedMode?: boolean;
@@ -117,8 +115,6 @@ export function GenerationSettingsPanel({
   showEditStrength,
   routedModelLabel,
   editRouteSubtitle,
-  referencePackSubtitle,
-  identitySubtitle,
   isQwenModel,
   activeModelLabel,
   advancedMode = false,
@@ -218,8 +214,6 @@ export function GenerationSettingsPanel({
     showGenerateLikeSettings,
     showEditStrength,
     customPerf,
-    referencePackSubtitle,
-    identitySubtitle,
   });
   const show = (section: Parameters<typeof generationSectionVisible>[0]) =>
     generationSectionVisible(section, tabCtx);
@@ -258,18 +252,6 @@ export function GenerationSettingsPanel({
             </select>
           </label>
         </SettingsSection>
-      )}
-      {show("referencePack") && (
-        <div className="rounded-lg border border-df-blue/25 bg-df-blue/5 px-2.5 py-2">
-          <p className="text-[10px] uppercase tracking-wide text-dfui-muted">Reference pack</p>
-          <p className="mt-0.5 text-[11px] text-dfui-secondary">{referencePackSubtitle}</p>
-        </div>
-      )}
-      {show("identity") && (
-        <div className="rounded-lg border border-dfui-accent/25 bg-dfui-accent/5 px-2.5 py-2">
-          <p className="text-[10px] uppercase tracking-wide text-dfui-muted">Identity</p>
-          <p className="mt-0.5 text-[11px] text-dfui-secondary">{identitySubtitle}</p>
-        </div>
       )}
       {show("upscalePanel") && (
         <UltimateSDUpscalePanel settings={settings} onChange={onChange} />

@@ -110,12 +110,6 @@ export type GenerationSettings = {
   reference_image?: string;
   /** Additional Kontext/control reference images (Krita-style multi-reference). */
   reference_images?: string[];
-  /** Lightweight local reference pack attached to this plan/run. */
-  reference_pack_id?: string;
-  reference_pack_role?: string;
-  /** SQLite-backed local identity reference attached to this plan/run. */
-  identity_id?: string;
-  identity_role?: string;
   identity_mode?: string;
   face_preservation?: boolean;
   /** Inpaint mask preprocessing (Krita grow/feather). */

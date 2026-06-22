@@ -100,7 +100,11 @@ export function PromptBar({
   const isIdeogramModel = activeModelLabel.toLowerCase().includes("ideogram");
   const promptText = (settings.prompt ?? "").trim();
   const canEnhancePrompt =
-    !isAgentMode && Boolean(promptText) && !generating && !enhancePromptBusy;
+    !isAgentMode &&
+    studioMode === "generate" &&
+    Boolean(promptText) &&
+    !generating &&
+    !enhancePromptBusy;
   const primaryActionLabel = "Generate";
   const simpleBatchCount = Math.min(4, Math.max(2, imageNumberMax >= 4 ? 4 : imageNumberMax));
   const dropReferenceMode = (): ReferenceImageMode => {
@@ -340,7 +344,7 @@ export function PromptBar({
               }
               className="df-textarea-glowing min-h-[48px] flex-1 py-1.5 text-xs leading-snug"
             />
-            {!isAgentMode && onEnhancePrompt ? (
+            {!isAgentMode && studioMode === "generate" && onEnhancePrompt ? (
               <motion.button
                 whileHover={{ scale: canEnhancePrompt ? 1.04 : 1 }}
                 whileTap={{ scale: canEnhancePrompt ? 0.96 : 1 }}

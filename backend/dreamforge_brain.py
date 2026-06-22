@@ -389,19 +389,7 @@ def heuristic_brain_decision(
     selected_image: str = "",
     gallery: Optional[list] = None,
 ) -> Dict[str, Any]:
-    settings = current_settings or {}
-    try:
-        from dreamforge_reference_packs import apply_reference_pack_to_settings
-
-        settings = apply_reference_pack_to_settings(settings)
-    except Exception:
-        settings = dict(settings)
-    try:
-        from dreamforge_identity_registry import apply_identity_to_settings
-
-        settings = apply_identity_to_settings(settings)
-    except Exception:
-        settings = dict(settings)
+    settings = dict(current_settings or {})
     has_image = bool(selected_image or settings.get("input_image") or settings.get("upscale_image"))
     has_mask = bool(settings.get("inpaint_mask_path") or settings.get("mask"))
     operations = _infer_operations(user_intent, has_image=has_image, has_mask=has_mask)
@@ -431,16 +419,6 @@ def heuristic_brain_decision(
         )
         if reference_image:
             patch.setdefault("reference_image", reference_image)
-    if isinstance(settings.get("reference_pack"), dict):
-        pack = settings["reference_pack"]
-        patch.setdefault("reference_pack_id", pack.get("id"))
-        patch.setdefault("reference_pack_role", pack.get("type"))
-        patch.setdefault("reference_images", settings.get("reference_images") or [])
-    if isinstance(settings.get("identity_reference"), dict):
-        identity = settings["identity_reference"]
-        patch.setdefault("identity_id", identity.get("id"))
-        patch.setdefault("identity_role", identity.get("role") or identity.get("type"))
-        patch.setdefault("reference_images", settings.get("reference_images") or [])
     if "face_detail" in operations:
         patch.setdefault("workflow_mode", "face_detail")
         if has_image:
@@ -524,30 +502,7 @@ def heuristic_brain_decision(
         message="Planned with the built-in local heuristic because no local brain model was required.",
         actions=operations,
     )
-    payload = decision.to_dict()
-    if isinstance(settings.get("reference_pack"), dict):
-        pack = settings["reference_pack"]
-        role = pack.get("role") or pack.get("type") or "style"
-        payload["reference_pack"] = pack
-        payload["message"] = (
-            f"{payload['message']} Reference pack «{pack.get('name')}» as {role}."
-        )
-    if isinstance(settings.get("identity_reference"), dict):
-        identity = settings["identity_reference"]
-        role = identity.get("role") or identity.get("type") or "person"
-        embedding = str(identity.get("embedding_status") or "not_extracted")
-        embedding_note = f" · {embedding}" if embedding != "not_extracted" else ""
-        payload["identity_reference"] = identity
-        payload["message"] = (
-            f"{payload['message']} Identity «{identity.get('name')}» as {role}{embedding_note}."
-        )
-    if settings.get("identity_dependency_actions"):
-        payload.setdefault("recommended_actions", []).extend(settings["identity_dependency_actions"])
-    if settings.get("reference_pack_missing"):
-        payload.setdefault("warnings", []).append(f"Reference pack not found: {settings['reference_pack_missing']}")
-    if settings.get("identity_missing"):
-        payload.setdefault("warnings", []).append(f"Identity not found: {settings['identity_missing']}")
-    return payload
+    return decision.to_dict()
 
 
 def coerce_brain_decision(

@@ -397,9 +397,11 @@ export function handleImagePathDragOver(
   event.preventDefault();
   event.stopPropagation();
   if (disabled) return false;
-  const accepted = canAcceptImagePathDrag(event.dataTransfer);
+  const transfer = event.dataTransfer;
+  if (!transfer) return false;
+  const accepted = canAcceptImagePathDrag(transfer);
   if (accepted) {
-    event.dataTransfer.dropEffect = "copy";
+    transfer.dropEffect = "copy";
   }
   return accepted;
 }
@@ -414,9 +416,10 @@ export function installImagePathDragDropBridge() {
   window.addEventListener(
     "dragover",
     (event) => {
-      if (canAcceptImagePathDrag(event.dataTransfer)) {
+      const transfer = event.dataTransfer;
+      if (transfer && canAcceptImagePathDrag(transfer)) {
         event.preventDefault();
-        event.dataTransfer.dropEffect = "copy";
+        transfer.dropEffect = "copy";
       }
     },
     { capture: true },
@@ -425,9 +428,10 @@ export function installImagePathDragDropBridge() {
   window.addEventListener(
     "dragenter",
     (event) => {
-      if (canAcceptImagePathDrag(event.dataTransfer)) {
+      const transfer = event.dataTransfer;
+      if (transfer && canAcceptImagePathDrag(transfer)) {
         event.preventDefault();
-        event.dataTransfer.dropEffect = "copy";
+        transfer.dropEffect = "copy";
       }
     },
     { capture: true },

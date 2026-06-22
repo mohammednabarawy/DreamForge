@@ -98,8 +98,6 @@ export function WorkflowPlanPanel({
   );
   const presetSources = textList(plan.dynamic_preset?.source);
   const modeContract = plan.mode_contract;
-  const referencePack = plan.reference_pack;
-  const identityReference = plan.identity_reference;
   const changedFields = textList(modeContract?.changed_fields);
   const preservedFields = textList(modeContract?.preserved_fields);
   const preservationHints = textList(modeContract?.preservation_hints);
@@ -200,49 +198,6 @@ export function WorkflowPlanPanel({
               <div className="col-span-2 mt-1 border-t border-dfui-border/30 pt-1 text-[9px] text-emerald-400">
                 ⚡ Qwen Lightning LoRA active ({qwenLoraWeight ?? 0.75} weight)
               </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {referencePack && (
-        <div>
-          <p className="mb-1 font-mono text-[9px] uppercase tracking-wider text-dfui-tertiary">
-            Reference pack
-          </p>
-          <div className="rounded border border-dfui-accent/25 bg-dfui-accent/5 px-2 py-1.5 text-[10px] text-dfui-secondary">
-            <p className="font-medium text-dfui-fg">
-              {referencePack.name ?? referencePack.id ?? "Attached pack"}
-              {referencePack.type ? ` · ${referencePack.type}` : ""}
-            </p>
-            {(referencePack.tags?.length ?? 0) > 0 && (
-              <p className="mt-0.5 font-mono text-[9px] text-dfui-tertiary">
-                {referencePack.tags!.slice(0, 6).join(", ")}
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-
-      {identityReference && (
-        <div>
-          <p className="mb-1 font-mono text-[9px] uppercase tracking-wider text-dfui-tertiary">
-            Identity
-          </p>
-          <div className="rounded border border-dfui-accent/25 bg-dfui-accent/5 px-2 py-1.5 text-[10px] text-dfui-secondary">
-            <p className="font-medium text-dfui-fg">
-              {identityReference.name ?? identityReference.id ?? "Attached identity"}
-              {identityReference.type ? ` · ${identityReference.type}` : ""}
-            </p>
-            {identityReference.embedding_status && (
-              <p className="mt-0.5 font-mono text-[9px] text-dfui-tertiary">
-                Embeddings: {identityReference.embedding_status}
-              </p>
-            )}
-            {(identityReference.tags?.length ?? 0) > 0 && (
-              <p className="mt-0.5 font-mono text-[9px] text-dfui-tertiary">
-                {identityReference.tags!.slice(0, 6).join(", ")}
-              </p>
             )}
           </div>
         </div>

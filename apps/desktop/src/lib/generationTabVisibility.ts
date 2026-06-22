@@ -2,8 +2,6 @@ import type { StudioMode } from "./model-selection";
 
 export type GenerationSection =
   | "creativeTemplate"
-  | "referencePack"
-  | "identity"
   | "upscalePanel"
   | "editFamilyPanel"
   | "performance"
@@ -26,8 +24,6 @@ export type GenerationTabContext = {
   showGenerateLikeSettings: boolean;
   showEditStrength: boolean;
   customPerf: boolean;
-  hasReferencePack: boolean;
-  hasIdentity: boolean;
   isEdit: boolean;
   isInpaint: boolean;
   isUpscale: boolean;
@@ -47,8 +43,6 @@ export function buildGenerationTabContext(input: {
   showGenerateLikeSettings: boolean;
   showEditStrength: boolean;
   customPerf: boolean;
-  referencePackSubtitle?: string;
-  identitySubtitle?: string;
 }): GenerationTabContext {
   const studioMode = input.studioMode;
   const activeModelLower = input.activeModelLabel.toLowerCase();
@@ -68,8 +62,6 @@ export function buildGenerationTabContext(input: {
     showGenerateLikeSettings: input.showGenerateLikeSettings,
     showEditStrength: input.showEditStrength,
     customPerf: input.customPerf,
-    hasReferencePack: Boolean(input.referencePackSubtitle?.trim()),
-    hasIdentity: Boolean(input.identitySubtitle?.trim()),
     isEdit: studioMode === "edit",
     isInpaint: studioMode === "inpaint",
     isUpscale: studioMode === "upscale",
@@ -90,10 +82,6 @@ export function generationSectionVisible(
   switch (section) {
     case "creativeTemplate":
       return Boolean(ctx.advancedMode) && !ctx.isUpscale;
-    case "referencePack":
-      return ctx.hasReferencePack && (ctx.isGenerateFamily || ctx.isEdit);
-    case "identity":
-      return ctx.hasIdentity && (ctx.isGenerateFamily || ctx.isEdit);
     case "upscalePanel":
       return ctx.isUpscale;
     case "editFamilyPanel":
@@ -131,7 +119,6 @@ export type InspectorTabId =
   | "models"
   | "loras"
   | "styles"
-  | "refs"
   | "settings"
   | "automation";
 
@@ -152,24 +139,24 @@ export function inspectorTabsForMode(input: {
     return ["settings"];
   }
   if (simpleInspectorLocked) {
-    return ["settings", "models", "refs"];
+    return ["settings", "models"];
   }
   if (isInpaint) {
     return powerUserInspector
-      ? ["models", "loras", "settings", "refs", "automation"]
-      : ["models", "settings", "refs"];
+      ? ["models", "loras", "settings", "automation"]
+      : ["models", "settings"];
   }
   if (studioMode === "edit") {
     return powerUserInspector
-      ? ["models", "loras", "settings", "refs", "automation"]
-      : ["models", "settings", "refs"];
+      ? ["models", "loras", "settings", "automation"]
+      : ["models", "settings"];
   }
   if (isGenerateFamilyMode(studioMode)) {
     return powerUserInspector
-      ? ["models", "loras", "styles", "settings", "refs", "automation"]
-      : ["models", "styles", "settings", "refs"];
+      ? ["models", "loras", "styles", "settings", "automation"]
+      : ["models", "styles", "settings"];
   }
-  return ["models", "settings", "refs"];
+  return ["models", "settings"];
 }
 
 export const MODE_AUTO_SUMMARY: Partial<Record<string, string>> = {
@@ -177,5 +164,4 @@ export const MODE_AUTO_SUMMARY: Partial<Record<string, string>> = {
     "Auto: model route · performance preset · VRAM detect · seed (random default)",
   edit: "Auto: Flux Kontext route · edit graph · performance preset · VRAM detect",
   inpaint: "Auto: Flux Fill route · inpaint graph · mask from canvas · performance preset",
-  agent: "Auto: planned route · performance preset · VRAM detect",
 };

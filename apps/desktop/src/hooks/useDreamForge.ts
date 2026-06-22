@@ -46,13 +46,6 @@ import {
   editModelWarning,
   isQwenEditModel,
 } from "../lib/editModel";
-import {
-  formatAttachedReferencePackLine,
-} from "../lib/referencePackUi";
-import {
-  formatAttachedIdentityLine,
-  formatPlanReferenceContext,
-} from "../lib/identityUi";
 import { excerptPrompt, HISTORY_PAGE_SIZE } from "../lib/historyUtils";
 import { settingsFromManifestBundle } from "../lib/historyActions";
 import {
@@ -158,17 +151,11 @@ import {
   getAppConfig,
   getLoraInfo,
   getStudioSettings,
-  deleteReferencePack,
-  deleteIdentity,
   enhanceStudioPrompt,
   listAgentProviders,
-  listIdentities,
-  listReferencePacks,
   planAgentInstruction,
   runAutomation,
   saveAppConfig,
-  saveIdentity,
-  saveReferencePack,
   saveStudioSettings,
   saveUserStyleProfile,
   testAgentProvider,
@@ -178,8 +165,6 @@ import {
   type AgentProviderTestResult,
   type DreamForgeAppConfig,
   type DreamForgeAppConfigPatch,
-  type IdentityRecord,
-  type ReferencePack,
   type StudioSettings,
   type UserStyleProfile,
   type WorkflowReadiness,
@@ -405,8 +390,6 @@ export function useDreamForge() {
     null,
   );
   const [userStyleProfilePath, setUserStyleProfilePath] = useState<string>("");
-  const [referencePacks, setReferencePacks] = useState<ReferencePack[]>([]);
-  const [identities, setIdentities] = useState<IdentityRecord[]>([]);
   const [agentPlannedMode, setAgentPlannedMode] = useState<StudioMode | null>(
     null,
   );
@@ -882,8 +865,6 @@ export function useDreamForge() {
         app,
         providers,
         styleProfile,
-        packs,
-        identityRecords,
       ] = await Promise.all([
         getModelGallery("", fetchOpts),
         getLoraGallery("", fetchOpts),
@@ -894,8 +875,6 @@ export function useDreamForge() {
         getAppConfig().catch(() => null),
         listAgentProviders().catch(() => []),
         getUserStyleProfile().catch(() => null),
-        listReferencePacks().catch(() => []),
-        listIdentities().catch(() => []),
       ]);
       const recipes = (styleIdRes.styles ?? []) as StyleRecipe[];
       setStyleRecipes(recipes);
@@ -952,8 +931,6 @@ export function useDreamForge() {
         setUserStyleProfile(styleProfile.profile);
         setUserStyleProfilePath(styleProfile.path ?? "");
       }
-      setReferencePacks(packs);
-      setIdentities(identityRecords);
       studioCatalogLoadedRef.current = true;
     } catch (e) {
       setStatus(`Studio catalog error: ${String(e)}`);
@@ -1510,277 +1487,6 @@ export function useDreamForge() {
       });
     },
     [],
-  );
-
-  const refreshReferencePacks = useCallback(async () => {
-    try {
-      const packs = await listReferencePacks();
-      setReferencePacks(packs);
-      return packs;
-    } catch {
-      return [];
-    }
-  }, []);
-
-  const mergeReferencePaths = useCallback((...groups: Array<string[] | undefined>) => {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const group of groups) {
-      for (const item of group ?? []) {
-        const path = item.trim();
-        if (!path || seen.has(path)) continue;
-        seen.add(path);
-        out.push(path);
-      }
-    }
-    return out.length ? out : undefined;
-  }, []);
-
-  const attachReferencePack = useCallback(
-    (packId: string) => {
-      const pack = referencePacks.find((item) => item.id === packId);
-      const identity = identities.find((item) => item.id === settingsRef.current.identity_id);
-      if (!pack) {
-        patchSettings({
-          reference_pack_id: undefined,
-          reference_pack_role: undefined,
-          reference_images: mergeReferencePaths(identity?.image_paths),
-        });
-        setStatus("Reference pack cleared");
-        return;
-      }
-      patchSettings({
-        reference_pack_id: pack.id,
-        reference_pack_role: pack.type,
-        reference_images: mergeReferencePaths(pack.image_paths, identity?.image_paths),
-      });
-      setStatus(
-        formatAttachedReferencePackLine(pack, pack.type) ??
-          `Attached reference pack: ${pack.name}`,
-      );
-    },
-    [identities, mergeReferencePaths, patchSettings, referencePacks],
-  );
-
-  const setReferencePackRole = useCallback(
-    (role: ReferencePack["type"]) => {
-      if (!settingsRef.current.reference_pack_id) return;
-      const pack = referencePacks.find(
-        (item) => item.id === settingsRef.current.reference_pack_id,
-      );
-      patchSettings({ reference_pack_role: role });
-      setStatus(
-        pack
-          ? formatAttachedReferencePackLine(pack, role) ??
-              `Reference pack role: ${role}`
-          : `Reference pack role: ${role}`,
-      );
-    },
-    [patchSettings, referencePacks],
-  );
-
-  const createReferencePackFromCurrent = useCallback(
-    async (
-      name: string,
-      type: ReferencePack["type"] = "style",
-      meta?: { tags?: string[]; notes?: string; imagePaths?: string[] },
-    ) => {
-      const imagePaths = (
-        meta?.imagePaths?.length
-          ? meta.imagePaths
-          : [
-              settingsRef.current.input_image,
-              settingsRef.current.upscale_image,
-              ...(settingsRef.current.reference_images ?? []),
-              selected?.images?.[0],
-            ]
-      ).filter((item): item is string => Boolean(item?.trim()));
-      if (!imagePaths.length) {
-        setStatus("Add image(s) with Add images… before creating a reference pack");
-        return null;
-      }
-      try {
-        const pack = await saveReferencePack({
-          name,
-          type,
-          image_paths: imagePaths,
-          tags: meta?.tags ?? [],
-          notes: meta?.notes ?? "",
-          preferred_use_cases: [type],
-        });
-        setReferencePacks((prev) => [pack, ...prev.filter((item) => item.id !== pack.id)]);
-        const identity = identities.find((item) => item.id === settingsRef.current.identity_id);
-        patchSettings({
-          reference_pack_id: pack.id,
-          reference_pack_role: pack.type,
-          reference_images: mergeReferencePaths(pack.image_paths, identity?.image_paths),
-        });
-        setStatus(`Saved reference pack: ${pack.name}`);
-        return pack;
-      } catch (e) {
-        setStatus(`Save reference pack failed: ${String(e)}`);
-        return null;
-      }
-    },
-    [identities, mergeReferencePaths, patchSettings, selected],
-  );
-
-  const removeReferencePack = useCallback(
-    async (packId: string) => {
-      if (!packId) return;
-      try {
-        const deleted = await deleteReferencePack(packId);
-        if (!deleted) {
-          setStatus("Reference pack was already gone");
-        } else {
-          setStatus("Reference pack deleted");
-        }
-        setReferencePacks((prev) => prev.filter((item) => item.id !== packId));
-        if (settingsRef.current.reference_pack_id === packId) {
-          const identity = identities.find((item) => item.id === settingsRef.current.identity_id);
-          patchSettings({
-            reference_pack_id: undefined,
-            reference_pack_role: undefined,
-            reference_images: mergeReferencePaths(identity?.image_paths),
-          });
-        }
-      } catch (e) {
-        setStatus(`Delete reference pack failed: ${String(e)}`);
-      }
-    },
-    [identities, mergeReferencePaths, patchSettings],
-  );
-
-  const refreshIdentities = useCallback(async () => {
-    try {
-      const records = await listIdentities();
-      setIdentities(records);
-      return records;
-    } catch {
-      return [];
-    }
-  }, []);
-
-  const attachIdentity = useCallback(
-    (identityId: string) => {
-      const identity = identities.find((item) => item.id === identityId);
-      const pack = referencePacks.find((item) => item.id === settingsRef.current.reference_pack_id);
-      if (!identity) {
-        patchSettings({
-          identity_id: undefined,
-          identity_role: undefined,
-          identity_mode: undefined,
-          face_preservation: undefined,
-          reference_images: mergeReferencePaths(pack?.image_paths),
-        });
-        setStatus("Identity cleared");
-        return;
-      }
-      patchSettings({
-        identity_id: identity.id,
-        identity_role: identity.type,
-        reference_images: mergeReferencePaths(pack?.image_paths, identity.image_paths),
-      });
-      setStatus(
-        formatAttachedIdentityLine(identity, identity.type) ??
-          `Attached identity: ${identity.name}`,
-      );
-    },
-    [identities, mergeReferencePaths, patchSettings, referencePacks],
-  );
-
-  const setIdentityRole = useCallback(
-    (role: IdentityRecord["type"]) => {
-      if (!settingsRef.current.identity_id) return;
-      const identity = identities.find(
-        (item) => item.id === settingsRef.current.identity_id,
-      );
-      patchSettings({ identity_role: role });
-      setStatus(
-        identity
-          ? formatAttachedIdentityLine(identity, role) ?? `Identity role: ${role}`
-          : `Identity role: ${role}`,
-      );
-    },
-    [identities, patchSettings],
-  );
-
-  const createIdentityFromCurrent = useCallback(
-    async (
-      name: string,
-      type: IdentityRecord["type"] = "style",
-      explicitPaths?: string[],
-    ) => {
-      const imagePaths = (
-        explicitPaths?.length
-          ? explicitPaths
-          : [
-              settingsRef.current.input_image,
-              settingsRef.current.upscale_image,
-              ...(settingsRef.current.reference_images ?? []),
-              selected?.images?.[0],
-            ]
-      ).filter((item): item is string => Boolean(item?.trim()));
-      if (!imagePaths.length) {
-        setStatus("Add image(s) with Add images… before creating an identity");
-        return null;
-      }
-      try {
-        const identity = await saveIdentity({
-          name,
-          type,
-          image_paths: imagePaths,
-          reference_pack_ids: settingsRef.current.reference_pack_id
-            ? [settingsRef.current.reference_pack_id]
-            : [],
-          tags: [],
-          metadata: {},
-          embeddings: {},
-          embedding_status: "not_extracted",
-        });
-        setIdentities((prev) => [identity, ...prev.filter((item) => item.id !== identity.id)]);
-        const pack = referencePacks.find((item) => item.id === settingsRef.current.reference_pack_id);
-        patchSettings({
-          identity_id: identity.id,
-          identity_role: identity.type,
-          reference_images: mergeReferencePaths(pack?.image_paths, identity.image_paths),
-        });
-        setStatus(`Saved identity: ${identity.name}`);
-        return identity;
-      } catch (e) {
-        setStatus(`Save identity failed: ${String(e)}`);
-        return null;
-      }
-    },
-    [mergeReferencePaths, patchSettings, referencePacks, selected],
-  );
-
-  const removeIdentity = useCallback(
-    async (identityId: string) => {
-      if (!identityId) return;
-      try {
-        const deleted = await deleteIdentity(identityId);
-        if (!deleted) {
-          setStatus("Identity was already gone");
-        } else {
-          setStatus("Identity deleted");
-        }
-        setIdentities((prev) => prev.filter((item) => item.id !== identityId));
-        if (settingsRef.current.identity_id === identityId) {
-          const pack = referencePacks.find((item) => item.id === settingsRef.current.reference_pack_id);
-          patchSettings({
-            identity_id: undefined,
-            identity_role: undefined,
-            identity_mode: undefined,
-            face_preservation: undefined,
-            reference_images: mergeReferencePaths(pack?.image_paths),
-          });
-        }
-      } catch (e) {
-        setStatus(`Delete identity failed: ${String(e)}`);
-      }
-    },
-    [mergeReferencePaths, patchSettings, referencePacks],
   );
 
   const syncOutputPathForSession = useCallback(
@@ -2700,12 +2406,6 @@ export function useDreamForge() {
           readiness,
           message: `${hint}${extra}`.trim() || "Dry-run plan",
         });
-        const refContextSuffix = formatPlanReferenceContext({
-          pack: plan.reference_pack,
-          packRole: settingsRef.current.reference_pack_role,
-          identity: plan.identity_reference,
-          identityRole: settingsRef.current.identity_role,
-        });
         const blocked = canRunApprovedPlan(plan, readiness);
 
         if (!run) {
@@ -2716,9 +2416,7 @@ export function useDreamForge() {
           }
           setStatus(
             blocked.ok
-              ? refContextSuffix
-                ? `Plan ready — ${refContextSuffix}`
-                : "Plan ready for review"
+              ? "Plan ready for review"
               : blocked.reason ?? "Plan needs setup before it can run",
           );
           return;
@@ -2781,9 +2479,7 @@ export function useDreamForge() {
             ? `mapped ${finalPrepared.applied.join(", ")}`
             : undefined;
         const runHint =
-          finalPrepared.hints.length > 0
-            ? finalPrepared.hints[0]
-            : refContextSuffix || undefined;
+          finalPrepared.hints.length > 0 ? finalPrepared.hints[0] : undefined;
         await startGeneration(finalPrepared.settings, {
           mapped,
           hint: runHint,
@@ -2817,6 +2513,10 @@ export function useDreamForge() {
     const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
     if (studioMode === "agent") {
       setStatus("Switch to Generate, Edit, Inpaint, or Upscale to enhance prompts");
+      return;
+    }
+    if (studioMode !== "generate") {
+      setStatus("Manual prompt enhance is available in Generate mode only");
       return;
     }
     const current = settingsRef.current;
@@ -4059,22 +3759,6 @@ export function useDreamForge() {
     return `${label}${model}`;
   }, [agentProviders, appConfig]);
 
-  const registrySessionImagePaths = useMemo(
-    () =>
-      [
-        settings.input_image,
-        settings.upscale_image,
-        ...(settings.reference_images ?? []),
-        selected?.images?.[0],
-      ].filter((item): item is string => Boolean(item?.trim())),
-    [
-      selected?.images,
-      settings.input_image,
-      settings.reference_images,
-      settings.upscale_image,
-    ],
-  );
-
   const companionAssetsBusy = companionDownloadBusy || companionBootstrapBusy;
 
   return {
@@ -4148,19 +3832,6 @@ export function useDreamForge() {
     galleryLoading,
     userStyleProfile,
     userStyleProfilePath,
-    referencePacks,
-    registrySessionImagePaths,
-    refreshReferencePacks,
-    attachReferencePack,
-    setReferencePackRole,
-    createReferencePackFromCurrent,
-    deleteReferencePack: removeReferencePack,
-    identities,
-    refreshIdentities,
-    attachIdentity,
-    setIdentityRole,
-    createIdentityFromCurrent,
-    deleteIdentity: removeIdentity,
     setUserStyleMemoryEnabled,
     clearUserStyleMemory,
     exportUserStyleMemory,

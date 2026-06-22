@@ -1,8 +1,6 @@
 import { Bot, CheckCircle2, KeyRound, ShieldCheck, X, XCircle, DownloadCloud, Loader2, FolderOpen } from "lucide-react";
 import { useState, useEffect } from "react";
-import { ReferencePacksPanel } from "./ReferencePacksPanel";
-import { IdentitiesPanel } from "./IdentitiesPanel";
-import { checkComfyBackend, installComfyBackend, pickFolder, type GenerationSettings, type ComfyBackendStatus } from "../lib/tauri-api";
+import { checkComfyBackend, installComfyBackend, pickFolder, type ComfyBackendStatus } from "../lib/tauri-api";
 import {
   applyRuntimePreferences,
   getRuntimeStatus,
@@ -14,8 +12,6 @@ import type {
   AgentProviderTestResult,
   DreamForgeAppConfig,
   DreamForgeAppConfigPatch,
-  IdentityRecord,
-  ReferencePack,
   StudioSettings,
   UserStyleProfile,
 } from "../lib/studioBridge";
@@ -36,29 +32,6 @@ type Props = {
   onUserStyleMemoryEnabledChange?: (enabled: boolean) => void | Promise<void>;
   onClearUserStyleMemory?: () => void | Promise<void>;
   onExportUserStyleMemory?: () => void | Promise<void>;
-  settings: GenerationSettings;
-  referencePacks?: ReferencePack[];
-  onAttachReferencePack?: (packId: string) => void;
-  onReferencePackRoleChange?: (role: ReferencePack["type"]) => void;
-  onCreateReferencePack?: (
-    name: string,
-    type: ReferencePack["type"],
-    meta?: { tags?: string[]; notes?: string; imagePaths?: string[] },
-  ) => void | Promise<void>;
-  onDeleteReferencePack?: (packId: string) => void | Promise<void>;
-  onRefreshReferencePacks?: () => void | Promise<void>;
-  sessionImagePaths?: string[];
-  identities?: IdentityRecord[];
-  onAttachIdentity?: (identityId: string) => void;
-  onIdentityRoleChange?: (role: IdentityRecord["type"]) => void;
-  onCreateIdentity?: (
-    name: string,
-    type: IdentityRecord["type"],
-    imagePaths?: string[],
-  ) => void | Promise<void>;
-  onDeleteIdentity?: (identityId: string) => void | Promise<void>;
-  onRefreshIdentities?: () => void | Promise<void>;
-  onChange: (patch: Partial<GenerationSettings>) => void;
 };
 
 export function AppSettingsModal({
@@ -77,21 +50,6 @@ export function AppSettingsModal({
   onUserStyleMemoryEnabledChange,
   onClearUserStyleMemory,
   onExportUserStyleMemory,
-  settings,
-  referencePacks = [],
-  onAttachReferencePack,
-  onReferencePackRoleChange,
-  onCreateReferencePack,
-  onDeleteReferencePack,
-  onRefreshReferencePacks,
-  sessionImagePaths = [],
-  identities = [],
-  onAttachIdentity,
-  onIdentityRoleChange,
-  onCreateIdentity,
-  onDeleteIdentity,
-  onRefreshIdentities,
-  onChange,
 }: Props) {
   if (!open) return null;
 
@@ -635,35 +593,6 @@ export function AppSettingsModal({
                   )}
                 </div>
               </section>
-            )}
-
-            {(onAttachReferencePack || onCreateReferencePack) && (
-              <ReferencePacksPanel
-                compact
-                settings={settings}
-                referencePacks={referencePacks}
-                sessionImagePaths={sessionImagePaths}
-                onAttachReferencePack={onAttachReferencePack}
-                onReferencePackRoleChange={onReferencePackRoleChange}
-                onCreateReferencePack={onCreateReferencePack}
-                onDeleteReferencePack={onDeleteReferencePack}
-                onRefreshReferencePacks={onRefreshReferencePacks}
-              />
-            )}
-
-            {(onAttachIdentity || onCreateIdentity) && (
-              <IdentitiesPanel
-                compact
-                settings={settings}
-                identities={identities}
-                sessionImagePaths={sessionImagePaths}
-                onAttachIdentity={onAttachIdentity}
-                onIdentityRoleChange={onIdentityRoleChange}
-                onChange={onChange}
-                onCreateIdentity={onCreateIdentity}
-                onDeleteIdentity={onDeleteIdentity}
-                onRefreshIdentities={onRefreshIdentities}
-              />
             )}
 
             {onSaveStudioSettings && studioSettings && (

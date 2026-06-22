@@ -7,7 +7,6 @@ import {
   LayoutGrid,
   Palette,
   SlidersHorizontal,
-  Tag,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
@@ -43,18 +42,13 @@ import { LoraStackPanel } from "./LoraStackPanel";
 import { GenerationSettingsPanel } from "./GenerationSettingsPanel";
 import { AutomationPanel } from "./AutomationPanel";
 import { FeatureExtractionPanel } from "./FeatureExtractionPanel";
-import { RefsInspectorPanel } from "./RefsInspectorPanel";
 import {
   aggregateLoraKeywords,
-  type IdentityRecord,
-  type ReferencePack,
   type StudioSettings,
 } from "../lib/studioBridge";
-import { formatAttachedReferencePackLine } from "../lib/referencePackUi";
-import { formatAttachedIdentityLine } from "../lib/identityUi";
 import { DEFAULT_MAX_LORA_STACK } from "../lib/loraStack";
 
-type Tab = "discover" | "models" | "loras" | "styles" | "refs" | "settings" | "automation";
+type Tab = "discover" | "models" | "loras" | "styles" | "settings" | "automation";
 
 type Props = {
   settings: GenerationSettings;
@@ -85,27 +79,6 @@ type Props = {
   advancedMode?: boolean;
   simpleExperience?: boolean;
   imageNumberMax?: number;
-  referencePacks?: ReferencePack[];
-  onAttachReferencePack?: (packId: string) => void;
-  onReferencePackRoleChange?: (role: ReferencePack["type"]) => void;
-  onCreateReferencePack?: (
-    name: string,
-    type: ReferencePack["type"],
-    meta?: { tags?: string[]; notes?: string; imagePaths?: string[] },
-  ) => void | Promise<void>;
-  onDeleteReferencePack?: (packId: string) => void | Promise<void>;
-  onRefreshReferencePacks?: () => void | Promise<void>;
-  sessionImagePaths?: string[];
-  identities?: IdentityRecord[];
-  onAttachIdentity?: (identityId: string) => void;
-  onIdentityRoleChange?: (role: IdentityRecord["type"]) => void;
-  onCreateIdentity?: (
-    name: string,
-    type: IdentityRecord["type"],
-    imagePaths?: string[],
-  ) => void | Promise<void>;
-  onDeleteIdentity?: (identityId: string) => void | Promise<void>;
-  onRefreshIdentities?: () => void | Promise<void>;
   civitaiApiKey?: string;
   generating?: boolean;
   vramGb?: number | null;
@@ -146,19 +119,6 @@ export function InspectorPanel({
   advancedMode = false,
   simpleExperience = false,
   imageNumberMax = 8,
-  referencePacks = [],
-  onAttachReferencePack,
-  onReferencePackRoleChange,
-  onCreateReferencePack,
-  onDeleteReferencePack,
-  onRefreshReferencePacks,
-  sessionImagePaths = [],
-  identities = [],
-  onAttachIdentity,
-  onIdentityRoleChange,
-  onCreateIdentity,
-  onDeleteIdentity,
-  onRefreshIdentities,
   civitaiApiKey = "",
   generating = false,
   vramGb,
@@ -188,30 +148,6 @@ export function InspectorPanel({
     (powerUserInspector && (isEdit || isInpaint));
   const activeStyleId = settings.style;
   const activeLoras = settings.lora ?? [];
-  const attachedReferencePack = useMemo(
-    () => referencePacks.find((pack) => pack.id === settings.reference_pack_id),
-    [referencePacks, settings.reference_pack_id],
-  );
-  const referencePackSubtitle = useMemo(
-    () =>
-      formatAttachedReferencePackLine(
-        attachedReferencePack,
-        settings.reference_pack_role ?? attachedReferencePack?.type,
-      ),
-    [attachedReferencePack, settings.reference_pack_role],
-  );
-  const attachedIdentity = useMemo(
-    () => identities.find((identity) => identity.id === settings.identity_id),
-    [identities, settings.identity_id],
-  );
-  const identitySubtitle = useMemo(
-    () =>
-      formatAttachedIdentityLine(
-        attachedIdentity,
-        settings.identity_role ?? attachedIdentity?.type,
-      ),
-    [attachedIdentity, settings.identity_role],
-  );
   const sortedModelGallery = useMemo(() => {
     let gallery = modelGallery;
     gallery = sortGalleryForInpaintMode(gallery, studioMode as StudioMode);
@@ -364,7 +300,6 @@ export function InspectorPanel({
       models: { label: "Models", icon: Boxes },
       loras: { label: "LoRAs", icon: Layers },
       styles: { label: "Styles", icon: Palette },
-      refs: { label: "Refs", icon: Tag },
       settings: { label: "Generation", icon: SlidersHorizontal },
       automation: { label: "Batch", icon: LayoutGrid },
     };
@@ -548,11 +483,6 @@ export function InspectorPanel({
                   {activeLoras.length}
                 </span>
               )}
-              {id === "refs" && (settings.reference_pack_id || settings.identity_id) && (
-                <span className="rounded-full bg-dfui-accent/20 px-1.5 font-mono text-[9px] text-dfui-accent">
-                  {(settings.reference_pack_id ? 1 : 0) + (settings.identity_id ? 1 : 0)}
-                </span>
-              )}
             </button>
           ))}
         </div>
@@ -690,26 +620,6 @@ export function InspectorPanel({
           />
         )}
 
-        {tab === "refs" && (
-          <RefsInspectorPanel
-            settings={settings}
-            referencePacks={referencePacks}
-            identities={identities}
-            sessionImagePaths={sessionImagePaths}
-            onAttachReferencePack={onAttachReferencePack}
-            onReferencePackRoleChange={onReferencePackRoleChange}
-            onCreateReferencePack={onCreateReferencePack}
-            onDeleteReferencePack={onDeleteReferencePack}
-            onRefreshReferencePacks={onRefreshReferencePacks}
-            onAttachIdentity={onAttachIdentity}
-            onIdentityRoleChange={onIdentityRoleChange}
-            onChange={onChange}
-            onCreateIdentity={onCreateIdentity}
-            onDeleteIdentity={onDeleteIdentity}
-            onRefreshIdentities={onRefreshIdentities}
-          />
-        )}
-
         {tab === "settings" && studioMode === "extract" && (
           <div className="h-full min-h-0 overflow-y-auto">
             <FeatureExtractionPanel settings={settings} onChange={onChange} />
@@ -731,8 +641,6 @@ export function InspectorPanel({
               showEditStrength={showEditStrength}
               routedModelLabel={routedModelLabel}
               editRouteSubtitle={editRouteSubtitle}
-              referencePackSubtitle={referencePackSubtitle}
-              identitySubtitle={identitySubtitle}
               isQwenModel={isQwenModel}
               activeModelLabel={activeModelLabel}
               advancedMode={advancedMode}

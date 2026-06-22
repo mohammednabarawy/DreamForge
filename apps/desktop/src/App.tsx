@@ -238,23 +238,6 @@ function DreamForgeStudio() {
             advancedMode={mc.advancedMode}
             simpleExperience={mc.uiExperience === "simple"}
             imageNumberMax={mc.imageNumberMax}
-            referencePacks={mc.referencePacks}
-            onAttachReferencePack={mc.attachReferencePack}
-            onReferencePackRoleChange={mc.setReferencePackRole}
-            onCreateReferencePack={(name, type, meta) =>
-              void mc.createReferencePackFromCurrent(name, type, meta)
-            }
-            onDeleteReferencePack={(packId) => void mc.deleteReferencePack(packId)}
-            onRefreshReferencePacks={() => void mc.refreshReferencePacks()}
-            sessionImagePaths={mc.registrySessionImagePaths}
-            identities={mc.identities}
-            onAttachIdentity={mc.attachIdentity}
-            onIdentityRoleChange={mc.setIdentityRole}
-            onCreateIdentity={(name, type, imagePaths) =>
-              void mc.createIdentityFromCurrent(name, type, imagePaths)
-            }
-            onDeleteIdentity={(identityId) => void mc.deleteIdentity(identityId)}
-            onRefreshIdentities={() => void mc.refreshIdentities()}
             civitaiApiKey={mc.appConfig?.ui.civitai_api_key ?? ""}
             generating={mc.generating}
             vramGb={mc.vramGb}
@@ -302,25 +285,6 @@ function DreamForgeStudio() {
         }
         onClearUserStyleMemory={() => void mc.clearUserStyleMemory()}
         onExportUserStyleMemory={() => void mc.exportUserStyleMemory()}
-        settings={mc.settings}
-        onChange={mc.patchSettings}
-        referencePacks={mc.referencePacks}
-        onAttachReferencePack={mc.attachReferencePack}
-        onReferencePackRoleChange={mc.setReferencePackRole}
-        onCreateReferencePack={(name, type, meta) =>
-          void mc.createReferencePackFromCurrent(name, type, meta)
-        }
-        onDeleteReferencePack={(packId) => void mc.deleteReferencePack(packId)}
-        onRefreshReferencePacks={() => void mc.refreshReferencePacks()}
-        onIdentityRoleChange={mc.setIdentityRole}
-        sessionImagePaths={mc.registrySessionImagePaths}
-        identities={mc.identities}
-        onAttachIdentity={mc.attachIdentity}
-        onCreateIdentity={(name, type, imagePaths) =>
-          void mc.createIdentityFromCurrent(name, type, imagePaths)
-        }
-        onDeleteIdentity={(identityId) => void mc.deleteIdentity(identityId)}
-        onRefreshIdentities={() => void mc.refreshIdentities()}
       />
       <CompanionDownloadModal
         open={mc.companionDownload.open}

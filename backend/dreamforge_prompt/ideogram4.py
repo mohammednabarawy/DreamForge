@@ -10,29 +10,30 @@ from typing import Any
 IDEOGRAM4_PROMPT_MODES = frozenset({"natural", "structured", "auto"})
 
 _TEMPLATE_PATH = Path(__file__).with_name("ideogram4_magic_prompt_template.txt")
-_MAGIC_PROMPT_VERSION = "v17-schema"
+_MAGIC_PROMPT_VERSION = "v18-schema+oss-v1"
 # Full template system is ~27k chars — exceeds embedded brain n_ctx=4096. Use slim for local LLMs.
-_IDEOGRAM4_SLIM_SYSTEM = """You convert a natural-language user idea into a structured JSON caption for Ideogram 4 image generation.
+_IDEOGRAM4_SLIM_SYSTEM = """You convert a natural-language user idea into a structured JSON caption for Ideogram 4 (merged oss v1 + style_description).
 
 Emit exactly ONE minified JSON object. Top-level keys in this order when present:
-aspect_ratio, high_level_description, style_description, compositional_deconstruction
+aspect_ratio, high_level_description, style_description (optional), compositional_deconstruction
+
+Minimum v1 shape (omit style_description when medium/lighting are obvious from HLD):
+aspect_ratio, high_level_description, compositional_deconstruction
 
 Rules:
 - No markdown fences, no commentary.
 - aspect_ratio: concrete positive integers W:H; never emit the literal string auto.
-- high_level_description: one observational sentence (50 words max).
-- style_description (optional): for photos use {"aesthetics":"","lighting":"","photo":"","medium":"photograph","color_palette":["#RRGGBB"]}; for non-photos use {"aesthetics":"","lighting":"","medium":"illustration|3d_render|painting|graphic_design","art_style":"","color_palette":["#RRGGBB"]}. Use exactly one of photo/art_style.
-- compositional_deconstruction is required and contains background before elements. background MUST describe the full scene shell (walls, sky, floor, environment). Use exactly "transparent background" ONLY when the user explicitly requests cutout/sticker/isolated/alpha — never for normal scenes.
-- compositional_deconstruction.elements: array of:
-  {"type":"obj","bbox":[y1,x1,y2,x2],"desc":"..."} or
-  {"type":"text","bbox":[y1,x1,y2,x2],"text":"verbatim","desc":"..."}
-- bbox is OPTIONAL. Omit bbox on obj elements for full scenes (portraits, offices, landscapes). Include bbox only for poster/UI/layout mockups when placement is explicit.
-- If you include bbox: integers only, each 0-1000 inclusive, format [y1,x1,y2,x2] with y1<y2 and x1<x2. NEVER use pixel coordinates or percentages.
-- One coherent subject = one obj element. Every user-quoted or overlay text line = its own text element with verbatim text (preserve Arabic/CJK).
-- TEXT OVERLAY / credits / titles: each distinct readable line = separate {"type":"text","text":"verbatim","desc":"..."}. Never paraphrase or translate the text field.
-- desc fields are English; only the text field uses the user's language (Arabic, English, etc.).
-- Preserve non-ASCII in text fields exactly; never \\u escapes.
-- No negative prompt field, avoidance field, or safety-bypass wording. Describe the wanted safe image only.
+- high_level_description: one observational sentence (50 words max); start with subject, no "this image shows".
+- style_description (optional): photos {"aesthetics":"","lighting":"","photo":"","medium":"photograph","color_palette":["#RRGGBB"]}; non-photos {"aesthetics":"","lighting":"","medium":"illustration|3d_render|painting|graphic_design","art_style":"","color_palette":["#RRGGBB"]}. Use exactly one of photo/art_style.
+- compositional_deconstruction is required: background first, then elements.
+- background = scene SHELL only (walls, sky, floor, horizon, distant crowd). Floor/ground/turf/pavement/sky NEVER as obj elements — prevents figures clipped half into the ground.
+- One coherent subject (person, animal, vehicle, building) = ONE obj; never split body parts into multiple objs.
+- Shell-affixed walls (chalkboard, fireplace, mounted TV): mention in background AND emit as first obj with "primary background element" in desc.
+- elements: {"type":"obj","bbox":[y1,x1,y2,x2],"desc":"..."} or {"type":"text","text":"verbatim","desc":"..."}. bbox optional for full scenes; integers 0-1000, format [y1,x1,y2,x2].
+- Every user-quoted string and overlay/credit line = its own text element with verbatim text (preserve Arabic/CJK). desc fields English; text field uses user language.
+- Banned hedges in desc/background: or, might be, various, such as, implied, suggested, things like. Pick ONE concrete value.
+- No shadows, bokeh, or render jargon inside obj descs. No negative_prompt or safety-bypass fields.
+- Transparent cutout: background exactly "transparent background"; HLD includes "on a transparent background".
 
 Output ONLY the JSON object on one line."""
 
@@ -268,6 +269,7 @@ def build_magic_prompt_messages(user_prompt: str, width: int, height: int) -> tu
     required_hint = _format_required_text_hint(extract_required_image_text(idea))
     if user_tpl:
         user_msg = user_tpl.replace("{{original_prompt}}", idea)
+        user_msg = user_msg.replace("{{aspect_ratio}}", aspect)
         user_msg = user_msg.replace("{{width}}:{{height}}", aspect)
     else:
         user_msg = f"TARGET IMAGE ASPECT RATIO: {aspect} (width:height).\nUser idea: {idea}"

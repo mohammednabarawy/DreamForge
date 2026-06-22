@@ -4,22 +4,34 @@ from __future__ import annotations
 
 from typing import Any
 
+from dreamforge_prompt.flux_llm_enhance import (
+    normalize_enhance_strength,
+    resolve_enhance_prefs,
+    resolve_flux_enhance_purpose,
+)
 from dreamforge_prompt.pipeline import (
     _is_modern_family,
     prepare_generation_prompts,
 )
 
 
-def studio_enhancer_for_preview(studio_mode: str, family: str) -> str:
+def studio_enhancer_for_preview(
+    studio_mode: str,
+    family: str,
+    *,
+    use_flufferizer: bool = True,
+) -> str:
     """Pick RuinedFooocus-style enhancer for UI preview (may differ from runtime default)."""
     mode = (studio_mode or "generate").strip().lower()
     fam = (family or "").strip().lower()
 
     if mode in {"upscale", "agent"}:
         return "none"
+    if resolve_flux_enhance_purpose(mode, fam):
+        return "flux_llm"
+    if not use_flufferizer:
+        return "none"
     if mode in {"edit", "inpaint"}:
-        if fam.startswith("qwen") or "kontext" in fam:
-            return "none"
         if _is_modern_family(fam):
             return "none"
         return "flufferizer"
@@ -28,9 +40,37 @@ def studio_enhancer_for_preview(studio_mode: str, family: str) -> str:
     return "flufferizer"
 
 
-def _enhance_hint(studio_mode: str, family: str, enhancer: str | None) -> str:
+def _enhance_hint(
+    studio_mode: str,
+    family: str,
+    enhancer: str | None,
+    *,
+    skipped: bool = False,
+    skipped_reason: str = "",
+    enhance_strength: str = "balanced",
+) -> str:
     mode = (studio_mode or "generate").lower()
     fam = (family or "").lower()
+    strength = normalize_enhance_strength(enhance_strength)
+    strength_note = ""
+    if strength == "minimal":
+        strength_note = " (minimal)"
+    elif strength == "rich":
+        strength_note = " (rich)"
+    if skipped:
+        if skipped_reason == "prompt already detailed":
+            return "Prompt already detailed — no enhancement applied"
+        if skipped_reason:
+            return f"No enhancement needed ({skipped_reason})"
+        return "No enhancement applied"
+    if enhancer == "flux_llm":
+        if mode == "inpaint":
+            return f"Enhanced for inpaint via local brain{strength_note}"
+        if mode == "edit" and fam.startswith("qwen"):
+            return f"Enhanced for Qwen Image Edit via local brain{strength_note}"
+        if mode == "edit" and "kontext" in fam:
+            return f"Enhanced for Flux Kontext via local brain{strength_note}"
+        return f"Enhanced for {fam or 'Flux'} via local brain{strength_note}"
     if mode == "upscale":
         return "Enhanced for upscale: detail restoration wording"
     if mode == "inpaint":
@@ -84,6 +124,7 @@ def enhance_studio_prompt(params: dict[str, Any]) -> dict[str, Any]:
     _apply_studio_mode(job, studio_mode)
 
     family = str(model.get("family") or "").lower()
+    enhance_strength, use_flufferizer = resolve_enhance_prefs(params)
     if family == "ideogram4" and studio_mode == "inpaint":
         from dreamforge_prompt.ideogram4 import ideogram_inpaint_prompt
 
@@ -120,7 +161,37 @@ def enhance_studio_prompt(params: dict[str, Any]) -> dict[str, Any]:
             "magic_prompt_source": magic.get("magic_prompt_source"),
         }
 
-    enhancer = studio_enhancer_for_preview(studio_mode, family)
+    llm_purpose = resolve_flux_enhance_purpose(studio_mode, family)
+    if llm_purpose:
+        from dreamforge_prompt.flux_llm_enhance import run_flux_llm_enhance
+
+        llm = run_flux_llm_enhance(prompt_raw, purpose=llm_purpose, params=params)
+        if not llm.get("ok"):
+            return {"ok": False, "error": llm.get("error") or "Prompt enhancement failed"}
+        return {
+            "ok": True,
+            "prompt": llm.get("prompt") or prompt_raw,
+            "negative_prompt": negative or "",
+            "hint": _enhance_hint(
+                studio_mode,
+                family,
+                "flux_llm",
+                skipped=bool(llm.get("skipped")),
+                skipped_reason=str(llm.get("skipped_reason") or ""),
+                enhance_strength=enhance_strength,
+            ),
+            "prompt_enhancer": "flux_llm",
+            "prompt_format": "natural",
+            "model_family": family,
+            "studio_mode": studio_mode,
+            "enhance_source": llm.get("enhance_source"),
+            "enhance_purpose": llm_purpose,
+            "enhance_strength": enhance_strength,
+        }
+
+    enhancer = studio_enhancer_for_preview(
+        studio_mode, family, use_flufferizer=use_flufferizer
+    )
     job.prompt_enhancer = enhancer
 
     settings = _apply_generation_recipe_settings(

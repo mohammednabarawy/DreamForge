@@ -41,11 +41,19 @@ def test_build_magic_prompt_instruction_replaces_placeholders():
 def test_build_magic_prompt_messages_splits_system_and_user():
     system, user = build_magic_prompt_messages("sunset city", 1024, 768)
     assert "OUTPUT CONTRACT" in system or "three top-level keys" in system
+    assert "Minimum v1-only shape" in system or "Minimum v1 shape" in system
     assert "compositional_deconstruction` is REQUIRED" in system
     assert "Text: `type`, optional `bbox`, `text`, `desc`" in system
     assert "sunset city" in user
     assert "1024:768" in user
+    assert "{{aspect_ratio}}" not in user
     assert len(user) < 500
+
+
+def test_build_magic_prompt_messages_uses_aspect_ratio_placeholder():
+    _, user = build_magic_prompt_messages("cat", 512, 512)
+    assert "512:512" in user
+    assert "{{width}}" not in user
 
 
 def test_brain_system_prompt_uses_slim_for_embedded():

@@ -61,6 +61,9 @@ export type DreamForgeAppConfig = {
     studio_mode: "generate" | "edit" | "inpaint" | "upscale" | "extract" | "agent";
     experience: "simple" | "pro";
     advanced_mode: boolean;
+    auto_enhance_on_generate?: boolean;
+    enhance_strength?: "minimal" | "balanced" | "rich";
+    use_flufferizer?: boolean;
     civitai_api_key?: string;
     civitai_api_key_configured?: boolean;
     civitai_api_key_tail?: string;
@@ -322,6 +325,8 @@ export type EnhanceStudioPromptResult = {
   studio_mode?: string;
   prompt_format?: string;
   magic_prompt_source?: string;
+  enhance_strength?: string;
+  enhance_purpose?: string;
 };
 
 export async function enhanceStudioPrompt(

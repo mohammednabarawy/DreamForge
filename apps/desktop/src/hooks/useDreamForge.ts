@@ -35,6 +35,7 @@ import {
 } from "../lib/model-selection";
 import { isAdvancedMode, type UiExperience } from "../lib/experienceUi";
 import { ideogram4SettingsDefaults, looksLikeIdeogramJson } from "../lib/ideogram4Ui";
+import { enhancePrefsFromAppConfig, shouldAutoEnhanceOnGenerate } from "../lib/promptEnhance";
 import { inpaintModelWarning } from "../lib/inpaintModel";
 import { upscaleModelWarning } from "../lib/upscaleModel";
 import { enforceCreativeTaskSettings, enforceCreativeTaskSettingsRemote, planStudioModeSwitch } from "../lib/creativeTask";
@@ -2529,16 +2530,26 @@ export function useDreamForge() {
       }
 
       const activeModelForEnhance = findGalleryModel(modelGalleryAll, params.model ?? "");
-      if (
-        activeModelForEnhance?.family?.toLowerCase() === "ideogram4" &&
+      const enhanceFamily = activeModelForEnhance?.family?.toLowerCase() ?? "";
+      const needsIdeogramEnhance =
+        enhanceFamily === "ideogram4" &&
         params.prompt &&
-        !looksLikeIdeogramJson(params.prompt)
-      ) {
+        !looksLikeIdeogramJson(params.prompt) &&
+        studioMode === "generate";
+      const needsModernLlmEnhance =
+        shouldAutoEnhanceOnGenerate(
+          enhanceFamily,
+          studioMode,
+          appConfig?.ui.auto_enhance_on_generate,
+        ) && Boolean(params.prompt?.trim());
+
+      if (needsIdeogramEnhance || needsModernLlmEnhance) {
         setStatus("Enhancing prompt...");
         try {
           const res = await enhanceStudioPrompt({
             ...params,
             studio_mode: studioMode,
+            ...enhancePrefsFromAppConfig(appConfig),
           });
           if (res.ok && res.prompt) {
             params.prompt = res.prompt;
@@ -2599,6 +2610,7 @@ export function useDreamForge() {
     },
     [
       appConfig?.ui.studio_mode,
+      appConfig?.ui.auto_enhance_on_generate,
       advancedMode,
       patchSettings,
       startLogPoll,
@@ -2820,19 +2832,20 @@ export function useDreamForge() {
       const res = await enhanceStudioPrompt({
         ...sanitized,
         studio_mode: studioMode,
+        ...enhancePrefsFromAppConfig(appConfig),
       });
       const patch: Partial<GenerationSettings> = { prompt: res.prompt };
       if (res.negative_prompt?.trim()) {
         patch.negative_prompt = res.negative_prompt;
       }
       patchSettings(patch);
-      setStatus(res.hint ?? "Prompt enhanced — review before Generate");
+      setStatus(res.hint ?? "Prompt enhanced");
     } catch (e) {
       setStatus(`Enhance failed: ${String(e)}`);
     } finally {
       setEnhancePromptBusy(false);
     }
-  }, [appConfig?.ui.studio_mode, patchSettings]);
+  }, [appConfig, patchSettings]);
 
   const dismissAgentPlan = useCallback(() => {
     setAgentPlan(null);

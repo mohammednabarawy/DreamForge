@@ -19,11 +19,23 @@ class StudioPromptEnhanceTests(unittest.TestCase):
     def test_studio_enhancer_sdxl_generate_uses_flufferizer(self):
         self.assertEqual(studio_enhancer_for_preview("generate", "sdxl"), "flufferizer")
 
-    def test_studio_enhancer_flux_generate_skips_flufferizer(self):
-        self.assertEqual(studio_enhancer_for_preview("generate", "flux"), "none")
+    def test_studio_enhancer_sdxl_respects_flufferizer_toggle(self):
+        self.assertEqual(
+            studio_enhancer_for_preview("generate", "sdxl", use_flufferizer=False),
+            "none",
+        )
 
-    def test_studio_enhancer_qwen_edit_skips_flufferizer(self):
-        self.assertEqual(studio_enhancer_for_preview("edit", "qwen_image_edit"), "none")
+    def test_studio_enhancer_flux_generate_uses_flux_llm(self):
+        self.assertEqual(studio_enhancer_for_preview("generate", "flux"), "flux_llm")
+
+    def test_studio_enhancer_flux_inpaint_uses_flux_llm(self):
+        self.assertEqual(studio_enhancer_for_preview("inpaint", "flux"), "flux_llm")
+
+    def test_studio_enhancer_kontext_edit_uses_flux_llm(self):
+        self.assertEqual(studio_enhancer_for_preview("edit", "flux_kontext"), "flux_llm")
+
+    def test_studio_enhancer_qwen_edit_uses_flux_llm(self):
+        self.assertEqual(studio_enhancer_for_preview("edit", "qwen_image_edit"), "flux_llm")
 
     def test_modern_generate_boost_adds_quality_clause(self):
         boosted = _modern_generate_boost("flux", "a red sports car")

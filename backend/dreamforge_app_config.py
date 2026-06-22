@@ -75,6 +75,9 @@ DEFAULT_APP_CONFIG: dict[str, Any] = {
         "studio_mode": "generate",
         "experience": "simple",
         "advanced_mode": False,
+        "auto_enhance_on_generate": False,
+        "enhance_strength": "balanced",
+        "use_flufferizer": True,
         "civitai_api_key": "",
     },
 }
@@ -89,7 +92,15 @@ _AGENT_KEYS = {
     "auto_configure_workflows",
 }
 _PRIVACY_KEYS: set[str] = set()
-_UI_KEYS = {"studio_mode", "experience", "advanced_mode", "civitai_api_key"}
+_UI_KEYS = {
+    "studio_mode",
+    "experience",
+    "advanced_mode",
+    "auto_enhance_on_generate",
+    "enhance_strength",
+    "use_flufferizer",
+    "civitai_api_key",
+}
 _EXPERIENCE_VALUES = {"simple", "pro"}
 
 _AGENT_FIELD_GUIDE = """
@@ -294,6 +305,18 @@ def _normalize_ui_config(cfg: dict[str, Any]) -> dict[str, Any]:
     if experience not in _EXPERIENCE_VALUES:
         experience = "simple"
     ui["experience"] = experience
+    strength = str(ui.get("enhance_strength") or "balanced").strip().lower()
+    if strength not in {"minimal", "balanced", "rich"}:
+        strength = "balanced"
+    ui["enhance_strength"] = strength
+    if ui.get("use_flufferizer") is None:
+        ui["use_flufferizer"] = True
+    else:
+        ui["use_flufferizer"] = bool(ui.get("use_flufferizer"))
+    if ui.get("auto_enhance_on_generate") is None:
+        ui["auto_enhance_on_generate"] = False
+    else:
+        ui["auto_enhance_on_generate"] = bool(ui.get("auto_enhance_on_generate"))
     if experience == "simple" and str(ui.get("studio_mode") or "") == "agent":
         ui["studio_mode"] = "generate"
     return normalized

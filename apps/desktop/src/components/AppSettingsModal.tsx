@@ -411,6 +411,59 @@ export function AppSettingsModal({
                   />
                   Approve agent workflow changes
                 </label>
+                <label className="flex items-start gap-2 text-[10px] text-dfui-muted">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(appConfig.ui.auto_enhance_on_generate)}
+                    onChange={(e) =>
+                      void onSaveAppConfig({
+                        ui: { auto_enhance_on_generate: e.target.checked },
+                      })
+                    }
+                    className="mt-0.5 accent-dfui-accent"
+                  />
+                  Auto-enhance prompts on Generate (Flux, SD3, Qwen, HiDream — uses local brain)
+                </label>
+                <div className="space-y-1 border-t border-dfui-border/30 pt-2">
+                  <span className="text-[10px] text-dfui-tertiary">Enhance strength (wand + auto-enhance)</span>
+                  <div className="flex flex-wrap gap-1">
+                    {(
+                      [
+                        ["minimal", "Minimal"],
+                        ["balanced", "Balanced"],
+                        ["rich", "Rich"],
+                      ] as const
+                    ).map(([id, label]) => (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() =>
+                          void onSaveAppConfig({ ui: { enhance_strength: id } })
+                        }
+                        className={`rounded-md border px-2 py-1 text-[10px] transition-colors ${
+                          (appConfig.ui.enhance_strength ?? "balanced") === id
+                            ? "border-dfui-accent/50 bg-dfui-accent/15 text-dfui-accent"
+                            : "border-dfui-border/50 text-dfui-muted hover:border-dfui-accent/30"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <label className="flex items-start gap-2 text-[10px] text-dfui-muted">
+                  <input
+                    type="checkbox"
+                    checked={appConfig.ui.use_flufferizer !== false}
+                    onChange={(e) =>
+                      void onSaveAppConfig({
+                        ui: { use_flufferizer: e.target.checked },
+                      })
+                    }
+                    className="mt-0.5 accent-dfui-accent"
+                  />
+                  Use Flufferizer for SDXL / legacy models (Fooocus-style tag expansion)
+                </label>
                 <div className="flex items-center justify-between gap-2 border-t border-dfui-border/30 pt-2">
                   <span className="inline-flex items-center gap-1 text-[10px] text-dfui-tertiary">
                     <ShieldCheck size={12} />

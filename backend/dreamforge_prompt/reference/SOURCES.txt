@@ -1,0 +1,33 @@
+DreamForge prompt enhancement — upstream reference files
+============================================================
+Downloaded for planning and prompt engineering. Do NOT import these at runtime;
+derive DreamForge-specific templates from them (see implementation plan).
+
+Files
+-----
+ideogram4_official_v1.txt
+  Source: https://github.com/ideogram-oss/ideogram4/blob/main/src/ideogram4/magic_prompt_system_prompts/v1.txt
+  License: Ideogram OSS repo (check repo LICENSE)
+  Use: Compare against ../ideogram4_magic_prompt_template.txt (DreamForge v18-schema+oss-v1)
+
+monks_flux_klein_text_to_image.md
+  Source: https://github.com/Experience-Monks/Monks-Prompt-Enhancer-ComfyUI-Node
+  Use: Flux natural-language structure (Subject -> Setting -> Details -> Lighting -> Atmosphere)
+
+monks_flux_klein_image_editing.md
+  Source: same repo
+  Use: Kontext-style edit instructions (change only, don't describe input image)
+
+spellcaster_model_prompt_profiles.py
+  Source: https://github.com/laboratoiresonore/ComfyUI-Spellcaster (Unlicense)
+  Use: Per-arch prompt grammar (Flux = natural language, strip quality tags)
+
+spellcaster_prompt_enhance.py
+  Source: same repo (Unlicense)
+  Use: _ARCH_ENHANCE_PROFILES, enhance_prompt() system message pattern, skip rules for edit methods
+
+Not vendored (optional future)
+------------------------------
+- gokaygokay/Flux-Prompt-Enhance — seq2seq model (~256 tokens); adds HF dependency
+- EricRollei/Local_LLM_Prompt_Enhancer — ComfyUI nodes; good platform matrix reference
+- Ideogram hosted Magic Prompt API — requires cloud API key (DreamForge is local-first)

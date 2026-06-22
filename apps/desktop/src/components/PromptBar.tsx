@@ -100,7 +100,7 @@ export function PromptBar({
   const isIdeogramModel = activeModelLabel.toLowerCase().includes("ideogram");
   const promptText = (settings.prompt ?? "").trim();
   const canEnhancePrompt =
-    !isAgentMode && Boolean(promptText) && !generating && !enhancePromptBusy && studioMode !== "edit" && studioMode !== "inpaint";
+    !isAgentMode && Boolean(promptText) && !generating && !enhancePromptBusy;
   const primaryActionLabel = "Generate";
   const simpleBatchCount = Math.min(4, Math.max(2, imageNumberMax >= 4 ? 4 : imageNumberMax));
   const dropReferenceMode = (): ReferenceImageMode => {

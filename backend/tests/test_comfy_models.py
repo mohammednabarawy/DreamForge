@@ -150,6 +150,58 @@ def test_resolve_qwen_split_loaders_from_object_info():
     assert args["vae"] == "qwen_image_vae.safetensors"
 
 
+def test_resolve_z_image_does_not_pick_qwen_image_companions():
+    """Z-Image must load the Qwen3-4B encoder + Flux AE VAE, never the Qwen-Image
+    encoder/VAE. The Qwen-Image VAE is a Wan-style video VAE that yields a 5D
+    latent, crashing NextDiT with 'too many values to unpack (expected 4)'.
+    Regression: both companion sets are present in ComfyUI's lists."""
+    client = SimpleNamespace(
+        object_info=lambda: {
+            "UNETLoader": {
+                "input": {"required": {"unet_name": [["z_image_turbo_fp8_e4m3fn.safetensors"], {}]}}
+            },
+            "CLIPLoader": {
+                "input": {
+                    "required": {
+                        "clip_name": [
+                            [
+                                "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+                                "qwen_3_4b.safetensors",
+                            ],
+                            {},
+                        ]
+                    }
+                }
+            },
+            "CLIPLoaderGGUF": {"input": {"required": {"clip_name": [[], {}]}}},
+            "VAELoader": {
+                "input": {
+                    "required": {
+                        "vae_name": [["ae.safetensors", "qwen_image_vae.safetensors"], {}]
+                    }
+                }
+            },
+        }
+    )
+    model = {
+        "category": "diffusion_models",
+        "relative_path": "z_image_turbo_fp8_e4m3fn.safetensors",
+        "name": "z_image_turbo_fp8_e4m3fn.safetensors",
+        "family": "z_image",
+    }
+
+    with pytest.MonkeyPatch.context() as mp:
+        # Simulate an environment where the Qwen-Image companions are also on disk;
+        # the z_image resolver must still ignore them.
+        mp.setattr("dreamforge_comfy_models.companion_file_present", lambda req: True)
+        mp.setattr("dreamforge_comfy_models.check_model_dependencies", lambda m: [])
+
+        args = resolve_comfy_model_loader_args(client, model=model, model_family="z_image")
+
+    assert args["clip"] == "qwen_3_4b.safetensors"
+    assert args["vae"] == "ae.safetensors"
+
+
 def test_resolve_qwen_gguf_uses_gguf_unet_loader_choices():
     client = SimpleNamespace(
         object_info=lambda: {

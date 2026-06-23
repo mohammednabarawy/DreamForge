@@ -183,8 +183,8 @@ def comfy_z_image_img2img(args: dict[str, Any]) -> dict[str, Any]:
     g: dict[str, Any] = {}
     model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
     model_sampled, n = _apply_z_image_model_sampling(model_out, g, n, args)
-    g["2"] = _node("LoadImage", {"image": image_filename, "upload": "image"})
-    g["3"] = _node("VAEEncode", {"pixels": ["2", 0], "vae": vae_out})
+    pixels = _img2img_source_pixels(g, args, image_filename, load_id="2", scale_id="20")
+    g["3"] = _node("VAEEncode", {"pixels": pixels, "vae": vae_out})
     g["4"] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
     g["5"] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
     g["6"] = _node(
@@ -266,8 +266,8 @@ def comfy_kandinsky5_img2img(args: dict[str, Any]) -> dict[str, Any]:
 
     g: dict[str, Any] = {}
     model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
-    g["2"] = _node("LoadImage", {"image": image_filename, "upload": "image"})
-    g["3"] = _node("VAEEncode", {"pixels": ["2", 0], "vae": vae_out})
+    pixels = _img2img_source_pixels(g, args, image_filename, load_id="2", scale_id="20")
+    g["3"] = _node("VAEEncode", {"pixels": pixels, "vae": vae_out})
     g["4"] = _node("CLIPTextEncodeKandinsky5", {"clip": clip_out, "text": prompt})
     g["5"] = _node("CLIPTextEncodeKandinsky5", {"clip": clip_out, "text": negative})
     g["6"] = _node(
@@ -676,8 +676,8 @@ workflow to reference it by filename.
 
     g: dict[str, Any] = {}
     model_out, clip_out, vae_out, _next = _add_model_loader(g, {**args, "ckpt_name": ckpt})
-    g["2"] = _node("LoadImage", {"image": image_filename, "upload": "image"})
-    g["3"] = _node("VAEEncode", {"pixels": ["2", 0], "vae": vae_out})
+    pixels = _img2img_source_pixels(g, args, image_filename, load_id="2", scale_id="20")
+    g["3"] = _node("VAEEncode", {"pixels": pixels, "vae": vae_out})
     g["4"] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
     g["5"] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
     g["6"] = _node(
@@ -722,8 +722,8 @@ def comfy_flux_img2img(args: dict[str, Any]) -> dict[str, Any]:
 
     g: dict[str, Any] = {}
     model_out, clip_out, vae_out, _next = _add_model_loader(g, {**args, "ckpt_name": ckpt})
-    g["2"] = _node("LoadImage", {"image": image_filename, "upload": "image"})
-    g["3"] = _node("VAEEncode", {"pixels": ["2", 0], "vae": vae_out})
+    pixels = _img2img_source_pixels(g, args, image_filename, load_id="2", scale_id="20")
+    g["3"] = _node("VAEEncode", {"pixels": pixels, "vae": vae_out})
     g["4"] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
     g["5"] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
     g["6"] = _node("FluxGuidance", {"conditioning": ["4", 0], "guidance": guidance})
@@ -926,6 +926,55 @@ def _maybe_scale_qwen_pixels(
         },
     )
     return [str(start_id), 0], start_id + 1
+
+
+def _img2img_target_megapixels(args: dict[str, Any]) -> float:
+    """Megapixel budget for an img2img source resize.
+
+    Derived from the requested output resolution when available so the source is
+    sampled near the user's target size; otherwise defaults to ~1 MP. Clamped to
+    a sane range so a stray huge resolution can't OOM the sampler.
+    """
+    try:
+        width = int(args.get("width") or 0)
+        height = int(args.get("height") or 0)
+    except (TypeError, ValueError):
+        width = height = 0
+    if width > 0 and height > 0:
+        mp = (width * height) / 1_000_000.0
+    else:
+        mp = 1.0
+    return max(0.25, min(mp, 4.0))
+
+
+def _img2img_source_pixels(
+    g: dict[str, Any],
+    args: dict[str, Any],
+    image_filename: str,
+    *,
+    load_id: str,
+    scale_id: str,
+) -> list[str | int]:
+    """LoadImage + aspect-preserving resize snapped to a multiple of 64.
+
+    DiT families patchify the latent (Flux/Z-Image/Lumina stride 16, HiDream-O1
+    stride 32) and crash on dimensions that aren't divisible by their patch size
+    when a raw photo is fed at native resolution (e.g. 2586x2062). Scaling the
+    source to the requested megapixel budget with ``resolution_steps=64`` keeps
+    the aspect ratio (so faces aren't cropped) while guaranteeing the encoded
+    latent is always divisible, which leading local-gen apps do for img2img.
+    """
+    g[load_id] = _node("LoadImage", {"image": image_filename, "upload": "image"})
+    g[scale_id] = _node(
+        "ImageScaleToTotalPixels",
+        {
+            "image": [load_id, 0],
+            "upscale_method": "lanczos",
+            "megapixels": _img2img_target_megapixels(args),
+            "resolution_steps": 64,
+        },
+    )
+    return [scale_id, 0]
 
 
 def _qwen_edit_sampler_nodes(

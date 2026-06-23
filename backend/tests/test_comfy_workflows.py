@@ -610,11 +610,45 @@ def test_z_image_img2img_uses_vae_encode_and_auraflow():
     clip = next(n for n in graph.values() if n.get("class_type") == "CLIPLoader")
     assert clip["inputs"]["type"] == "lumina2"
     vae_encode = next(n for n in graph.values() if n.get("class_type") == "VAEEncode")
-    assert vae_encode["inputs"]["pixels"] == ["2", 0]
+    # Source pixels must flow through the aspect-preserving 64-aligned resize so
+    # the encoded latent is divisible by the DiT patch stride.
+    scale = next(n for n in graph.values() if n.get("class_type") == "ImageScaleToTotalPixels")
+    assert scale["inputs"]["resolution_steps"] == 64
+    assert vae_encode["inputs"]["pixels"] == ["20", 0]
     sampler = next(n for n in graph.values() if n.get("class_type") == "KSampler")
     assert sampler["inputs"]["denoise"] == 0.35
     assert sampler["inputs"]["latent_image"] == ["3", 0]
     assert any(n.get("class_type") == "ModelSamplingAuraFlow" for n in graph.values())
+
+
+def test_img2img_builders_align_source_to_patch_stride():
+    """All reference/img2img builders resize the source to a 64-aligned size so
+    DiT patchify (Flux/Z-Image stride 16, HiDream-O1 stride 32) never receives an
+    indivisible latent (regression: native 2586x2062 photo crashed KSampler)."""
+    from dreamforge_comfy_workflows import comfy_img2img_basic
+
+    base = {
+        "ckpt_name": "model.safetensors",
+        "relative_path": "model.safetensors",
+        "category": "checkpoints",
+        "image": "ref.png",
+        "prompt": "a portrait",
+        "negative": "",
+        "width": 1024,
+        "height": 1024,
+    }
+    builders = [
+        (comfy_img2img_basic, {**base, "family": "hidream_o1"}),
+        (comfy_flux_img2img, {**base, "family": "flux", "guidance": 3.5}),
+        (comfy_kandinsky5_img2img, {**base, "family": "kandinsky5", "category": "diffusion_models"}),
+    ]
+    for builder, args in builders:
+        graph = builder(args)
+        scale = next(n for n in graph.values() if n.get("class_type") == "ImageScaleToTotalPixels")
+        assert scale["inputs"]["resolution_steps"] == 64
+        assert scale["inputs"]["image"] == ["2", 0]
+        vae_encode = next(n for n in graph.values() if n.get("class_type") == "VAEEncode")
+        assert vae_encode["inputs"]["pixels"] == ["20", 0]
 
 
 def test_composite_inpaint_result_preserves_outside_mask():

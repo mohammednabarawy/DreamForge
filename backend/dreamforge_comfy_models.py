@@ -256,6 +256,45 @@ def _qwen_companion_basenames_on_disk(family: str) -> dict[str, str]:
     return out
 
 
+def _z_image_companion_basenames_on_disk(family: str) -> dict[str, str]:
+    """Map Z-Image loader keys to companion basenames on disk.
+
+    Z-Image is a Lumina2/NextDiT model: it needs the Qwen3-4B text encoder
+    (loaded with the ``lumina2`` CLIP type) and the Flux AE VAE
+    (``ae.safetensors``). It must NOT inherit the Qwen-Image companions
+    (``qwen_2.5_vl_*`` text encoder / ``qwen_image_vae.safetensors``): the
+    Qwen-Image VAE is a Wan-style video VAE whose latent carries a temporal
+    axis, so feeding it to NextDiT crashes the sampler with
+    "too many values to unpack (expected 4)". Scan only the ``z_image``
+    dependency list (never ``qwen_image``).
+    """
+    out: dict[str, str] = {}
+    for req in MODEL_DEPENDENCIES.get("z_image", []):
+        if req.get("optional") or not companion_file_present(req):
+            continue
+        relative = str(req.get("relative") or "")
+        basename = Path(relative).name
+        req_id = str(req.get("id") or "")
+        if "vae" in req_id or "vae" in basename.lower():
+            out["vae"] = basename
+        elif "clip" in req_id or basename.lower().startswith("qwen_3_4b"):
+            out["clip"] = basename
+    # The dependency list pins specific quantised text encoders, but the user
+    # may have a different Qwen3-4B build on disk; prefer whatever is present.
+    if not out.get("clip"):
+        for alt in (
+            "qwen_3_4b.safetensors",
+            "qwen_3_4b_fp8_mixed.safetensors",
+            "qwen_3_4b_fp4_mixed.safetensors",
+        ):
+            if companion_file_present({"relative": f"text_encoders/{alt}"}):
+                out["clip"] = alt
+                break
+    if not out.get("vae") and companion_file_present({"relative": "vae/ae.safetensors"}):
+        out["vae"] = "ae.safetensors"
+    return out
+
+
 def _hidream_companion_basenames_on_disk(family: str) -> dict[str, str]:
     """Map HiDream split-loader keys to companion basenames on disk."""
     out: dict[str, str] = {}
@@ -443,15 +482,16 @@ def resolve_comfy_model_loader_args(
             for item in missing_deps[:4]:
                 problems.append(f"Missing companion: {item.get('relative')} — {item.get('note', '')}")
 
-    elif family.startswith("qwen") or family in ("z-image", "z_image"):
-        is_z = family in ("z-image", "z_image")
-        on_disk = _qwen_companion_basenames_on_disk(family)
+    elif family in ("z-image", "z_image"):
+        # Z-Image (Lumina2/NextDiT): Qwen3-4B text encoder + Flux AE VAE. Kept
+        # separate from the Qwen-Image branch so it never picks up the
+        # Qwen-Image video VAE / qwen_2.5_vl encoder, which crash NextDiT.
+        on_disk = _z_image_companion_basenames_on_disk(family)
         clip_choices = _object_info_options(object_info, "CLIPLoader", "clip_name")
         clip_choices += _object_info_options(object_info, "CLIPLoaderGGUF", "clip_name")
         vae_choices = _object_info_options(object_info, "VAELoader", "vae_name")
-        default_clip = on_disk.get("clip", "qwen_3_4b_fp4_mixed.safetensors" if is_z else "qwen_2.5_vl_7b_fp8_scaled.safetensors")
-        clip = _basename_match(default_clip, clip_choices)
-        vae = _basename_match(on_disk.get("vae", "ae.safetensors" if is_z else "qwen_image_vae.safetensors"), vae_choices)
+        clip = _basename_match(on_disk.get("clip", "qwen_3_4b_fp4_mixed.safetensors"), clip_choices)
+        vae = _basename_match(on_disk.get("vae", "ae.safetensors"), vae_choices)
         if clip:
             args["clip"] = clip
         elif on_disk.get("clip"):
@@ -469,6 +509,36 @@ def resolve_comfy_model_loader_args(
             )
         elif not vae_choices:
             problems.append("ComfyUI reports no VAE files for workflows.")
+        missing_deps = check_model_dependencies(model)
+        if missing_deps:
+            for item in missing_deps[:4]:
+                problems.append(f"Missing companion: {item.get('relative')} — {item.get('note', '')}")
+
+    elif family.startswith("qwen"):
+        on_disk = _qwen_companion_basenames_on_disk(family)
+        clip_choices = _object_info_options(object_info, "CLIPLoader", "clip_name")
+        clip_choices += _object_info_options(object_info, "CLIPLoaderGGUF", "clip_name")
+        vae_choices = _object_info_options(object_info, "VAELoader", "vae_name")
+        default_clip = on_disk.get("clip", "qwen_2.5_vl_7b_fp8_scaled.safetensors")
+        clip = _basename_match(default_clip, clip_choices)
+        vae = _basename_match(on_disk.get("vae", "qwen_image_vae.safetensors"), vae_choices)
+        if clip:
+            args["clip"] = clip
+        elif on_disk.get("clip"):
+            problems.append(
+                f"Qwen CLIP '{on_disk['clip']}' exists under {Path(MODELS_ROOT).resolve()} "
+                "but ComfyUI does not list it for CLIPLoader."
+            )
+        elif not clip_choices:
+            problems.append("ComfyUI reports no Qwen text encoder files for CLIPLoader.")
+        if vae:
+            args["vae"] = vae
+        elif on_disk.get("vae"):
+            problems.append(
+                f"Qwen VAE '{on_disk['vae']}' exists under {MODELS_ROOT} but ComfyUI vae list is: {vae_choices!r}."
+            )
+        elif not vae_choices:
+            problems.append("ComfyUI reports no VAE files for Qwen workflows.")
         missing_deps = check_model_dependencies(model)
         if missing_deps:
             for item in missing_deps[:4]:

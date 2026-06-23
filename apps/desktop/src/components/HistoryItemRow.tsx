@@ -380,18 +380,22 @@ export function HistoryItemRow({
                   </button>
                 </li>
               )}
-              {thumb && onDeleteImage && (
+              {thumb && (
                 <li>
                   <button
                     type="button"
                     className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-red-300 hover:bg-red-500/10"
                     onClick={() => {
                       setMenuOpen(false);
-                      onDeleteImage(item, thumb);
+                      if (imageCount > 1 && onDeleteImage) {
+                        onDeleteImage(item, thumb);
+                      } else {
+                        onDeleteGeneration(item);
+                      }
                     }}
                   >
                     <Trash2 size={11} />
-                    {imageCount > 1 ? "Delete image only" : "Delete image"}
+                    {imageCount > 1 ? "Delete image only" : "Delete generation"}
                   </button>
                 </li>
               )}

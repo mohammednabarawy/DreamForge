@@ -64,6 +64,7 @@ export function loadFavoriteManifests(): Set<string> {
 export function saveFavoriteManifests(favs: Set<string>) {
   try {
     localStorage.setItem(FAVORITES_KEY, JSON.stringify([...favs]));
+    window.dispatchEvent(new CustomEvent("dreamforge-favorites-changed"));
   } catch {
     /* ignore */
   }
@@ -141,6 +142,32 @@ export function saveLastSelectedManifest(manifestPath: string) {
   } catch {
     /* ignore */
   }
+}
+
+export function clearLastSelectedManifestIf(manifestPath: string) {
+  try {
+    if (loadLastSelectedManifest() === manifestPath) {
+      localStorage.removeItem(LAST_SELECTED_KEY);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+export function removeFavoriteManifest(manifestPath: string) {
+  try {
+    const favs = loadFavoriteManifests();
+    if (!favs.delete(manifestPath)) return false;
+    saveFavoriteManifests(favs);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function purgeHistoryMetadataForManifest(manifestPath: string) {
+  removeFavoriteManifest(manifestPath);
+  clearLastSelectedManifestIf(manifestPath);
 }
 
 export function loadCollapsedDateGroups(): Record<string, boolean> {

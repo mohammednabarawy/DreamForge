@@ -299,20 +299,160 @@ def _manifest_image_entry_key(item) -> str:
     return ""
 
 
-def _remove_image_from_manifest_data(data: dict, removed: Path) -> bool:
+def _paths_from_image_entry(item) -> list[str]:
+    if isinstance(item, str):
+        return [item]
+    if isinstance(item, dict):
+        paths: list[str] = []
+        for key in ("path", "raw_path"):
+            raw = item.get(key)
+            if raw:
+                paths.append(str(raw))
+        return paths
+    return []
+
+
+def _find_image_index(data: dict, removed: Path) -> int | None:
     target_key = _output_path_key(str(removed))
     if not target_key:
-        return False
-    changed = False
-    new_images = []
-    for item in data.get("images") or []:
+        return None
+    for index, item in enumerate(data.get("images") or []):
         if _manifest_image_entry_key(item) == target_key:
-            changed = True
+            return index
+    return None
+
+
+def _per_image_manifest_path(image: Path) -> Path:
+    return image.with_suffix(".generation_manifest.json")
+
+
+def _sidecar_files_for_image(image: Path, *, exclude_manifest: Path | None = None) -> list[Path]:
+    sidecars: list[Path] = []
+    composite = image.with_name(f"{image.stem}_composite.png")
+    try:
+        if composite.is_file() and composite.resolve() != image.resolve():
+            sidecars.append(composite.resolve())
+    except OSError:
+        pass
+    per_image_manifest = _per_image_manifest_path(image)
+    try:
+        if per_image_manifest.is_file():
+            resolved = per_image_manifest.resolve()
+            if exclude_manifest is None or resolved != exclude_manifest.resolve():
+                sidecars.append(resolved)
+    except OSError:
+        pass
+    return sidecars
+
+
+def _paths_for_manifest_index(data: dict, index: int) -> list[str]:
+    paths: list[str] = []
+    images = data.get("images") or []
+    if 0 <= index < len(images):
+        paths.extend(_paths_from_image_entry(images[index]))
+    raw_images = data.get("raw_images") or []
+    if 0 <= index < len(raw_images):
+        raw_item = raw_images[index]
+        if isinstance(raw_item, str):
+            paths.append(raw_item)
+        elif isinstance(raw_item, dict) and raw_item.get("path"):
+            paths.append(str(raw_item["path"]))
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for raw in paths:
+        key = _output_path_key(raw)
+        if not key or key in seen:
             continue
-        new_images.append(item)
-    if changed:
-        data["images"] = new_images
-    return changed
+        seen.add(key)
+        deduped.append(raw)
+    return deduped
+
+
+def _all_referenced_paths(data: dict) -> list[str]:
+    paths: list[str] = []
+    for item in data.get("images") or []:
+        paths.extend(_paths_from_image_entry(item))
+    for item in data.get("raw_images") or []:
+        if isinstance(item, str):
+            paths.append(item)
+        elif isinstance(item, dict) and item.get("path"):
+            paths.append(str(item["path"]))
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for raw in paths:
+        key = _output_path_key(raw)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(raw)
+    return deduped
+
+
+def _delete_output_files(paths: list[str]) -> list[str]:
+    deleted: list[str] = []
+    for raw in paths:
+        if _safe_unlink_output_file(raw):
+            deleted.append(raw)
+    return deleted
+
+
+def _prune_lineage_outputs(data: dict, removed: Path) -> None:
+    lineage = data.get("lineage")
+    if not isinstance(lineage, dict):
+        return
+    target_key = _output_path_key(str(removed))
+    if not target_key:
+        return
+    outputs = lineage.get("output_images")
+    if isinstance(outputs, list):
+        lineage["output_images"] = [
+            item
+            for item in outputs
+            if _output_path_key(str(item)) != target_key
+        ]
+
+
+def _remove_image_from_manifest_data(data: dict, removed: Path) -> bool:
+    index = _find_image_index(data, removed)
+    if index is None:
+        return False
+
+    images = list(data.get("images") or [])
+    images.pop(index)
+    data["images"] = images
+
+    for parallel_key in ("raw_images", "validation"):
+        parallel = data.get(parallel_key)
+        if isinstance(parallel, list) and index < len(parallel):
+            updated = list(parallel)
+            updated.pop(index)
+            data[parallel_key] = updated
+
+    _prune_lineage_outputs(data, removed)
+    return True
+
+
+def _collect_delete_paths_for_image(
+    data: dict,
+    image: Path,
+    *,
+    exclude_manifest: Path | None = None,
+) -> list[str]:
+    paths: list[str] = [str(image)]
+    index = _find_image_index(data, image)
+    if index is not None:
+        paths.extend(_paths_for_manifest_index(data, index))
+    paths.extend(str(path) for path in _sidecar_files_for_image(image, exclude_manifest=exclude_manifest))
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for raw in paths:
+        key = _output_path_key(raw)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(raw)
+    return deduped
 
 
 def delete_generation(manifest_path: str) -> dict:
@@ -321,12 +461,22 @@ def delete_generation(manifest_path: str) -> dict:
     if not manifest:
         return {"ok": False, "error": "invalid_manifest_path"}
 
-    deleted_images = []
-    data = _load_manifest(str(manifest))
-    if data:
-        for raw in _image_paths_from_manifest(data):
-            if _safe_unlink_output_file(raw):
-                deleted_images.append(raw)
+    data = _load_manifest(str(manifest)) or {}
+    delete_paths = list(_all_referenced_paths(data))
+    seen_sidecars: set[str] = set()
+    for item in data.get("images") or []:
+        for raw in _paths_from_image_entry(item):
+            image = _resolve_under_outputs(_normalize_output_path(raw), must_be_file=False)
+            if not image or not image.is_file():
+                continue
+            for sidecar in _sidecar_files_for_image(image, exclude_manifest=manifest):
+                key = str(sidecar).lower()
+                if key in seen_sidecars:
+                    continue
+                seen_sidecars.add(key)
+                delete_paths.append(str(sidecar))
+
+    deleted_images = _delete_output_files(delete_paths)
 
     try:
         manifest.unlink()
@@ -352,26 +502,28 @@ def delete_output_image(manifest_path: str, image_path: str) -> dict:
 
     data = _load_manifest(str(manifest))
     if not data:
+        delete_paths = _collect_delete_paths_for_image({}, image, exclude_manifest=manifest)
+        deleted_files = _delete_output_files(delete_paths)
         try:
-            image.unlink()
             manifest.unlink(missing_ok=True)
         except OSError as exc:
             return {"ok": False, "error": str(exc)}
         return {
             "ok": True,
             "deleted_image": str(image),
+            "deleted_files": deleted_files,
             "manifest_removed": True,
         }
 
+    if _find_image_index(data, image) is None:
+        return {"ok": False, "error": "image_not_in_manifest"}
+
+    delete_paths = _collect_delete_paths_for_image(data, image, exclude_manifest=manifest)
     if not _remove_image_from_manifest_data(data, image):
         return {"ok": False, "error": "image_not_in_manifest"}
 
     remaining = _image_paths_from_manifest(data)
-
-    try:
-        image.unlink()
-    except OSError as exc:
-        return {"ok": False, "error": str(exc)}
+    deleted_files = _delete_output_files(delete_paths)
 
     if not remaining:
         try:
@@ -381,6 +533,7 @@ def delete_output_image(manifest_path: str, image_path: str) -> dict:
         return {
             "ok": True,
             "deleted_image": str(image),
+            "deleted_files": deleted_files,
             "manifest_removed": True,
         }
 
@@ -393,6 +546,7 @@ def delete_output_image(manifest_path: str, image_path: str) -> dict:
     return {
         "ok": True,
         "deleted_image": str(image),
+        "deleted_files": deleted_files,
         "manifest_path": str(manifest),
         "remaining_images": len(remaining),
     }

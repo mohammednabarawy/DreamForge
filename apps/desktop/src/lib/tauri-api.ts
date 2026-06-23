@@ -106,7 +106,7 @@ export type GenerationSettings = {
   ideogram4_cfg_override_start?: number;
   ideogram4_cfg_override_end?: number;
   input_image?: string;
-  /** Primary identity/style reference for IP-Adapter generate workflows. */
+  /** Primary style/face reference for IP-Adapter generate workflows. */
   reference_image?: string;
   /** Additional Kontext/control reference images (Krita-style multi-reference). */
   reference_images?: string[];

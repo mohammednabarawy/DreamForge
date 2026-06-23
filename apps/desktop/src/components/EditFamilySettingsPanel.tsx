@@ -88,29 +88,37 @@ export function EditFamilySettingsPanel({
                 }
                 className="h-3.5 w-3.5 accent-[#6a9955]"
               />
-              Face guidance (when identity is attached)
+              Face guidance
             </label>
-            <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
-              {(
-                [
-                  ["preserve_character", "Character"],
-                  ["preserve_style", "Style"],
-                  ["preserve_text", "Text"],
-                ] as const
-              ).map(([key, label]) => (
-                <label
-                  key={key}
-                  className="inline-flex items-center gap-1.5 text-[10px] text-[#aaaaaa]"
-                >
-                  <input
-                    type="checkbox"
-                    checked={Boolean(settings[key])}
-                    onChange={(e) => onChange({ [key]: e.target.checked })}
-                    className="h-3.5 w-3.5 accent-[#6a9955]"
-                  />
-                  {label}
-                </label>
-              ))}
+            <p className="text-[10px] leading-snug text-[#777777]">
+              Preserve face when editing with a reference or source image attached.
+            </p>
+            <div>
+              <p className="mb-1.5 text-[10px] leading-snug text-[#777777]">
+                Preservation hints — what to keep from the source image during edit.
+              </p>
+              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
+                {(
+                  [
+                    ["preserve_character", "Character"],
+                    ["preserve_style", "Style"],
+                    ["preserve_text", "Text"],
+                  ] as const
+                ).map(([key, label]) => (
+                  <label
+                    key={key}
+                    className="inline-flex items-center gap-1.5 text-[10px] text-[#aaaaaa]"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={Boolean(settings[key])}
+                      onChange={(e) => onChange({ [key]: e.target.checked })}
+                      className="h-3.5 w-3.5 accent-[#6a9955]"
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
             </div>
           </>
         )}

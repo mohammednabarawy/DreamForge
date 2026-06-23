@@ -32,7 +32,7 @@ export const REFERENCE_IMAGE_MODES: Array<{
     id: "reference",
     label: "Reference / edit",
     short: "Ref",
-    description: "Identity or Kontext-style image editing",
+    description: "Kontext-style image editing with a source photo",
   },
   {
     id: "inpaint",

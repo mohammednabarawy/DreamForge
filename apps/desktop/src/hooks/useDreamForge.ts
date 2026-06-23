@@ -62,6 +62,7 @@ import {
   loadActiveSessionId,
   loadLastSelectedManifest,
   loadSessionRegistry,
+  purgeHistoryMetadataForManifest,
   saveActiveSessionId,
   saveLastSelectedManifest,
   saveSessionRegistry,
@@ -1649,13 +1650,14 @@ export function useDreamForge() {
       const label = item.title || excerptPrompt(item.prompt, 40) || "this generation";
       if (
         !window.confirm(
-          `Delete "${label}" and its image file(s)? This cannot be undone.`,
+          `Delete "${label}" and all of its files and generation metadata? This cannot be undone.`,
         )
       ) {
         return;
       }
       try {
         await deleteOutput(item.manifest_path);
+        purgeHistoryMetadataForManifest(item.manifest_path);
         removeDeletedFromSelection(item.manifest_path);
         setStatus("Deleted generation");
         void refreshOutputs({ keepSelection: true });
@@ -1677,8 +1679,14 @@ export function useDreamForge() {
         return;
       }
       try {
-        await deleteOutputImage(item.manifest_path, imagePath);
-        removeDeletedFromSelection(undefined, imagePath);
+        const res = await deleteOutputImage(item.manifest_path, imagePath);
+        if (res.manifest_removed) {
+          purgeHistoryMetadataForManifest(item.manifest_path);
+        }
+        removeDeletedFromSelection(
+          res.manifest_removed ? item.manifest_path : undefined,
+          imagePath,
+        );
         setStatus("Deleted image");
         void refreshOutputs({ keepSelection: true });
       } catch (e) {
@@ -1703,6 +1711,9 @@ export function useDreamForge() {
       }
       try {
         await deleteSession(session.id);
+        for (const item of session.items) {
+          purgeHistoryMetadataForManifest(item.manifest_path);
+        }
         setSessionRegistry((prev) => {
           const next = prev.filter((s) => s.id !== session.id);
           saveSessionRegistry(next);
@@ -2992,7 +3003,7 @@ export function useDreamForge() {
           ? findGalleryModel(modelGalleryAll, patch.model)?.family ?? "reference"
           : "reference";
         setStatus(
-          `Identity reference attached - identity guidance configured (${route})`,
+          `Reference image attached — face guidance configured (${route})`,
         );
       } else {
         setStatus(`Attached ${referenceStatusLabel(mode, resolved)}`);

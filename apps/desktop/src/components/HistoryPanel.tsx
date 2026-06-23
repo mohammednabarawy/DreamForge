@@ -96,6 +96,13 @@ export function HistoryPanel({
   const [favorites, setFavorites] = useState<Set<string>>(() =>
     loadFavoriteManifests(),
   );
+
+  useEffect(() => {
+    const syncFavorites = () => setFavorites(loadFavoriteManifests());
+    window.addEventListener("dreamforge-favorites-changed", syncFavorites);
+    return () =>
+      window.removeEventListener("dreamforge-favorites-changed", syncFavorites);
+  }, []);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [newSessionName, setNewSessionName] = useState("");
   const onRefreshRef = useRef(onRefresh);

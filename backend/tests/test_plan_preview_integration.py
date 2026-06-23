@@ -12,7 +12,7 @@ from dreamforge_brain import plan_user_intent
 from dreamforge_desktop_bridge import cmd_brain_plan
 from dreamforge_engine import DreamForgeEngine
 from dreamforge_server import DreamForgeRESTHandler
-from modules.ui.ui_agent_plan import _preset_hint, _request_plan
+from dreamforge_plan_execution import preset_hint_from_decision, request_agent_plan
 
 
 def test_engine_plan_includes_dynamic_preset():
@@ -103,7 +103,7 @@ def test_rest_brain_plan_endpoint():
 
 
 def test_ui_agent_plan_preset_hint():
-    hint = _preset_hint(
+    hint = preset_hint_from_decision(
         {
             "dynamic_preset": {
                 "applied": {"style": "product_ad", "aspect_ratio": "896x704"},
@@ -117,7 +117,7 @@ def test_ui_agent_plan_preset_hint():
 
 
 def test_ui_request_plan_returns_hint_for_product_intent():
-    plan_json, hint = _request_plan("Professional product advertisement for headphones")
+    plan_json, hint = request_agent_plan("Professional product advertisement for headphones")
     plan = json.loads(plan_json)
     assert isinstance(plan, dict)
     assert plan.get("dynamic_preset", {}).get("applied", {}).get("style") == "product_ad"

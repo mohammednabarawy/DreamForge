@@ -390,7 +390,9 @@ def comfy_workflow_mode(
         return "outpaint"
     if cn in controlnet_types or mode_key == "controlnet":
         return "controlnet"
-    if cn == "ipadapter" or cn == "reference" or mode_key == "reference":
+    if cn == "ipadapter" or mode_key in ("ipadapter", "reference_ipadapter"):
+        return "ipadapter"
+    if cn == "reference" and not input_filename:
         return "ipadapter"
     if cn == "area_composition":
         return "area_composition"

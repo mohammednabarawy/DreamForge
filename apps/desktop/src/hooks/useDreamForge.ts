@@ -2182,21 +2182,24 @@ export function useDreamForge() {
       const modelFamily = (activeModel?.family ?? "").toLowerCase();
       if (
         studioMode === "generate" &&
-        params.face_preservation &&
         (params.input_image?.trim() || params.reference_image?.trim())
       ) {
-        if (modelFamily.includes("kontext") && params.input_image?.trim()) {
+        const refPath =
+          params.input_image?.trim() || params.reference_image?.trim() || "";
+        if (modelFamily.includes("kontext") && refPath) {
           params = {
             ...params,
+            input_image: refPath,
             edit_type: "kontext",
             cn_selection: "None",
             cn_type: "None",
             edit_strength: params.edit_strength ?? 0.92,
           };
-        } else if (modelFamily === "qwen_image_edit" && params.input_image?.trim()) {
+        } else if (modelFamily === "qwen_image_edit" && refPath) {
           if (params.edit_type !== "inpaint") {
             params = {
               ...params,
+              input_image: refPath,
               edit_type: "qwen_edit",
               cn_selection: "None",
               cn_type: "None",
@@ -2205,12 +2208,22 @@ export function useDreamForge() {
           if (params.edit_strength == null || params.edit_strength <= 0) {
             params = { ...params, edit_strength: 1.0 };
           }
-        } else if (params.cn_type === "reference" || params.reference_image?.trim()) {
+        } else if (refPath) {
           params = {
             ...params,
-            workflow_mode: "reference",
+            input_image: refPath,
             cn_selection: "Custom...",
-            cn_type: "reference",
+            cn_type: "img2img",
+            edit_type:
+              params.edit_type === "kontext" || params.edit_type === "qwen_edit"
+                ? "auto"
+                : (params.edit_type ?? "auto"),
+            workflow_mode: "generate",
+            edit_strength:
+              params.edit_strength ??
+              defaultReferenceEditStrength(params, modelFamily),
+            face_preservation: undefined,
+            identity_mode: undefined,
           };
         }
       }
@@ -2920,7 +2933,6 @@ export function useDreamForge() {
 
   const attachReferenceImage = useCallback(
     async (path: string, mode: ReferenceImageMode) => {
-      userPickedModelRef.current = false;
       const resolved = await resolveReferenceImagePath(path);
       let studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
 
@@ -2965,17 +2977,15 @@ export function useDreamForge() {
               resolved,
               modelGalleryAll,
               outputFor,
+              {
+                currentModel: settingsRef.current.model,
+                userPickedModel: userPickedModelRef.current,
+                modelFamily: family,
+              },
             )
           : buildReferenceImagePatch(resolved, mode, outputFor, family);
-      if (
-        studioMode === "generate" &&
-        mode === "reference" &&
-        !patch.model
-      ) {
-        setStatus(
-          "Generate references need Flux Kontext or Qwen Edit installed — IPAdapter is optional and is no longer selected automatically",
-        );
-        return;
+      if (patch.model && patch.model !== settingsRef.current.model) {
+        userPickedModelRef.current = false;
       }
       if (mode !== "upscale") {
         if (
@@ -2999,12 +3009,13 @@ export function useDreamForge() {
             : `Attached ${referenceStatusLabel(mode, resolved)} — paint on the canvas or use full-screen mask tools`,
         );
       } else if (studioMode === "generate" && mode === "reference") {
-        const route = patch.model
-          ? findGalleryModel(modelGalleryAll, patch.model)?.family ?? "reference"
-          : "reference";
-        setStatus(
-          `Reference image attached — face guidance configured (${route})`,
+        const routeModel = findGalleryModel(
+          modelGalleryAll,
+          patch.model ?? settingsRef.current.model ?? "",
         );
+        const routeLabel =
+          routeModel?.caption ?? routeModel?.engine_name ?? "selected model";
+        setStatus(`Reference image attached — img2img with ${routeLabel}`);
       } else {
         setStatus(`Attached ${referenceStatusLabel(mode, resolved)}`);
       }

@@ -152,34 +152,66 @@ export function buildReferenceImagePatch(
   };
 }
 
-/** Generate tab: reference photo → new scene with preserved face/identity. */
+/** Generate tab: reference photo → img2img on the selected (or auto-routed edit) model. */
+export type GenerateReferencePatchOptions = {
+  currentModel?: string;
+  userPickedModel?: boolean;
+  modelFamily?: string;
+};
+
+function buildGenerateReferenceImg2imgPatch(
+  imagePath: string,
+  shared: Partial<GenerationSettings>,
+  modelFamily?: string,
+): Partial<GenerationSettings> {
+  return {
+    ...shared,
+    input_image: imagePath,
+    reference_image: imagePath,
+    edit_type: "auto",
+    cn_selection: "Custom...",
+    cn_type: "img2img",
+    face_preservation: undefined,
+    identity_mode: undefined,
+    edit_strength: defaultReferenceEditStrength(
+      { edit_type: "auto" } as GenerationSettings,
+      modelFamily,
+    ),
+  };
+}
+
 export function buildGenerateIdentityReferencePatch(
   path: string,
   gallery: ModelGalleryItem[],
   outputFor: (suffix: string) => string,
+  options: GenerateReferencePatchOptions = {},
 ): Partial<GenerationSettings> {
   const imagePath = typeof path === "string" ? path : "";
-  const routed = selectIdentityGenerateModel(gallery);
+  const userPickedModel = Boolean(options.userPickedModel);
+  const modelFamily = (options.modelFamily ?? "").toLowerCase();
   const shared: Partial<GenerationSettings> = {
     upscale_image: undefined,
     inpaint_mask_path: undefined,
-    face_preservation: true,
-    identity_mode: "faceid",
     preserve_character: true,
     workflow_mode: "generate",
     style: "none",
     output: outputFor("gen"),
   };
 
-  if (!routed) {
+  if (userPickedModel && options.currentModel?.trim()) {
     return {
-      ...shared,
-      input_image: imagePath,
-      reference_image: imagePath,
-      reference_images: [imagePath],
-      cn_selection: "Custom...",
-      cn_type: "reference",
+      ...buildGenerateReferenceImg2imgPatch(imagePath, shared, modelFamily),
+      model: options.currentModel.trim(),
     };
+  }
+
+  const routed = selectIdentityGenerateModel(gallery);
+  if (!routed) {
+    const patch = buildGenerateReferenceImg2imgPatch(imagePath, shared, modelFamily);
+    if (options.currentModel?.trim()) {
+      patch.model = options.currentModel.trim();
+    }
+    return patch;
   }
 
   if (routed.route === "kontext") {
@@ -188,6 +220,8 @@ export function buildGenerateIdentityReferencePatch(
       model: routed.engine_name,
       input_image: imagePath,
       reference_image: imagePath,
+      face_preservation: true,
+      identity_mode: "faceid",
       edit_type: "kontext",
       edit_strength: 0.92,
       cn_selection: "None",
@@ -202,6 +236,8 @@ export function buildGenerateIdentityReferencePatch(
       model: routed.engine_name,
       input_image: imagePath,
       reference_image: imagePath,
+      face_preservation: true,
+      identity_mode: "faceid",
       ...qwenEdit2511LightningPatch(),
       edit_type: "qwen_edit",
       edit_strength: 1.0,
@@ -210,19 +246,11 @@ export function buildGenerateIdentityReferencePatch(
     };
   }
 
-  if (routed.route === "ipadapter") {
-    return {
-      ...shared,
-      model: routed.engine_name,
-      reference_image: imagePath,
-      reference_images: [imagePath],
-      input_image: undefined,
-      cn_selection: "Custom...",
-      cn_type: "reference",
-    };
+  const patch = buildGenerateReferenceImg2imgPatch(imagePath, shared, modelFamily);
+  if (options.currentModel?.trim()) {
+    patch.model = options.currentModel.trim();
   }
-
-  return shared;
+  return patch;
 }
 
 export function buildClearReferenceImagePatch(): Partial<GenerationSettings> {
@@ -532,9 +560,10 @@ export function defaultReferenceEditStrength(
   modelFamily?: string,
 ): number {
   const family = (modelFamily ?? "").toLowerCase();
+  if (family.includes("z_image") || family.includes("z-image")) return 0.35;
   if (family === "qwen_image_edit") return 1.0;
   if (settings.edit_type === "inpaint") return 0.9;
-  return 0.98;
+  return 0.75;
 }
 
 export function effectiveReferenceEditStrength(

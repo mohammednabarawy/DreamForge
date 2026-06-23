@@ -68,10 +68,24 @@ def _route_input(
         elif _is_flux_kontext_model(model_family, engine_name):
             cn_sel = "None"
             cn_t = "None"
+        elif str(cn_t or "").lower() == "reference":
+            cn_t = "img2img"
         elif ed not in ("auto", "None", None, ""):
             cn_t = ed
 
     return cn_sel, cn_t, ed
+
+
+def test_reference_cn_type_with_input_routes_img2img():
+    sel, typ, _ = _route_input(
+        input_path="/tmp/ref.png",
+        cn_selection="Custom...",
+        cn_type="reference",
+        model_family="z_image",
+        engine_name="z_image_turbo_nvfp4.safetensors",
+    )
+    assert sel == "Custom..."
+    assert typ == "img2img"
 
 
 def test_txt2img_clears_custom_cn():
@@ -95,6 +109,84 @@ def test_flux_kontext_keeps_cn_none():
     )
     assert sel == "None"
     assert typ == "None"
+
+
+def test_z_image_img2img_graph_uses_dedicated_builder():
+    graph, _template = _build_comfy_prompt_graph(
+        job=SimpleNamespace(),
+        mode="img2img",
+        model={"name": "z_image_turbo_nvfp4.safetensors", "category": "diffusion_models"},
+        model_family="z_image",
+        settings={
+            "steps": 8,
+            "cfg": 1.0,
+            "sampler_name": "euler",
+            "scheduler": "simple",
+            "width": 1024,
+            "height": 1024,
+            "comfy_loras": [],
+            "qwen_image_shift": 3.0,
+        },
+        prompt="portrait in sunlight",
+        negative="",
+        seed=42,
+        edit_strength=0.35,
+        cn_upscale="",
+        input_filename="ref.png",
+        mask_filename=None,
+        reference_stitch_filename=None,
+        grow_mask_by=0,
+        model_loader_args={
+            "ckpt_name": "z_image_turbo_nvfp4.safetensors",
+            "relative_path": "z_image_turbo_nvfp4.safetensors",
+            "category": "diffusion_models",
+            "family": "z_image",
+        },
+    )
+    assert any(n.get("class_type") == "VAEEncode" for n in graph.values())
+    clip = next(n for n in graph.values() if n.get("class_type") == "CLIPLoader")
+    assert clip["inputs"]["type"] == "lumina2"
+    aura = next(n for n in graph.values() if n.get("class_type") == "ModelSamplingAuraFlow")
+    assert aura["inputs"]["shift"] == 3.0
+
+
+def test_flux_img2img_graph_uses_flux_guidance():
+    graph, _template = _build_comfy_prompt_graph(
+        job=SimpleNamespace(),
+        mode="img2img",
+        model={"name": "flux1-dev.safetensors", "category": "diffusion_models"},
+        model_family="flux",
+        settings={
+            "steps": 20,
+            "cfg": 3.5,
+            "sampler_name": "euler",
+            "scheduler": "simple",
+            "width": 1024,
+            "height": 1024,
+            "comfy_loras": [],
+        },
+        prompt="a knight in a forest",
+        negative="",
+        seed=7,
+        edit_strength=0.7,
+        cn_upscale="",
+        input_filename="ref.png",
+        mask_filename=None,
+        reference_stitch_filename=None,
+        grow_mask_by=0,
+        model_loader_args={
+            "ckpt_name": "flux1-dev.safetensors",
+            "relative_path": "flux1-dev.safetensors",
+            "category": "diffusion_models",
+            "family": "flux",
+        },
+    )
+    assert any(n.get("class_type") == "VAEEncode" for n in graph.values())
+    guidance = next(n for n in graph.values() if n.get("class_type") == "FluxGuidance")
+    assert guidance["inputs"]["guidance"] == 3.5
+    sampler = next(n for n in graph.values() if n.get("class_type") == "KSampler")
+    assert sampler["inputs"]["cfg"] == 1.0
+    assert sampler["inputs"]["denoise"] == 0.7
 
 
 def test_qwen_edit_routes_to_qwen_control_type():

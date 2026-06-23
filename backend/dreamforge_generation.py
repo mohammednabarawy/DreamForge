@@ -538,10 +538,13 @@ def _build_comfy_prompt_graph(
         comfy_qwen_image_edit,
         comfy_qwen_image_edit_plus,
         comfy_qwen_image_txt2img,
+        comfy_flux_img2img,
         comfy_pid_flux_upscale,
         comfy_txt2img_basic,
         comfy_upscale_basic,
+        comfy_z_image_img2img,
         comfy_z_image_txt2img,
+        comfy_kandinsky5_img2img,
         comfy_kandinsky5_txt2img,
     )
 
@@ -812,6 +815,61 @@ def _build_comfy_prompt_graph(
                 # are only valid through the Plus node; do not stitch uploaded Comfy
                 # filenames into a fake local path.
                 graph = comfy_qwen_image_edit({**qwen_common, "image": input_filename})
+        elif (model_family or "").lower() in ("z-image", "z_image"):
+            graph = comfy_z_image_img2img(
+                {
+                    "ckpt_name": ckpt_name,
+                    **loader_args,
+                    "image": input_filename,
+                    "prompt": prompt,
+                    "negative": negative,
+                    "steps": settings["steps"],
+                    "cfg": settings["cfg"],
+                    "sampler_name": settings["sampler_name"],
+                    "scheduler": settings["scheduler"],
+                    "seed": seed,
+                    "denoise": edit_strength,
+                    "filename_prefix": "DreamForge",
+                    "qwen_image_shift": settings.get("qwen_image_shift"),
+                }
+            )
+        elif (model_family or "").startswith("flux") or model_family == "chroma":
+            # Flux/Flux2/Chroma img2img is guidance-distilled: prompt strength
+            # lives in FluxGuidance and KSampler cfg must stay 1.0. The generic
+            # img2img builder omits FluxGuidance and would wash out the result.
+            graph = comfy_flux_img2img(
+                {
+                    "ckpt_name": ckpt_name,
+                    **loader_args,
+                    "image": input_filename,
+                    "prompt": prompt,
+                    "negative": negative,
+                    "steps": settings["steps"],
+                    "guidance": settings["cfg"],
+                    "sampler_name": settings["sampler_name"],
+                    "scheduler": settings["scheduler"],
+                    "seed": seed,
+                    "denoise": edit_strength,
+                    "filename_prefix": "DreamForge",
+                }
+            )
+        elif model_family in ("kandinsky", "kandinsky5"):
+            graph = comfy_kandinsky5_img2img(
+                {
+                    "ckpt_name": ckpt_name,
+                    **loader_args,
+                    "image": input_filename,
+                    "prompt": prompt,
+                    "negative": negative,
+                    "steps": settings["steps"],
+                    "cfg": settings["cfg"],
+                    "sampler_name": settings["sampler_name"],
+                    "scheduler": settings["scheduler"],
+                    "seed": seed,
+                    "denoise": edit_strength,
+                    "filename_prefix": "DreamForge",
+                }
+            )
         else:
             graph = comfy_img2img_basic(
                 {
@@ -1322,6 +1380,10 @@ def run_generation(
                 # cn_type img2img would skip ReferenceLatent and break Flux Kontext UNets.
                 cn_selection = "None"
                 cn_type = "None"
+            elif str(cn_type or "").lower() == "reference":
+                wf = str(workflow_mode or "").lower()
+                if wf not in ("ipadapter", "reference_ipadapter"):
+                    cn_type = "img2img"
             elif edit_type not in ("auto", "None", None, ""):
                 cn_type = edit_type
 
@@ -2168,6 +2230,8 @@ def _apply_qwen_family_settings(
         out["qwen_image_shift"] = float(job.qwen_image_shift)
     elif params.get("qwen_image_shift") is not None:
         out["qwen_image_shift"] = float(params["qwen_image_shift"])
+    elif family in ("z-image", "z_image"):
+        out.setdefault("qwen_image_shift", 3.0)
     elif family.startswith("qwen"):
         out.setdefault("qwen_image_shift", 3.1)
 

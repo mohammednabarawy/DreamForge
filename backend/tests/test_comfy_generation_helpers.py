@@ -98,6 +98,28 @@ def test_comfy_workflow_mode_respects_explicit_workflow_mode():
         )
         == "ipadapter"
     )
+    assert (
+        comfy_workflow_mode(
+            input_filename="main.png",
+            cn_type="reference",
+            model={"name": "z_image_turbo_nvfp4.safetensors"},
+            model_family="z_image",
+            checkpoint_is_flux_kontext=_is_kontext,
+            workflow_mode="generate",
+        )
+        == "img2img"
+    )
+    assert (
+        comfy_workflow_mode(
+            input_filename="main.png",
+            cn_type="reference",
+            model={"name": "sdxl.safetensors"},
+            model_family="sdxl",
+            checkpoint_is_flux_kontext=_is_kontext,
+            workflow_mode="reference",
+        )
+        == "img2img"
+    )
 
 
 def test_checkpoint_is_flux_fill():

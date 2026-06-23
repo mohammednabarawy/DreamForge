@@ -2,8 +2,41 @@
 
 from __future__ import annotations
 
+import json
+import traceback
 from copy import deepcopy
 from typing import Any
+
+
+def preset_hint_from_decision(decision: dict) -> str:
+    """Format dynamic-preset metadata as markdown for plan preview UIs."""
+    preset = decision.get("dynamic_preset") if isinstance(decision, dict) else None
+    if not isinstance(preset, dict):
+        return ""
+    applied = preset.get("applied") if isinstance(preset.get("applied"), dict) else {}
+    if not applied:
+        return ""
+    sources = preset.get("source") if isinstance(preset.get("source"), list) else []
+    parts = [f"**{key}:** `{value}`" for key, value in applied.items()]
+    hint = "Style preset hints: " + " · ".join(parts)
+    if sources:
+        hint += f" _(sources: {', '.join(str(s) for s in sources)})_"
+    return hint
+
+
+def request_agent_plan(instruction: str) -> tuple[str, str]:
+    """Call DreamForgeEngine.plan and return JSON + preset hint (Gradio-free)."""
+    if not instruction or not instruction.strip():
+        empty = json.dumps({"status": "error", "message": "Please enter an instruction."}, indent=2)
+        return empty, ""
+    try:
+        from dreamforge_engine import DreamForgeEngine
+
+        decision = DreamForgeEngine.plan(instruction)
+        return json.dumps(decision, indent=2, ensure_ascii=False), preset_hint_from_decision(decision)
+    except Exception as exc:
+        traceback.print_exc()
+        return json.dumps({"status": "error", "message": str(exc)}, indent=2), ""
 
 
 def normalize_brain_decision(decision: dict[str, Any]) -> dict[str, Any]:

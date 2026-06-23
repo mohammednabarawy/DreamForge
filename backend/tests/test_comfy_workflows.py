@@ -29,9 +29,14 @@ from dreamforge_comfy_workflows import (
     comfy_inpaint_basic,
     comfy_outpaint_basic,
     comfy_pid_flux_upscale,
+    comfy_kandinsky5_img2img,
+    comfy_flux_img2img,
     comfy_qwen_image_edit,
     comfy_qwen_image_edit_plus,
     comfy_qwen_image_txt2img,
+    comfy_txt2img_basic,
+    comfy_z_image_img2img,
+    comfy_z_image_txt2img,
 )
 from dreamforge_krita_resources import (
     composite_inpaint_result,
@@ -467,6 +472,149 @@ def test_stitch_kontext_reference_images_horizontal():
     b = Image.new("RGB", (15, 10), color=(0, 255, 0))
     stitched = stitch_kontext_reference_images([a, b])
     assert stitched.size == (40, 20)
+
+
+def test_z_image_txt2img_uses_lumina2_clip_and_auraflow():
+    graph = comfy_z_image_txt2img(
+        {
+            "ckpt_name": "z_image_turbo_nvfp4.safetensors",
+            "relative_path": "z_image_turbo_nvfp4.safetensors",
+            "category": "diffusion_models",
+            "family": "z_image",
+            "prompt": "a portrait",
+            "negative": "",
+            "width": 1024,
+            "height": 1024,
+        }
+    )
+    clip = next(n for n in graph.values() if n.get("class_type") == "CLIPLoader")
+    assert clip["inputs"]["type"] == "lumina2"
+    assert any(n.get("class_type") == "ModelSamplingAuraFlow" for n in graph.values())
+    assert graph["4"]["class_type"] == "EmptySD3LatentImage"
+
+
+def test_kandinsky5_img2img_uses_kandinsky_clip_encode():
+    graph = comfy_kandinsky5_img2img(
+        {
+            "ckpt_name": "kandinsky5lite_t2i.safetensors",
+            "relative_path": "kandinsky5lite_t2i.safetensors",
+            "category": "diffusion_models",
+            "family": "kandinsky5",
+            "image": "ref.png",
+            "prompt": "a portrait",
+            "negative": "",
+            "denoise": 0.7,
+        }
+    )
+    encoders = [n for n in graph.values() if n.get("class_type") == "CLIPTextEncodeKandinsky5"]
+    assert len(encoders) == 2
+    assert any(n.get("class_type") == "VAEEncode" for n in graph.values())
+    sampler = next(n for n in graph.values() if n.get("class_type") == "KSampler")
+    assert sampler["inputs"]["denoise"] == 0.7
+
+
+def test_flux_img2img_uses_flux_guidance_and_cfg_one():
+    graph = comfy_flux_img2img(
+        {
+            "ckpt_name": "flux1-dev.safetensors",
+            "relative_path": "flux1-dev.safetensors",
+            "category": "diffusion_models",
+            "family": "flux",
+            "image": "ref.png",
+            "prompt": "a knight in a forest",
+            "negative": "",
+            "guidance": 3.5,
+            "denoise": 0.75,
+        }
+    )
+    assert any(n.get("class_type") == "VAEEncode" for n in graph.values())
+    guidance = next(n for n in graph.values() if n.get("class_type") == "FluxGuidance")
+    assert guidance["inputs"]["guidance"] == 3.5
+    sampler = next(n for n in graph.values() if n.get("class_type") == "KSampler")
+    assert sampler["inputs"]["cfg"] == 1.0
+    assert sampler["inputs"]["denoise"] == 0.75
+    # KSampler positive must come from FluxGuidance, not raw CLIPTextEncode.
+    assert sampler["inputs"]["positive"] == [guidance_id(graph), 0]
+
+
+def guidance_id(graph: dict) -> str:
+    for key, node in graph.items():
+        if node.get("class_type") == "FluxGuidance":
+            return key
+    raise AssertionError("FluxGuidance node not found")
+
+
+def test_sd3_txt2img_uses_sd3_latent():
+    graph = comfy_txt2img_basic(
+        {
+            "ckpt_name": "sd3.5_large.safetensors",
+            "relative_path": "sd3.5_large.safetensors",
+            "category": "checkpoints",
+            "family": "sd3",
+            "prompt": "a castle",
+            "negative": "",
+            "width": 1024,
+            "height": 1024,
+        }
+    )
+    assert any(n.get("class_type") == "EmptySD3LatentImage" for n in graph.values())
+    assert not any(n.get("class_type") == "EmptyLatentImage" for n in graph.values())
+
+
+def test_hidream_txt2img_uses_sd3_latent():
+    graph = comfy_txt2img_basic(
+        {
+            "ckpt_name": "hidream_i1_dev.safetensors",
+            "relative_path": "hidream_i1_dev.safetensors",
+            "category": "diffusion_models",
+            "family": "hidream",
+            "prompt": "a castle",
+            "negative": "",
+            "width": 1024,
+            "height": 1024,
+        }
+    )
+    assert any(n.get("class_type") == "EmptySD3LatentImage" for n in graph.values())
+
+
+def test_sdxl_txt2img_keeps_plain_latent():
+    graph = comfy_txt2img_basic(
+        {
+            "ckpt_name": "sdxl.safetensors",
+            "relative_path": "sdxl.safetensors",
+            "category": "checkpoints",
+            "family": "sdxl",
+            "prompt": "a castle",
+            "negative": "",
+            "width": 1024,
+            "height": 1024,
+        }
+    )
+    assert any(n.get("class_type") == "EmptyLatentImage" for n in graph.values())
+    assert not any(n.get("class_type") == "EmptySD3LatentImage" for n in graph.values())
+
+
+def test_z_image_img2img_uses_vae_encode_and_auraflow():
+    graph = comfy_z_image_img2img(
+        {
+            "ckpt_name": "z_image_turbo_nvfp4.safetensors",
+            "relative_path": "z_image_turbo_nvfp4.safetensors",
+            "category": "diffusion_models",
+            "family": "z_image",
+            "image": "ref.png",
+            "prompt": "a portrait in a garden",
+            "negative": "",
+            "denoise": 0.35,
+        }
+    )
+    clip = next(n for n in graph.values() if n.get("class_type") == "CLIPLoader")
+    assert clip["inputs"]["type"] == "lumina2"
+    vae_encode = next(n for n in graph.values() if n.get("class_type") == "VAEEncode")
+    assert vae_encode["inputs"]["pixels"] == ["2", 0]
+    sampler = next(n for n in graph.values() if n.get("class_type") == "KSampler")
+    assert sampler["inputs"]["denoise"] == 0.35
+    assert sampler["inputs"]["latent_image"] == ["3", 0]
+    assert any(n.get("class_type") == "ModelSamplingAuraFlow" for n in graph.values())
 
 
 def test_composite_inpaint_result_preserves_outside_mask():

@@ -15,39 +15,15 @@ from __future__ import annotations
 import json
 import traceback
 
-import gradio as gr
+from dreamforge_plan_execution import (
+    build_execution_params_from_brain_decision,
+    preset_hint_from_decision,
+    request_agent_plan,
+)
 
-from dreamforge_plan_execution import build_execution_params_from_brain_decision
-
-
-def _preset_hint(decision: dict) -> str:
-    preset = decision.get("dynamic_preset") if isinstance(decision, dict) else None
-    if not isinstance(preset, dict):
-        return ""
-    applied = preset.get("applied") if isinstance(preset.get("applied"), dict) else {}
-    if not applied:
-        return ""
-    sources = preset.get("source") if isinstance(preset.get("source"), list) else []
-    parts = [f"**{key}:** `{value}`" for key, value in applied.items()]
-    hint = "Style preset hints: " + " · ".join(parts)
-    if sources:
-        hint += f" _(sources: {', '.join(str(s) for s in sources)})_"
-    return hint
-
-
-def _request_plan(instruction: str) -> tuple[str, str]:
-    """Call the engine to get a structured plan for the instruction."""
-    if not instruction or not instruction.strip():
-        empty = json.dumps({"status": "error", "message": "Please enter an instruction."}, indent=2)
-        return empty, ""
-    try:
-        from dreamforge_engine import DreamForgeEngine
-
-        decision = DreamForgeEngine.plan(instruction)
-        return json.dumps(decision, indent=2, ensure_ascii=False), _preset_hint(decision)
-    except Exception as exc:
-        traceback.print_exc()
-        return json.dumps({"status": "error", "message": str(exc)}, indent=2), ""
+# Backward-compatible aliases for tests and internal callers.
+_preset_hint = preset_hint_from_decision
+_request_plan = request_agent_plan
 
 
 def _approve_and_run(plan_json_str: str) -> str:
@@ -74,13 +50,15 @@ def _approve_and_run(plan_json_str: str) -> str:
         return json.dumps({"status": "error", "message": str(exc)}, indent=2)
 
 
-def create_agent_plan_accordion() -> gr.Accordion:
+def create_agent_plan_accordion():
     """
     Build and return a Gradio Accordion that can be embedded in the main UI.
 
     Returns the accordion component.  The caller should place it inside
     the relevant Gradio context (e.g. below the prompt area).
     """
+    import gradio as gr
+
     with gr.Accordion(label="🧠 Agent Plan (preview)", open=False) as accordion:
         gr.Markdown(
             "Type a natural-language instruction and the AI brain will produce a structured plan. "

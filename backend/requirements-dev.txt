@@ -1,0 +1,8 @@
+# Dev/test dependencies for running the backend pytest suite locally.
+# Install: pip install -r requirements-dev.txt
+#
+# Gradio is only required for WebUI launch (webui.py). Core and desktop tests
+# do not import it after plan helpers were moved to dreamforge_plan_execution.
+
+pytest>=8.0
+Pillow>=10.0

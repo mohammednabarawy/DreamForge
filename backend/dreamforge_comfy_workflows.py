@@ -100,6 +100,31 @@ def _nunchaku_cond_nodes(
     return model_out, pos, neg, n
 
 
+def _z_image_clip_loader_type() -> str:
+    """Official Comfy Z-Image-Turbo templates use lumina2 with qwen_3_4b text encoders."""
+    return "lumina2"
+
+
+def _apply_z_image_model_sampling(
+    model_out: list[str | int],
+    g: dict[str, Any],
+    start_id: int,
+    args: dict[str, Any],
+) -> tuple[list[str | int], int]:
+    shift_value = args.get("qwen_image_shift")
+    if shift_value is None:
+        shift_value = args.get("lumina2_shift")
+    if shift_value is None:
+        shift_value = args.get("shift")
+    if shift_value is None:
+        shift_value = 3.0
+    g[str(start_id)] = _node(
+        "ModelSamplingAuraFlow",
+        {"model": model_out, "shift": float(shift_value)},
+    )
+    return [str(start_id), 0], start_id + 1
+
+
 def comfy_z_image_txt2img(args: dict[str, Any]) -> dict[str, Any]:
     """Z-Image txt2img."""
     ckpt = str(args["ckpt_name"])
@@ -115,13 +140,14 @@ def comfy_z_image_txt2img(args: dict[str, Any]) -> dict[str, Any]:
 
     g: dict[str, Any] = {}
     model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_sampled, n = _apply_z_image_model_sampling(model_out, g, n, args)
     g["2"] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
     g["3"] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
     g["4"] = _node("EmptySD3LatentImage", {"width": width, "height": height, "batch_size": 1})
     g["5"] = _node(
         "KSampler",
         {
-            "model": model_out,
+            "model": model_sampled,
             "positive": ["2", 0],
             "negative": ["3", 0],
             "latent_image": ["4", 0],
@@ -137,6 +163,49 @@ def comfy_z_image_txt2img(args: dict[str, Any]) -> dict[str, Any]:
     g["7"] = _node(
         "SaveImage",
         {"images": ["6", 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+    )
+    return g
+
+
+def comfy_z_image_img2img(args: dict[str, Any]) -> dict[str, Any]:
+    """Z-Image img2img — VAEEncode reference + AuraFlow sampling (official Comfy template)."""
+    ckpt = str(args["ckpt_name"])
+    prompt = str(args.get("prompt", ""))
+    negative = str(args.get("negative", ""))
+    image_filename = str(args["image"])
+    steps = int(args.get("steps", 20))
+    cfg = float(args.get("cfg", 3.5))
+    sampler = str(args.get("sampler_name", "euler"))
+    scheduler = str(args.get("scheduler", "simple"))
+    seed = int(args.get("seed", 0))
+    denoise = float(args.get("denoise", args.get("edit_strength", 0.35)))
+
+    g: dict[str, Any] = {}
+    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_sampled, n = _apply_z_image_model_sampling(model_out, g, n, args)
+    g["2"] = _node("LoadImage", {"image": image_filename, "upload": "image"})
+    g["3"] = _node("VAEEncode", {"pixels": ["2", 0], "vae": vae_out})
+    g["4"] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
+    g["5"] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
+    g["6"] = _node(
+        "KSampler",
+        {
+            "model": model_sampled,
+            "positive": ["4", 0],
+            "negative": ["5", 0],
+            "latent_image": ["3", 0],
+            "seed": seed,
+            "steps": steps,
+            "cfg": cfg,
+            "sampler_name": sampler,
+            "scheduler": scheduler,
+            "denoise": denoise,
+        },
+    )
+    g["7"] = _vae_decode_node(args, ["6", 0], vae_out)
+    g["8"] = _node(
+        "SaveImage",
+        {"images": ["7", 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
     )
     return g
 
@@ -178,6 +247,48 @@ def comfy_kandinsky5_txt2img(args: dict[str, Any]) -> dict[str, Any]:
     g["7"] = _node(
         "SaveImage",
         {"images": ["6", 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+    )
+    return g
+
+
+def comfy_kandinsky5_img2img(args: dict[str, Any]) -> dict[str, Any]:
+    """Kandinsky 5 img2img — VAEEncode + CLIPTextEncodeKandinsky5 + KSampler."""
+    ckpt = str(args["ckpt_name"])
+    prompt = str(args.get("prompt", ""))
+    negative = str(args.get("negative", ""))
+    image_filename = str(args["image"])
+    steps = int(args.get("steps", 20))
+    cfg = float(args.get("cfg", 3.5))
+    sampler = str(args.get("sampler_name", "euler"))
+    scheduler = str(args.get("scheduler", "simple"))
+    seed = int(args.get("seed", 0))
+    denoise = float(args.get("denoise", args.get("edit_strength", 0.75)))
+
+    g: dict[str, Any] = {}
+    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    g["2"] = _node("LoadImage", {"image": image_filename, "upload": "image"})
+    g["3"] = _node("VAEEncode", {"pixels": ["2", 0], "vae": vae_out})
+    g["4"] = _node("CLIPTextEncodeKandinsky5", {"clip": clip_out, "text": prompt})
+    g["5"] = _node("CLIPTextEncodeKandinsky5", {"clip": clip_out, "text": negative})
+    g["6"] = _node(
+        "KSampler",
+        {
+            "model": model_out,
+            "positive": ["4", 0],
+            "negative": ["5", 0],
+            "latent_image": ["3", 0],
+            "seed": seed,
+            "steps": steps,
+            "cfg": cfg,
+            "sampler_name": sampler,
+            "scheduler": scheduler,
+            "denoise": denoise,
+        },
+    )
+    g["7"] = _vae_decode_node(args, ["6", 0], vae_out)
+    g["8"] = _node(
+        "SaveImage",
+        {"images": ["7", 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
     )
     return g
 
@@ -392,10 +503,11 @@ def _add_model_loader(g: dict[str, Any], args: dict[str, Any], *, start_id: int 
             return model_out, clip_out, vae_out, i
         if family in ("z-image", "z_image"):
             clip_name = str(args.get("clip") or args.get("clip_qwen") or "qwen_3_4b_fp4_mixed.safetensors")
+            clip_type = _z_image_clip_loader_type()
             if clip_name.endswith(".gguf"):
-                g[str(i)] = _node("CLIPLoaderGGUF", {"clip_name": clip_name, "type": "qwen_image"})
+                g[str(i)] = _node("CLIPLoaderGGUF", {"clip_name": clip_name, "type": clip_type})
             else:
-                g[str(i)] = _node("CLIPLoader", {"clip_name": clip_name, "type": "qwen_image"})
+                g[str(i)] = _node("CLIPLoader", {"clip_name": clip_name, "type": clip_type})
             clip_out = [str(i), 0]
             i += 1
             g[str(i)] = _node(
@@ -442,6 +554,22 @@ def _add_model_loader(g: dict[str, Any], args: dict[str, Any], *, start_id: int 
     return model_out, clip_out, vae_out, i
 
 
+def _empty_latent_node(family: str, width: int, height: int) -> dict[str, Any]:
+    """Pick the correct empty-latent node for the architecture.
+
+    SD3 / HiDream use a 16-channel latent and require ``EmptySD3LatentImage``;
+    a plain ``EmptyLatentImage`` (4 channels) crashes the sampler on those DiT
+    backbones. SDXL/SD1.5 stay on the classic 4-channel latent.
+    """
+    fam = (family or "").lower()
+    node_type = (
+        "EmptySD3LatentImage"
+        if fam in ("sd3", "hidream", "hidream_o1")
+        else "EmptyLatentImage"
+    )
+    return _node(node_type, {"width": width, "height": height, "batch_size": 1})
+
+
 def comfy_txt2img_basic(args: dict[str, Any]) -> dict[str, Any]:
     """Generic KSampler txt2img (SDXL-style checkpoints)."""
     ckpt = str(args["ckpt_name"])
@@ -460,7 +588,7 @@ def comfy_txt2img_basic(args: dict[str, Any]) -> dict[str, Any]:
     model_out, clip_out, vae_out, _next = _add_model_loader(prompt_graph, {**args, "ckpt_name": ckpt})
     prompt_graph["2"] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
     prompt_graph["3"] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
-    prompt_graph["4"] = _node("EmptyLatentImage", {"width": width, "height": height, "batch_size": 1})
+    prompt_graph["4"] = _empty_latent_node(str(args.get("family") or ""), width, height)
     prompt_graph["5"] = _node(
         "KSampler",
         {
@@ -569,6 +697,56 @@ workflow to reference it by filename.
     )
     g["7"] = _vae_decode_node(args, ["6", 0], vae_out)
     g["8"] = _node("SaveImage", {"images": ["7", 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))})
+    return g
+
+
+def comfy_flux_img2img(args: dict[str, Any]) -> dict[str, Any]:
+    """Flux img2img — VAEEncode reference + FluxGuidance + cfg=1 KSampler.
+
+    Flux is guidance-distilled: the prompt strength lives in the ``FluxGuidance``
+    node (default 3.5) and the KSampler ``cfg`` must stay at 1.0, otherwise the
+    output washes out. ``denoise`` (edit_strength) controls how much of the
+    source image is preserved (0.3-0.5 subtle, 0.6-0.8 moderate). The generic
+    img2img builder omits FluxGuidance, so Flux/Flux2/Chroma need this path.
+    """
+    ckpt = str(args["ckpt_name"])
+    prompt = str(args.get("prompt", ""))
+    negative = str(args.get("negative", ""))
+    image_filename = str(args["image"])
+    steps = int(args.get("steps", 20))
+    guidance = float(args.get("guidance", args.get("cfg", 3.5)))
+    sampler = str(args.get("sampler_name", "euler"))
+    scheduler = str(args.get("scheduler", "simple"))
+    seed = int(args.get("seed", 0))
+    denoise = float(args.get("denoise", args.get("edit_strength", 0.75)))
+
+    g: dict[str, Any] = {}
+    model_out, clip_out, vae_out, _next = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    g["2"] = _node("LoadImage", {"image": image_filename, "upload": "image"})
+    g["3"] = _node("VAEEncode", {"pixels": ["2", 0], "vae": vae_out})
+    g["4"] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
+    g["5"] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
+    g["6"] = _node("FluxGuidance", {"conditioning": ["4", 0], "guidance": guidance})
+    g["7"] = _node(
+        "KSampler",
+        {
+            "model": model_out,
+            "positive": ["6", 0],
+            "negative": ["5", 0],
+            "latent_image": ["3", 0],
+            "seed": seed,
+            "steps": steps,
+            "cfg": 1.0,
+            "sampler_name": sampler,
+            "scheduler": scheduler,
+            "denoise": denoise,
+        },
+    )
+    g["8"] = _vae_decode_node(args, ["7", 0], vae_out)
+    g["9"] = _node(
+        "SaveImage",
+        {"images": ["8", 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+    )
     return g
 
 

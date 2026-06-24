@@ -25,7 +25,6 @@ PROMPT_ENHANCERS = frozenset(
         "style: hyperprompt",
         "erniehancer",
         "style: erniehancer",
-        "gemma4",
     }
 )
 
@@ -404,7 +403,7 @@ def prepare_generation_prompts(
     if enhancer in ("", "none") and getattr(job, "prompt_enhancer", None) in (None, ""):
         enhancer = default_prompt_enhancer(family, workflow_mode)
 
-    if enhancer not in ("none", "gemma4"):
+    if enhancer != "none":
         styles = _inject_prompt_enhancer_style(styles, enhancer)
         if enhancer == "flufferizer" and download_expansion:
             ensure_prompt_expansion_model(download=True)
@@ -425,7 +424,7 @@ def prepare_generation_prompts(
         prompt = _kontext_edit_boost(job, family, prompt)
     elif workflow_mode == "generate":
         prompt = _identity_generate_boost(job, workflow_mode, prompt)
-        if _is_modern_family(family) and enhancer != "gemma4":
+        if _is_modern_family(family):
             prompt = _modern_generate_boost(family, prompt)
 
     gen_data = _build_gen_data(job, settings)

@@ -197,8 +197,7 @@ export type GenerationSettings = {
   hidream_patch_seam_smoothing?: boolean;
   hidream_reference_megapixels?: number;
   hidream_prompt_refinement?: boolean;
-  /** Comfy Gemma4 TextGenerate refinement (Quality profile); not DreamForge hyperprompt. */
-  prompt_enhancer?: "none" | "gemma4" | "hyperprompt" | "flufferizer" | "erniehancer" | string;
+  prompt_enhancer?: "none" | "hyperprompt" | "flufferizer" | "erniehancer" | string;
   denoise?: number;
 };
 
@@ -934,12 +933,10 @@ export type DownloadCompanionsResult = {
 export async function checkModelDependencies(
   model: string,
   performance?: string | null,
-  hidreamPromptRefinement?: boolean | null,
 ) {
   return invoke<ModelDependenciesResult>("check_model_dependencies", {
     model,
     performance: performance ?? null,
-    hidream_prompt_refinement: hidreamPromptRefinement ?? null,
   });
 }
 
@@ -947,13 +944,11 @@ export async function downloadModelCompanions(
   model: string,
   ids?: string[],
   performance?: string | null,
-  hidreamPromptRefinement?: boolean | null,
 ) {
   return invoke<DownloadCompanionsResult>("download_model_companions", {
     model,
     ids: ids ?? null,
     performance: performance ?? null,
-    hidream_prompt_refinement: hidreamPromptRefinement ?? null,
   });
 }
 

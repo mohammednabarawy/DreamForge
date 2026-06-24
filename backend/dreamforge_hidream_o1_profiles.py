@@ -225,5 +225,5 @@ def apply_hidream_o1_dev_at_submit(
     if not opts.get("hidream_prompt_refinement"):
         out["prompt_enhancer"] = "none"
     else:
-        out["prompt_enhancer"] = str(out.get("prompt_enhancer") or "gemma4")
+        out["prompt_enhancer"] = str(out.get("prompt_enhancer") or "hyperprompt")
     return out

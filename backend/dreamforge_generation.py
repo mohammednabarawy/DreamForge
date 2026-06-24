@@ -1073,18 +1073,9 @@ def _build_comfy_prompt_graph(
                 "hidream_patch_seam_smoothing": settings.get(
                     "hidream_patch_seam_smoothing", False
                 ),
-                "hidream_prompt_refinement": settings.get(
-                    "hidream_prompt_refinement", False
-                ),
-                "gemma4_clip": loader_args.get("gemma4_clip"),
-                "gemma4_clip_available": loader_args.get("gemma4_clip_available"),
             }
             graph = comfy_hidream_o1_dev_txt2img(o1_args)
             template = "hidream_o1/dev_txt2img"
-            if settings.get("hidream_prompt_refinement") and loader_args.get(
-                "gemma4_clip"
-            ):
-                template += "+gemma4"
             return graph, template
         graph = comfy_txt2img_basic(
             {
@@ -1405,14 +1396,12 @@ def run_generation(
             model,
             performance=getattr(job, "performance", None)
             or settings.get("performance_selection"),
-            hidream_prompt_refinement=settings.get("hidream_prompt_refinement"),
         )
         if missing_deps:
             download_out = ensure_model_companions_downloaded(
                 model,
                 performance=getattr(job, "performance", None)
                 or settings.get("performance_selection"),
-                hidream_prompt_refinement=settings.get("hidream_prompt_refinement"),
                 progress_cb=lambda count: emit_event(
                     stream_sink,
                     {
@@ -1762,7 +1751,6 @@ def run_generation(
                 model,
                 performance=getattr(job, "performance", None)
                 or settings.get("performance_selection"),
-                hidream_prompt_refinement=settings.get("hidream_prompt_refinement"),
                 progress_cb=lambda count: emit_event(
                     stream_sink,
                     {

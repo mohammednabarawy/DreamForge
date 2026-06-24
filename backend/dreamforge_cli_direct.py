@@ -635,7 +635,6 @@ def build_plan(base_args, data=None):
     missing_deps = check_model_dependencies(
         model,
         performance=getattr(job, "performance", None),
-        hidream_prompt_refinement=getattr(job, "hidream_prompt_refinement", None),
     )
     setup_warnings = model_setup_warnings(
         model,

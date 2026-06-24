@@ -30,7 +30,6 @@ HF_BASE_QWEN_LIGHTNING = (
 )
 HF_BASE_IDEOGRAM4 = "https://huggingface.co/Comfy-Org/Ideogram-4/resolve/main/split_files"
 HF_BASE_FLUX2_VAE = "https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/vae"
-HF_BASE_GEMMA4 = "https://huggingface.co/Comfy-Org/gemma-4/resolve/main"
 
 # Shared catalog keyed by dependency id (referenced from MODEL_DEPENDENCIES).
 COMPANION_SOURCES: dict[str, dict[str, Any]] = {
@@ -93,10 +92,6 @@ COMPANION_SOURCES: dict[str, dict[str, Any]] = {
     "vae_flux2": {
         "url": f"{HF_BASE_FLUX2_VAE}/flux2-vae.safetensors",
         "min_bytes": 300 * 1024 * 1024,
-    },
-    "gemma4_prompt_refine": {
-        "url": f"{HF_BASE_GEMMA4}/text_encoders/gemma4_e4b_it_fp8_scaled.safetensors",
-        "min_bytes": 8 * 1024 * 1024 * 1024,
     },
 }
 
@@ -285,7 +280,6 @@ def _collect_task_missing(
     studio_mode: str | None,
     upscale_method: str | None,
     performance: str | None,
-    hidream_prompt_refinement: bool | None = None,
     template_id: str | None = None,
 ) -> tuple[Any | None, list[dict]]:
     from dreamforge_cli_inventory import (
@@ -304,7 +298,6 @@ def _collect_task_missing(
                 check_model_dependencies(
                     resolved_model,
                     performance=performance,
-                    hidream_prompt_refinement=hidream_prompt_refinement,
                 )
             )
     if studio_mode:
@@ -356,7 +349,6 @@ def ensure_creative_task_ready(
     studio_mode: str | None = None,
     upscale_method: str | None = None,
     performance: str | None = None,
-    hidream_prompt_refinement: bool | None = None,
     auto_download_tier_a: bool = True,
     auto_download_tier_b: bool = False,
     auto_install_nodes: bool = False,
@@ -440,7 +432,6 @@ def ensure_creative_task_ready(
         studio_mode=studio_mode,
         upscale_method=upscale_method,
         performance=performance,
-        hidream_prompt_refinement=hidream_prompt_refinement,
         template_id=template_id,
     )
     tier_a = [item for item in missing if item.get("download_tier") == "A"]
@@ -488,7 +479,6 @@ def ensure_creative_task_ready(
         studio_mode=studio_mode,
         upscale_method=upscale_method,
         performance=performance,
-        hidream_prompt_refinement=hidream_prompt_refinement,
         template_id=template_id,
     )
     still_a = [item for item in missing_after if item.get("download_tier") == "A"]

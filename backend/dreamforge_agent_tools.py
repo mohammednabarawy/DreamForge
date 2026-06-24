@@ -53,7 +53,7 @@ MODEL_FAMILY_HINTS: dict[str, dict[str, Any]] = {
             "hidream_o1_image_dev_mxfp8.safetensors",
             "hidream_o1_image_dev_fp8_scaled.safetensors",
         ],
-        "vram_16gb": "28 steps, CFG 1.0, euler/normal; optional gemma4 prompt refine",
+        "vram_16gb": "28 steps, CFG 1.0, lcm/normal; optional hyperprompt on Quality",
         "vram_8gb": "28 steps min; place weights under models/checkpoints/",
         "notes": "Do not use SDXL style presets. Negative prompt is cleared. Use detailed reasoning-style prompts.",
     },

@@ -789,7 +789,7 @@ def test_hidream_o1_dev_txt2img_uses_native_sampler_chain():
     assert sample["inputs"]["cfg"] == 1.0
 
 
-def test_hidream_o1_dev_txt2img_wires_gemma4_prompt_chain():
+def test_hidream_o1_dev_txt2img_uses_prepared_prompt_directly():
     from dreamforge_comfy_workflows import comfy_hidream_o1_dev_txt2img
 
     graph = comfy_hidream_o1_dev_txt2img(
@@ -805,19 +805,15 @@ def test_hidream_o1_dev_txt2img_wires_gemma4_prompt_chain():
             "cfg": 1.0,
             "scheduler": "normal",
             "seed": 42,
-            "hidream_prompt_refinement": True,
-            "gemma4_clip": "gemma4_e4b_it_fp8_scaled.safetensors",
         }
     )
     class_types = {node["class_type"] for node in graph.values() if isinstance(node, dict)}
-    assert "TextGenerate" in class_types
-    assert "JsonExtractString" in class_types
-    clip_loaders = [n for n in graph.values() if n.get("class_type") == "CLIPLoader"]
-    assert any(
-        n["inputs"].get("clip_name") == "gemma4_e4b_it_fp8_scaled.safetensors"
-        for n in clip_loaders
+    assert "TextGenerate" not in class_types
+    assert "JsonExtractString" not in class_types
+    positive = next(
+        n
+        for n in graph.values()
+        if n.get("class_type") == "CLIPTextEncode"
+        and n["inputs"].get("text") == "a knight on a dragon at night"
     )
-    text_gen = next(n for n in graph.values() if n.get("class_type") == "TextGenerate")
-    assert "SCALIST" in str(text_gen["inputs"].get("prompt", ""))
-    encode = next(n for n in graph.values() if n.get("class_type") == "CLIPTextEncode")
-    assert isinstance(encode["inputs"]["text"], list)
+    assert positive

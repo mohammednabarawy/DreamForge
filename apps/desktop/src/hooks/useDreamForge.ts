@@ -212,7 +212,6 @@ import {
   type VaryAmount,
 } from "../lib/varyImage";
 import { applyHiDreamPerformanceAtSubmit } from "../lib/hidreamPerformance";
-import { hidreamO1Gemma4Requested } from "../lib/hidreamO1Profiles";
 import {
   buildPlanSnapshotFromDryRun,
   canRunApprovedPlan,
@@ -3175,7 +3174,6 @@ export function useDreamForge() {
   const refreshModelDependencies = useCallback(async (modelName?: string) => {
     const model = (modelName ?? settingsRef.current.model ?? "").trim();
     const performance = settingsRef.current.performance ?? null;
-    const hidreamPromptRefinement = hidreamO1Gemma4Requested(settingsRef.current);
     if (!model) {
       const empty = { missing: [] as ModelDependencyItem[], ready: true };
       setModelDependencies(empty);
@@ -3185,7 +3183,6 @@ export function useDreamForge() {
       const res = await checkModelDependencies(
         model,
         performance,
-        hidreamPromptRefinement,
       );
       const next = {
         missing: res.missing ?? [],
@@ -3585,7 +3582,6 @@ export function useDreamForge() {
         const res = await checkModelDependencies(
           model,
           settingsRef.current.performance ?? null,
-          hidreamO1Gemma4Requested(settingsRef.current),
         );
         fromModel = res.missing ?? [];
         setModelDependencies({
@@ -3680,7 +3676,6 @@ export function useDreamForge() {
         studioMode,
         templateId ?? "",
         currentSettings.performance ?? "",
-        hidreamO1Gemma4Requested(currentSettings) ? "gemma4" : "",
         upscaleForPrep,
       ].join("|");
       const prepCached = assetPrepReadyRef.current;
@@ -3706,7 +3701,6 @@ export function useDreamForge() {
                 ? currentSettings.post_upscale ?? "ultimate_sd_upscale"
                 : undefined,
           performance: currentSettings.performance ?? null,
-          hidream_prompt_refinement: hidreamO1Gemma4Requested(currentSettings),
           auto_download_tier_a: true,
           auto_download_tier_b: false,
           auto_install_nodes: true,
@@ -3808,7 +3802,6 @@ export function useDreamForge() {
                     ? settingsRef.current.post_upscale ?? "ultimate_sd_upscale"
                     : undefined,
               performance: settingsRef.current.performance ?? null,
-              hidream_prompt_refinement: hidreamO1Gemma4Requested(settingsRef.current),
               auto_download_tier_a: true,
               auto_download_tier_b: true,
               auto_install_nodes: true,
@@ -3997,11 +3990,11 @@ export function useDreamForge() {
         clearTimeout(modelDepsDebounceRef.current);
       }
     };
-  }, [settings.model, settings.performance, settings.hidream_prompt_refinement, refreshModelDependencies]);
+  }, [settings.model, settings.performance, refreshModelDependencies]);
 
   useEffect(() => {
     assetPrepReadyRef.current = null;
-  }, [settings.model, settings.performance, settings.hidream_prompt_refinement, appConfig?.ui.studio_mode]);
+  }, [settings.model, settings.performance, appConfig?.ui.studio_mode]);
 
   const referenceModelFamily = useMemo(() => {
     const item = findGalleryModel(modelGalleryAll, settings.model ?? "");

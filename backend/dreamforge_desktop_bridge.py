@@ -716,7 +716,6 @@ def cmd_check_model_dependencies(params: dict) -> dict:
     missing = check_model_dependencies(
         model,
         performance=params.get("performance"),
-        hidream_prompt_refinement=params.get("hidream_prompt_refinement"),
     )
     return {
         "ok": True,
@@ -740,7 +739,6 @@ def cmd_download_model_companions(params: dict) -> dict:
     missing = check_model_dependencies(
         model,
         performance=params.get("performance"),
-        hidream_prompt_refinement=params.get("hidream_prompt_refinement"),
     )
     ids = params.get("ids")
     if ids:
@@ -889,7 +887,6 @@ def cmd_ensure_creative_task_ready(params: dict) -> dict:
         studio_mode=str(studio_mode) if studio_mode else None,
         upscale_method=params.get("upscale_method"),
         performance=params.get("performance"),
-        hidream_prompt_refinement=params.get("hidream_prompt_refinement"),
         auto_download_tier_a=bool(params.get("auto_download_tier_a", True)),
         auto_download_tier_b=bool(params.get("auto_download_tier_b", False)),
         auto_install_nodes=bool(params.get("auto_install_nodes", False)),

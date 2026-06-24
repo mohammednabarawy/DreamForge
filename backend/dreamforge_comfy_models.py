@@ -617,7 +617,6 @@ def resolve_comfy_model_loader_args(
         on_disk = _hidream_companion_basenames_on_disk(family)
         quad = _object_info_options(object_info, "QuadrupleCLIPLoader", "clip_name1")
         vae_choices = _object_info_options(object_info, "VAELoader", "vae_name")
-        clip_choices = _object_info_options(object_info, "CLIPLoader", "clip_name")
         clip_l = _basename_match(on_disk.get("clip_l", "clip_l.safetensors"), quad)
         if clip_l:
             args["clip_l"] = clip_l
@@ -626,21 +625,6 @@ def resolve_comfy_model_loader_args(
             args["vae"] = vae
         elif not vae_choices:
             problems.append("ComfyUI reports no VAE files for HiDream workflows.")
-        gemma = _basename_match(
-            "gemma4_e4b_it_fp8_scaled.safetensors",
-            clip_choices,
-        )
-        if not gemma:
-            for name in clip_choices:
-                if "gemma4" in name.lower():
-                    gemma = name
-                    break
-        from dreamforge_cli_inventory import HIDREAM_O1_GEMMA4, companion_file_present
-
-        if companion_file_present(HIDREAM_O1_GEMMA4):
-            args["gemma4_clip"] = gemma or "gemma4_e4b_it_fp8_scaled.safetensors"
-        else:
-            args["gemma4_clip_available"] = False
 
     if problems:
         models_root = Path(MODELS_ROOT).resolve()

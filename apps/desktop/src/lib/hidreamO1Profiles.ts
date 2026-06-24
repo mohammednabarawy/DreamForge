@@ -122,21 +122,11 @@ export function applyHiDreamO1DevAtSubmit(
     hidream_patch_seam_smoothing: profile.patchSeamSmoothing,
     hidream_reference_megapixels: profile.referenceMegapixels,
     hidream_prompt_refinement: profile.promptRefinement,
-    prompt_enhancer: profile.promptRefinement ? "gemma4" : "none",
+    prompt_enhancer: profile.promptRefinement ? "hyperprompt" : "none",
     aspect_ratio: aspect,
     width: w,
     height: h,
     negative_prompt: "",
     styles: [],
   };
-}
-
-/** True when HiDream O1 Quality (or explicit flag) needs the Gemma4 encoder. */
-export function hidreamO1Gemma4Requested(
-  settings: Pick<GenerationSettings, "performance" | "hidream_prompt_refinement">,
-): boolean {
-  if (settings.hidream_prompt_refinement != null) {
-    return settings.hidream_prompt_refinement;
-  }
-  return (settings.performance ?? "").trim().toLowerCase() === "quality";
 }

@@ -69,7 +69,7 @@ def test_quality_profile_enables_prompt_refinement():
         performance="Quality",
     )
     assert out["hidream_prompt_refinement"] is True
-    assert out["prompt_enhancer"] == "gemma4"
+    assert out["prompt_enhancer"] == "hyperprompt"
     assert out["hidream_patch_seam_smoothing"] is True
 
 

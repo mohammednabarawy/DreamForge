@@ -721,71 +721,6 @@ def _hidream_o1_checkpoint_loader(
     return model_out, clip_out, vae_out, node_id
 
 
-def _wire_hidream_o1_gemma4_prompt(
-    g: dict[str, Any],
-    args: dict[str, Any],
-    *,
-    raw_prompt: str,
-    start_id: int,
-) -> tuple[Any, int, bool]:
-    """Optional Gemma4 TextGenerate chain (official HiDream O1 prompt enhancement)."""
-    if not args.get("hidream_prompt_refinement"):
-        return raw_prompt, start_id, False
-    if args.get("gemma4_clip_available") is False:
-        return raw_prompt, start_id, False
-
-    from dreamforge_hidream_o1_gemma_prompt import (
-        DEFAULT_GEMMA4_CLIP,
-        build_gemma4_refine_prompt,
-    )
-
-    clip_name = str(args.get("gemma4_clip") or DEFAULT_GEMMA4_CLIP)
-    gemma_prompt = build_gemma4_refine_prompt(raw_prompt)
-    seed = int(args.get("seed", 0))
-
-    g[str(start_id)] = _node(
-        "CLIPLoader",
-        {
-            "clip_name": clip_name,
-            "type": "stable_diffusion",
-            "device": "default",
-        },
-    )
-    gemma_clip = [str(start_id), 0]
-    n = start_id + 1
-
-    g[str(n)] = _node(
-        "TextGenerate",
-        {
-            "clip": gemma_clip,
-            "prompt": gemma_prompt,
-            "max_length": int(args.get("gemma4_max_length", 2048)),
-            "sampling_mode": "on",
-            "sampling_mode.temperature": float(args.get("gemma4_temperature", 0.7)),
-            "sampling_mode.top_k": int(args.get("gemma4_top_k", 64)),
-            "sampling_mode.top_p": float(args.get("gemma4_top_p", 0.95)),
-            "sampling_mode.min_p": float(args.get("gemma4_min_p", 0.05)),
-            "sampling_mode.repetition_penalty": float(
-                args.get("gemma4_repetition_penalty", 1.05)
-            ),
-            "sampling_mode.seed": seed,
-            "thinking": False,
-            "use_default_template": False,
-        },
-    )
-    generated = [str(n), 0]
-    n += 1
-
-    g[str(n)] = _node(
-        "JsonExtractString",
-        {
-            "json_string": generated,
-            "key": "prompt",
-        },
-    )
-    return [str(n), 0], n + 1, True
-
-
 def comfy_hidream_o1_dev_txt2img(args: dict[str, Any]) -> dict[str, Any]:
     """Native HiDream-O1 Dev txt2img (ModelNoiseScale + SamplerLCM + SamplerCustom)."""
     prompt = str(args.get("prompt", ""))
@@ -826,17 +761,11 @@ def comfy_hidream_o1_dev_txt2img(args: dict[str, Any]) -> dict[str, Any]:
         model_sampled = [str(n), 0]
         n += 1
 
-    positive_text, n, _used_gemma = _wire_hidream_o1_gemma4_prompt(
-        g,
-        args,
-        raw_prompt=prompt,
-        start_id=n,
-    )
     g[str(n)] = _node(
         "CLIPTextEncode",
         {
             "clip": clip_out,
-            "text": positive_text,
+            "text": prompt,
         },
     )
     positive = [str(n), 0]

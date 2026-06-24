@@ -541,12 +541,6 @@ QWEN_EDIT_LIGHTNING_LORA_8STEP = {
     "note": "Qwen Image Edit 2511 Lightning LoRA (8-step balanced portrait/edit preset).",
 }
 
-HIDREAM_O1_GEMMA4 = {
-    "id": "gemma4_prompt_refine",
-    "relative": "text_encoders/gemma4_e4b_it_fp8_scaled.safetensors",
-    "note": "Gemma4 prompt refinement for HiDream O1 Quality (Comfy TextGenerate chain).",
-}
-
 _QWEN_LIGHTNING_PERFORMANCES = frozenset({"lightning", "speed", "lcm"})
 
 
@@ -562,18 +556,6 @@ def qwen_lightning_lora_requirement(performance: str | None) -> dict:
     if perf == "lightning":
         return dict(QWEN_EDIT_LIGHTNING_LORA_8STEP)
     return dict(QWEN_EDIT_LIGHTNING_LORA)
-
-
-def hidream_o1_gemma4_requested(
-    performance: str | None = None,
-    *,
-    hidream_prompt_refinement: bool | None = None,
-) -> bool:
-    """True when HiDream O1 should run the Gemma4 Comfy prompt-refinement chain."""
-    if hidream_prompt_refinement is not None:
-        return bool(hidream_prompt_refinement)
-    perf = str(performance or "").strip().lower()
-    return perf == "quality"
 
 
 def normalize_routing_speed_preference(speed_preference: str | None) -> str:
@@ -702,9 +684,6 @@ COMPANION_ALTERNATE_PATHS: dict[str, list[str]] = {
         "text_encoders/qwen_3_4b_fp8_mixed.safetensors",
         "clip/qwen_3_4b_fp8_mixed.safetensors",
     ],
-    "gemma4_prompt_refine": [
-        "clip/gemma4_e4b_it_fp8_scaled.safetensors",
-    ],
     "lora_qwen_edit_lightning_4step": [
         "loras/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-fp32.safetensors",
         "loras/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
@@ -745,12 +724,7 @@ def companion_file_present(req: dict, *, min_bytes: int = 1024 * 1024) -> bool:
     return False
 
 
-def check_model_dependencies(
-    model,
-    *,
-    performance: str | None = None,
-    hidream_prompt_refinement: bool | None = None,
-):
+def check_model_dependencies(model, *, performance: str | None = None):
     """Return missing companion files for modern model families."""
     if not model:
         return []
@@ -768,11 +742,6 @@ def check_model_dependencies(
         and not qwen_fused_lightning_model(name)
     ):
         reqs = [*reqs, qwen_lightning_lora_requirement(performance)]
-    if family == "hidream_o1" and hidream_o1_gemma4_requested(
-        performance,
-        hidream_prompt_refinement=hidream_prompt_refinement,
-    ):
-        reqs = [*reqs, dict(HIDREAM_O1_GEMMA4)]
     for req in reqs:
         if req.get("optional"):
             continue
@@ -796,7 +765,6 @@ def ensure_model_companions_downloaded(
     *,
     progress_cb=None,
     performance: str | None = None,
-    hidream_prompt_refinement: bool | None = None,
 ) -> dict:
     """Download missing companion weights to MODELS_ROOT when URLs are known."""
     from dreamforge_companion_download import download_missing_companions
@@ -804,7 +772,6 @@ def ensure_model_companions_downloaded(
     missing = check_model_dependencies(
         model,
         performance=performance,
-        hidream_prompt_refinement=hidream_prompt_refinement,
     )
     if not missing:
         return {"status": "ready", "missing": [], "downloaded": 0, "errors": [], "results": []}
@@ -820,7 +787,6 @@ def ensure_model_companions_downloaded(
     still_missing = check_model_dependencies(
         model,
         performance=performance,
-        hidream_prompt_refinement=hidream_prompt_refinement,
     )
     status = "ready" if not still_missing else "missing"
     if payload.get("errors") and still_missing:
@@ -860,16 +826,6 @@ def model_setup_warnings(model, *, performance: str | None = None):
     placement = hidream_o1_placement_hint(model)
     if placement:
         warnings.append(placement)
-    if (
-        model
-        and model.get("family") == "hidream_o1"
-        and hidream_o1_gemma4_requested(performance)
-        and not companion_file_present(HIDREAM_O1_GEMMA4)
-    ):
-        warnings.append(
-            "Gemma4 prompt encoder missing for Quality — use Download in the inspector to fetch "
-            "text_encoders/gemma4_e4b_it_fp8_scaled.safetensors."
-        )
     return warnings
 
 

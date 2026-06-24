@@ -644,6 +644,7 @@ export function InspectorPanel({
               isQwenModel={isQwenModel}
               activeModelLabel={activeModelLabel}
               advancedMode={advancedMode}
+              modelGallery={modelGallery}
             />
           </div>
         )}

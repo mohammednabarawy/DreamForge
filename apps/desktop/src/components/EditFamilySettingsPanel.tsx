@@ -1,5 +1,12 @@
-import type { GenerationSettings } from "../lib/tauri-api";
+import type { GenerationSettings, ModelGalleryItem } from "../lib/tauri-api";
 import { MODE_AUTO_SUMMARY } from "../lib/generationTabVisibility";
+import {
+  INPAINT_INTENTS,
+  normalizeInpaintIntent,
+  patchForInpaintIntent,
+  selectInpaintModelForIntent,
+  showInpaintAdditionalPrompt,
+} from "../lib/inpaintIntent";
 
 type Props = {
   settings: GenerationSettings;
@@ -8,6 +15,7 @@ type Props = {
   routedModelLabel: string;
   editRouteSubtitle?: string;
   showEditStrength: boolean;
+  modelGallery?: ModelGalleryItem[];
 };
 
 function FieldLabel({
@@ -35,8 +43,18 @@ export function EditFamilySettingsPanel({
   routedModelLabel,
   editRouteSubtitle,
   showEditStrength,
+  modelGallery = [],
 }: Props) {
   const autoSummary = isInpaint ? MODE_AUTO_SUMMARY.inpaint : MODE_AUTO_SUMMARY.edit;
+  const inpaintIntent = normalizeInpaintIntent(settings.inpaint_intent);
+  const activeIntent = INPAINT_INTENTS.find((item) => item.id === inpaintIntent);
+
+  const applyInpaintIntent = (intent: typeof inpaintIntent) => {
+    onChange({
+      ...patchForInpaintIntent(intent),
+      model: selectInpaintModelForIntent(modelGallery, intent, settings.model),
+    });
+  };
 
   return (
     <div className="overflow-hidden rounded-md border border-[#4a4a4a] bg-[#353535] font-mono shadow-[0_2px_8px_rgba(0,0,0,0.35)]">
@@ -125,6 +143,55 @@ export function EditFamilySettingsPanel({
 
         {isInpaint && (
           <>
+            <div>
+              <p className="mb-1.5 text-[10px] font-medium text-[#aaaaaa]">Inpaint mode</p>
+              <div className="grid grid-cols-3 gap-1 rounded-md border border-[#4a4a4a]/70 bg-[#2a2a2a]/60 p-0.5">
+                {INPAINT_INTENTS.map((item) => {
+                  const active = inpaintIntent === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => applyInpaintIntent(item.id)}
+                      title={item.hint}
+                      className={`min-h-8 rounded px-1 py-1 text-[9px] font-medium transition ${
+                        active
+                          ? "bg-[#6a9955]/25 text-[#a8d08d]"
+                          : "text-[#888888] hover:bg-[#353535] hover:text-[#cccccc]"
+                      }`}
+                    >
+                      {item.short}
+                    </button>
+                  );
+                })}
+              </div>
+              {activeIntent ? (
+                <p className="mt-1.5 text-[9px] leading-snug text-[#777777]">
+                  {activeIntent.hint}
+                  {inpaintIntent === "improve_detail"
+                    ? " Re-inpaint the result with Improve detail for a second polish pass."
+                    : null}
+                </p>
+              ) : null}
+            </div>
+
+            {showInpaintAdditionalPrompt(inpaintIntent) ? (
+              <label className="block">
+                <FieldLabel hint="Optional extra guidance for the masked region only.">
+                  Additional inpaint prompt
+                </FieldLabel>
+                <input
+                  type="text"
+                  value={settings.inpaint_additional_prompt ?? ""}
+                  onChange={(e) =>
+                    onChange({ inpaint_additional_prompt: e.target.value || undefined })
+                  }
+                  placeholder="e.g. sharper eyes, cleaner skin texture"
+                  className="mt-1 w-full rounded border border-[#555555] bg-[#2a2a2a] px-2 py-1.5 font-mono text-[11px] text-[#e8e8e8] focus:border-[#6a9955] focus:outline-none"
+                />
+              </label>
+            ) : null}
+
             <p className="text-[10px] leading-snug text-[#777777]">
               Paint or tap-select the mask on the canvas, then tune grow and feather.
             </p>

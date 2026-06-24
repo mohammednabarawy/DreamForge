@@ -1380,13 +1380,15 @@ def run_generation(
                 pick_inpaint_base_model,
                 resolve_inpaint_intent_params,
             )
+            from dreamforge_model_library_cache import get_cached_model_gallery
 
+            inpaint_gallery, _inpaint_gallery_hit = get_cached_model_gallery()
             inpaint_intent_params = resolve_inpaint_intent_params(job)
             intent = normalize_inpaint_intent(getattr(job, "inpaint_intent", None))
             requires_fill = inpaint_intent_requires_fill_engine(intent)
             if not requires_fill:
                 base_model = pick_inpaint_base_model(
-                    gallery or [],
+                    inpaint_gallery or [],
                     current=str(getattr(job, "model", "") or model.get("engine_name") or ""),
                 )
                 if base_model:
@@ -1501,6 +1503,10 @@ def run_generation(
             model_family or ""
         ).lower() != "qwen_image_edit":
             default_edit_strength = 0.75
+        if is_inpaint_job and inpaint_intent_params:
+            default_edit_strength = float(
+                inpaint_intent_params.get("edit_strength", default_edit_strength)
+            )
         edit_strength = _clamp_float(
             getattr(job, "edit_strength", None),
             default_edit_strength,

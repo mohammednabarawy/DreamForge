@@ -11,7 +11,7 @@ import {
   isCustomPerformance,
   performanceHint,
 } from "../lib/generationSettingsUi";
-import type { GenerationSettings, UiDefaults } from "../lib/tauri-api";
+import type { GenerationSettings, UiDefaults, ModelGalleryItem } from "../lib/tauri-api";
 import type { StudioSettings } from "../lib/studioBridge";
 import { listCreativeTemplates, type CreativeTemplateSummary } from "../lib/studioBridge";
 import { defaultTemplateIdForMode } from "../lib/creativeTemplates";
@@ -41,6 +41,7 @@ type Props = {
   isQwenModel: boolean;
   activeModelLabel: string;
   advancedMode?: boolean;
+  modelGallery?: ModelGalleryItem[];
 };
 
 export function isModernModel(label: string): boolean {
@@ -119,6 +120,7 @@ export function GenerationSettingsPanel({
   isQwenModel,
   activeModelLabel,
   advancedMode = false,
+  modelGallery = [],
 }: Props) {
   const [creativeTemplates, setCreativeTemplates] = useState<CreativeTemplateSummary[]>([]);
 
@@ -265,6 +267,7 @@ export function GenerationSettingsPanel({
           routedModelLabel={routedModelLabel}
           editRouteSubtitle={editRouteSubtitle}
           showEditStrength={showEditStrength}
+          modelGallery={modelGallery}
         />
       )}
 

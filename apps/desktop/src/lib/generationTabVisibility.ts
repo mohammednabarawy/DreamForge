@@ -166,6 +166,6 @@ export const MODE_AUTO_SUMMARY: Partial<Record<string, string>> = {
   generate:
     "Auto: best create route · performance preset · VRAM detect · optional reference guidance",
   edit: "Auto: best edit model · describe the change · performance preset",
-  inpaint: "Auto: Flux Fill inpaint · mask from canvas · performance preset",
+  inpaint: "Auto: Flux Fill inpaint · mask from canvas · named intent presets",
   upscale: "Auto: SDXL upscale route · tile settings tuned for quality",
 };

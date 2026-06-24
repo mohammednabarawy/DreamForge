@@ -87,9 +87,11 @@ def test_python_exe_prefers_install_root_embedded(monkeypatch, tmp_path):
     embed = install / "python_embeded"
     embed.mkdir()
     (embed / "python.exe").write_text("", encoding="utf-8")
+    monkeypatch.setattr("dreamforge_runtime_paths.resolve_install_root", lambda: install)
     monkeypatch.setenv("DREAMFORGE_BACKEND_ROOT", str(backend))
     monkeypatch.setenv("DREAMFORGE_INSTALL_ROOT", str(install))
     monkeypatch.setenv("DREAMFORGE_DATA_ROOT", str(tmp_path / "AppData" / "DreamForge"))
+    monkeypatch.delenv("DREAMFORGE_EMBEDDED_PYTHON", raising=False)
     from _paths import refresh_path_constants, resolve_python_exe
 
     refresh_path_constants()

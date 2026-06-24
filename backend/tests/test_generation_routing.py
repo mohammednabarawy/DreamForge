@@ -1043,7 +1043,7 @@ def test_performance_presets_do_not_override_explicit_sampling(monkeypatch):
     from dreamforge_generation import _apply_job_performance, _tune_edit_job_settings
 
     job = SimpleNamespace(
-        performance="Flux",
+        performance="Custom...",
         steps=2,
         cfg_scale=2.5,
         sampler="euler",
@@ -1051,11 +1051,12 @@ def test_performance_presets_do_not_override_explicit_sampling(monkeypatch):
         edit_type="kontext",
         input_image="/tmp/reference.png",
         upscale_image=None,
+        model=None,
     )
 
     out = _apply_job_performance(
         {
-            "performance_selection": "Flux",
+            "performance_selection": "Custom...",
             "steps": 20,
             "cfg": 3.0,
             "sampler_name": "euler",
@@ -1070,6 +1071,40 @@ def test_performance_presets_do_not_override_explicit_sampling(monkeypatch):
     assert out["cfg"] == 2.5
     assert out["scheduler"] == "normal"
     assert out["performance_selection"] == "Custom..."
+
+
+def test_o1_dev_quality_preset_ignores_stale_ui_sampling(monkeypatch):
+    monkeypatch.chdir(_BACKEND)
+    from dreamforge_generation import _apply_job_performance
+
+    job = SimpleNamespace(
+        performance="Quality",
+        steps=50,
+        cfg_scale=5.0,
+        sampler="euler",
+        scheduler="normal",
+        model="hidream_o1_image_dev_mxfp8.safetensors",
+    )
+    out = _apply_job_performance(
+        {
+            "performance_selection": "Quality",
+            "steps": 50,
+            "cfg": 5.0,
+            "sampler_name": "euler",
+            "scheduler": "normal",
+            "clip_skip": 1,
+            "width": 1344,
+            "height": 1344,
+        },
+        job,
+        model_family="hidream_o1",
+    )
+    assert out["steps"] == 28
+    assert out["cfg"] == 1.0
+    assert out["sampler_name"] == "lcm"
+    assert out["width"] == 2048
+    assert out["height"] == 2048
+    assert out["performance_selection"] == "Quality"
 
 
 def test_flux_kontext_uses_krita_edit_recipe(monkeypatch):

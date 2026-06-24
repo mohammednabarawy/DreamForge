@@ -11,9 +11,9 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageStat
 
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+BACKEND = Path(__file__).resolve().parents[1]
+if str(BACKEND) not in sys.path:
+    sys.path.insert(0, str(BACKEND))
 
 import arabic_poster_pipeline as pipeline
 from arabic_text_renderer import ArabicTextRenderer
@@ -33,7 +33,7 @@ from dreamforge_cli_inventory import (
 )
 
 
-OUTPUTS = ROOT / "outputs" / "cli_inventory_tests"
+OUTPUTS = BACKEND / "outputs" / "cli_inventory_tests"
 
 
 def assert_nonblank_image(path):
@@ -190,7 +190,6 @@ def test_hidream_o1_family_and_dependencies():
     assert infer_model_family("dreamshaper_8.safetensors") == "sd15"
 
     from dreamforge_cli_direct import build_plan
-    from argparse import Namespace
 
     args = Namespace(
         model="hidream_o1_image_dev_mxfp8.safetensors",
@@ -214,9 +213,10 @@ def test_hidream_o1_family_and_dependencies():
     plan = build_plan(args)
     if plan.get("model"):
         assert plan["model"]["family"] == "hidream_o1"
-        assert plan["settings"]["steps"] >= 28
+        assert plan["settings"]["steps"] == 22
         assert plan["settings"]["cfg"] == 1.0
-        assert plan["settings"]["performance_selection"] == "Lightning"
+        assert plan["settings"]["sampler"] == "lcm"
+        assert plan["settings"]["performance_selection"] == "Speed"
         assert plan["settings"]["styles"] == []
 
 

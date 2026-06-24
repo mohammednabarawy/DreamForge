@@ -1090,7 +1090,7 @@ def is_ideogram_identity_generate_job(job: Any) -> bool:
     return bool(
         getattr(job, "face_preservation", False)
         or str(getattr(job, "identity_mode", "") or "").lower()
-        in {"face", "faceid", "face_id", "preserve_face"}
+        in {"face", "faceid", "face_id", "preserve_face", "ipadapter_faceid", "kontext", "qwen_edit", "auto"}
         or getattr(job, "preserve_character", False)
     )
 

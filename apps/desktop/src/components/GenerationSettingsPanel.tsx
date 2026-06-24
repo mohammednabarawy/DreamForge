@@ -11,6 +11,13 @@ import {
   isCustomPerformance,
   performanceHint,
 } from "../lib/generationSettingsUi";
+import {
+  hidreamPerformancePreview,
+} from "../lib/hidreamPerformance";
+import {
+  applyHiDreamO1DevAtSubmit,
+  isHiDreamO1DevCheckpoint,
+} from "../lib/hidreamO1Profiles";
 import type { GenerationSettings, UiDefaults, ModelGalleryItem } from "../lib/tauri-api";
 import type { StudioSettings } from "../lib/studioBridge";
 import { listCreativeTemplates, type CreativeTemplateSummary } from "../lib/studioBridge";
@@ -23,6 +30,7 @@ import {
 } from "../lib/generationTabVisibility";
 import { EditFamilySettingsPanel } from "./EditFamilySettingsPanel";
 import { UltimateSDUpscalePanel } from "./UltimateSDUpscalePanel";
+import { AutoEnhancePanel } from "./AutoEnhancePanel";
 
 type Props = {
   settings: GenerationSettings;
@@ -179,13 +187,8 @@ export function GenerationSettingsPanel({
       perfPreview = { steps: 8, cfg: 2, sampler: "euler", scheduler: "beta" };
     }
   } else if (activeModelLower.includes("hidream") && !customPerf) {
-    if (performance === "Quality") {
-      perfPreview = { steps: 50, cfg: 5, sampler: "euler", scheduler: "normal" };
-    } else if (performance === "Speed") {
-      perfPreview = { steps: 28, cfg: 1, sampler: "euler", scheduler: "normal" };
-    } else if (performance === "Lightning") {
-      perfPreview = { steps: 16, cfg: 1, sampler: "euler", scheduler: "normal" };
-    }
+    const hidreamPreview = hidreamPerformancePreview(settings.model, performance);
+    if (hidreamPreview) perfPreview = hidreamPreview;
   } else if (activeModelLower.includes("sd3") && !customPerf) {
     if (performance === "Quality") {
       perfPreview = { steps: 40, cfg: 5, sampler: "dpmpp_2m", scheduler: "sgm_uniform" };
@@ -207,6 +210,41 @@ export function GenerationSettingsPanel({
 
   const enableCustomSampling = () => {
     onChange({ performance: CUSTOM_PERFORMANCE });
+  };
+
+  const handlePerformanceChange = (perf: string) => {
+    if (
+      isCustomPerformance(perf) ||
+      !isHiDreamO1DevCheckpoint(settings.model) ||
+      !isGenerateFamilyMode(studioMode)
+    ) {
+      onChange({ performance: perf });
+      return;
+    }
+    const patched = applyHiDreamO1DevAtSubmit(
+      { ...settings, performance: perf },
+      settings.model,
+    );
+    onChange({
+      performance: perf,
+      steps: patched.steps,
+      cfg_scale: patched.cfg_scale,
+      sampler: patched.sampler,
+      scheduler: patched.scheduler,
+      aspect_ratio: patched.aspect_ratio,
+      width: patched.width,
+      height: patched.height,
+      negative_prompt: patched.negative_prompt,
+      styles: patched.styles,
+      denoise: patched.denoise,
+      hidream_noise_scale: patched.hidream_noise_scale,
+      hidream_s_noise: patched.hidream_s_noise,
+      hidream_s_noise_end: patched.hidream_s_noise_end,
+      hidream_noise_clip_std: patched.hidream_noise_clip_std,
+      hidream_patch_seam_smoothing: patched.hidream_patch_seam_smoothing,
+      hidream_reference_megapixels: patched.hidream_reference_megapixels,
+      hidream_prompt_refinement: patched.hidream_prompt_refinement,
+    });
   };
 
   const tabCtx = buildGenerationTabContext({
@@ -257,7 +295,16 @@ export function GenerationSettingsPanel({
         </SettingsSection>
       )}
       {show("upscalePanel") && (
-        <UltimateSDUpscalePanel settings={settings} onChange={onChange} />
+        <>
+          <UltimateSDUpscalePanel settings={settings} onChange={onChange} />
+          <div className="mt-2">
+            <AutoEnhancePanel
+              settings={settings}
+              sourceImage={settings.upscale_image ?? settings.input_image}
+              onChange={onChange}
+            />
+          </div>
+        </>
       )}
       {show("editFamilyPanel") && (
         <EditFamilySettingsPanel
@@ -292,7 +339,7 @@ export function GenerationSettingsPanel({
           </FieldLabel>
           <select
             value={performance}
-            onChange={(e) => onChange({ performance: e.target.value })}
+            onChange={(e) => handlePerformanceChange(e.target.value)}
             className="df-select mt-1 w-full px-2.5 py-2 text-xs"
           >
             {performances.map((p) => (
@@ -320,7 +367,7 @@ export function GenerationSettingsPanel({
 
         {show("aspectRatio") && (
           <>
-            <FieldLabel hint="SDXL-trained sizes work best; portrait / square / landscape groups match Fooocus.">
+            <FieldLabel hint="SDXL-trained sizes through 1344px; HiDream-O1 Dev supports up to 2048×2048. Portrait / square / landscape groups match Fooocus.">
               Aspect ratio
             </FieldLabel>
             <div className="space-y-2">

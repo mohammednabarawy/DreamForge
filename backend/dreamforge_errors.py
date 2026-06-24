@@ -662,6 +662,11 @@ def _try_parse_comfy_http_validation(msg: str) -> dict[str, Any] | None:
                 "DreamForge's tiled VAE decode step doesn't match your ComfyUI version — "
                 f"a required setting ({first['input']}) is missing."
             )
+        elif first.get("node") == "CLIPLoader" and "krea2" in str(first.get("input") or ""):
+            summary = (
+                "Krea 2 requires ComfyUI v0.26.0 or newer — the GPU engine is running an older "
+                "ComfyUI that does not support CLIPLoader type 'krea2'."
+            )
         else:
             summary = (
                 "ComfyUI rejected the generation graph before sampling started: "
@@ -670,8 +675,19 @@ def _try_parse_comfy_http_validation(msg: str) -> dict[str, Any] | None:
     else:
         summary = "ComfyUI rejected the generation graph before sampling could start."
 
+    suggestions: list[str] | None = None
+    if issues and issues[0].get("node") == "CLIPLoader" and "krea2" in str(
+        issues[0].get("input") or ""
+    ):
+        suggestions = [
+            "Restart the GPU engine so DreamForge can update ComfyUI to v0.26.0.",
+            "If the problem persists, use Settings to reinstall or update the Comfy backend.",
+            "Confirm qwen3vl_4b_fp8_scaled.safetensors is in text_encoders/ before generating.",
+        ]
+
     return {
         "summary": summary,
+        "suggestions": suggestions,
         "details": {
             "comfy_validation": dict(payload),
             "node_issues": issues,
@@ -697,6 +713,14 @@ def from_exception(exc: BaseException, *, job_id: str | None = None) -> dict:
     # torch OutOfMemoryError comes through here on backends where the
     # specific OOM class isn't directly importable at module load time.
     msg_lower = msg.lower()
+    winerror = getattr(exc, "winerror", None)
+    if (
+        winerror == 1455
+        or "paging file is too small" in msg_lower
+        or "os error 1455" in msg_lower
+    ):
+        return virtual_memory_low(f"{name}: {msg}", job_id=job_id)
+
     try:
         from dreamforge_comfy_client import is_comfy_oom_error
 
@@ -823,6 +847,7 @@ def from_exception(exc: BaseException, *, job_id: str | None = None) -> dict:
     if parsed_validation is not None:
         return comfy_workflow_validation(
             parsed_validation["summary"],
+            suggestions=parsed_validation.get("suggestions"),
             details=parsed_validation["details"],
             job_id=job_id,
         )

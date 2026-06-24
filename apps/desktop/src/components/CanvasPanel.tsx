@@ -70,6 +70,9 @@ type Props = {
   onDryRun: () => void;
   onEnhancePrompt?: () => void;
   enhancePromptBusy?: boolean;
+  onDescribeImage?: () => void;
+  describeImageBusy?: boolean;
+  onImportImageMetadata?: (path: string) => void;
   onGenerate: () => void;
   onGenerateVariants?: (count: number) => void;
   imageNumberMax?: number;
@@ -87,6 +90,8 @@ type Props = {
   activeModelLabel: string;
   referenceModelFamily?: string;
   experience?: UiExperience;
+  onVaryImage?: (amount: "subtle" | "strong") => void;
+  onAutoEnhance?: (target: "face" | "hands" | "eyes") => void;
 };
 
 export function CanvasPanel({
@@ -128,6 +133,9 @@ export function CanvasPanel({
   onDryRun,
   onEnhancePrompt,
   enhancePromptBusy,
+  onDescribeImage,
+  describeImageBusy,
+  onImportImageMetadata,
   onGenerate,
   onGenerateVariants,
   imageNumberMax,
@@ -145,6 +153,8 @@ export function CanvasPanel({
   activeModelLabel,
   referenceModelFamily,
   experience = "pro",
+  onVaryImage,
+  onAutoEnhance,
 }: Props) {
   const simpleExperience = isSimpleExperience(experience);
   const [compareMode, setCompareMode] = useState<CompareMode>("after");
@@ -557,6 +567,56 @@ export function CanvasPanel({
             </button>
           </div>
         )}
+        {previewUrl && !generating && onAutoEnhance && (
+          <div className="absolute bottom-16 left-4 z-10 flex items-center gap-1 rounded-lg border border-dfui-border/60 bg-dfui-panel/90 p-1 text-[10px] font-medium text-dfui-fg shadow-glass backdrop-blur-md">
+            <span className="px-1.5 text-dfui-muted">Fix</span>
+            <button
+              type="button"
+              onClick={() => onAutoEnhance("face")}
+              className="rounded-md px-2 py-1 text-dfui-muted transition hover:bg-dfui-surface hover:text-dfui-fg"
+              title="Detect and repair faces"
+            >
+              Face
+            </button>
+            <button
+              type="button"
+              onClick={() => onAutoEnhance("hands")}
+              className="rounded-md px-2 py-1 text-dfui-muted transition hover:bg-dfui-surface hover:text-dfui-fg"
+              title="Detect and repair hands"
+            >
+              Hands
+            </button>
+            <button
+              type="button"
+              onClick={() => onAutoEnhance("eyes")}
+              className="rounded-md px-2 py-1 text-dfui-muted transition hover:bg-dfui-surface hover:text-dfui-fg"
+              title="Mask and refine eyes"
+            >
+              Eyes
+            </button>
+          </div>
+        )}
+        {previewUrl && !generating && onVaryImage && (
+          <div className="absolute bottom-4 left-4 z-10 flex items-center gap-1 rounded-lg border border-dfui-border/60 bg-dfui-panel/90 p-1 text-[10px] font-medium text-dfui-fg shadow-glass backdrop-blur-md">
+            <span className="px-1.5 text-dfui-muted">Vary</span>
+            <button
+              type="button"
+              onClick={() => onVaryImage("subtle")}
+              className="rounded-md px-2 py-1 text-dfui-muted transition hover:bg-dfui-surface hover:text-dfui-fg"
+              title="Light img2img variation on this result"
+            >
+              Subtle
+            </button>
+            <button
+              type="button"
+              onClick={() => onVaryImage("strong")}
+              className="rounded-md px-2 py-1 text-dfui-muted transition hover:bg-dfui-surface hover:text-dfui-fg"
+              title="Stronger img2img variation on this result"
+            >
+              Strong
+            </button>
+          </div>
+        )}
         {showCompareCanvas && !generating && (
           <div className="absolute bottom-4 right-4 z-10 flex items-center gap-1 rounded-lg border border-dfui-border/60 bg-dfui-panel/90 p-1 text-[10px] font-medium text-dfui-fg shadow-glass backdrop-blur-md">
             <button
@@ -658,6 +718,9 @@ export function CanvasPanel({
         onDryRun={onDryRun}
         onEnhancePrompt={onEnhancePrompt}
         enhancePromptBusy={enhancePromptBusy}
+        onDescribeImage={onDescribeImage}
+        describeImageBusy={describeImageBusy}
+        onImportImageMetadata={onImportImageMetadata}
         onGenerate={onGenerate}
         onGenerateVariants={onGenerateVariants}
         imageNumberMax={imageNumberMax}

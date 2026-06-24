@@ -209,6 +209,14 @@ class DreamForgeEngine:
             "automation_total": "automation_total",
             "detail_target": "detail_target",
             "detail_prompt": "detail_prompt",
+            "denoise": "denoise",
+            "hidream_noise_scale": "hidream_noise_scale",
+            "hidream_s_noise": "hidream_s_noise",
+            "hidream_s_noise_end": "hidream_s_noise_end",
+            "hidream_noise_clip_std": "hidream_noise_clip_std",
+            "hidream_patch_seam_smoothing": "hidream_patch_seam_smoothing",
+            "hidream_reference_megapixels": "hidream_reference_megapixels",
+            "hidream_prompt_refinement": "hidream_prompt_refinement",
         }
         # Populate with standard CLI defaults to keep hasattr behavior identical
         data = {

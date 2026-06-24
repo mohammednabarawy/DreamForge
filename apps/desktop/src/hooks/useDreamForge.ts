@@ -35,6 +35,7 @@ import {
 } from "../lib/model-selection";
 import { isAdvancedMode, isSimpleExperience, type UiExperience } from "../lib/experienceUi";
 import { ideogram4SettingsDefaults, looksLikeIdeogramJson } from "../lib/ideogram4Ui";
+import { resolveAspectPresets } from "../lib/aspectPresets";
 import { enhancePrefsFromAppConfig, shouldAutoEnhanceOnGenerate } from "../lib/promptEnhance";
 import { inpaintModelWarning } from "../lib/inpaintModel";
 import { upscaleModelWarning } from "../lib/upscaleModel";
@@ -191,6 +192,27 @@ import {
 } from "../lib/routeResolution";
 import { buildEasyCreateReferencePatch } from "../lib/easyModeRouting";
 import { applyExplicitReferenceRoleParams } from "../lib/generateReferenceParams";
+import { applyUpscalePresetAtSubmit } from "../lib/upscalePresets";
+import {
+  applyReferencesAtSubmit,
+  normalizeReferenceSettings,
+  appendReferenceSlot,
+  coerceReferenceSlots,
+} from "../lib/referenceSlots";
+import { applyAutoEnhanceAtSubmit, patchForEnhanceTarget, type EnhanceTarget } from "../lib/autoEnhance";
+import { applyIdentityAtSubmit } from "../lib/identityPreserve";
+import {
+  describeImageToPrompt,
+  resolveDescribeImagePath,
+} from "../lib/describeImage";
+import { importImageMetadata, mergeMetadataPatch } from "../lib/imageMetadata";
+import {
+  applyVaryAmountAtSubmit,
+  buildVarySettingsPatch,
+  type VaryAmount,
+} from "../lib/varyImage";
+import { applyHiDreamPerformanceAtSubmit } from "../lib/hidreamPerformance";
+import { hidreamO1Gemma4Requested } from "../lib/hidreamO1Profiles";
 import {
   buildPlanSnapshotFromDryRun,
   canRunApprovedPlan,
@@ -316,24 +338,6 @@ function dryRunReadinessSnapshot(
   return hasDetails ? readiness : undefined;
 }
 
-const ASPECT_PRESETS = [
-  "768x768",
-  "896x896",
-  "1024x1024",
-  "896x704",
-  "704x896",
-  "960x640",
-  "640x960",
-  "1024x576",
-  "576x1024",
-  "704x1056",
-  "1056x704",
-  "1152x896",
-  "896x1152",
-  "1344x768",
-  "768x1344",
-];
-
 export function useDreamForge() {
   const [outputs, setOutputs] = useState<OutputItem[]>([]);
   const [outputsTotal, setOutputsTotal] = useState(0);
@@ -358,6 +362,7 @@ export function useDreamForge() {
   const [agentTranscript, setAgentTranscript] = useState<AgentTranscriptMessage[]>([]);
   const [planRunBusy, setPlanRunBusy] = useState(false);
   const [enhancePromptBusy, setEnhancePromptBusy] = useState(false);
+  const [describeImageBusy, setDescribeImageBusy] = useState(false);
   const agentPlanRef = useRef(agentPlan);
   agentPlanRef.current = agentPlan;
   const [engineState, setEngineState] = useState<EngineState>("booting");
@@ -793,6 +798,9 @@ export function useDreamForge() {
           patch.cfg_scale = profile.custom_sampling.cfg;
           patch.sampler = profile.custom_sampling.sampler_name;
           patch.scheduler = profile.custom_sampling.scheduler;
+        }
+        if (profile.settings_patch) {
+          Object.assign(patch, profile.settings_patch);
         }
         if ((item.family ?? "").toLowerCase() === "ideogram4") {
           Object.assign(patch, ideogram4SettingsDefaults());
@@ -2192,6 +2200,16 @@ export function useDreamForge() {
       );
       params = routed.params;
       const routeWarning = routed.warning;
+      params = applyVaryAmountAtSubmit(params);
+      params = applyUpscalePresetAtSubmit(params);
+      params = applyReferencesAtSubmit(params, studioMode);
+      params = applyAutoEnhanceAtSubmit(params);
+      params = applyIdentityAtSubmit(params, modelGalleryAll, {
+        studioMode,
+        modelMissing: modelDependencies.missing,
+        studioMissing: studioResources.missing,
+        imagePromptMissing: imagePromptResources.missing,
+      });
       params = await enforceCreativeTaskSettingsRemote(params, {
         studioMode,
         gallery: modelGalleryAll,
@@ -2202,6 +2220,11 @@ export function useDreamForge() {
         selectedImage: selected?.images?.[0],
         userPickedModel: userPickedModelRef.current,
       });
+      params = applyHiDreamPerformanceAtSubmit(
+        params,
+        modelFamily,
+        params.model,
+      );
       if (params.lora?.length && !params.lora_keywords?.trim()) {
         try {
           const kw = await aggregateLoraKeywords(params.lora);
@@ -2528,6 +2551,63 @@ export function useDreamForge() {
       setEnhancePromptBusy(false);
     }
   }, [appConfig, patchSettings]);
+
+  const runDescribeImage = useCallback(
+    async (imagePath?: string) => {
+      const path = resolveDescribeImagePath(
+        settingsRef.current,
+        imagePath ?? selected?.images?.[0],
+      );
+      if (!path) {
+        setStatus("Attach or select an image to describe");
+        return;
+      }
+      setDescribeImageBusy(true);
+      setStatus("Describing image…");
+      try {
+        const res = await describeImageToPrompt(path, settingsRef.current.prompt);
+        if (!res.ok || !res.prompt) {
+          setStatus(
+            res.error === "empty_caption"
+              ? "Describe returned no caption — try another image"
+              : `Describe failed: ${res.error ?? "unknown"}`,
+          );
+          return;
+        }
+        patchSettings({ prompt: res.prompt });
+        setStatus("Prompt filled from image description");
+      } catch (e) {
+        setStatus(`Describe failed: ${String(e)}`);
+      } finally {
+        setDescribeImageBusy(false);
+      }
+    },
+    [patchSettings, selected],
+  );
+
+  const runImportImageMetadata = useCallback(
+    async (path: string) => {
+      const normalized = path.trim();
+      if (!normalized) return;
+      setStatus("Reading image metadata…");
+      try {
+        const res = await importImageMetadata(normalized);
+        if (!res.ok || !res.patch) {
+          setStatus(
+            res.error === "no_generation_metadata"
+              ? "No DreamForge or A1111 metadata in this image"
+              : "Could not import settings from image",
+          );
+          return;
+        }
+        patchSettings(mergeMetadataPatch(settingsRef.current, res.patch));
+        setStatus("Imported prompt and settings from image metadata");
+      } catch (e) {
+        setStatus(`Metadata import failed: ${String(e)}`);
+      }
+    },
+    [patchSettings],
+  );
 
   const dismissAgentPlan = useCallback(() => {
     setAgentPlan(null);
@@ -3010,10 +3090,13 @@ export function useDreamForge() {
           );
         }
       }
-      const mergedPatch = sanitizeSettingsForStudioMode(studioMode, {
-        ...settingsRef.current,
-        ...patch,
-      });
+      const mergedPatch = normalizeReferenceSettings(
+        sanitizeSettingsForStudioMode(studioMode, {
+          ...settingsRef.current,
+          ...patch,
+        }),
+        studioMode,
+      );
       patchSettings(mergedPatch);
       setAgentPlan(null);
       if (mode === "inpaint") {
@@ -3046,6 +3129,29 @@ export function useDreamForge() {
   const attachExtraReferenceImage = useCallback(
     async (path: string) => {
       const resolved = await resolveReferenceImagePath(path);
+      const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+      if (studioMode === "generate" && !isSimpleExperience(uiExperience)) {
+        const patch = appendReferenceSlot(
+          settingsRef.current,
+          {
+            path: resolved,
+            role: "image_prompt",
+            weight: settingsRef.current.reference_weight ?? 0.75,
+            stop_at: settingsRef.current.cn_stop ?? 1,
+          },
+          studioMode,
+        );
+        if (!patch) {
+          setStatus("Could not add reference slot (limit reached or invalid mix)");
+          return;
+        }
+        patchSettings(
+          normalizeReferenceSettings({ ...settingsRef.current, ...patch }, studioMode),
+        );
+        const count = coerceReferenceSlots(patch, studioMode).length;
+        setStatus(`Added reference slot (${count} total)`);
+        return;
+      }
       const patch = appendExtraReferencePath(settingsRef.current, resolved);
       if (!Object.keys(patch).length) {
         setStatus("Control reference already attached");
@@ -3055,7 +3161,7 @@ export function useDreamForge() {
       const count = (patch.reference_images ?? []).length;
       setStatus(`Added control reference (${count} total)`);
     },
-    [patchSettings],
+    [appConfig?.ui.studio_mode, patchSettings, uiExperience],
   );
 
   const removeExtraReferenceImage = useCallback(
@@ -3069,13 +3175,18 @@ export function useDreamForge() {
   const refreshModelDependencies = useCallback(async (modelName?: string) => {
     const model = (modelName ?? settingsRef.current.model ?? "").trim();
     const performance = settingsRef.current.performance ?? null;
+    const hidreamPromptRefinement = hidreamO1Gemma4Requested(settingsRef.current);
     if (!model) {
       const empty = { missing: [] as ModelDependencyItem[], ready: true };
       setModelDependencies(empty);
       return empty;
     }
     try {
-      const res = await checkModelDependencies(model, performance);
+      const res = await checkModelDependencies(
+        model,
+        performance,
+        hidreamPromptRefinement,
+      );
       const next = {
         missing: res.missing ?? [],
         ready: res.ready ?? (res.missing?.length ?? 0) === 0,
@@ -3359,6 +3470,103 @@ export function useDreamForge() {
     [attachImageForCreativeMode, selectOutput, setCanvasPreviewFromPath],
   );
 
+  const runVaryImage = useCallback(
+    async (amount: VaryAmount) => {
+      const path = (selected?.images?.[0] ?? "").trim();
+      if (!path) {
+        setStatus("Select a result image to vary");
+        return;
+      }
+      if (await promptMissingCompanionsDownloadRef.current?.()) return;
+
+      const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+      if (studioMode !== "generate") {
+        await setStudioMode("generate");
+      }
+
+      const resolved = await resolveReferenceImagePath(path);
+      const activeModel = findGalleryModel(
+        modelGalleryAll,
+        settingsRef.current.model ?? "",
+      );
+      const family = activeModel?.family ?? "";
+      const sid = activeSessionIdRef.current || DEFAULT_SESSION_ID;
+      const patch = buildVarySettingsPatch(
+        resolved,
+        amount,
+        (suffix) =>
+          outputPathForSession(
+            sid,
+            suffix === "upscale"
+              ? "upscale"
+              : suffix === "inpaint"
+                ? "inpaint"
+                : suffix === "edit"
+                  ? "edit"
+                  : "gen",
+          ),
+        family,
+      );
+      const nextSettings: GenerationSettings = {
+        ...settingsRef.current,
+        ...patch,
+      };
+      patchSettings(patch);
+      setStatus(
+        amount === "subtle"
+          ? "Vary subtle — generating light variation…"
+          : "Vary strong — generating stronger variation…",
+      );
+      await startGeneration(nextSettings, { studioMode: "generate" });
+    },
+    [
+      appConfig?.ui.studio_mode,
+      modelGalleryAll,
+      patchSettings,
+      selected,
+      setStudioMode,
+      startGeneration,
+    ],
+  );
+
+  const runAutoEnhance = useCallback(
+    async (target: EnhanceTarget, options?: { postUpscale?: boolean }) => {
+      const path = (selected?.images?.[0] ?? "").trim();
+      if (!path) {
+        setStatus("Select a result image to enhance");
+        return;
+      }
+      if (await promptMissingCompanionsDownloadRef.current?.()) return;
+
+      let studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+      if (studioMode !== "upscale" && studioMode !== "edit") {
+        await setStudioMode("upscale");
+        studioMode = "upscale";
+      }
+
+      const resolved = await resolveReferenceImagePath(path);
+      const patch = patchForEnhanceTarget(target, resolved, {
+        postUpscale: options?.postUpscale,
+        detectionPrompt: settingsRef.current.enhance_detection_prompt,
+        detailPrompt: settingsRef.current.detail_prompt,
+      });
+      const nextSettings: GenerationSettings = {
+        ...settingsRef.current,
+        ...patch,
+      };
+      patchSettings(patch);
+      setStatus(`Auto-fix ${target} — generating…`);
+      await startGeneration(nextSettings, { studioMode });
+    },
+    [
+      appConfig?.ui.studio_mode,
+      patchSettings,
+      selected,
+      setStudioMode,
+      startGeneration,
+    ],
+  );
+
   const resolveMergedMissingDependencies = useCallback(
     async (opts?: MissingDepsResolveOptions) => {
     const plan = agentPlanRef.current;
@@ -3377,6 +3585,7 @@ export function useDreamForge() {
         const res = await checkModelDependencies(
           model,
           settingsRef.current.performance ?? null,
+          hidreamO1Gemma4Requested(settingsRef.current),
         );
         fromModel = res.missing ?? [];
         setModelDependencies({
@@ -3471,6 +3680,7 @@ export function useDreamForge() {
         studioMode,
         templateId ?? "",
         currentSettings.performance ?? "",
+        hidreamO1Gemma4Requested(currentSettings) ? "gemma4" : "",
         upscaleForPrep,
       ].join("|");
       const prepCached = assetPrepReadyRef.current;
@@ -3496,8 +3706,9 @@ export function useDreamForge() {
                 ? currentSettings.post_upscale ?? "ultimate_sd_upscale"
                 : undefined,
           performance: currentSettings.performance ?? null,
+          hidream_prompt_refinement: hidreamO1Gemma4Requested(currentSettings),
           auto_download_tier_a: true,
-          auto_download_tier_b: true,
+          auto_download_tier_b: false,
           auto_install_nodes: true,
           template_id: templateId ?? null,
         });
@@ -3597,6 +3808,7 @@ export function useDreamForge() {
                     ? settingsRef.current.post_upscale ?? "ultimate_sd_upscale"
                     : undefined,
               performance: settingsRef.current.performance ?? null,
+              hidream_prompt_refinement: hidreamO1Gemma4Requested(settingsRef.current),
               auto_download_tier_a: true,
               auto_download_tier_b: true,
               auto_install_nodes: true,
@@ -3633,6 +3845,12 @@ export function useDreamForge() {
           return false;
         }
 
+        const { merged: stillMissing } = await resolveMergedMissingDependencies(opts);
+        if (stillMissing.length > 0) {
+          startCompanionDownload(model || "workflow-assets", stillMissing);
+          setStatus(`Review download approval for ${stillMissing.length} required asset(s)`);
+          return true;
+        }
         return false;
       } catch (e) {
         setStatus(`Could not prepare assets: ${String(e)}`);
@@ -3678,14 +3896,21 @@ export function useDreamForge() {
       setStatus("Select a model first");
       return;
     }
-    const prompted = await promptMissingCompanionsDownload();
-    if (!prompted) {
-      const { merged } = await resolveMergedMissingDependencies();
-      if (merged.length === 0) {
-        setStatus("All companion files are already present");
-      }
+    if (!workerReadyRef.current) {
+      setStatus(COMFY_NOT_READY_REASON);
+      return;
     }
-  }, [lastError, promptMissingCompanionsDownload, resolveMergedMissingDependencies]);
+    const { merged } = await resolveMergedMissingDependencies();
+    if (merged.length === 0) {
+      setStatus("All companion files are already present");
+      return;
+    }
+    startCompanionDownload(model || "workflow-assets", merged);
+  }, [
+    lastError,
+    resolveMergedMissingDependencies,
+    startCompanionDownload,
+  ]);
 
   useEffect(() => {
     if (companionDownloadPhase !== "done" && companionDownloadPhase !== "error") {
@@ -3772,11 +3997,11 @@ export function useDreamForge() {
         clearTimeout(modelDepsDebounceRef.current);
       }
     };
-  }, [settings.model, settings.performance, refreshModelDependencies]);
+  }, [settings.model, settings.performance, settings.hidream_prompt_refinement, refreshModelDependencies]);
 
   useEffect(() => {
     assetPrepReadyRef.current = null;
-  }, [settings.model, settings.performance, appConfig?.ui.studio_mode]);
+  }, [settings.model, settings.performance, settings.hidream_prompt_refinement, appConfig?.ui.studio_mode]);
 
   const referenceModelFamily = useMemo(() => {
     const item = findGalleryModel(modelGalleryAll, settings.model ?? "");
@@ -3888,13 +4113,14 @@ export function useDreamForge() {
     selectModelGallery,
     toggleLoraGallery,
     styleRecipes,
-    aspectPresets: uiDefaults?.aspect_ratios
-      ?.filter((a): a is string => typeof a === "string" && Boolean(a.trim()))
-      .map((a) => a.replace("×", "x")) ?? ASPECT_PRESETS,
+    aspectPresets: resolveAspectPresets(uiDefaults?.aspect_ratios),
     mentionTargets,
     runDryRun,
     runEnhancePrompt,
     enhancePromptBusy,
+    runDescribeImage,
+    describeImageBusy,
+    runImportImageMetadata,
     runGenerate,
     runGenerateVariants,
     runAutomationBatch,
@@ -3917,6 +4143,8 @@ export function useDreamForge() {
     historyEditThis,
     historyFixRegion,
     historyEnhance,
+    runVaryImage,
+    runAutoEnhance,
     openOutputInExplorer,
     copyOutputPath,
     deleteOutputManifest,

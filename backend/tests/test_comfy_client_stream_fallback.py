@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock, patch
 
-from dreamforge_comfy_client import ComfyClient, ComfyPromptResult
+from dreamforge_comfy_client import ComfyClient, ComfyPromptResult, COMFY_EXECUTION_TIMEOUT_S
 
 
 def test_history_poll_state_done_when_outputs_present():
@@ -29,6 +29,6 @@ def test_run_prompt_with_stream_falls_back_to_http_without_requeue():
     client.prompt.assert_called_once()
     client.wait_for_outputs.assert_called_once_with(
         "prompt-1",
-        timeout_s=600.0,
+        timeout_s=float(COMFY_EXECUTION_TIMEOUT_S),
         poll_s=0.5,
     )

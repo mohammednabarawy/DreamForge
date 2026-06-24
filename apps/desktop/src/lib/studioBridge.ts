@@ -506,6 +506,7 @@ export async function ensureCreativeTaskReady(args: {
   studio_mode?: string;
   upscale_method?: string | null;
   performance?: string | null;
+  hidream_prompt_refinement?: boolean | null;
   auto_download_tier_a?: boolean;
   auto_download_tier_b?: boolean;
   auto_install_nodes?: boolean;
@@ -516,6 +517,7 @@ export async function ensureCreativeTaskReady(args: {
     studio_mode: args.studio_mode ?? null,
     upscale_method: args.upscale_method ?? null,
     performance: args.performance ?? null,
+    hidream_prompt_refinement: args.hidream_prompt_refinement ?? null,
     auto_download_tier_a: args.auto_download_tier_a ?? true,
     auto_download_tier_b: args.auto_download_tier_b ?? false,
     auto_install_nodes: args.auto_install_nodes ?? false,

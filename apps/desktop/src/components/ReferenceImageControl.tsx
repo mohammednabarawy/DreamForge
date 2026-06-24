@@ -24,6 +24,19 @@ import {
 import type { GenerationSettings } from "../lib/tauri-api";
 import { pickImageFile } from "../lib/tauri-api";
 import type { StudioMode } from "../lib/model-selection";
+import { ReferenceSlotsEditor } from "./ReferenceSlotsEditor";
+import {
+  appendReferenceSlot,
+  coerceReferenceSlots,
+  DEFAULT_SLOT_STOP_AT,
+  removeReferenceSlotAt,
+  syncLegacyFromPrimarySlot,
+  updateReferenceSlotAt,
+} from "../lib/referenceSlots";
+import {
+  isIdentityPreservationActive,
+  patchForKeepFace,
+} from "../lib/identityPreserve";
 
 type Props = {
   settings: GenerationSettings;
@@ -86,6 +99,20 @@ export function ReferenceImageControl({
   const showProReferenceRoles =
     !simpleAttach && attachedPath && onPatchSettings && proReferenceRoles.length > 1;
 
+  const showMultiSlots =
+    !simpleAttach &&
+    studioMode === "generate" &&
+    Boolean(onPatchSettings) &&
+    Boolean(attachedPath);
+  const referenceSlots = coerceReferenceSlots(settings, studioMode);
+
+  const showKeepFace =
+    !simpleAttach &&
+    studioMode === "generate" &&
+    Boolean(attachedPath) &&
+    Boolean(onPatchSettings);
+  const keepFaceActive = isIdentityPreservationActive(settings);
+
   const applyReferenceRole = (role: ReferenceRole) => {
     if (!attachedPath || !onPatchSettings) return;
     const patch = buildReferenceRolePatch(
@@ -98,7 +125,14 @@ export function ReferenceImageControl({
         currentModel: settings.model,
       },
     );
-    onPatchSettings(patch);
+    const merged = { ...settings, ...patch };
+    const slots = [...coerceReferenceSlots(merged, studioMode)];
+    if (slots.length) {
+      slots[0] = { ...slots[0], role };
+      onPatchSettings(syncLegacyFromPrimarySlot(merged, slots));
+    } else {
+      onPatchSettings(patch);
+    }
   };
 
   useEffect(() => {
@@ -459,6 +493,65 @@ export function ReferenceImageControl({
             {Math.round(editStrength * 100)}%
           </span>
         </label>
+      )}
+      {showKeepFace && (
+        <label
+          className="mx-2.5 mb-2 flex items-center justify-between gap-2 rounded-md border border-dfui-border/35 bg-dfui-bg/35 px-2 py-1.5"
+          title="Route to Kontext or Qwen Edit to keep the same face/character in a new scene"
+        >
+          <span className="text-[10px] text-dfui-muted">Keep face / character</span>
+          <input
+            type="checkbox"
+            disabled={disabled}
+            checked={keepFaceActive}
+            onChange={(e) => onPatchSettings?.(patchForKeepFace(e.target.checked, settings))}
+            className="h-3.5 w-3.5 accent-df-blue"
+          />
+        </label>
+      )}
+      {showMultiSlots && activeReferenceRole === "image_prompt" && onPatchSettings && (
+        <label
+          className="mx-2.5 mb-2 flex items-center gap-2 rounded-md border border-dfui-border/35 bg-dfui-bg/35 px-2 py-1.5"
+          title="IP-Adapter stop-at (sampling step fraction)"
+        >
+          <span className="min-w-[58px] text-[9px] text-dfui-muted">Stop at</span>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            disabled={disabled}
+            value={referenceSlots[0]?.stop_at ?? DEFAULT_SLOT_STOP_AT}
+            onChange={(e) => {
+              const patch = updateReferenceSlotAt(
+                settings,
+                0,
+                { stop_at: Number(e.target.value) },
+                studioMode,
+              );
+              if (patch) onPatchSettings(patch);
+            }}
+            className="h-1.5 min-w-0 flex-1 accent-df-blue"
+          />
+          <span className="w-8 text-right font-mono text-[9px] text-dfui-secondary">
+            {Math.round((referenceSlots[0]?.stop_at ?? DEFAULT_SLOT_STOP_AT) * 100)}%
+          </span>
+        </label>
+      )}
+      {showMultiSlots && (
+        <ReferenceSlotsEditor
+          settings={settings}
+          disabled={disabled}
+          onAddSlot={(slot) => {
+            const patch = appendReferenceSlot(settings, slot, studioMode);
+            if (patch) onPatchSettings?.(patch);
+          }}
+          onUpdateSlot={(index, slotPatch) => {
+            const patch = updateReferenceSlotAt(settings, index, slotPatch, studioMode);
+            if (patch) onPatchSettings?.(patch);
+          }}
+          onRemoveSlot={(index) => onPatchSettings?.(removeReferenceSlotAt(settings, index, studioMode))}
+        />
       )}
       {showExtraRefs && (
         <div className={`${compact ? "px-2 pb-1.5 pt-1" : "pt-1.5"} flex flex-wrap items-center gap-1 border-t border-dfui-border/40`}>

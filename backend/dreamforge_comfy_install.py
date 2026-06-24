@@ -58,7 +58,7 @@ def ensure_comfyui_checkout(*, progress: ProgressCallback = None) -> Path:
 
     if comfy_dir.is_dir() and any(comfy_dir.iterdir()) and current == target:
         pin_marker = comfy_dir / ".dreamforge_archive_pin"
-        if pin_marker.is_file() or (comfy_dir / ".git").is_dir():
+        if pin_marker.is_file() or _git_repo_is_at_commit(comfy_dir, str(target)):
             return comfy_dir
 
     _report(progress, f"Updating ComfyUI to {target[:12]}…")

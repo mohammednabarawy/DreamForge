@@ -166,7 +166,7 @@ export function selectCuratedModelForMode(
   return current ?? gallery[0]?.engine_name ?? "";
 }
 
-export type IdentityGenerateRoute = "kontext" | "qwen_edit" | "ipadapter";
+export type IdentityGenerateRoute = "kontext" | "qwen_edit" | "ipadapter" | "ipadapter_faceid";
 
 export type IdentityGenerateModelPick = {
   engine_name: string;

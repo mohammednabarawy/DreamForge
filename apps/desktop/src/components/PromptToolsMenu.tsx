@@ -7,6 +7,7 @@ import {
   interrogateImage,
   randomOnebuttonPrompt,
 } from "../lib/studioBridge";
+import { resolveDescribeImagePath } from "../lib/describeImage";
 
 type Props = {
   settings: GenerationSettings;
@@ -89,21 +90,21 @@ export function PromptToolsMenu({ settings, onChange, disabled }: Props) {
             <Wand2 size={14} />
             Evolve prompt…
           </button>
-          {settings.input_image && (
+          {resolveDescribeImagePath(settings) && (
             <button
               type="button"
               className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-dfui-accent/10"
               onClick={() =>
                 void run(async () => {
-                  const res = await interrogateImage(
-                    settings.input_image!,
-                    settings.prompt,
-                  );
+                  const path = resolveDescribeImagePath(settings);
+                  if (!path) return;
+                  const res = await interrogateImage(path, settings.prompt);
                   if (res.prompt) onChange({ prompt: res.prompt });
                 })
               }
             >
-              Interrogate image
+              <Wand2 size={14} />
+              Describe image
             </button>
           )}
         </div>

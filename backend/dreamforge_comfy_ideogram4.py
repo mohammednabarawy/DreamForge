@@ -5,8 +5,10 @@ from __future__ import annotations
 import os
 from typing import Any
 
-# ComfyUI tag that introduced Ideogram 4 core nodes.
-IDEOGRAM4_COMFY_VERSION = "ba9ffa0a2b70250a2945e7cdca5d72febc53df51"  # v0.24.1
+# Pinned ComfyUI release (Ideogram 4 nodes + Krea 2 CLIPLoader type).
+DREAMFORGE_COMFY_VERSION = "f6c162ddcfbd7eefb39c06fe5b8d4c46e8d09f40"  # v0.26.0
+IDEOGRAM4_COMFY_VERSION = DREAMFORGE_COMFY_VERSION
+KREA2_MIN_COMFY_VERSION = DREAMFORGE_COMFY_VERSION
 
 IDEOGRAM4_CORE_NODES = frozenset(
     {

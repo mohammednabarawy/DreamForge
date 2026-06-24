@@ -101,7 +101,8 @@ export function EditFamilySettingsPanel({
                 onChange={(e) =>
                   onChange({
                     face_preservation: e.target.checked,
-                    identity_mode: e.target.checked ? "faceid" : undefined,
+                    preserve_character: e.target.checked ? settings.preserve_character : undefined,
+                    identity_mode: e.target.checked ? "preserve_face" : undefined,
                   })
                 }
                 className="h-3.5 w-3.5 accent-[#6a9955]"
@@ -109,7 +110,7 @@ export function EditFamilySettingsPanel({
               Face guidance
             </label>
             <p className="text-[10px] leading-snug text-[#777777]">
-              Preserve face when editing with a reference or source image attached.
+              Preserve face via Kontext/Qwen identity routing (not legacy FaceID weights).
             </p>
             <div>
               <p className="mb-1.5 text-[10px] leading-snug text-[#777777]">

@@ -1,4 +1,4 @@
-import { AtSign, Download, LayoutGrid, Play, Sparkles, Square, Wand2 } from "lucide-react";
+import { AtSign, Brain, Download, LayoutGrid, Play, Sparkles, Square, Wand2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import type { GenerationSettings } from "../lib/tauri-api";
@@ -16,6 +16,8 @@ import {
   readImagePathFromDrop,
   type ReferenceImageMode,
 } from "../lib/referenceImage";
+import { SIMPLE_ASPECT_PRESETS } from "../lib/aspectPresets";
+import { resolveDescribeImagePath } from "../lib/describeImage";
 import { ReferenceImageControl } from "./ReferenceImageControl";
 import { PromptToolsMenu } from "./PromptToolsMenu";
 import { IdeogramCaptionTemplatesMenu } from "./IdeogramCaptionTemplatesMenu";
@@ -47,6 +49,9 @@ type Props = {
   onDryRun: () => void;
   onEnhancePrompt?: () => void;
   enhancePromptBusy?: boolean;
+  onDescribeImage?: () => void;
+  describeImageBusy?: boolean;
+  onImportImageMetadata?: (path: string) => void;
   onGenerate: () => void;
   onGenerateVariants?: (count: number) => void;
   imageNumberMax?: number;
@@ -80,6 +85,9 @@ export function PromptBar({
   onDryRun,
   onEnhancePrompt,
   enhancePromptBusy = false,
+  onDescribeImage,
+  describeImageBusy = false,
+  onImportImageMetadata,
   onGenerate,
   onGenerateVariants,
   imageNumberMax = 8,
@@ -106,6 +114,13 @@ export function PromptBar({
     Boolean(promptText) &&
     !generating &&
     !enhancePromptBusy;
+  const describeImagePath = resolveDescribeImagePath(settings);
+  const canDescribeImage =
+    !isAgentMode &&
+    Boolean(describeImagePath) &&
+    !generating &&
+    !describeImageBusy &&
+    Boolean(onDescribeImage);
   const primaryActionLabel = "Generate";
   const simpleBatchCount = Math.min(4, Math.max(2, imageNumberMax >= 4 ? 4 : imageNumberMax));
   const dropReferenceMode = (): ReferenceImageMode => {
@@ -247,9 +262,12 @@ export function PromptBar({
         event.preventDefault();
         setPromptDragOver(false);
         const path = readImagePathFromDrop(event.dataTransfer);
-        if (path) {
-          onAttachReferenceImage(path, dropReferenceMode());
+        if (!path) return;
+        if (event.shiftKey && onImportImageMetadata) {
+          void onImportImageMetadata(path);
+          return;
         }
+        onAttachReferenceImage(path, dropReferenceMode());
       }}
     >
       {filtered.length > 0 && (
@@ -307,9 +325,49 @@ export function PromptBar({
         </div>
         )}
         <div className="hidden shrink-0 items-center justify-end text-[10px] text-dfui-muted 2xl:flex">
-          {agentHint ?? (promptDragOver ? "Drop image to attach" : "@mentions · drag images in")}
+          {agentHint ??
+            (promptDragOver
+              ? onImportImageMetadata
+                ? "Drop attach · Shift+drop import settings"
+                : "Drop image to attach"
+              : "@mentions · drag images in")}
         </div>
       </motion.div>
+      {simpleExperience && studioMode === "generate" && !isAgentMode && (
+        <div className="mb-1.5 flex flex-wrap items-center gap-1">
+          {(["Speed", "Quality"] as const).map((perf) => (
+            <button
+              key={perf}
+              type="button"
+              disabled={generating}
+              onClick={() => onChange({ performance: perf })}
+              className={`rounded-md border px-2 py-0.5 text-[10px] transition ${
+                (settings.performance ?? "Speed") === perf
+                  ? "border-df-blue/50 bg-df-blue/10 text-df-blue"
+                  : "border-dfui-border/45 text-dfui-muted hover:border-df-blue/30 hover:text-dfui-fg"
+              }`}
+            >
+              {perf}
+            </button>
+          ))}
+          <span className="mx-0.5 text-dfui-border">|</span>
+          {SIMPLE_ASPECT_PRESETS.map((ratio) => (
+            <button
+              key={ratio}
+              type="button"
+              disabled={generating}
+              onClick={() => onChange({ aspect_ratio: ratio })}
+              className={`rounded-md border px-2 py-0.5 font-mono text-[10px] transition ${
+                (settings.aspect_ratio ?? "").replace("×", "x") === ratio
+                  ? "border-df-blue/50 bg-df-blue/10 text-df-blue"
+                  : "border-dfui-border/45 text-dfui-muted hover:border-df-blue/30 hover:text-dfui-fg"
+              }`}
+            >
+              {ratio.replace("x", "×")}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="df-command-main-grid">
         <div className="min-w-0 self-stretch">
           <ReferenceImageControl
@@ -408,6 +466,20 @@ export function PromptBar({
                   Layout
                 </button>
                 </>
+              ) : null}
+              {canDescribeImage ? (
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  type="button"
+                  onClick={() => onDescribeImage?.()}
+                  disabled={generating || describeImageBusy}
+                  className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-dfui-border/50 px-2.5 text-xs text-dfui-fg transition-colors hover:border-df-blue/40 disabled:opacity-50"
+                  title="Describe image → fill prompt (Fooocus-style)"
+                >
+                  <Brain size={13} className="text-df-blue" />
+                  {describeImageBusy ? "Describing…" : "Describe"}
+                </motion.button>
               ) : null}
               {!simpleExperience ? (
               <PromptToolsMenu

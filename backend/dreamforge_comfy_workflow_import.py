@@ -371,9 +371,15 @@ def comfy_workflow_mode(
         return "area_composition"
     if mode_key == "ipadapter":
         return "ipadapter"
+    if mode_key == "ipadapter_faceid":
+        return "ipadapter_faceid"
+    if mode_key == "ipadapter_controlnet":
+        return "ipadapter_controlnet"
     if mode_key == "face_detail" or edit == "face_detail":
         return "face_detail"
     cn = str(cn_type or "None").lower()
+    if cn == "extract" or edit == "extract" or mode_key == "extract":
+        return "extract"
     controlnet_types = {
         "depth",
         "canny",

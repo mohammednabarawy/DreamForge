@@ -371,6 +371,15 @@ def cmd_evolve_prompts(params: dict) -> dict:
     return {"ok": True, "variants": variants}
 
 
+def cmd_import_image_metadata(params: dict) -> dict:
+    path = (params.get("path") or "").strip()
+    if not path:
+        return _error("path required")
+    from dreamforge_image_metadata import import_image_metadata
+
+    return import_image_metadata(path)
+
+
 def cmd_interrogate_image(params: dict) -> dict:
     path = (params.get("path") or "").strip()
     if not path:
@@ -443,6 +452,7 @@ STUDIO_HANDLERS = {
     "list_ideogram4_caption_templates": cmd_list_ideogram4_caption_templates,
     "render_ideogram4_caption_template": cmd_render_ideogram4_caption_template,
     "evolve_prompts": cmd_evolve_prompts,
+    "import_image_metadata": cmd_import_image_metadata,
     "interrogate_image": cmd_interrogate_image,
     "organize_models_preview": cmd_organize_models_preview,
 }

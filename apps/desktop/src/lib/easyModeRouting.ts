@@ -8,6 +8,8 @@ import {
 } from "./referenceImage";
 import { routeBadgeLabel } from "./referenceRole";
 import type { GenerationSettings } from "./tauri-api";
+import { normalizeInpaintIntent } from "./inpaintIntent";
+import { inferUpscalePreset } from "./upscalePresets";
 
 function dependencyHaystack(items: ModelDependencyItem[]): string {
   return items
@@ -140,11 +142,21 @@ export function easyRouteSummary(
     case "edit":
       return "Describe what should change";
     case "inpaint":
-      return settings.inpaint_mask_path?.trim()
-        ? "Fix the painted region"
-        : "Paint a region to fix";
-    case "upscale":
-      return "Enhance image resolution";
+      if (!settings.inpaint_mask_path?.trim()) {
+        return "Paint a region to fix";
+      }
+      switch (normalizeInpaintIntent(settings.inpaint_intent)) {
+        case "improve_detail":
+          return "Improve detail in masked region";
+        case "modify_content":
+          return "Modify content in masked region";
+        default:
+          return "Fix the painted region";
+      }
+    case "upscale": {
+      const preset = inferUpscalePreset(settings);
+      return preset ? `Enhance · ${preset} upscale` : "Enhance image resolution";
+    }
     case "extract":
       return "Extract structure from image";
     default:

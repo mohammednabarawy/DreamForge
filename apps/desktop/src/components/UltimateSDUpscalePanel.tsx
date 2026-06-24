@@ -3,6 +3,11 @@ import { clampUpscaleBy, clampUpscaleTile } from "../lib/companionAssets";
 import { CUSTOM_PERFORMANCE } from "../lib/generationSettingsUi";
 import type { GenerationSettings } from "../lib/tauri-api";
 import {
+  inferUpscalePreset,
+  patchForUpscalePreset,
+  UPSCALE_PRESETS,
+} from "../lib/upscalePresets";
+import {
   ULTIMATE_SD_AUTO_SUMMARY,
   ULTIMATE_SD_NODE,
   ULTIMATE_SD_USER_WIDGETS,
@@ -96,6 +101,8 @@ function NodeSelect({
 }
 
 export function UltimateSDUpscalePanel({ settings, onChange }: Props) {
+  const activePreset = inferUpscalePreset(settings);
+
   const widgetValues = useMemo(() => {
     const map = new Map<string, number | string | boolean>();
     for (const spec of ULTIMATE_SD_USER_WIDGETS) {
@@ -163,6 +170,27 @@ export function UltimateSDUpscalePanel({ settings, onChange }: Props) {
 
       <div className="border-b border-[#4a4a4a]/70 px-2.5 py-1.5">
         <p className="text-[9px] leading-snug text-[#777777]">{ULTIMATE_SD_AUTO_SUMMARY}</p>
+      </div>
+
+      <div className="flex flex-wrap gap-1 border-b border-[#4a4a4a]/70 px-2.5 py-2">
+        {UPSCALE_PRESETS.map((preset) => {
+          const selected = activePreset === preset.id;
+          return (
+            <button
+              key={preset.id}
+              type="button"
+              title={preset.hint}
+              onClick={() => onChange(patchUpscale(patchForUpscalePreset(preset.id)))}
+              className={`rounded border px-2 py-0.5 text-[10px] transition ${
+                selected
+                  ? "border-[#6a9955] bg-[#3d4a38] text-[#cccccc]"
+                  : "border-[#555555] text-[#aaaaaa] hover:border-[#6a9955]/60 hover:text-[#cccccc]"
+              }`}
+            >
+              {preset.short}
+            </button>
+          );
+        })}
       </div>
 
       <div className="divide-y divide-[#4a4a4a]/50">

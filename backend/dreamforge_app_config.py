@@ -736,8 +736,18 @@ _GENERATION_PATCH_KEYS = {
     "workflow_plan",
     "detail_target",
     "detail_prompt",
+    "enhance_auto_fix",
+    "enhance_target",
+    "enhance_detection_prompt",
+    "enhance_post_upscale",
     "reference_image",
     "reference_images",
+    "references",
+    "reference_role",
+    "reference_weight",
+    "cn_strength",
+    "cn_stop",
+    "structure_type",
     "identity_mode",
     "face_preservation",
     "control_image",
@@ -906,12 +916,20 @@ def _complete_patch_for_mode(
     next_patch = dict(patch)
     if mode == "edit":
         next_patch.setdefault("style", "image_edit")
-        next_patch.setdefault("edit_type", "kontext")
-        if str(next_patch.get("edit_type") or "").lower() == "qwen_edit":
+        edit_type = str(next_patch.get("edit_type") or "").lower()
+        if not edit_type or edit_type == "auto":
+            if _gallery_has_qwen_edit(model_gallery):
+                next_patch.update(_qwen_edit_lightning_patch())
+                edit_type = "qwen_edit"
+            else:
+                edit_type = "kontext"
+                next_patch["edit_type"] = edit_type
+        if edit_type == "qwen_edit":
+            next_patch["edit_type"] = "qwen_edit"
             next_patch["cn_selection"] = "Custom..."
             next_patch["cn_type"] = "qwen_edit"
             _force_qwen_lightning_defaults(next_patch)
-        else:
+        elif edit_type == "kontext":
             next_patch["edit_type"] = "kontext"
             next_patch["cn_selection"] = "None"
             next_patch["cn_type"] = "None"

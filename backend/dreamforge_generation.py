@@ -497,6 +497,7 @@ def _build_comfy_prompt_graph(
         comfy_img2img_basic,
         comfy_inpaint_basic,
         comfy_ipadapter_reference,
+        comfy_ipadapter_faceid_reference,
         comfy_ultimate_sd_upscale,
         comfy_outpaint_basic,
         comfy_qwen_image_edit,
@@ -506,6 +507,7 @@ def _build_comfy_prompt_graph(
         comfy_krea2_img2img,
         comfy_flux_img2img,
         comfy_pid_flux_upscale,
+        comfy_hidream_o1_dev_txt2img,
         comfy_txt2img_basic,
         comfy_upscale_basic,
         comfy_z_image_img2img,
@@ -638,19 +640,61 @@ def _build_comfy_prompt_graph(
                 "foreground_prompt": getattr(job, "foreground_prompt", None),
             }
         )
-    elif mode == "ipadapter":
+    elif mode in ("ipadapter", "ipadapter_controlnet"):
+        from dreamforge_references import coerce_reference_slots, resolve_reference_composition
+
         ref_name = getattr(job, "reference_image", None) or input_filename
-        graph = comfy_ipadapter_reference(
-            {
-                **common,
-                "reference_image": ref_name,
-                "ipadapter_model": getattr(job, "ipadapter_model", None)
-                or _first_inventory_model("ipadapter"),
-                "clip_vision": getattr(job, "clip_vision", None)
-                or _first_inventory_model("clip_vision", ("vit", "clip-vision")),
-                "ipadapter_weight": getattr(job, "ipadapter_weight", getattr(job, "reference_weight", 0.75)),
-            }
-        )
+        resolved_slots = list(getattr(job, "_resolved_reference_slots", None) or [])
+        composition = resolve_reference_composition(coerce_reference_slots(job))
+        graph_args: dict[str, Any] = {
+            **common,
+            "reference_image": ref_name,
+            "ipadapter_model": getattr(job, "ipadapter_model", None)
+            or _first_inventory_model("ipadapter"),
+            "clip_vision": getattr(job, "clip_vision", None)
+            or _first_inventory_model("clip_vision", ("vit", "clip-vision")),
+            "ipadapter_weight": getattr(
+                job, "ipadapter_weight", getattr(job, "reference_weight", 0.75)
+            ),
+        }
+        if resolved_slots:
+            graph_args["reference_slots"] = resolved_slots
+        if composition.get("mode") == "ipadapter_controlnet":
+            struct = dict(composition.get("structure_slot") or {})
+            struct_upload = next(
+                (item for item in resolved_slots if item.get("role") == "structure"),
+                None,
+            )
+            if struct_upload:
+                struct["image"] = struct_upload.get("image") or struct_upload.get("path")
+            graph_args["structure_slot"] = struct
+            graph_args["controlnet_model"] = getattr(job, "controlnet_model", None) or _first_inventory_model(
+                "controlnet",
+                (str(struct.get("structure_type") or getattr(job, "cn_type", "") or "canny").lower(),),
+            )
+            graph_args["cn_strength"] = struct.get("weight", getattr(job, "cn_strength", 1.0))
+            graph_args["cn_stop"] = struct.get("stop_at", getattr(job, "cn_stop", 1.0))
+            from dreamforge_comfy_workflows import comfy_ipadapter_controlnet_hybrid
+
+            graph = comfy_ipadapter_controlnet_hybrid(graph_args)
+        else:
+            graph = comfy_ipadapter_reference(graph_args)
+    elif mode == "ipadapter_faceid":
+        from dreamforge_identity import faceid_assets_available
+
+        ref_name = getattr(job, "reference_image", None) or input_filename
+        assets = faceid_assets_available()
+        graph_args = {
+            **common,
+            "reference_image": ref_name,
+            "ipadapter_faceid_model": getattr(job, "ipadapter_model", None)
+            or assets.get("ipadapter_faceid_model")
+            or _first_inventory_model("ipadapter", ("faceid", "face-id", "face_id")),
+            "ipadapter_weight": getattr(
+                job, "ipadapter_weight", getattr(job, "reference_weight", 0.75)
+            ),
+        }
+        graph = comfy_ipadapter_faceid_reference(graph_args)
     elif mode == "face_detail" and input_filename:
         graph = comfy_face_detail_basic(
             {
@@ -1006,6 +1050,42 @@ def _build_comfy_prompt_graph(
             }
         )
     else:
+        from dreamforge_hidream_o1_profiles import is_hidream_o1_dev_checkpoint
+
+        o1_model_name = str(model.get("name") or model.get("engine_name") or ckpt_name or "")
+        if is_hidream_o1_dev_checkpoint(o1_model_name):
+            o1_args = {
+                **loader_args,
+                "prompt": prompt,
+                "negative": negative,
+                "width": settings["width"],
+                "height": settings["height"],
+                "steps": settings["steps"],
+                "cfg": settings["cfg"],
+                "scheduler": settings["scheduler"],
+                "seed": seed,
+                "denoise": float(settings.get("denoise", 1.0)),
+                "filename_prefix": "DreamForge",
+                "hidream_noise_scale": settings.get("hidream_noise_scale", 7.6),
+                "hidream_s_noise": settings.get("hidream_s_noise", 1.0),
+                "hidream_s_noise_end": settings.get("hidream_s_noise_end", 1.0),
+                "hidream_noise_clip_std": settings.get("hidream_noise_clip_std", 2.5),
+                "hidream_patch_seam_smoothing": settings.get(
+                    "hidream_patch_seam_smoothing", False
+                ),
+                "hidream_prompt_refinement": settings.get(
+                    "hidream_prompt_refinement", False
+                ),
+                "gemma4_clip": loader_args.get("gemma4_clip"),
+                "gemma4_clip_available": loader_args.get("gemma4_clip_available"),
+            }
+            graph = comfy_hidream_o1_dev_txt2img(o1_args)
+            template = "hidream_o1/dev_txt2img"
+            if settings.get("hidream_prompt_refinement") and loader_args.get(
+                "gemma4_clip"
+            ):
+                template += "+gemma4"
+            return graph, template
         graph = comfy_txt2img_basic(
             {
                 **loader_args,
@@ -1214,18 +1294,67 @@ def run_generation(
 
     try:
         job, model, prompt, negative, width, height, _brand_kit = _compile_job(base_args, data)
+        from dreamforge_upscale_presets import apply_upscale_preset_to_job
+        from dreamforge_vary_image import apply_vary_amount_to_job
+
+        for _preset_key, _preset_val in apply_upscale_preset_to_job(job).items():
+            setattr(job, _preset_key, _preset_val)
+        for _vary_key, _vary_val in apply_vary_amount_to_job(job).items():
+            setattr(job, _vary_key, _vary_val)
+        from dreamforge_references import apply_reference_slots_to_job
+
+        ref_patch = apply_reference_slots_to_job(job)
+        if ref_patch.get("reference_composition_error"):
+            from dreamforge_errors import invalid_request
+
+            err = invalid_request(
+                str(ref_patch["reference_composition_error"]),
+                job_id=job_id,
+            )
+            emit_event(stream_sink, err)
+            return {"status": "error", **err}
+        from dreamforge_auto_enhance import apply_auto_enhance_to_job
+
+        auto_patch = apply_auto_enhance_to_job(job)
+        if auto_patch.get("auto_enhance_error"):
+            err = invalid_request(str(auto_patch["auto_enhance_error"]), job_id=job_id)
+            emit_event(stream_sink, err)
+            return {"status": "error", **err}
+        from dreamforge_identity import apply_identity_to_job
+
+        identity_patch = apply_identity_to_job(job)
+        if identity_patch.get("identity_error"):
+            err = invalid_request(str(identity_patch["identity_error"]), job_id=job_id)
+            emit_event(stream_sink, err)
+            return {"status": "error", **err}
+        if identity_patch.get("_identity_fallback_notice"):
+            emit_event(
+                stream_sink,
+                {
+                    "type": "warning",
+                    "message": str(identity_patch["_identity_fallback_notice"]),
+                    "job_id": job_id,
+                },
+            )
         model_family = str(model.get("family") or "").lower()
+        from dreamforge_hidream_o1_profiles import finalize_hidream_generation_settings
+
         settings = _apply_ideogram4_family_settings(
             _apply_qwen_family_settings(
-                _tune_edit_job_settings(
-                    _apply_job_performance(
-                        _auto_settings(model, job, width, height, negative),
+                _apply_hidream_family_settings(
+                    _tune_edit_job_settings(
+                        _apply_job_performance(
+                            _auto_settings(model, job, width, height, negative),
+                            job,
+                            model_family,
+                        ),
                         job,
                         model_family,
+                        is_live=stream_sink is not None,
                     ),
                     job,
                     model_family,
-                    is_live=stream_sink is not None,
+                    model=model,
                 ),
                 job,
                 model_family,
@@ -1234,6 +1363,7 @@ def run_generation(
             job,
             model_family,
         )
+        settings = finalize_hidream_generation_settings(settings, model, job)
         if getattr(job, "clip_skip", None) is not None:
             try:
                 settings["clip_skip"] = int(job.clip_skip)
@@ -1273,11 +1403,16 @@ def run_generation(
 
         missing_deps = check_model_dependencies(
             model,
-            performance=getattr(job, "performance", None),
+            performance=getattr(job, "performance", None)
+            or settings.get("performance_selection"),
+            hidream_prompt_refinement=settings.get("hidream_prompt_refinement"),
         )
         if missing_deps:
             download_out = ensure_model_companions_downloaded(
                 model,
+                performance=getattr(job, "performance", None)
+                or settings.get("performance_selection"),
+                hidream_prompt_refinement=settings.get("hidream_prompt_refinement"),
                 progress_cb=lambda count: emit_event(
                     stream_sink,
                     {
@@ -1497,6 +1632,27 @@ def run_generation(
                 emit_event(stream_sink, err)
                 return {"status": "error", **err}
 
+        auto_selection = getattr(job, "_auto_enhance_selection", None)
+        if auto_selection and input_path and not inpaint_mask_path:
+            from dreamforge_inpaint_selection import generate_inpaint_selection_mask
+
+            selection_result = generate_inpaint_selection_mask(
+                str(input_path),
+                str(auto_selection),
+            )
+            if not selection_result.get("ok"):
+                err = invalid_request(
+                    f"Auto-enhance mask failed: {selection_result.get('error', 'unknown')}",
+                    job_id=job_id,
+                )
+                emit_event(stream_sink, err)
+                return {"status": "error", **err}
+            inpaint_mask_path = selection_result.get("mask_path")
+            job.inpaint_mask_path = inpaint_mask_path
+            is_inpaint_job = True
+            cn_type = "inpaint"
+            edit_type = "inpaint"
+
         streaming = stream_sink is not None
         default_edit_strength = 1.0
         if not _checkpoint_is_flux_kontext(model, model_family) and (
@@ -1604,6 +1760,9 @@ def run_generation(
         except ComfyModelResolutionError as first_exc:
             ensure_model_companions_downloaded(
                 model,
+                performance=getattr(job, "performance", None)
+                or settings.get("performance_selection"),
+                hidream_prompt_refinement=settings.get("hidream_prompt_refinement"),
                 progress_cb=lambda count: emit_event(
                     stream_sink,
                     {
@@ -1737,6 +1896,36 @@ def run_generation(
                 emit_event(stream_sink, err)
                 return {"status": "error", **err}
 
+        try:
+            from dreamforge_paths import resolve_image_path_or_raise
+            from dreamforge_references import coerce_reference_slots
+
+            resolved_reference_slots: list[dict] = []
+            for slot in coerce_reference_slots(job):
+                resolved_path = resolve_image_path_or_raise(str(slot.get("path") or ""))
+                local_name = Path(resolved_path).name
+                slot_upload = client.upload_image(
+                    image_bytes=Path(resolved_path).read_bytes(),
+                    filename=local_name,
+                    folder_type="input",
+                    overwrite=True,
+                )
+                resolved_reference_slots.append(
+                    {
+                        **slot,
+                        "image": str(slot_upload.get("name") or local_name),
+                    }
+                )
+            if resolved_reference_slots:
+                job._resolved_reference_slots = resolved_reference_slots
+        except (FileNotFoundError, ValueError, OSError) as exc:
+            err = invalid_input_image(
+                f"reference slot image: {exc}",
+                job_id=job_id,
+            )
+            emit_event(stream_sink, err)
+            return {"status": "error", **err}
+
         mask_filename = None
         if cn_type == "inpaint" and mask_path and input_path:
             try:
@@ -1774,21 +1963,35 @@ def run_generation(
             model_family=model_family,
             input_filename=input_filename,
         )
-        if comfy_mode == "ipadapter":
+        if comfy_mode in ("ipadapter", "ipadapter_controlnet", "ipadapter_faceid"):
             from dreamforge_workflow_planner import custom_node_pack_present
 
             ipadapter_unavailable = False
             if not custom_node_pack_present("ComfyUI_IPAdapter_plus"):
                 ipadapter_unavailable = True
             missing_ipadapter_models: list[str] = []
-            if not (getattr(job, "ipadapter_model", None) or _first_inventory_model("ipadapter")):
-                missing_ipadapter_models.append("ipadapter_model")
-            if not (
-                getattr(job, "clip_vision", None)
-                or getattr(job, "clip_vision_model", None)
-                or _first_inventory_model("clip_vision", ("vit", "clip-vision"))
-            ):
-                missing_ipadapter_models.append("clip_vision")
+            if comfy_mode == "ipadapter_faceid":
+                from dreamforge_identity import faceid_assets_available
+
+                faceid_assets = faceid_assets_available()
+                if not faceid_assets.get("ok"):
+                    missing_ipadapter_models.extend(faceid_assets.get("missing") or [])
+                    ipadapter_unavailable = True
+                elif not (
+                    getattr(job, "ipadapter_model", None)
+                    or faceid_assets.get("ipadapter_faceid_model")
+                    or _first_inventory_model("ipadapter", ("faceid", "face-id", "face_id"))
+                ):
+                    missing_ipadapter_models.append("ipadapter_faceid_model")
+            else:
+                if not (getattr(job, "ipadapter_model", None) or _first_inventory_model("ipadapter")):
+                    missing_ipadapter_models.append("ipadapter_model")
+                if not (
+                    getattr(job, "clip_vision", None)
+                    or getattr(job, "clip_vision_model", None)
+                    or _first_inventory_model("clip_vision", ("vit", "clip-vision"))
+                ):
+                    missing_ipadapter_models.append("clip_vision")
             if missing_ipadapter_models:
                 ipadapter_unavailable = True
 
@@ -1987,6 +2190,44 @@ def run_generation(
                 )
                 emit_event(stream_sink, err)
                 return {"status": "error", **err}
+
+        if str(cn_type or "").lower() == "upscale" and input_path:
+            try:
+                from PIL import Image
+
+                from dreamforge_krita_resources import resolve_upscaler
+                from dreamforge_vram_profiles import profile_tier
+
+                upscale_info = resolve_upscaler(
+                    str(getattr(job, "upscale_method", None) or "ultimate_sd_upscale")
+                )
+                if str(upscale_info.get("workflow") or "") == "pid_flux":
+                    src_w, src_h = Image.open(input_path).size
+                    upscale_by = float(getattr(job, "upscale_by", None) or 2.0)
+                    vram_tier = profile_tier(
+                        getattr(job, "vram_profile", None) or "auto"
+                    )
+                    requested = int(max(src_w, src_h) * upscale_by)
+                    tw, th, _, _ = _pid_upscale_target_size(
+                        src_w,
+                        src_h,
+                        requested_long_side=requested,
+                        vram_tier=vram_tier,
+                    )
+                    settings["width"] = tw
+                    settings["height"] = th
+                    job.width = tw
+                    job.height = th
+            except Exception:
+                pass
+
+        settings = finalize_hidream_generation_settings(settings, model, job)
+        from dreamforge_hidream_o1_profiles import hidream_o1_manifest_warnings
+
+        o1_warnings = hidream_o1_manifest_warnings(
+            str(model.get("name") or model.get("engine_name") or ""),
+            settings,
+        )
 
         prompt_graph, template_used = _build_comfy_prompt_graph(
             job=job,
@@ -2224,6 +2465,14 @@ def run_generation(
                     "total": job_data.get("automation_total"),
                 }
 
+            if o1_warnings:
+                manifest_payload["hidream_o1_warnings"] = o1_warnings
+                if manifest_payload.get("validation"):
+                    manifest_payload["validation"][0]["warnings"] = (
+                        list(manifest_payload["validation"][0].get("warnings") or [])
+                        + o1_warnings
+                    )
+
             manifest_path = write_manifest(manifest_path, manifest_payload)
 
         from dreamforge_engine import _free_comfy_vram
@@ -2246,6 +2495,20 @@ def run_generation(
 _GENERIC_SDXL_PRESETS = frozenset({"Speed", "Quality", "Lightning", "Lcm", "Pony XL"})
 _FAMILY_PRESETS = frozenset({"Flux", "HiDream", "HiDream Full", "SD3"})
 _UNIFIED_PERFORMANCE_PRESETS = frozenset({"Lightning", "Speed", "Quality", "Custom..."})
+
+
+def _apply_hidream_family_settings(
+    settings: dict,
+    job,
+    model_family: str,
+    model: dict | None = None,
+) -> dict:
+    """Enforce ComfyUI HiDream CFG/steps (Dev/Fast CFG 1.0, not SDXL 7.0)."""
+    if (model_family or "").lower() not in ("hidream", "hidream_o1"):
+        return settings
+    from dreamforge_hidream_o1_profiles import finalize_hidream_generation_settings
+
+    return finalize_hidream_generation_settings(settings, model or {}, job)
 
 
 def _apply_ideogram4_family_settings(
@@ -2543,6 +2806,14 @@ def _apply_job_performance(settings: dict, job, model_family: str = "") -> dict:
         return out
     out["performance_selection"] = perf
     if perf == "Custom...":
+        if getattr(job, "steps", None) is not None:
+            out["steps"] = int(job.steps)
+        if getattr(job, "cfg_scale", None) is not None:
+            out["cfg"] = float(job.cfg_scale)
+        if getattr(job, "sampler", None):
+            out["sampler_name"] = str(job.sampler)
+        if getattr(job, "scheduler", None):
+            out["scheduler"] = str(job.scheduler)
         return out
     try:
         if perf in {"Lightning", "Speed", "Quality"} and model_family:
@@ -2559,19 +2830,21 @@ def _apply_job_performance(settings: dict, job, model_family: str = "") -> dict:
         out["sampler_name"] = opts.get("sampler_name", out["sampler_name"])
         out["scheduler"] = opts.get("scheduler", out["scheduler"])
         out["clip_skip"] = int(opts.get("clip_skip", out.get("clip_skip", 1)))
-        if getattr(job, "steps", None) is not None:
-            out["steps"] = int(job.steps)
-        if getattr(job, "cfg_scale", None) is not None:
-            out["cfg"] = float(job.cfg_scale)
-        if getattr(job, "sampler", None):
-            out["sampler_name"] = str(job.sampler)
-        if getattr(job, "scheduler", None):
-            out["scheduler"] = str(job.scheduler)
-        if any(
-            getattr(job, attr, None) is not None
-            for attr in ("steps", "cfg_scale", "sampler", "scheduler")
-        ):
-            out["performance_selection"] = "Custom..."
+        try:
+            from dreamforge_hidream_o1_profiles import (
+                apply_hidream_o1_dev_at_submit,
+                is_hidream_o1_dev_checkpoint,
+            )
+
+            model_name = str(getattr(job, "model", "") or out.get("base_model", "") or "")
+            if is_hidream_o1_dev_checkpoint(model_name):
+                out = apply_hidream_o1_dev_at_submit(
+                    out,
+                    model_name,
+                    performance=perf,
+                )
+        except ImportError:
+            pass
     except (KeyError, TypeError, ValueError):
         pass
     return out

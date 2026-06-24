@@ -228,6 +228,22 @@ def test_from_exception_falls_back_to_generation_failed():
     assert payload["details"]["exception"].startswith("ValueError:")
 
 
+def test_from_exception_maps_comfy_krea2_clip_type_to_upgrade_message():
+    raw = (
+        'Comfy HTTP 400 Bad Request: {"error": {"type": "prompt_outputs_failed_validation", '
+        '"message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, '
+        '"node_errors": {"31": {"errors": [{"type": "value_not_in_list", '
+        '"message": "Value not in list", "details": "type: \'krea2\' not in (list of length 23)", '
+        '"extra_info": {"input_name": "type", "received_value": "krea2"}}], '
+        '"dependent_outputs": ["7"], "class_type": "CLIPLoader"}}}'
+    )
+    payload = from_exception(RuntimeError(raw))
+    _is_error(payload, "comfy_workflow_validation")
+    assert "v0.26.0" in payload["message"]
+    assert "krea2" in payload["message"].lower()
+    assert any("Restart the GPU engine" in item for item in payload["suggestions"])
+
+
 def test_from_exception_maps_comfy_http_validation_to_friendly_message():
     raw = (
         'Comfy HTTP 400 Bad Request: {"error": {"type": "prompt_outputs_failed_validation", '

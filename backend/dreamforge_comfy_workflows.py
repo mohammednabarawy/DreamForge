@@ -695,10 +695,214 @@ def _empty_latent_node(family: str, width: int, height: int) -> dict[str, Any]:
     fam = (family or "").lower()
     node_type = (
         "EmptySD3LatentImage"
-        if fam in ("sd3", "hidream", "hidream_o1")
+        if fam in ("sd3", "hidream")
         else "EmptyLatentImage"
     )
     return _node(node_type, {"width": width, "height": height, "batch_size": 1})
+
+
+def _hidream_o1_checkpoint_loader(
+    g: dict[str, Any],
+    args: dict[str, Any],
+    *,
+    start_id: int = 1,
+) -> tuple[list[Any], list[Any], list[Any], int]:
+    """HiDream-O1 all-in-one checkpoint (built-in CLIP + pixel VAE)."""
+    ckpt = str(args["ckpt_name"])
+    g[str(start_id)] = _node("CheckpointLoaderSimple", {"ckpt_name": ckpt})
+    model_out: list[Any] = [str(start_id), 0]
+    clip_out: list[Any] = [str(start_id), 1]
+    vae_out: list[Any] = [str(start_id), 2]
+    node_id = start_id + 1
+    model_out, clip_out, node_id = _apply_user_lora_stack(
+        g, model_out, clip_out, args.get("loras"), node_id, clip_lora=True
+    )
+    model_out, node_id = _apply_easy_cache(g, model_out, args, node_id)
+    return model_out, clip_out, vae_out, node_id
+
+
+def _wire_hidream_o1_gemma4_prompt(
+    g: dict[str, Any],
+    args: dict[str, Any],
+    *,
+    raw_prompt: str,
+    start_id: int,
+) -> tuple[Any, int, bool]:
+    """Optional Gemma4 TextGenerate chain (official HiDream O1 prompt enhancement)."""
+    if not args.get("hidream_prompt_refinement"):
+        return raw_prompt, start_id, False
+    if args.get("gemma4_clip_available") is False:
+        return raw_prompt, start_id, False
+
+    from dreamforge_hidream_o1_gemma_prompt import (
+        DEFAULT_GEMMA4_CLIP,
+        build_gemma4_refine_prompt,
+    )
+
+    clip_name = str(args.get("gemma4_clip") or DEFAULT_GEMMA4_CLIP)
+    gemma_prompt = build_gemma4_refine_prompt(raw_prompt)
+    seed = int(args.get("seed", 0))
+
+    g[str(start_id)] = _node(
+        "CLIPLoader",
+        {
+            "clip_name": clip_name,
+            "type": "stable_diffusion",
+            "device": "default",
+        },
+    )
+    gemma_clip = [str(start_id), 0]
+    n = start_id + 1
+
+    g[str(n)] = _node(
+        "TextGenerate",
+        {
+            "clip": gemma_clip,
+            "prompt": gemma_prompt,
+            "max_length": int(args.get("gemma4_max_length", 2048)),
+            "sampling_mode": "on",
+            "sampling_mode.temperature": float(args.get("gemma4_temperature", 0.7)),
+            "sampling_mode.top_k": int(args.get("gemma4_top_k", 64)),
+            "sampling_mode.top_p": float(args.get("gemma4_top_p", 0.95)),
+            "sampling_mode.min_p": float(args.get("gemma4_min_p", 0.05)),
+            "sampling_mode.repetition_penalty": float(
+                args.get("gemma4_repetition_penalty", 1.05)
+            ),
+            "sampling_mode.seed": seed,
+            "thinking": False,
+            "use_default_template": False,
+        },
+    )
+    generated = [str(n), 0]
+    n += 1
+
+    g[str(n)] = _node(
+        "JsonExtractString",
+        {
+            "json_string": generated,
+            "key": "prompt",
+        },
+    )
+    return [str(n), 0], n + 1, True
+
+
+def comfy_hidream_o1_dev_txt2img(args: dict[str, Any]) -> dict[str, Any]:
+    """Native HiDream-O1 Dev txt2img (ModelNoiseScale + SamplerLCM + SamplerCustom)."""
+    prompt = str(args.get("prompt", ""))
+    negative = str(args.get("negative", ""))
+    width = int(args.get("width", 2048))
+    height = int(args.get("height", 2048))
+    steps = int(args.get("steps", 28))
+    cfg = float(args.get("cfg", 1.0))
+    scheduler = str(args.get("scheduler", "normal"))
+    seed = int(args.get("seed", 0))
+    noise_scale = float(args.get("hidream_noise_scale", 7.6))
+    s_noise = float(args.get("hidream_s_noise", 1.0))
+    s_noise_end = float(args.get("hidream_s_noise_end", 1.0))
+    noise_clip_std = float(args.get("hidream_noise_clip_std", 2.5))
+    patch_seam = bool(args.get("hidream_patch_seam_smoothing", False))
+    denoise = float(args.get("denoise", 1.0))
+
+    g: dict[str, Any] = {}
+    model_out, clip_out, vae_out, n = _hidream_o1_checkpoint_loader(g, args)
+
+    g[str(n)] = _node("ModelNoiseScale", {"model": model_out, "noise_scale": noise_scale})
+    model_sampled: list[Any] = [str(n), 0]
+    n += 1
+
+    if patch_seam:
+        g[str(n)] = _node(
+            "HiDreamO1PatchSeamSmoothing",
+            {
+                "model": model_sampled,
+                "start_percent": 0.8,
+                "end_percent": 1.0,
+                "pattern": "single_shift",
+                "passes": "2",
+                "blend": "average",
+                "strength": 1.0,
+            },
+        )
+        model_sampled = [str(n), 0]
+        n += 1
+
+    positive_text, n, _used_gemma = _wire_hidream_o1_gemma4_prompt(
+        g,
+        args,
+        raw_prompt=prompt,
+        start_id=n,
+    )
+    g[str(n)] = _node(
+        "CLIPTextEncode",
+        {
+            "clip": clip_out,
+            "text": positive_text,
+        },
+    )
+    positive = [str(n), 0]
+    n += 1
+    g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
+    negative_out = [str(n), 0]
+    n += 1
+
+    g[str(n)] = _node(
+        "EmptyHiDreamO1LatentImage",
+        {"width": width, "height": height, "batch_size": 1},
+    )
+    latent = [str(n), 0]
+    n += 1
+
+    g[str(n)] = _node(
+        "SamplerLCM",
+        {
+            "s_noise": s_noise,
+            "s_noise_end": s_noise_end,
+            "noise_clip_std": noise_clip_std,
+        },
+    )
+    sampler = [str(n), 0]
+    n += 1
+
+    g[str(n)] = _node(
+        "BasicScheduler",
+        {
+            "model": model_sampled,
+            "scheduler": scheduler,
+            "steps": steps,
+            "denoise": denoise,
+        },
+    )
+    sigmas = [str(n), 0]
+    n += 1
+
+    g[str(n)] = _node(
+        "SamplerCustom",
+        {
+            "model": model_sampled,
+            "positive": positive,
+            "negative": negative_out,
+            "sampler": sampler,
+            "sigmas": sigmas,
+            "latent_image": latent,
+            "noise_seed": seed,
+            "cfg": cfg,
+            "add_noise": True,
+        },
+    )
+    samples = [str(n), 0]
+    n += 1
+
+    g[str(n)] = _vae_decode_node(args, samples, vae_out)
+    decode = [str(n), 0]
+    n += 1
+    g[str(n)] = _node(
+        "SaveImage",
+        {
+            "images": decode,
+            "filename_prefix": str(args.get("filename_prefix", "DreamForge")),
+        },
+    )
+    return g
 
 
 def comfy_txt2img_basic(args: dict[str, Any]) -> dict[str, Any]:
@@ -2091,12 +2295,48 @@ def comfy_hires_two_pass(args: dict[str, Any]) -> dict[str, Any]:
     return g
 
 
-def comfy_ipadapter_reference(args: dict[str, Any]) -> dict[str, Any]:
-    """Reference/style guidance via ComfyUI_IPAdapter_plus (guarded at runtime)."""
+def _normalize_ipadapter_slots(args: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = args.get("reference_slots")
+    if isinstance(raw, list) and raw:
+        out: list[dict[str, Any]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            image = str(item.get("image") or item.get("path") or "").strip()
+            if not image:
+                continue
+            out.append(
+                {
+                    "image": image,
+                    "weight": float(
+                        item.get("weight", args.get("ipadapter_weight", args.get("reference_weight", 0.75)))
+                    ),
+                    "stop_at": float(item.get("stop_at", item.get("end_at", 1.0))),
+                }
+            )
+        if out:
+            return out
+    reference_image = str(args.get("reference_image") or args.get("image") or "")
+    if reference_image:
+        return [
+            {
+                "image": reference_image,
+                "weight": float(
+                    args.get("ipadapter_weight", args.get("reference_weight", 0.75))
+                ),
+                "stop_at": 1.0,
+            }
+        ]
+    return []
+
+
+def _comfy_ipadapter_from_slots(args: dict[str, Any], slots: list[dict[str, Any]]) -> dict[str, Any]:
+    """Chain IPAdapterAdvanced nodes for one or more image-prompt slots."""
+    if not slots:
+        raise ValueError("reference image is required for IPAdapter workflows")
     ckpt = str(args["ckpt_name"])
     prompt = str(args.get("prompt", ""))
     negative = str(args.get("negative", ""))
-    reference_image = str(args.get("reference_image") or args.get("image") or "")
     ipadapter_model = str(args.get("ipadapter_model") or args.get("ip_adapter_model") or "")
     clip_vision = str(args.get("clip_vision") or args.get("clip_vision_model") or "")
     if not ipadapter_model or not clip_vision:
@@ -2108,11 +2348,9 @@ def comfy_ipadapter_reference(args: dict[str, Any]) -> dict[str, Any]:
     sampler = str(args.get("sampler_name", "euler"))
     scheduler = str(args.get("scheduler", "normal"))
     seed = int(args.get("seed", 0))
-    weight = float(args.get("ipadapter_weight", args.get("reference_weight", 0.75)))
 
     g: dict[str, Any] = {}
     model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
-    g["2"] = _node("LoadImage", {"image": reference_image, "upload": "image"})
     g[str(n)] = _node("CLIPVisionLoader", {"clip_name": clip_vision})
     clip_vis = [str(n), 0]
     n += 1
@@ -2125,23 +2363,33 @@ def comfy_ipadapter_reference(args: dict[str, Any]) -> dict[str, Any]:
     g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
     neg = [str(n), 0]
     n += 1
-    g[str(n)] = _node(
-        "IPAdapterAdvanced",
-        {
-            "model": model_out,
-            "ipadapter": ipa,
-            "clip_vision": clip_vis,
-            "image": ["2", 0],
-            "weight": weight,
-            "weight_type": "linear",
-            "combine_embeds": "concat",
-            "start_at": 0.0,
-            "end_at": 1.0,
-            "embeds_scaling": "V only",
-        },
-    )
-    model_ipa = [str(n), 0]
-    n += 1
+
+    model_ipa = model_out
+    for index, slot in enumerate(slots):
+        g[str(n)] = _node(
+            "LoadImage",
+            {"image": str(slot["image"]), "upload": "image"},
+        )
+        image_ref = [str(n), 0]
+        n += 1
+        g[str(n)] = _node(
+            "IPAdapterAdvanced",
+            {
+                "model": model_ipa,
+                "ipadapter": ipa,
+                "clip_vision": clip_vis,
+                "image": image_ref,
+                "weight": float(slot.get("weight", 0.75)),
+                "weight_type": "linear",
+                "combine_embeds": "concat",
+                "start_at": 0.0,
+                "end_at": float(slot.get("stop_at", 1.0)),
+                "embeds_scaling": "V only",
+            },
+        )
+        model_ipa = [str(n), 0]
+        n += 1
+
     g[str(n)] = _node("EmptyLatentImage", {"width": width, "height": height, "batch_size": 1})
     latent = [str(n), 0]
     n += 1
@@ -2169,6 +2417,234 @@ def comfy_ipadapter_reference(args: dict[str, Any]) -> dict[str, Any]:
         {"images": [dec, 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
     )
     return g
+
+
+def comfy_ipadapter_controlnet_hybrid(args: dict[str, Any]) -> dict[str, Any]:
+    """Image-prompt slots + structure ControlNet in one txt2img graph."""
+    ipa_slots = _normalize_ipadapter_slots(args)
+    structure = args.get("structure_slot") or {}
+    if not ipa_slots:
+        raise ValueError("image-prompt slots are required for hybrid IP-Adapter + ControlNet")
+    control_image = str(
+        structure.get("image")
+        or structure.get("path")
+        or args.get("control_image")
+        or ""
+    )
+    controlnet_model = str(args.get("controlnet_model") or args.get("cn_model") or "")
+    if not control_image or not controlnet_model:
+        raise ValueError("structure_slot and controlnet_model are required for hybrid workflows")
+
+    ckpt = str(args["ckpt_name"])
+    prompt = str(args.get("prompt", ""))
+    negative = str(args.get("negative", ""))
+    ipadapter_model = str(args.get("ipadapter_model") or args.get("ip_adapter_model") or "")
+    clip_vision = str(args.get("clip_vision") or args.get("clip_vision_model") or "")
+    if not ipadapter_model or not clip_vision:
+        raise ValueError("ipadapter_model and clip_vision are required for IPAdapter workflows")
+    width = int(args.get("width", 1024))
+    height = int(args.get("height", 1024))
+    steps = int(args.get("steps", 30))
+    cfg = float(args.get("cfg", 7.0))
+    sampler = str(args.get("sampler_name", "euler"))
+    scheduler = str(args.get("scheduler", "normal"))
+    seed = int(args.get("seed", 0))
+    cn_strength = float(
+        structure.get("weight", args.get("cn_strength", args.get("controlnet_strength", 1.0)))
+    )
+    cn_stop = float(
+        structure.get("stop_at", args.get("cn_stop", args.get("controlnet_end", 1.0)))
+    )
+
+    g: dict[str, Any] = {}
+    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    g[str(n)] = _node("CLIPVisionLoader", {"clip_name": clip_vision})
+    clip_vis = [str(n), 0]
+    n += 1
+    g[str(n)] = _node("IPAdapterModelLoader", {"ipadapter_file": ipadapter_model})
+    ipa = [str(n), 0]
+    n += 1
+    g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
+    pos = [str(n), 0]
+    n += 1
+    g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
+    neg = [str(n), 0]
+    n += 1
+
+    model_ipa = model_out
+    for slot in ipa_slots:
+        g[str(n)] = _node("LoadImage", {"image": str(slot["image"]), "upload": "image"})
+        image_ref = [str(n), 0]
+        n += 1
+        g[str(n)] = _node(
+            "IPAdapterAdvanced",
+            {
+                "model": model_ipa,
+                "ipadapter": ipa,
+                "clip_vision": clip_vis,
+                "image": image_ref,
+                "weight": float(slot.get("weight", 0.75)),
+                "weight_type": "linear",
+                "combine_embeds": "concat",
+                "start_at": 0.0,
+                "end_at": float(slot.get("stop_at", 1.0)),
+                "embeds_scaling": "V only",
+            },
+        )
+        model_ipa = [str(n), 0]
+        n += 1
+
+    g[str(n)] = _node("LoadImage", {"image": control_image, "upload": "image"})
+    control_ref = [str(n), 0]
+    n += 1
+    g[str(n)] = _node("ControlNetLoader", {"control_net_name": controlnet_model})
+    cn_out = [str(n), 0]
+    n += 1
+    g[str(n)] = _node(
+        "ControlNetApplyAdvanced",
+        {
+            "positive": pos,
+            "negative": neg,
+            "control_net": cn_out,
+            "image": control_ref,
+            "strength": cn_strength,
+            "start_percent": 0.0,
+            "end_percent": cn_stop,
+        },
+    )
+    pos_cn, neg_cn = [str(n), 0], [str(n), 1]
+    n += 1
+    g[str(n)] = _node("EmptyLatentImage", {"width": width, "height": height, "batch_size": 1})
+    latent = [str(n), 0]
+    n += 1
+    g[str(n)] = _node(
+        "KSampler",
+        _sampler_inputs(
+            model_out=model_ipa,
+            positive=pos_cn,
+            negative=neg_cn,
+            latent=latent,
+            seed=seed,
+            steps=steps,
+            cfg=cfg,
+            sampler=sampler,
+            scheduler=scheduler,
+            denoise=1.0,
+        ),
+    )
+    samp = str(n)
+    n += 1
+    g[str(n)] = _vae_decode_node(args, [samp, 0], vae_out)
+    dec = str(n)
+    g[str(n + 1)] = _node(
+        "SaveImage",
+        {"images": [dec, 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+    )
+    return g
+
+
+def comfy_ipadapter_faceid_reference(args: dict[str, Any]) -> dict[str, Any]:
+    """Face identity via IP-Adapter FaceID + InsightFace (ComfyUI_IPAdapter_plus)."""
+    reference_image = str(args.get("reference_image") or args.get("image") or "")
+    if not reference_image:
+        raise ValueError("reference image is required for FaceID workflows")
+    faceid_model = str(
+        args.get("ipadapter_faceid_model")
+        or args.get("ipadapter_model")
+        or args.get("ip_adapter_model")
+        or ""
+    )
+    if not faceid_model:
+        raise ValueError("ipadapter_faceid_model is required for FaceID workflows")
+
+    ckpt = str(args["ckpt_name"])
+    prompt = str(args.get("prompt", ""))
+    negative = str(args.get("negative", ""))
+    width = int(args.get("width", 1024))
+    height = int(args.get("height", 1024))
+    steps = int(args.get("steps", 30))
+    cfg = float(args.get("cfg", 7.0))
+    sampler = str(args.get("sampler_name", "euler"))
+    scheduler = str(args.get("scheduler", "normal"))
+    seed = int(args.get("seed", 0))
+    weight = float(args.get("ipadapter_weight", args.get("reference_weight", 0.75)))
+
+    g: dict[str, Any] = {}
+    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    g[str(n)] = _node(
+        "IPAdapterUnifiedLoaderFaceID",
+        {
+            "model": model_out,
+            "preset": "FACEID",
+            "lora_strength": 0.6,
+            "provider": "CPU",
+            "ipadapter_file": faceid_model,
+        },
+    )
+    loader_model = [str(n), 0]
+    loader_ipa = [str(n), 1]
+    n += 1
+    g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
+    pos = [str(n), 0]
+    n += 1
+    g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
+    neg = [str(n), 0]
+    n += 1
+    g[str(n)] = _node("LoadImage", {"image": reference_image, "upload": "image"})
+    image_ref = [str(n), 0]
+    n += 1
+    g[str(n)] = _node(
+        "IPAdapterFaceID",
+        {
+            "model": loader_model,
+            "ipadapter": loader_ipa,
+            "image": image_ref,
+            "weight": weight,
+            "weight_faceidv2": 1.0,
+            "weight_type": "linear",
+            "combine_embeds": "concat",
+            "start_at": 0.0,
+            "end_at": 1.0,
+        },
+    )
+    model_faceid = [str(n), 0]
+    n += 1
+    g[str(n)] = _node("EmptyLatentImage", {"width": width, "height": height, "batch_size": 1})
+    latent = [str(n), 0]
+    n += 1
+    g[str(n)] = _node(
+        "KSampler",
+        _sampler_inputs(
+            model_out=model_faceid,
+            positive=pos,
+            negative=neg,
+            latent=latent,
+            seed=seed,
+            steps=steps,
+            cfg=cfg,
+            sampler=sampler,
+            scheduler=scheduler,
+            denoise=1.0,
+        ),
+    )
+    samp = str(n)
+    n += 1
+    g[str(n)] = _vae_decode_node(args, [samp, 0], vae_out)
+    dec = str(n)
+    g[str(n + 1)] = _node(
+        "SaveImage",
+        {"images": [dec, 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+    )
+    return g
+
+
+def comfy_ipadapter_reference(args: dict[str, Any]) -> dict[str, Any]:
+    """Reference/style guidance via ComfyUI_IPAdapter_plus (guarded at runtime)."""
+    structure_slot = args.get("structure_slot")
+    slots = _normalize_ipadapter_slots(args)
+    if structure_slot and slots:
+        return comfy_ipadapter_controlnet_hybrid(args)
+    return _comfy_ipadapter_from_slots(args, slots)
 
 
 def comfy_face_detail_basic(args: dict[str, Any]) -> dict[str, Any]:

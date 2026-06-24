@@ -291,25 +291,9 @@ def cmd_get_ui_defaults(_params: dict) -> dict:
             data = json.loads(path.read_text(encoding="utf-8"))
             controlnet.extend([k for k in data.keys() if k not in controlnet])
 
-    aspect = [
-        "768×768",
-        "896×896",
-        "1024×1024",
-        "896×704",
-        "704×896",
-        "960×640",
-        "640×960",
-        "1024×576",
-        "576×1024",
-        "704×1056",
-        "1056×704",
-        "1152×896",
-        "896×1152",
-        "1344×768",
-        "768×1344",
-        "1536×640",
-        "640×1536",
-    ]
+    from dreamforge_aspect_presets import list_aspect_ratio_presets_ui
+
+    aspect = list_aspect_ratio_presets_ui()
     return {
         "ok": True,
         "performances": performances,
@@ -732,6 +716,7 @@ def cmd_check_model_dependencies(params: dict) -> dict:
     missing = check_model_dependencies(
         model,
         performance=params.get("performance"),
+        hidream_prompt_refinement=params.get("hidream_prompt_refinement"),
     )
     return {
         "ok": True,
@@ -755,6 +740,7 @@ def cmd_download_model_companions(params: dict) -> dict:
     missing = check_model_dependencies(
         model,
         performance=params.get("performance"),
+        hidream_prompt_refinement=params.get("hidream_prompt_refinement"),
     )
     ids = params.get("ids")
     if ids:
@@ -903,6 +889,7 @@ def cmd_ensure_creative_task_ready(params: dict) -> dict:
         studio_mode=str(studio_mode) if studio_mode else None,
         upscale_method=params.get("upscale_method"),
         performance=params.get("performance"),
+        hidream_prompt_refinement=params.get("hidream_prompt_refinement"),
         auto_download_tier_a=bool(params.get("auto_download_tier_a", True)),
         auto_download_tier_b=bool(params.get("auto_download_tier_b", False)),
         auto_install_nodes=bool(params.get("auto_install_nodes", False)),

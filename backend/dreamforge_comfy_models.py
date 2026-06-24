@@ -545,6 +545,12 @@ def resolve_comfy_model_loader_args(
 
     elif family == "krea2":
         # Krea 2 OSS: Qwen3-VL-4B text encoder (CLIP type krea2) + Qwen Image VAE.
+        clip_types = _object_info_options(object_info, "CLIPLoader", "type")
+        if clip_types and "krea2" not in clip_types:
+            problems.append(
+                "ComfyUI is too old for Krea 2 — CLIPLoader does not list type 'krea2'. "
+                "Update to ComfyUI v0.26.0+, then restart the GPU engine."
+            )
         on_disk = _krea2_companion_basenames_on_disk(family)
         clip_choices = _object_info_options(object_info, "CLIPLoader", "clip_name")
         clip_choices += _object_info_options(object_info, "CLIPLoaderGGUF", "clip_name")
@@ -611,6 +617,7 @@ def resolve_comfy_model_loader_args(
         on_disk = _hidream_companion_basenames_on_disk(family)
         quad = _object_info_options(object_info, "QuadrupleCLIPLoader", "clip_name1")
         vae_choices = _object_info_options(object_info, "VAELoader", "vae_name")
+        clip_choices = _object_info_options(object_info, "CLIPLoader", "clip_name")
         clip_l = _basename_match(on_disk.get("clip_l", "clip_l.safetensors"), quad)
         if clip_l:
             args["clip_l"] = clip_l
@@ -619,6 +626,21 @@ def resolve_comfy_model_loader_args(
             args["vae"] = vae
         elif not vae_choices:
             problems.append("ComfyUI reports no VAE files for HiDream workflows.")
+        gemma = _basename_match(
+            "gemma4_e4b_it_fp8_scaled.safetensors",
+            clip_choices,
+        )
+        if not gemma:
+            for name in clip_choices:
+                if "gemma4" in name.lower():
+                    gemma = name
+                    break
+        from dreamforge_cli_inventory import HIDREAM_O1_GEMMA4, companion_file_present
+
+        if companion_file_present(HIDREAM_O1_GEMMA4):
+            args["gemma4_clip"] = gemma or "gemma4_e4b_it_fp8_scaled.safetensors"
+        else:
+            args["gemma4_clip_available"] = False
 
     if problems:
         models_root = Path(MODELS_ROOT).resolve()
@@ -628,8 +650,9 @@ def resolve_comfy_model_loader_args(
             companion_hint = "Install Flux companions under vae/, text_encoders/, and clip/ if missing."
         elif family == "krea2":
             companion_hint = (
-                "Install qwen3vl_4b_fp8_scaled.safetensors under text_encoders/ "
-                "and qwen_image_vae.safetensors under vae/, then restart the GPU engine."
+                "Krea 2 needs ComfyUI v0.26.0+ (Settings → Restart GPU engine to update). "
+                "Also install qwen3vl_4b_fp8_scaled.safetensors under text_encoders/ "
+                "and qwen_image_vae.safetensors under vae/."
             )
         elif family.startswith("qwen"):
             companion_hint = (

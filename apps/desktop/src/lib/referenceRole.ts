@@ -1,6 +1,7 @@
 import type { StudioMode } from "./model-selection";
 import type { GenerationSettings } from "./tauri-api";
 import type { ReferenceImageMode } from "./referenceImage";
+import { isIdentityPreservationActive } from "./identityPreserve";
 
 export type ReferenceRole =
   | "image_prompt"
@@ -92,15 +93,31 @@ export function routeBadgeLabel(
   studioMode: StudioMode,
   modelFamily?: string,
 ): string | null {
+  if (
+    (studioMode === "generate" || studioMode === "agent") &&
+    isIdentityPreservationActive(settings) &&
+    Boolean(
+      settings.input_image?.trim() ||
+        settings.reference_image?.trim() ||
+        settings.reference_images?.some((item) => item.trim()),
+    )
+  ) {
+    return "Keeping face / character";
+  }
+
   const role = inferReferenceRole(settings, studioMode);
   if (!role) return null;
 
   const family = (modelFamily ?? "").toLowerCase();
   switch (role) {
     case "image_prompt":
-      return "Creating with image prompt";
+      return settings.workflow_mode === "ipadapter_faceid"
+        ? "Creating with FaceID"
+        : "Creating with image prompt";
     case "restyle":
-      return "Restyling source image";
+      return settings.vary_amount
+        ? `Vary ${settings.vary_amount}`
+        : "Restyling source image";
     case "source_edit":
       if (family.includes("kontext")) return "Editing with Flux Kontext";
       if (family === "qwen_image_edit") return "Editing with Qwen Edit";

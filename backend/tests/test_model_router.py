@@ -15,7 +15,7 @@ def _model(name, size_mb, family):
 def test_router_uses_detected_16gb_profile_for_auto(monkeypatch):
     import dreamforge_cli_inventory as inv
 
-    monkeypatch.setattr(inv, "detect_vram_profile", lambda: "16gb")
+    monkeypatch.setattr("dreamforge_vram_profiles.detect_vram_profile", lambda: "16gb")
     monkeypatch.setattr(
         inv,
         "list_model_inventory",

@@ -100,7 +100,7 @@ def build_parser():
         default=None,
         help="Additional Kontext/control reference images (Krita-style multi-reference)",
     )
-    parser.add_argument("--identity-mode", default=None, help="Optional identity mode, e.g. faceid for local face preservation")
+    parser.add_argument("--identity-mode", default=None, help="Identity intent: preserve_face, ipadapter_faceid, kontext, qwen_edit, auto")
     parser.add_argument("--face-preservation", action="store_true", help="Require local face identity preservation dependencies")
     parser.add_argument(
         "--comfy-workflow-api",
@@ -620,12 +620,27 @@ def build_plan(base_args, data=None):
         model,
         job,
     )
+    from modules.model_ui_defaults import apply_hidream_sampling_at_submit
+
+    settings = apply_hidream_sampling_at_submit(
+        settings,
+        str(model.get("name") or ""),
+        str(model.get("family") or ""),
+        performance=getattr(job, "performance", None),
+    )
     input_path = getattr(job, "input_image", None) or getattr(job, "upscale_image", None)
     from dreamforge_cli_inventory import check_model_dependencies, model_fallback_actions, model_setup_warnings
     from dreamforge_model_registry import required_capabilities_for_request
 
-    missing_deps = check_model_dependencies(model, performance=getattr(job, "performance", None))
-    setup_warnings = model_setup_warnings(model)
+    missing_deps = check_model_dependencies(
+        model,
+        performance=getattr(job, "performance", None),
+        hidream_prompt_refinement=getattr(job, "hidream_prompt_refinement", None),
+    )
+    setup_warnings = model_setup_warnings(
+        model,
+        performance=getattr(job, "performance", None),
+    )
     capabilities = required_capabilities_for_request(vars(job))
     route_actions = model_fallback_actions(
         model,

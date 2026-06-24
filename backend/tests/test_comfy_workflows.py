@@ -720,3 +720,104 @@ def test_managed_comfy_extra_model_paths_points_to_shared_models(tmp_path, monke
     assert (models / "diffusion_models").is_dir()
     assert (models / "sams").is_dir()
     assert (models / "ultralytics" / "bbox").is_dir()
+
+
+def test_ipadapter_faceid_graph_uses_faceid_nodes():
+    from dreamforge_comfy_workflows import comfy_ipadapter_faceid_reference
+
+    graph = comfy_ipadapter_faceid_reference(
+        {
+            "ckpt_name": "realvisxl.safetensors",
+            "relative_path": "realvisxl.safetensors",
+            "family": "sdxl",
+            "reference_image": "face_ref.png",
+            "ipadapter_faceid_model": "ip-adapter-faceid_sdxl.bin",
+            "prompt": "portrait in studio",
+            "negative": "",
+            "width": 1024,
+            "height": 1024,
+            "steps": 20,
+            "cfg": 7.0,
+            "seed": 42,
+        }
+    )
+    class_types = {node["class_type"] for node in graph.values() if isinstance(node, dict)}
+    assert "IPAdapterUnifiedLoaderFaceID" in class_types
+    assert "IPAdapterFaceID" in class_types
+    assert "KSampler" in class_types
+
+
+def test_hidream_o1_dev_txt2img_uses_native_sampler_chain():
+    from dreamforge_comfy_workflows import comfy_hidream_o1_dev_txt2img
+
+    graph = comfy_hidream_o1_dev_txt2img(
+        {
+            "ckpt_name": "hidream_o1_image_dev_mxfp8.safetensors",
+            "relative_path": "hidream_o1_image_dev_mxfp8.safetensors",
+            "category": "checkpoints",
+            "prompt": "a knight on a dragon",
+            "negative": "",
+            "width": 2048,
+            "height": 2048,
+            "steps": 28,
+            "cfg": 1.0,
+            "scheduler": "normal",
+            "seed": 42,
+            "hidream_noise_scale": 7.6,
+            "hidream_s_noise": 1.0,
+            "hidream_s_noise_end": 1.0,
+            "hidream_noise_clip_std": 2.5,
+            "hidream_patch_seam_smoothing": True,
+        }
+    )
+    class_types = {node["class_type"] for node in graph.values() if isinstance(node, dict)}
+    assert "CheckpointLoaderSimple" in class_types
+    assert "EmptyHiDreamO1LatentImage" in class_types
+    assert "ModelNoiseScale" in class_types
+    assert "SamplerLCM" in class_types
+    assert "SamplerCustom" in class_types
+    assert "BasicScheduler" in class_types
+    assert "HiDreamO1PatchSeamSmoothing" in class_types
+    assert "KSampler" not in class_types
+    assert "EmptySD3LatentImage" not in class_types
+
+    noise = next(n for n in graph.values() if n.get("class_type") == "ModelNoiseScale")
+    assert noise["inputs"]["noise_scale"] == 7.6
+    lcm = next(n for n in graph.values() if n.get("class_type") == "SamplerLCM")
+    assert lcm["inputs"]["noise_clip_std"] == 2.5
+    sample = next(n for n in graph.values() if n.get("class_type") == "SamplerCustom")
+    assert sample["inputs"]["cfg"] == 1.0
+
+
+def test_hidream_o1_dev_txt2img_wires_gemma4_prompt_chain():
+    from dreamforge_comfy_workflows import comfy_hidream_o1_dev_txt2img
+
+    graph = comfy_hidream_o1_dev_txt2img(
+        {
+            "ckpt_name": "hidream_o1_image_dev_mxfp8.safetensors",
+            "relative_path": "hidream_o1_image_dev_mxfp8.safetensors",
+            "category": "checkpoints",
+            "prompt": "a knight on a dragon at night",
+            "negative": "",
+            "width": 2048,
+            "height": 2048,
+            "steps": 28,
+            "cfg": 1.0,
+            "scheduler": "normal",
+            "seed": 42,
+            "hidream_prompt_refinement": True,
+            "gemma4_clip": "gemma4_e4b_it_fp8_scaled.safetensors",
+        }
+    )
+    class_types = {node["class_type"] for node in graph.values() if isinstance(node, dict)}
+    assert "TextGenerate" in class_types
+    assert "JsonExtractString" in class_types
+    clip_loaders = [n for n in graph.values() if n.get("class_type") == "CLIPLoader"]
+    assert any(
+        n["inputs"].get("clip_name") == "gemma4_e4b_it_fp8_scaled.safetensors"
+        for n in clip_loaders
+    )
+    text_gen = next(n for n in graph.values() if n.get("class_type") == "TextGenerate")
+    assert "SCALIST" in str(text_gen["inputs"].get("prompt", ""))
+    encode = next(n for n in graph.values() if n.get("class_type") == "CLIPTextEncode")
+    assert isinstance(encode["inputs"]["text"], list)

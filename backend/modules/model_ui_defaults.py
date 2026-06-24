@@ -106,9 +106,49 @@ def infer_model_family(name: str) -> str:
     return "sdxl"
 
 
+def hidream_is_fast_variant(model_name: str) -> bool:
+    """HiDream-I1-Fast and similar 16-step distilled checkpoints."""
+    return "fast" in (model_name or "").lower()
+
+
 def hidream_is_dev_variant(model_name: str) -> bool:
     name = (model_name or "").lower()
-    return any(token in name for token in ("dev", "fast", "mxfp8", "fp8", "distill", "2604"))
+    if hidream_is_fast_variant(name):
+        return False
+    return any(token in name for token in ("dev", "mxfp8", "fp8", "distill", "2604"))
+
+
+def hidream_is_distilled_variant(model_name: str) -> bool:
+    """Guidance-distilled HiDream I1/O1 (Dev/Fast/mxfp8) — CFG 1.0, fewer steps."""
+    return hidream_is_fast_variant(model_name) or hidream_is_dev_variant(model_name)
+
+
+HIDREAM_DISTILLED_CFG = 1.0
+HIDREAM_FULL_CFG = 5.0
+
+
+def hidream_recommended_cfg(model_name: str) -> float:
+    """ComfyUI official: Dev/Fast use CFG 1.0 (not 0 — KSampler still needs prompt guidance)."""
+    return HIDREAM_DISTILLED_CFG if hidream_is_distilled_variant(model_name) else HIDREAM_FULL_CFG
+
+
+def _resolve_hidream_cfg(
+    model_name: str,
+    family: str,
+    user_cfg: float | None,
+    default_cfg: float,
+) -> float:
+    if family not in ("hidream", "hidream_o1"):
+        return float(user_cfg if user_cfg is not None else default_cfg)
+    recommended = hidream_recommended_cfg(model_name)
+    if user_cfg is None:
+        return recommended
+    # Reject SDXL-style CFG leaks (e.g. 7.0) on distilled checkpoints.
+    if hidream_is_distilled_variant(model_name) and user_cfg > 1.5:
+        return recommended
+    if not hidream_is_distilled_variant(model_name) and user_cfg >= 6.0:
+        return recommended
+    return float(user_cfg)
 
 
 def performance_preset_name(model_name: str, family: str) -> str:
@@ -116,6 +156,10 @@ def performance_preset_name(model_name: str, family: str) -> str:
     name = (model_name or "").lower()
     if family in ("hidream", "hidream_o1") and "full" in name and "dev" not in name:
         return "Quality"
+    if family in ("hidream", "hidream_o1") and hidream_is_fast_variant(model_name):
+        return "Lightning"
+    if family in ("hidream", "hidream_o1") and hidream_is_dev_variant(model_name):
+        return "Speed"
     if family in MODERN_FAMILIES:
         return DEFAULT_UI_PERFORMANCE
     return "Custom..."
@@ -255,7 +299,9 @@ def family_performance_settings(
     """Resolve unified UI profiles into model-family sampling settings."""
     perf = performance if performance in UNIFIED_PERFORMANCES else DEFAULT_UI_PERFORMANCE
     name = (model_name or "").lower()
+    fast_hidream = hidream_is_fast_variant(model_name)
     dev_hidream = hidream_is_dev_variant(model_name)
+    distilled_hidream = fast_hidream or dev_hidream
 
     if family.startswith("flux"):
         table = {
@@ -264,10 +310,23 @@ def family_performance_settings(
             "Quality": (28, 3.5, "euler", "beta"),
         }
     elif family in ("hidream", "hidream_o1"):
+        try:
+            from dreamforge_hidream_o1_profiles import (
+                hidream_o1_dev_family_options,
+                is_hidream_o1_dev_checkpoint,
+            )
+
+            if is_hidream_o1_dev_checkpoint(model_name):
+                return hidream_o1_dev_family_options(perf)
+        except ImportError:
+            pass
+        # HiDream I1 + O1 Full: ComfyUI official Fast 16 / Dev 28 / Full 50.
+        hidream_steps = 16 if fast_hidream else (28 if dev_hidream else 50)
+        hidream_cfg = HIDREAM_DISTILLED_CFG if distilled_hidream else HIDREAM_FULL_CFG
         table = {
-            "Lightning": (16, 1.0, "euler", "normal"),
-            "Speed": (28 if dev_hidream else 36, 1.0 if dev_hidream else 3.0, "euler", "normal"),
-            "Quality": (50, 5.0, "euler", "normal"),
+            "Lightning": (hidream_steps if fast_hidream else 16, hidream_cfg, "euler", "normal"),
+            "Speed": (hidream_steps, hidream_cfg, "euler", "normal"),
+            "Quality": (50, HIDREAM_FULL_CFG, "euler", "normal"),
         }
     elif family.startswith("qwen"):
         table = {
@@ -347,8 +406,38 @@ def resolve_ui_profile(
     )
 
     custom = None
+    settings_patch: dict = {}
     if apply and family in MODERN_FAMILIES:
         custom = family_performance_settings(family, model_name, perf)
+        try:
+            from dreamforge_hidream_o1_profiles import (
+                hidream_o1_dev_resolution,
+                is_hidream_o1_dev_checkpoint,
+            )
+
+            if is_hidream_o1_dev_checkpoint(model_name):
+                w, h = hidream_o1_dev_resolution(perf)
+                settings_patch = {
+                    "aspect_ratio": f"{w}x{h}",
+                    "width": w,
+                    "height": h,
+                    **{
+                        k: custom[k]
+                        for k in (
+                            "hidream_noise_scale",
+                            "hidream_s_noise",
+                            "hidream_s_noise_end",
+                            "hidream_noise_clip_std",
+                            "hidream_patch_seam_smoothing",
+                            "hidream_reference_megapixels",
+                            "hidream_prompt_refinement",
+                            "denoise",
+                        )
+                        if k in custom
+                    },
+                }
+        except ImportError:
+            pass
 
     hints = []
     if apply:
@@ -363,10 +452,18 @@ def resolve_ui_profile(
     if placement:
         hints.append(placement)
 
-    if family in ("hidream", "hidream_o1") and hidream_is_dev_variant(model_name):
-        hints.append("HiDream Dev Speed: 28 steps, CFG 1.0, no negative prompt, no SDXL styles.")
+    if family in ("hidream", "hidream_o1") and hidream_is_distilled_variant(model_name):
+        hints.append(
+            "HiDream distilled (Dev/Fast): CFG 1.0, LCM, no negative prompt. "
+            "O1 Dev: Lightning 16 / Speed 22 / Quality 28 steps."
+        )
     elif family in ("hidream", "hidream_o1"):
         hints.append("HiDream Full Quality: 50 steps, CFG 5.0, no SDXL styles.")
+    if family == "hidream_o1" and hidream_is_distilled_variant(model_name):
+        hints.append(
+            "HiDream O1 Dev: official 28-step @ CFG 1.0; Speed uses 22-step DreamForge preset. "
+            "Resolutions scale with profile (~1 / 2 / 4 MP square)."
+        )
 
     if family.startswith("flux"):
         hints.append("Flux profiles use Euler/beta with low CFG; avoid SDXL style packs.")
@@ -384,6 +481,7 @@ def resolve_ui_profile(
         "clear_styles": styles_clear and apply,
         "clear_negative": negative_clear and apply,
         "custom_sampling": custom,
+        "settings_patch": settings_patch or None,
         "hints": hints,
     }
 
@@ -484,11 +582,15 @@ def auto_generation_settings(
         sampler_name, scheduler, clip_skip = "euler", "beta", 1
         styles = []
     elif family in ("hidream", "hidream_o1"):
+        fast = hidream_is_fast_variant(model_name)
         dev = hidream_is_dev_variant(model_name)
-        cfg = 1.0 if dev else 5.0
-        steps = 28 if dev else 50
+        distilled = hidream_is_distilled_variant(model_name)
+        cfg = hidream_recommended_cfg(model_name)
+        steps = 16 if fast else (28 if dev else 50)
         sampler_name, scheduler, clip_skip = "euler", "normal", 1
         styles = []
+        if distilled:
+            negative = ""
     elif family.startswith("qwen"):
         cfg, steps = 2.5, (20 if "lightning" in model_name.lower() else 20)
         sampler_name, scheduler, clip_skip = "euler", "beta", 1
@@ -525,7 +627,23 @@ def auto_generation_settings(
         if family == "ideogram4":
             width, height = min(width, 768), min(height, 768)
         else:
-            width, height = min(width, 1344), min(height, 1344)
+            try:
+                from dreamforge_hidream_o1_profiles import (
+                    hidream_o1_dev_resolution,
+                    is_hidream_o1_dev_checkpoint,
+                )
+
+                if is_hidream_o1_dev_checkpoint(model_name):
+                    perf = performance_preset_name(model_name, family)
+                    width, height = hidream_o1_dev_resolution(
+                        perf,
+                        width=width,
+                        height=height,
+                    )
+                else:
+                    width, height = min(width, 1344), min(height, 1344)
+            except ImportError:
+                width, height = min(width, 1344), min(height, 1344)
 
     if family == "ideogram4":
         if profile in {"8gb", "5gb"}:
@@ -534,11 +652,28 @@ def auto_generation_settings(
 
     final_steps = int(user_steps) if user_steps is not None else steps
     if family in ("hidream", "hidream_o1"):
-        min_steps = 28 if hidream_is_dev_variant(model_name) else 50
-        final_steps = max(final_steps, min_steps)
+        try:
+            from dreamforge_hidream_o1_profiles import is_hidream_o1_dev_checkpoint
+
+            if is_hidream_o1_dev_checkpoint(model_name):
+                perf = performance_preset_name(model_name, family)
+                opts = family_performance_settings(family, model_name, perf)
+                final_steps = int(opts.get("custom_steps", steps))
+            else:
+                min_steps = 16 if hidream_is_fast_variant(model_name) else (
+                    28 if hidream_is_dev_variant(model_name) else 50
+                )
+                final_steps = max(final_steps, min_steps)
+        except ImportError:
+            min_steps = 16 if hidream_is_fast_variant(model_name) else (
+                28 if hidream_is_dev_variant(model_name) else 50
+            )
+            final_steps = max(final_steps, min_steps)
+
+    final_cfg = _resolve_hidream_cfg(model_name, family, user_cfg, cfg)
 
     return {
-        "cfg": user_cfg if user_cfg is not None else cfg,
+        "cfg": final_cfg,
         "steps": final_steps,
         "performance_selection": performance_preset_name(model_name, family),
         "sampler_name": user_sampler or sampler_name,
@@ -549,6 +684,70 @@ def auto_generation_settings(
         "width": width,
         "height": height,
     }
+
+
+def apply_hidream_sampling_at_submit(
+    settings: dict,
+    model_name: str,
+    family: str,
+    *,
+    performance: str | None = None,
+) -> dict:
+    """Clamp HiDream sampling so SDXL CFG defaults cannot reach ComfyUI."""
+    fam = (family or "").lower()
+    if fam not in ("hidream", "hidream_o1"):
+        return settings
+
+    try:
+        from dreamforge_hidream_o1_profiles import (
+            apply_hidream_o1_dev_at_submit,
+            is_hidream_o1_dev_checkpoint,
+        )
+
+        if is_hidream_o1_dev_checkpoint(model_name):
+            perf = (
+                performance
+                or settings.get("performance_selection")
+                or settings.get("performance")
+            )
+            return apply_hidream_o1_dev_at_submit(
+                settings, model_name, performance=perf
+            )
+    except ImportError:
+        pass
+
+    out = dict(settings)
+    perf = (
+        performance
+        or out.get("performance_selection")
+        or out.get("performance")
+        or performance_preset_name(model_name, fam)
+    )
+    perf = str(perf or "").strip()
+    custom_perf = perf in ("Custom...", "Custom")
+
+    if not custom_perf and perf in UNIFIED_PERFORMANCES:
+        opts = family_performance_settings(fam, model_name, perf)
+        out["steps"] = int(opts.get("custom_steps", out.get("steps", 28)))
+        out["cfg"] = float(opts.get("cfg", out.get("cfg", HIDREAM_DISTILLED_CFG)))
+        out["sampler_name"] = opts.get("sampler_name", out.get("sampler_name", "euler"))
+        out["scheduler"] = opts.get("scheduler", out.get("scheduler", "normal"))
+        out["clip_skip"] = int(opts.get("clip_skip", out.get("clip_skip", 1)))
+        out["performance_selection"] = perf
+    else:
+        out["cfg"] = _resolve_hidream_cfg(
+            model_name,
+            fam,
+            out.get("cfg"),
+            hidream_recommended_cfg(model_name),
+        )
+
+    if hidream_is_distilled_variant(model_name):
+        out["negative"] = ""
+        if out.get("styles"):
+            out["styles"] = []
+
+    return out
 
 
 def _normalize_vram_profile(profile: str) -> str:

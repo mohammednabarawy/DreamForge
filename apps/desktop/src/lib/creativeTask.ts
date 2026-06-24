@@ -26,6 +26,9 @@ import {
   applyUpscaleFallbacks,
   UPSCALE_SETTINGS_DEFAULTS,
 } from "./upscaleDefaults";
+import { applyUpscalePresetAtSubmit, patchForUpscalePreset } from "./upscalePresets";
+import { applyAutoEnhanceAtSubmit } from "./autoEnhance";
+import { applyHiDreamPerformanceAtSubmit } from "./hidreamPerformance";
 import { selectCuratedUpscaleModel } from "./upscaleModel";
 
 export type CreativeTaskContext = {
@@ -106,7 +109,14 @@ export function enforceUpscaleJobSettings(
   studioMode: StudioMode,
 ): GenerationSettings {
   if (studioMode !== "upscale") return settings;
-  return {
+  if (settings.enhance_auto_fix || settings.enhance_target) {
+    return applyAutoEnhanceAtSubmit({
+      ...settings,
+      style: "image_edit",
+      inpaint_mask_path: undefined,
+    });
+  }
+  return applyUpscalePresetAtSubmit({
     ...settings,
     ...applyUpscaleFallbacks(settings),
     style: "image_edit",
@@ -115,7 +125,7 @@ export function enforceUpscaleJobSettings(
     cn_type: "upscale",
     input_image: undefined,
     inpaint_mask_path: undefined,
-  };
+  });
 }
 
 /** Unified submit guard for Create / Edit / Fix region / Enhance. */
@@ -132,6 +142,17 @@ export function enforceCreativeTaskSettings(
     next = enforceInpaintJobSettings(next, studioMode, gallery, advancedMode);
   } else if (studioMode === "upscale") {
     next = enforceUpscaleJobSettings(next, studioMode);
+  } else if (studioMode === "extract") {
+    next = {
+      ...next,
+      workflow_mode: "extract",
+      edit_type: "extract",
+      cn_selection: "Custom...",
+      cn_type: "extract",
+      style: "image_edit",
+      upscale_image: undefined,
+      inpaint_mask_path: undefined,
+    };
   }
   if (next.post_upscale && (studioMode === "edit" || studioMode === "inpaint")) {
     next = {
@@ -140,6 +161,14 @@ export function enforceCreativeTaskSettings(
       upscale_method: undefined,
       ...applyUpscaleFallbacks(next),
     };
+  }
+  if (studioMode === "generate" || studioMode === "agent") {
+    const modelItem = gallery.find((item) => item.engine_name === next.model);
+    next = applyHiDreamPerformanceAtSubmit(
+      next,
+      modelItem?.family,
+      next.model,
+    );
   }
   return applyVramQualityDefaults(
     next,
@@ -366,7 +395,7 @@ export function planStudioModeSwitch(
   if (mode === "upscale") {
     const enteringUpscale = previousMode !== "upscale";
     if (enteringUpscale) {
-      Object.assign(patch, UPSCALE_SETTINGS_DEFAULTS);
+      Object.assign(patch, UPSCALE_SETTINGS_DEFAULTS, patchForUpscalePreset("2x"));
       refUpdates.userPickedModel = false;
       refUpdates.userPickedLoras = false;
       refUpdates.userPickedStyle = false;

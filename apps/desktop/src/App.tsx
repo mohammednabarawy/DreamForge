@@ -185,6 +185,9 @@ function DreamForgeStudio() {
             onDryRun={() => void mc.runDryRun()}
             onEnhancePrompt={() => void mc.runEnhancePrompt()}
             enhancePromptBusy={mc.enhancePromptBusy}
+            onDescribeImage={() => void mc.runDescribeImage()}
+            describeImageBusy={mc.describeImageBusy}
+            onImportImageMetadata={(path) => void mc.runImportImageMetadata(path)}
             onGenerate={() => void mc.runGenerate()}
             onGenerateVariants={(count) => void mc.runGenerateVariants(count)}
             imageNumberMax={mc.imageNumberMax}
@@ -203,6 +206,8 @@ function DreamForgeStudio() {
             onOpenFullLog={() => setFullLogOpen(true)}
             activeModelLabel={mc.activeModelLabel}
             referenceModelFamily={mc.referenceModelFamily}
+            onVaryImage={(amount) => void mc.runVaryImage(amount)}
+            onAutoEnhance={(target) => void mc.runAutoEnhance(target)}
           />
           </div>
         </Panel>

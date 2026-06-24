@@ -61,6 +61,8 @@ export type GenerationSettings = {
   cn_type?: string;
   upscale_image?: string;
   upscale_method?: string;
+  /** Named enhance preset: 1.5x / 2x / fast_2x. */
+  upscale_preset?: "1.5x" | "2x" | "fast_2x";
   upscale_by?: number;
   upscale_denoise?: number;
   upscale_tile_width?: number;
@@ -77,8 +79,10 @@ export type GenerationSettings = {
   upscale_mode_type?: string;
   cn_upscale?: string;
   batch_size?: number;
-  edit_type?: "auto" | "kontext" | "inpaint" | "img2img" | "qwen_edit";
+  edit_type?: "auto" | "kontext" | "inpaint" | "img2img" | "qwen_edit" | "extract";
   edit_strength?: number;
+  /** Fooocus-style img2img variation strength preset. */
+  vary_amount?: "subtle" | "strong";
   /** Qwen edit graph: auto picks plus when reference_images are set. */
   qwen_edit_mode?: "auto" | "single" | "plus";
   /** ModelSamplingAuraFlow shift (Qwen Image / Edit). */
@@ -110,7 +114,26 @@ export type GenerationSettings = {
   reference_image?: string;
   /** Additional Kontext/control reference images (Krita-style multi-reference). */
   reference_images?: string[];
-  identity_mode?: string;
+  /** Multi-slot references (Pro Create): path + role + weight + stop-at per slot. */
+  references?: Array<{
+    path: string;
+    role:
+      | "image_prompt"
+      | "restyle"
+      | "source_edit"
+      | "inpaint"
+      | "upscale"
+      | "structure";
+    weight?: number;
+    stop_at?: number;
+    structure_type?: string;
+  }>;
+  reference_weight?: number;
+  cn_strength?: number;
+  cn_stop?: number;
+  structure_type?: string;
+  /** Identity preservation intent: preserve_face (Kontext/Qwen) or ipadapter_faceid when assets exist. */
+  identity_mode?: "preserve_face" | "kontext" | "qwen_edit" | "ipadapter_faceid" | "auto" | string;
   face_preservation?: boolean;
   /** Inpaint mask preprocessing (Krita grow/feather). */
   inpaint_grow?: number;
@@ -160,7 +183,23 @@ export type GenerationSettings = {
   workflow_plan?: Array<Record<string, unknown>>;
   detail_target?: string;
   detail_prompt?: string;
+  /** Auto-enhance: detect face/hands/eyes and run targeted fix. */
+  enhance_auto_fix?: boolean;
+  enhance_target?: "face" | "hands" | "eyes" | "auto";
+  enhance_detection_prompt?: string;
+  enhance_post_upscale?: boolean;
   extraction_type?: string;
+  /** HiDream-O1 Dev: flash noise scale (locked 7.6 on Dev mxfp8). */
+  hidream_noise_scale?: number;
+  hidream_s_noise?: number;
+  hidream_s_noise_end?: number;
+  hidream_noise_clip_std?: number;
+  hidream_patch_seam_smoothing?: boolean;
+  hidream_reference_megapixels?: number;
+  hidream_prompt_refinement?: boolean;
+  /** Comfy Gemma4 TextGenerate refinement (Quality profile); not DreamForge hyperprompt. */
+  prompt_enhancer?: "none" | "gemma4" | "hyperprompt" | "flufferizer" | "erniehancer" | string;
+  denoise?: number;
 };
 
 export type InventoryPayload = {
@@ -311,6 +350,7 @@ export type ModelUiProfile = {
     scheduler: string;
     clip_skip: number;
   };
+  settings_patch?: Partial<GenerationSettings> | null;
   hints: string[];
 };
 
@@ -894,10 +934,12 @@ export type DownloadCompanionsResult = {
 export async function checkModelDependencies(
   model: string,
   performance?: string | null,
+  hidreamPromptRefinement?: boolean | null,
 ) {
   return invoke<ModelDependenciesResult>("check_model_dependencies", {
     model,
     performance: performance ?? null,
+    hidream_prompt_refinement: hidreamPromptRefinement ?? null,
   });
 }
 
@@ -905,11 +947,13 @@ export async function downloadModelCompanions(
   model: string,
   ids?: string[],
   performance?: string | null,
+  hidreamPromptRefinement?: boolean | null,
 ) {
   return invoke<DownloadCompanionsResult>("download_model_companions", {
     model,
     ids: ids ?? null,
     performance: performance ?? null,
+    hidream_prompt_refinement: hidreamPromptRefinement ?? null,
   });
 }
 

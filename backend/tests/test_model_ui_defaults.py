@@ -6,6 +6,7 @@ if BACKEND_ROOT not in sys.path:
     sys.path.insert(0, BACKEND_ROOT)
 
 from modules.model_ui_defaults import (  # noqa: E402
+    apply_hidream_sampling_at_submit,
     engine_name_for_category,
     family_performance_settings,
     gallery_caption,
@@ -43,22 +44,25 @@ def test_engine_name_for_diffusion():
 
 
 def test_hidream_performance_preset():
-    assert performance_preset_name("hidream_o1_image_dev_mxfp8.safetensors", "hidream_o1") == "Lightning"
+    assert performance_preset_name("hidream_o1_image_dev_mxfp8.safetensors", "hidream_o1") == "Speed"
     assert performance_preset_name("hidream_o1_image_full.safetensors", "hidream_o1") == "Quality"
 
 
-def test_resolve_ui_profile_applies_for_misaligned_speed():
+def test_resolve_ui_profile_applies_for_misaligned_lightning():
     profile = resolve_ui_profile(
         "hidream_o1_image_dev_mxfp8.safetensors",
-        current_performance="Speed",
+        current_performance="Lightning",
         lock_enabled=True,
         preset_active=False,
     )
     assert profile["family"] == "hidream_o1"
     assert profile["apply_performance"] is True
-    assert profile["performance_selection"] == "Lightning"
-    assert profile["custom_sampling"]["custom_steps"] == 16
+    assert profile["performance_selection"] == "Speed"
+    assert profile["custom_sampling"]["custom_steps"] == 22
     assert profile["custom_sampling"]["cfg"] == 1.0
+    assert profile["custom_sampling"]["sampler_name"] == "lcm"
+    assert profile["settings_patch"]["width"] == 1536
+    assert profile["settings_patch"]["height"] == 1536
     assert profile["clear_styles"] is True
     assert profile["clear_negative"] is True
 
@@ -90,9 +94,26 @@ def test_unified_family_performance_settings_are_family_specific():
 
     assert flux["sampler_name"] == "euler"
     assert flux["scheduler"] == "beta"
-    assert hidream["custom_steps"] == 28
+    assert hidream["custom_steps"] == 22
     assert hidream["cfg"] == 1.0
+    assert hidream["sampler_name"] == "lcm"
     assert ideogram["custom_steps"] == 48
+
+
+def test_hidream_fast_variant_steps():
+    fast = family_performance_settings("hidream", "HiDream-I1-Fast.safetensors", "Lightning")
+    assert fast["custom_steps"] == 16
+    assert fast["cfg"] == 1.0
+
+
+def test_hidream_submit_clamps_sdxl_cfg():
+    out = apply_hidream_sampling_at_submit(
+        {"cfg": 7.0, "steps": 28, "performance_selection": "Custom..."},
+        "hidream_o1_image_dev_mxfp8.safetensors",
+        "hidream_o1",
+    )
+    assert out["cfg"] == 1.0
+    assert out["negative"] == ""
 
 
 def test_list_gallery_models_scans_without_model_handler():

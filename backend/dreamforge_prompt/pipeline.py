@@ -25,6 +25,7 @@ PROMPT_ENHANCERS = frozenset(
         "style: hyperprompt",
         "erniehancer",
         "style: erniehancer",
+        "gemma4",
     }
 )
 
@@ -315,7 +316,7 @@ def _identity_generate_boost(job, workflow_mode: str, prompt: str) -> str:
         getattr(job, "face_preservation", False)
         or getattr(job, "preserve_character", False)
         or str(getattr(job, "identity_mode", "") or "").lower()
-        in {"face", "faceid", "face_id", "preserve_face"}
+        in {"face", "faceid", "face_id", "preserve_face", "ipadapter_faceid", "kontext", "qwen_edit", "auto"}
     ):
         return prompt
     text = str(prompt or "").strip()
@@ -394,14 +395,16 @@ def prepare_generation_prompts(
         )
     styles = list(settings.get("styles") or getattr(job, "styles", None) or [])
     enhancer = _normalize_enhancer(
-        getattr(job, "prompt_enhancer", None) or getattr(job, "prompt_enhance", None)
+        getattr(job, "prompt_enhancer", None)
+        or getattr(job, "prompt_enhance", None)
+        or settings.get("prompt_enhancer")
     )
     workflow_mode = str(getattr(job, "workflow_mode", None) or getattr(job, "comfy_workflow_mode", None) or "generate").lower()
 
     if enhancer in ("", "none") and getattr(job, "prompt_enhancer", None) in (None, ""):
         enhancer = default_prompt_enhancer(family, workflow_mode)
 
-    if enhancer != "none":
+    if enhancer not in ("none", "gemma4"):
         styles = _inject_prompt_enhancer_style(styles, enhancer)
         if enhancer == "flufferizer" and download_expansion:
             ensure_prompt_expansion_model(download=True)
@@ -422,7 +425,7 @@ def prepare_generation_prompts(
         prompt = _kontext_edit_boost(job, family, prompt)
     elif workflow_mode == "generate":
         prompt = _identity_generate_boost(job, workflow_mode, prompt)
-        if _is_modern_family(family):
+        if _is_modern_family(family) and enhancer != "gemma4":
             prompt = _modern_generate_boost(family, prompt)
 
     gen_data = _build_gen_data(job, settings)

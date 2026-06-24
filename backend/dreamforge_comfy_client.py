@@ -107,8 +107,6 @@ def is_comfy_oom_error(exc: BaseException | str | None) -> bool:
         "cuda out of memory",
         "cudnn_status_alloc_failed",
         "not enough memory",
-        "paging file is too small",
-        "os error 1455",
         "failed to allocate",
         "vram",
         "out of memory",
@@ -123,6 +121,8 @@ def _ensure_managed_comfy_alive(*, prompt_id: str = "") -> None:
         from dreamforge_comfy_server import comfy_server_log_tail, get_default_comfy_server
 
         server = get_default_comfy_server()
+        if server.proc is None:
+            return
         if server.is_running():
             return
         server.discard_dead_process()

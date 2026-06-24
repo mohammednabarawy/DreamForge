@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isTauri } from "@tauri-apps/api/core";
 import { downloadCompanionEntries, installCustomNodePacks, verifyCompanionEntries } from "../lib/studioBridge";
 import {
   checkModelDependencies,
+  downloadModel,
+  onDownloadProgress,
   type DownloadProgressPayload,
   type ModelDependencyItem,
 } from "../lib/tauri-api";
@@ -24,8 +27,33 @@ function itemLabel(item: ModelDependencyItem): string {
   return item.id ?? item.filename ?? item.relative ?? "companion";
 }
 
+function companionCategory(relative: string | undefined, fallback?: string): string {
+  if (fallback?.trim()) return fallback;
+  const folder = relative?.split("/", 1)[0] ?? "";
+  if (
+    folder === "vae" ||
+    folder === "clip" ||
+    folder === "loras" ||
+    folder === "text_encoders" ||
+    folder === "controlnet" ||
+    folder === "upscale_models" ||
+    folder === "checkpoints" ||
+    folder === "diffusion_models"
+  ) {
+    return folder;
+  }
+  return "text_encoders";
+}
+
+function companionFilename(item: ModelDependencyItem): string {
+  if (item.filename?.trim()) return item.filename;
+  const relative = item.relative ?? "";
+  const parts = relative.split("/");
+  return parts[parts.length - 1] || item.id || "companion.safetensors";
+}
+
 function itemDestination(item: ModelDependencyItem): string {
-  return item.relative ?? `${item.category ?? "models"}/${item.filename ?? itemLabel(item)}`;
+  return item.relative ?? `${item.category ?? "models"}/${companionFilename(item)}`;
 }
 
 function manualInstallText(model: string, missing: ModelDependencyItem[]): string {
@@ -210,51 +238,74 @@ export function useCompanionDownload(options?: Options) {
         for (let i = 0; i < downloadable.length; i += 1) {
           if (runId !== runIdRef.current) return;
           const item = downloadable[i];
+          const filename = companionFilename(item);
+          const category = companionCategory(item.relative, item.category);
           setCurrentIndex(customNodePacks.length + i + 1);
           setCurrentItem(item);
           setFileProgress({
-            filename: item.filename ?? itemLabel(item),
+            filename,
             percentage: 0,
             downloaded: 0,
             total: 0,
+            status: "downloading",
+            category,
           });
           append(
             "info",
             `Starting ${i + 1} of ${downloadable.length}: ${itemLabel(item)}${item.relative ? ` → ${item.relative}` : ""}`,
           );
-        }
 
-        try {
-          const payload = await downloadCompanionEntries(downloadable);
-          if (runId !== runIdRef.current) return;
-          if (payload.ok === false && payload.error) {
-            failures += downloadable.length;
-            append("error", `  ${payload.error}`);
-          }
-          for (const result of payload.results ?? []) {
-            const label = result.id ?? result.path ?? "asset";
-            if (result.status === "downloaded") {
-              append("ok", `  Download complete: ${label}`);
-            } else if (result.status === "exists") {
-              append("ok", `  Already present: ${label}`);
+          try {
+            if (isTauri()) {
+              const unlisten = await onDownloadProgress((payload) => {
+                if (runId !== runIdRef.current) return;
+                if (payload.filename !== filename) return;
+                setFileProgress(payload);
+              });
+              try {
+                await downloadModel({
+                  url: item.url!,
+                  category,
+                  filename,
+                  apiKey: null,
+                });
+              } finally {
+                unlisten();
+              }
+              append("ok", `  Download complete: ${itemLabel(item)}`);
             } else {
-              append("info", `  ${label}: ${result.status ?? "ok"}`);
+              const payload = await downloadCompanionEntries([item]);
+              if (payload.ok === false && payload.error) {
+                failures += 1;
+                append("error", `  ${payload.error}`);
+                continue;
+              }
+              for (const err of payload.errors ?? []) {
+                failures += 1;
+                append(
+                  "error",
+                  `  Failed ${err.id ?? err.relative ?? "asset"}: ${err.error ?? "unknown error"}`,
+                );
+              }
+              const result = payload.results?.[0];
+              if (result?.status === "downloaded") {
+                append("ok", `  Download complete: ${itemLabel(item)}`);
+              } else if (result?.status === "exists") {
+                append("ok", `  Already present: ${itemLabel(item)}`);
+              }
+              setFileProgress({
+                filename,
+                percentage: 100,
+                downloaded: 0,
+                total: 0,
+                status: "complete",
+                category,
+              });
             }
-          }
-          for (const err of payload.errors ?? []) {
+          } catch (e) {
             failures += 1;
-            append("error", `  Failed ${err.id ?? err.relative ?? "asset"}: ${err.error ?? "unknown error"}`);
+            append("error", `  Failed ${itemLabel(item)}: ${String(e)}`);
           }
-          const last = downloadable[downloadable.length - 1];
-          setFileProgress({
-            filename: last?.filename ?? itemLabel(last ?? downloadable[0]),
-            percentage: 100,
-            downloaded: payload.downloaded ?? 0,
-            total: payload.downloaded ?? 0,
-          });
-        } catch (e) {
-          failures += downloadable.length;
-          append("error", `Download batch failed: ${String(e)}`);
         }
       }
 

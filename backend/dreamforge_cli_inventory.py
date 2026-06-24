@@ -8,6 +8,7 @@ import argparse
 import csv
 import json
 import os
+from functools import lru_cache
 from pathlib import Path
 
 
@@ -88,6 +89,16 @@ def _scan_files(root, extensions):
 
 
 def list_model_inventory():
+    return _list_model_inventory_cached()
+
+
+def clear_model_inventory_cache() -> None:
+    """Drop cached inventory (tests or after model folder changes)."""
+    _list_model_inventory_cached.cache_clear()
+
+
+@lru_cache(maxsize=1)
+def _list_model_inventory_cached():
     categories = {}
     for label, folder in MODEL_CATEGORIES.items():
         categories[label] = _scan_files(MODELS_ROOT / folder, MODEL_EXTENSIONS)
@@ -173,11 +184,12 @@ def resolve_font_identifier(identifier):
     return identifier
 
 
-def resolve_model_name(category, model_name):
+def resolve_model_name(category, model_name, inventory=None):
     """Resolve a model filename/stem/relative path inside an inventory category."""
     if not model_name:
         return None
-    inventory = list_model_inventory()
+    if inventory is None:
+        inventory = list_model_inventory()
     models = inventory["categories"].get(category, [])
     normalized = model_name.lower().strip()
     normalized_stem = Path(normalized).stem
@@ -208,8 +220,9 @@ def _engine_model_name(model):
 
 def resolve_generation_model(model_name):
     """Resolve text/image generation models across checkpoints, diffusion_models, and unet."""
+    inventory = list_model_inventory()
     for category in GENERATION_MODEL_CATEGORIES:
-        model = resolve_model_name(category, model_name)
+        model = resolve_model_name(category, model_name, inventory=inventory)
         if model:
             model = dict(model)
             model["category"] = category
@@ -338,14 +351,39 @@ def hidream_o1_placement_hint(model):
 
 
 MODEL_DEPENDENCIES = {
-    "hidream_o1": [
+    "hidream": [
         {
-            "id": "gemma4_prompt_refine_optional",
-            "relative": "text_encoders/gemma4_e4b_it_fp8_scaled.safetensors",
-            "note": "Optional: reasoning prompt agent (Comfy HiDream O1 template). Generation works without it.",
+            "id": "hidream_clip_l",
+            "relative": "text_encoders/clip_l.safetensors",
+            "note": "HiDream I1 split UNet: QuadrupleCLIPLoader clip_l (skip when using a full checkpoint).",
+            "optional": True,
+        },
+        {
+            "id": "hidream_clip_g",
+            "relative": "text_encoders/clip_g.safetensors",
+            "note": "HiDream I1 split UNet: clip_g text encoder.",
+            "optional": True,
+        },
+        {
+            "id": "hidream_t5xxl",
+            "relative": "text_encoders/t5xxl_fp16.safetensors",
+            "note": "HiDream I1 split UNet: T5-XXL text encoder.",
+            "optional": True,
+        },
+        {
+            "id": "hidream_llama",
+            "relative": "text_encoders/llama_3.1_8b_instruct_fp8_scaled.safetensors",
+            "note": "HiDream I1 split UNet: Llama 3.1 8B instruct encoder.",
+            "optional": True,
+        },
+        {
+            "id": "vae_flux_ae",
+            "relative": "vae/ae.safetensors",
+            "note": "HiDream decode VAE (ae.safetensors).",
             "optional": True,
         },
     ],
+    "hidream_o1": [],
     "qwen_image": [
         {
             "id": "clip_qwen25_vl_7b",
@@ -503,6 +541,12 @@ QWEN_EDIT_LIGHTNING_LORA_8STEP = {
     "note": "Qwen Image Edit 2511 Lightning LoRA (8-step balanced portrait/edit preset).",
 }
 
+HIDREAM_O1_GEMMA4 = {
+    "id": "gemma4_prompt_refine",
+    "relative": "text_encoders/gemma4_e4b_it_fp8_scaled.safetensors",
+    "note": "Gemma4 prompt refinement for HiDream O1 Quality (Comfy TextGenerate chain).",
+}
+
 _QWEN_LIGHTNING_PERFORMANCES = frozenset({"lightning", "speed", "lcm"})
 
 
@@ -518,6 +562,18 @@ def qwen_lightning_lora_requirement(performance: str | None) -> dict:
     if perf == "lightning":
         return dict(QWEN_EDIT_LIGHTNING_LORA_8STEP)
     return dict(QWEN_EDIT_LIGHTNING_LORA)
+
+
+def hidream_o1_gemma4_requested(
+    performance: str | None = None,
+    *,
+    hidream_prompt_refinement: bool | None = None,
+) -> bool:
+    """True when HiDream O1 should run the Gemma4 Comfy prompt-refinement chain."""
+    if hidream_prompt_refinement is not None:
+        return bool(hidream_prompt_refinement)
+    perf = str(performance or "").strip().lower()
+    return perf == "quality"
 
 
 def normalize_routing_speed_preference(speed_preference: str | None) -> str:
@@ -646,6 +702,9 @@ COMPANION_ALTERNATE_PATHS: dict[str, list[str]] = {
         "text_encoders/qwen_3_4b_fp8_mixed.safetensors",
         "clip/qwen_3_4b_fp8_mixed.safetensors",
     ],
+    "gemma4_prompt_refine": [
+        "clip/gemma4_e4b_it_fp8_scaled.safetensors",
+    ],
     "lora_qwen_edit_lightning_4step": [
         "loras/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-fp32.safetensors",
         "loras/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
@@ -686,7 +745,12 @@ def companion_file_present(req: dict, *, min_bytes: int = 1024 * 1024) -> bool:
     return False
 
 
-def check_model_dependencies(model, *, performance: str | None = None):
+def check_model_dependencies(
+    model,
+    *,
+    performance: str | None = None,
+    hidream_prompt_refinement: bool | None = None,
+):
     """Return missing companion files for modern model families."""
     if not model:
         return []
@@ -704,6 +768,11 @@ def check_model_dependencies(model, *, performance: str | None = None):
         and not qwen_fused_lightning_model(name)
     ):
         reqs = [*reqs, qwen_lightning_lora_requirement(performance)]
+    if family == "hidream_o1" and hidream_o1_gemma4_requested(
+        performance,
+        hidream_prompt_refinement=hidream_prompt_refinement,
+    ):
+        reqs = [*reqs, dict(HIDREAM_O1_GEMMA4)]
     for req in reqs:
         if req.get("optional"):
             continue
@@ -722,11 +791,21 @@ def check_model_dependencies(model, *, performance: str | None = None):
     return [enrich_missing_dependency(item) for item in missing]
 
 
-def ensure_model_companions_downloaded(model, *, progress_cb=None) -> dict:
+def ensure_model_companions_downloaded(
+    model,
+    *,
+    progress_cb=None,
+    performance: str | None = None,
+    hidream_prompt_refinement: bool | None = None,
+) -> dict:
     """Download missing companion weights to MODELS_ROOT when URLs are known."""
     from dreamforge_companion_download import download_missing_companions
 
-    missing = check_model_dependencies(model)
+    missing = check_model_dependencies(
+        model,
+        performance=performance,
+        hidream_prompt_refinement=hidream_prompt_refinement,
+    )
     if not missing:
         return {"status": "ready", "missing": [], "downloaded": 0, "errors": [], "results": []}
 
@@ -738,7 +817,11 @@ def ensure_model_companions_downloaded(model, *, progress_cb=None) -> dict:
         progress_cb(len(downloadable))
 
     payload = download_missing_companions(downloadable)
-    still_missing = check_model_dependencies(model)
+    still_missing = check_model_dependencies(
+        model,
+        performance=performance,
+        hidream_prompt_refinement=hidream_prompt_refinement,
+    )
     status = "ready" if not still_missing else "missing"
     if payload.get("errors") and still_missing:
         status = "missing"
@@ -771,19 +854,22 @@ def download_studio_resources(studio_mode: str, *, upscale_method: str | None = 
     return download_missing_companions(missing)
 
 
-def model_setup_warnings(model):
+def model_setup_warnings(model, *, performance: str | None = None):
     """Non-fatal setup notes (placement, optional enhancers)."""
     warnings = []
     placement = hidream_o1_placement_hint(model)
     if placement:
         warnings.append(placement)
-    if model and model.get("family") == "hidream_o1":
-        gemma = _dependency_path("text_encoders/gemma4_e4b_it_fp8_scaled.safetensors")
-        if not gemma.exists():
-            warnings.append(
-                "Optional prompt enhancer missing: text_encoders/gemma4_e4b_it_fp8_scaled.safetensors "
-                "(Comfy HiDream O1 template; improves reasoning-style prompts, not required for sampling)."
-            )
+    if (
+        model
+        and model.get("family") == "hidream_o1"
+        and hidream_o1_gemma4_requested(performance)
+        and not companion_file_present(HIDREAM_O1_GEMMA4)
+    ):
+        warnings.append(
+            "Gemma4 prompt encoder missing for Quality — use Download in the inspector to fetch "
+            "text_encoders/gemma4_e4b_it_fp8_scaled.safetensors."
+        )
     return warnings
 
 

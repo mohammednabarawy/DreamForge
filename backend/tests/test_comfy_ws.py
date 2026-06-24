@@ -127,12 +127,13 @@ def test_live_preview_path_is_job_scoped():
 def test_write_live_preview_writes_job_and_legacy(tmp_path, monkeypatch):
     from dreamforge_comfy_ws import write_live_preview
 
-    monkeypatch.setattr("dreamforge_comfy_ws.PROJECT_ROOT", tmp_path)
+    previews = tmp_path / "temp" / "previews"
+    monkeypatch.setattr("dreamforge_comfy_ws.PREVIEWS_DIR", previews)
     jpeg = b"\xff\xd8\xff" + b"x" * 64
     path = write_live_preview(jpeg, job_id="abc123")
     assert path.name == "preview-abc123.jpg"
     assert path.is_file()
-    assert (tmp_path / "outputs" / "preview.jpg").is_file()
+    assert (previews / "preview.jpg").is_file()
 
 
 def test_start_raises_stored_connect_error(monkeypatch):

@@ -1,4 +1,4 @@
-"""Move legacy generation artifacts into outputs/dreamforge/ and fix manifest paths."""
+"""Flatten legacy generation artifacts into outputs/ root and relocate previews to temp/."""
 from __future__ import annotations
 
 import json
@@ -8,27 +8,36 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from _paths import BACKEND_ROOT, OUTPUTS_ROOT, PROJECT_ROOT, resolve_comfy_root
+from _paths import (
+    BACKEND_ROOT,
+    COMFY_STAGING_DIR,
+    OUTPUTS_ROOT,
+    PREVIEWS_DIR,
+    PROJECT_ROOT,
+    resolve_comfy_root,
+)
 
 DEFAULT_SESSION_ID = "dreamforge"
-TARGET_DIR = OUTPUTS_ROOT / DEFAULT_SESSION_ID
-LEGACY_NESTED_DIR = TARGET_DIR / "comfy"
+TARGET_DIR = OUTPUTS_ROOT
+LEGACY_SESSION_DIR = OUTPUTS_ROOT / DEFAULT_SESSION_ID
+LEGACY_NESTED_DIR = LEGACY_SESSION_DIR / "comfy"
 BACKEND_LEGACY_OUTPUTS = BACKEND_ROOT / "outputs"
 COMFY_OUTPUT_DIR = resolve_comfy_root() / "output"
 COMFY_INPUT_DIR = resolve_comfy_root() / "input"
 CONFIG_PATH = BACKEND_ROOT / "config.txt"
 
-_PREVIEW_RE = re.compile(r"^preview(-[0-9a-f-]+)?\.(jpg|jpeg|webp)$", re.IGNORECASE)
+_PREVIEW_RE = re.compile(r"^preview(-[0-9a-zA-Z_-]+)?\.(jpg|jpeg|webp)$", re.IGNORECASE)
 _PRIMARY_COMFY_OUTPUT_RE = re.compile(r"^DreamForge_(\d+)_\.png$", re.IGNORECASE)
 _TARGET_SEQ_RE = re.compile(r"^DreamForge_(\d+)__\d+\.png$", re.IGNORECASE)
 _TIMESTAMPED_COMFY_RE = re.compile(r"^DreamForge_(\d+)__\d+\.png$", re.IGNORECASE)
 _SKIP_COMFY_SUFFIXES = ("_kontext_refs", "_composite")
+_SKIP_OUTPUT_SUBDIRS = frozenset({"logs"})
 
 
 def _is_generation_artifact(name: str) -> bool:
     lower = name.lower()
     if lower.endswith(".png"):
-        return not _PREVIEW_RE.match(lower.replace(".png", ".jpg"))  # never preview png
+        return not _PREVIEW_RE.match(lower.replace(".png", ".jpg"))
     if lower.endswith(".json") and "manifest" in lower:
         return True
     return False
@@ -77,12 +86,22 @@ def _set_image_entry_path(item: Any, new_path: str) -> Any:
     return item
 
 
+def _should_skip_nested_output(rel: Path) -> bool:
+    parts = rel.parts
+    if not parts:
+        return True
+    if parts[0] == DEFAULT_SESSION_ID and len(parts) >= 2 and parts[1] in _SKIP_OUTPUT_SUBDIRS:
+        return True
+    return False
+
+
 def _resolve_existing_png(name: str) -> Path | None:
     if not name.lower().endswith(".png"):
         return None
     candidates = [
         TARGET_DIR / name,
         OUTPUTS_ROOT / name,
+        LEGACY_SESSION_DIR / name,
         LEGACY_NESTED_DIR / name,
         BACKEND_LEGACY_OUTPUTS / name,
         COMFY_OUTPUT_DIR / name,
@@ -182,7 +201,7 @@ def _legacy_manifest_payload(
 
 
 def migrate_comfy_output_generations(*, dry_run: bool = False) -> dict[str, Any]:
-    """Import primary DreamForge SaveImage outputs from ComfyUI into outputs/dreamforge/."""
+    """Import primary DreamForge SaveImage outputs from ComfyUI into outputs/ root."""
     TARGET_DIR.mkdir(parents=True, exist_ok=True)
     if not COMFY_OUTPUT_DIR.is_dir():
         return {
@@ -287,7 +306,7 @@ def _copy_file(src: Path, dest: Path, *, dry_run: bool) -> Path:
 
 
 def migrate_comfy_input_copies(*, dry_run: bool = False) -> dict[str, Any]:
-    """Copy timestamped DreamForge PNGs from ComfyUI input into outputs/dreamforge/."""
+    """Copy timestamped DreamForge PNGs from ComfyUI input into outputs/ root."""
     TARGET_DIR.mkdir(parents=True, exist_ok=True)
     if not COMFY_INPUT_DIR.is_dir():
         return {
@@ -379,13 +398,18 @@ def _move_file(src: Path, dest: Path, *, dry_run: bool) -> Path:
 def _collect_source_files() -> list[Path]:
     sources: list[Path] = []
     if OUTPUTS_ROOT.is_dir():
-        for entry in OUTPUTS_ROOT.iterdir():
-            if entry.is_file() and _is_generation_artifact(entry.name):
-                sources.append(entry)
-    if LEGACY_NESTED_DIR.is_dir():
-        for entry in LEGACY_NESTED_DIR.iterdir():
-            if entry.is_file() and _is_generation_artifact(entry.name):
-                sources.append(entry)
+        for entry in OUTPUTS_ROOT.rglob("*"):
+            if not entry.is_file() or not _is_generation_artifact(entry.name):
+                continue
+            try:
+                rel = entry.relative_to(OUTPUTS_ROOT)
+            except ValueError:
+                continue
+            if len(rel.parts) == 1:
+                continue
+            if _should_skip_nested_output(rel):
+                continue
+            sources.append(entry)
     if BACKEND_LEGACY_OUTPUTS.is_dir():
         for entry in BACKEND_LEGACY_OUTPUTS.iterdir():
             if entry.is_file() and _is_generation_artifact(entry.name):
@@ -398,36 +422,114 @@ def _collect_source_files() -> list[Path]:
     return sources
 
 
-def _update_config_outputs_path(*, dry_run: bool) -> bool:
+def _remove_empty_dirs(root: Path, *, dry_run: bool) -> list[str]:
+    removed: list[str] = []
+    if not root.is_dir():
+        return removed
+    for directory in sorted(root.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+        if not directory.is_dir():
+            continue
+        if directory == root:
+            continue
+        try:
+            next(directory.iterdir())
+        except StopIteration:
+            if not dry_run:
+                try:
+                    directory.rmdir()
+                    removed.append(str(directory))
+                except OSError:
+                    pass
+    return removed
+
+
+def migrate_previews_to_temp(*, dry_run: bool = False) -> dict[str, Any]:
+    """Move preview JPEGs out of outputs/ into temp/previews/."""
+    PREVIEWS_DIR.mkdir(parents=True, exist_ok=True)
+    moved: list[dict[str, str]] = []
+    for parent in (OUTPUTS_ROOT, BACKEND_LEGACY_OUTPUTS):
+        if not parent.is_dir():
+            continue
+        for entry in parent.iterdir():
+            if not entry.is_file() or not _PREVIEW_RE.match(entry.name):
+                continue
+            dest = PREVIEWS_DIR / entry.name
+            if dest.exists():
+                try:
+                    if entry.stat().st_size == dest.stat().st_size:
+                        if not dry_run:
+                            entry.unlink(missing_ok=True)
+                        continue
+                except OSError:
+                    pass
+                dest = _unique_dest(dest)
+            try:
+                final_dest = _move_file(entry, dest, dry_run=dry_run)
+                moved.append({"from": str(entry), "to": str(final_dest)})
+            except OSError:
+                pass
+    return {
+        "ok": True,
+        "moved": moved,
+        "moved_count": len(moved),
+        "dry_run": dry_run,
+    }
+
+
+def _update_config_paths(*, dry_run: bool) -> dict[str, bool]:
     if not CONFIG_PATH.is_file():
-        return False
+        return {"outputs": False, "preview": False}
     try:
         payload = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return False
+        return {"outputs": False, "preview": False}
     if not isinstance(payload, dict):
-        return False
-    desired = str((PROJECT_ROOT / "outputs" / DEFAULT_SESSION_ID).resolve())
-    current = str(payload.get("path_outputs") or "").strip()
-    legacy_values = {
+        return {"outputs": False, "preview": False}
+
+    desired_outputs = str(COMFY_STAGING_DIR.resolve())
+    desired_preview = str((PREVIEWS_DIR / "preview.jpg").resolve())
+    legacy_output_values = {
         str(BACKEND_LEGACY_OUTPUTS.resolve()),
         str(BACKEND_LEGACY_OUTPUTS),
+        str((PROJECT_ROOT / "outputs" / DEFAULT_SESSION_ID).resolve()),
+        str(OUTPUTS_ROOT / DEFAULT_SESSION_ID),
         "../outputs/",
         "../outputs",
     }
-    if current.replace("\\", "/") == desired.replace("\\", "/"):
-        return False
-    if current and current not in legacy_values and "backend" not in current.lower():
-        return False
-    payload["path_outputs"] = desired
-    if not dry_run:
+    legacy_preview_values = {
+        str((OUTPUTS_ROOT / "preview.jpg").resolve()),
+        str((BACKEND_LEGACY_OUTPUTS / "preview.jpg").resolve()),
+        "../outputs/preview.jpg",
+    }
+
+    outputs_updated = False
+    preview_updated = False
+    current_outputs = str(payload.get("path_outputs") or "").strip()
+    if current_outputs.replace("\\", "/") != desired_outputs.replace("\\", "/"):
+        if (
+            not current_outputs
+            or current_outputs in legacy_output_values
+            or "outputs" in current_outputs.replace("\\", "/").lower()
+        ):
+            payload["path_outputs"] = desired_outputs
+            outputs_updated = True
+
+    current_preview = str(payload.get("path_preview") or "").strip()
+    if current_preview.replace("\\", "/") != desired_preview.replace("\\", "/"):
+        if not current_preview or current_preview in legacy_preview_values or "preview" in current_preview:
+            payload["path_preview"] = desired_preview
+            preview_updated = True
+
+    if (outputs_updated or preview_updated) and not dry_run:
         CONFIG_PATH.write_text(json.dumps(payload, indent=4), encoding="utf-8")
-    return True
+    return {"outputs": outputs_updated, "preview": preview_updated}
 
 
 def migrate_legacy_outputs(*, dry_run: bool = False) -> dict[str, Any]:
-    """Move root / comfy / backend legacy PNG+manifest files into outputs/dreamforge/."""
+    """Flatten nested outputs into outputs/ root and relocate previews to temp/."""
     TARGET_DIR.mkdir(parents=True, exist_ok=True)
+    PREVIEWS_DIR.mkdir(parents=True, exist_ok=True)
+    COMFY_STAGING_DIR.mkdir(parents=True, exist_ok=True)
 
     moved: list[dict[str, str]] = []
     skipped: list[str] = []
@@ -447,13 +549,14 @@ def migrate_legacy_outputs(*, dry_run: bool = False) -> dict[str, Any]:
         if _rewrite_manifest_images(manifest, dry_run=dry_run):
             updated_manifests.append(str(manifest))
 
-    if not dry_run and LEGACY_NESTED_DIR.is_dir():
-        try:
-            next(LEGACY_NESTED_DIR.iterdir())
-        except StopIteration:
-            LEGACY_NESTED_DIR.rmdir()
+    removed_dirs: list[str] = []
+    if not dry_run:
+        removed_dirs.extend(_remove_empty_dirs(LEGACY_NESTED_DIR, dry_run=dry_run))
+        removed_dirs.extend(_remove_empty_dirs(LEGACY_SESSION_DIR, dry_run=dry_run))
+        removed_dirs.extend(_remove_empty_dirs(OUTPUTS_ROOT, dry_run=dry_run))
 
-    config_updated = _update_config_outputs_path(dry_run=dry_run)
+    config_updated = _update_config_paths(dry_run=dry_run)
+    preview_migration = migrate_previews_to_temp(dry_run=dry_run)
     comfy_import = migrate_comfy_output_generations(dry_run=dry_run)
     input_import = migrate_comfy_input_copies(dry_run=dry_run)
 
@@ -466,6 +569,8 @@ def migrate_legacy_outputs(*, dry_run: bool = False) -> dict[str, Any]:
         "updated_count": len(updated_manifests),
         "skipped": skipped,
         "config_updated": config_updated,
+        "preview_migration": preview_migration,
+        "removed_dirs": removed_dirs,
         "comfy_import": comfy_import,
         "input_import": input_import,
         "dry_run": dry_run,

@@ -36,5 +36,6 @@
     "path_wildcards": "D:\\DreamForge\\backend\\wildcards",
     "path_safety_checker": "D:\\DreamForge\\backend\\models\\safety_checker",
     "path_sam": "D:\\DreamForge\\backend\\models\\sam",
-    "path_outputs": "D:\\DreamForge\\outputs\\dreamforge"
+    "path_outputs": "D:\\DreamForge\\temp\\comfy-staging",
+    "path_preview": "D:\\DreamForge\\temp\\previews\\preview.jpg"
 }

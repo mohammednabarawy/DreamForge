@@ -24,7 +24,7 @@ from types import SimpleNamespace
 import numpy as np
 from PIL import Image
 
-from _paths import BACKEND_ROOT, COMFY_ROOT, PROJECT_ROOT, REPOS_ROOT, extend_sys_path
+from _paths import BACKEND_ROOT, COMFY_ROOT, COMFY_STAGING_DIR, OUTPUTS_ROOT, PROJECT_ROOT, REPOS_ROOT, extend_sys_path
 
 _RUNTIME_READY = False
 
@@ -2305,14 +2305,14 @@ def run_generation(
             emit_event(stream_sink, err)
             return {"status": "error", **err}
 
-        comfy_out_dir = PROJECT_ROOT / "outputs" / "dreamforge" / "comfy"
-        comfy_out_dir.mkdir(parents=True, exist_ok=True)
+        comfy_staging = COMFY_STAGING_DIR
+        comfy_staging.mkdir(parents=True, exist_ok=True)
         saved_paths: list[str] = []
         for filename, subfolder, folder_type in comfy_image_specs:
             payload = client.view(filename=filename, subfolder=subfolder, folder_type=folder_type)
             stem = Path(filename).stem
             suffix = Path(filename).suffix or ".png"
-            target = comfy_out_dir / f"{stem}_{int(time.time() * 1000)}{suffix}"
+            target = comfy_staging / f"{stem}_{int(time.time() * 1000)}{suffix}"
             target.write_bytes(payload)
             saved_paths.append(str(target))
 
@@ -2336,7 +2336,14 @@ def run_generation(
             except OSError:
                 pass
 
-        images = saved_paths
+        output_target = getattr(job, "output", None) or str(OUTPUTS_ROOT)
+        images = _resolve_output_paths(saved_paths, output_target)
+        for staged in saved_paths:
+            try:
+                Path(staged).unlink(missing_ok=True)
+            except OSError:
+                pass
+
         raw_images = comfy_images
         if streaming and images:
             emit_event(

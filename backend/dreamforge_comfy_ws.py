@@ -1,7 +1,7 @@
 """ComfyUI WebSocket streaming (Krita AI Diffusion–style).
 
 Connects to /ws?clientId=… before queueing the prompt, handles progress_state
-and binary preview frames, and writes outputs/preview.jpg for the desktop shell.
+and binary preview frames, and writes temp/previews/preview.jpg for the desktop shell.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-from _paths import PROJECT_ROOT
+from _paths import COMFY_STAGING_DIR, PREVIEWS_DIR, PROJECT_ROOT
 from dreamforge_progress import GEN_SAMPLING, generation_label, generation_phase_from_preview
 
 COMFY_HUNG_STALL_S = float(os.environ.get("DREAMFORGE_COMFY_HUNG_STALL_S", "180"))
@@ -165,7 +165,7 @@ def prompt_id_from_job_id(job_id: str) -> str | None:
 
 
 def live_preview_path(job_id: str = "") -> Path:
-    base = PROJECT_ROOT / "outputs"
+    base = PREVIEWS_DIR
     if str(job_id or "").strip():
         return base / f"preview-{_sanitize_job_id(job_id)}.jpg"
     return base / "preview.jpg"
@@ -183,9 +183,10 @@ def write_live_preview(
     path = live_preview_path(job_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     legacy_path = live_preview_path()
-    # Tauri also checks backend/outputs/preview.jpg when agent_root is backend/.
-    backend_mirror = path.parent.parent / "backend" / "outputs" / path.name
-    backend_legacy = path.parent.parent / "backend" / "outputs" / legacy_path.name
+    # Mirror for legacy desktop builds that still probe backend/outputs or backend/temp.
+    backend_mirror = PROJECT_ROOT / "backend" / "temp" / "previews" / path.name
+    backend_legacy = PROJECT_ROOT / "backend" / "outputs" / path.name
+    backend_legacy_root = PROJECT_ROOT / "backend" / "outputs" / legacy_path.name
     if image_format == 2 or image_bytes[:8] == b"\x89PNG\r\n\x1a\n":
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         buf = io.BytesIO()
@@ -209,7 +210,7 @@ def write_live_preview(
     if job_id:
         _atomic_write(legacy_path)
     resolved = path.resolve()
-    for mirror in (backend_mirror, backend_legacy if job_id else None):
+    for mirror in (backend_mirror, backend_legacy, backend_legacy_root if job_id else None):
         if mirror is None:
             continue
         try:

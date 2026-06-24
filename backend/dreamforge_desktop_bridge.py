@@ -173,8 +173,9 @@ def cmd_get_paths(_params: dict) -> dict:
     status = runtime_status()
     paths = status.get("paths") or {}
     outputs = Path(paths.get("outputs_root") or (_paths.PROJECT_ROOT / "outputs"))
-    live_preview = outputs / "preview.jpg"
-    engine_preview = _paths.BACKEND_ROOT / "outputs" / "preview.jpg"
+    previews = Path(paths.get("previews_dir") or (_paths.PROJECT_ROOT / "temp" / "previews"))
+    live_preview = previews / "preview.jpg"
+    engine_preview = _paths.BACKEND_ROOT / "temp" / "previews" / "preview.jpg"
     python_exe = paths.get("embedded_python") or str(_paths.PYTHON_EXE)
     return {
         "ok": True,
@@ -183,6 +184,10 @@ def cmd_get_paths(_params: dict) -> dict:
         "backend_root": paths.get("backend_root") or str(_paths.BACKEND_ROOT),
         "code_root": str(_paths.BACKEND_ROOT),
         "outputs_root": str(outputs),
+        "temp_root": paths.get("temp_root") or str(_paths.PROJECT_ROOT / "temp"),
+        "previews_dir": str(previews),
+        "comfy_staging_dir": paths.get("comfy_staging_dir")
+        or str(_paths.PROJECT_ROOT / "temp" / "comfy-staging"),
         "models_root": paths.get("models_root") or str(_paths.PROJECT_ROOT / "models"),
         "comfy_root": paths.get("comfy_root") or "",
         "install_root": paths.get("install_root") or "",

@@ -867,6 +867,10 @@ fn outputs_root(_root: &Path) -> PathBuf {
     resolve_runtime_roots().data_root.join("outputs")
 }
 
+fn previews_dir(_root: &Path) -> PathBuf {
+    resolve_runtime_roots().data_root.join("temp").join("previews")
+}
+
 fn models_root(_root: &Path) -> PathBuf {
     configured_models_root(&resolve_runtime_roots().data_root)
 }
@@ -904,6 +908,7 @@ fn safe_model_filename(name: &str) -> Result<String, String> {
 fn live_preview_candidates() -> Vec<PathBuf> {
     let root = agent_root();
     vec![
+        previews_dir(&root).join("preview.jpg"),
         root.join("outputs").join("preview.jpg"),
         outputs_root(&root).join("preview.jpg"),
     ]
@@ -935,6 +940,7 @@ fn live_preview_candidates_for_job(job_id: Option<&str>) -> Vec<PathBuf> {
     if let Some(id) = job_id {
         let safe = sanitize_preview_job_id(id);
         let name = format!("preview-{safe}.jpg");
+        candidates.push(previews_dir(&root).join(&name));
         candidates.push(root.join("outputs").join(&name));
         candidates.push(outputs_root(&root).join(&name));
     }

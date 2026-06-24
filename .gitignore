@@ -41,6 +41,7 @@ __pycache__/
 *$py.class
 *.tmp
 *.log
+temp/
 backend/temp/
 .cache/
 apps/desktop/dist/

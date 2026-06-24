@@ -9,6 +9,9 @@ BACKEND_ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = BACKEND_ROOT.parent
 REPOS_ROOT = BACKEND_ROOT / "repositories"
 OUTPUTS_ROOT = PROJECT_ROOT / "outputs"
+TEMP_ROOT = PROJECT_ROOT / "temp"
+PREVIEWS_DIR = TEMP_ROOT / "previews"
+COMFY_STAGING_DIR = TEMP_ROOT / "comfy-staging"
 MODELS_ROOT = PROJECT_ROOT / "models"
 
 
@@ -84,6 +87,21 @@ def resolve_outputs_root() -> Path:
     return PROJECT_ROOT / "outputs"
 
 
+def resolve_temp_root() -> Path:
+    data_root = os.environ.get("DREAMFORGE_DATA_ROOT")
+    if data_root:
+        return Path(data_root) / "temp"
+    return PROJECT_ROOT / "temp"
+
+
+def resolve_previews_dir() -> Path:
+    return resolve_temp_root() / "previews"
+
+
+def resolve_comfy_staging_dir() -> Path:
+    return resolve_temp_root() / "comfy-staging"
+
+
 def resolve_python_exe() -> Path:
     """``python_embeded`` at install root, then venv, then current interpreter."""
     install = resolve_install_root()
@@ -120,7 +138,8 @@ PYTHON_EXE = resolve_python_exe()
 
 def refresh_path_constants(layout: object | None = None) -> None:
     """Refresh module-level path constants after runtime layout changes."""
-    global PROJECT_ROOT, OUTPUTS_ROOT, MODELS_ROOT, COMFY_ROOT, PYTHON_EXE, BACKEND_ROOT
+    global PROJECT_ROOT, OUTPUTS_ROOT, TEMP_ROOT, PREVIEWS_DIR, COMFY_STAGING_DIR
+    global MODELS_ROOT, COMFY_ROOT, PYTHON_EXE, BACKEND_ROOT
 
     if layout is not None:
         from dreamforge_runtime_paths import RuntimeLayout
@@ -129,6 +148,9 @@ def refresh_path_constants(layout: object | None = None) -> None:
             BACKEND_ROOT = layout.backend_root
             PROJECT_ROOT = layout.data_root
             OUTPUTS_ROOT = layout.outputs_root
+            TEMP_ROOT = layout.temp_root
+            PREVIEWS_DIR = layout.previews_dir
+            COMFY_STAGING_DIR = layout.comfy_staging_dir
             MODELS_ROOT = layout.models_root
             COMFY_ROOT = layout.comfy_root
             if layout.embedded_python_exe.is_file():
@@ -142,6 +164,9 @@ def refresh_path_constants(layout: object | None = None) -> None:
         BACKEND_ROOT = Path(backend_env)
     PROJECT_ROOT = resolve_project_root()
     OUTPUTS_ROOT = resolve_outputs_root()
+    TEMP_ROOT = resolve_temp_root()
+    PREVIEWS_DIR = resolve_previews_dir()
+    COMFY_STAGING_DIR = resolve_comfy_staging_dir()
     MODELS_ROOT = resolve_models_root()
     COMFY_ROOT = resolve_comfy_root()
     PYTHON_EXE = resolve_python_exe()

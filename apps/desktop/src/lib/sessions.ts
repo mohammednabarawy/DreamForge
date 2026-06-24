@@ -46,14 +46,13 @@ function outputStamp() {
 }
 
 export function outputPathForSession(
-  sessionId: string,
+  _sessionId: string,
   kind: "gen" | "edit" | "inpaint" | "upscale" = "gen",
 ): string {
   const stamp = outputStamp();
-  const folder = sessionId === "root" ? "outputs" : `outputs/${sessionId || DEFAULT_SESSION_ID}`;
   const name =
     kind === "gen" ? `gen_${stamp}.png` : `${kind}_${stamp}.png`;
-  return `${folder}/${name}`;
+  return `outputs/${name}`;
 }
 
 export function groupOutputsBySession(outputs: OutputItem[]): OutputSession[] {

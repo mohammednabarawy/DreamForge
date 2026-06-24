@@ -1245,7 +1245,7 @@ export function useDreamForge() {
           (migration.updated_count ?? 0) > 0
         ) {
           setStatus(
-            `Moved ${migration.moved_count ?? 0} generation file(s) into outputs/dreamforge`,
+            `Moved ${migration.moved_count ?? 0} generation file(s) into outputs/`,
           );
         }
       } catch {

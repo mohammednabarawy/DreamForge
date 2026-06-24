@@ -95,6 +95,9 @@ class RuntimeLayout:
     data_root: Path
     models_root: Path
     outputs_root: Path
+    temp_root: Path
+    previews_dir: Path
+    comfy_staging_dir: Path
     comfy_root: Path
     embedded_python_dir: Path
     embedded_python_exe: Path
@@ -430,12 +433,17 @@ def ensure_data_layout(layout: RuntimeLayout) -> dict[str, str]:
         "data_root": str(layout.data_root),
         "models_root": str(layout.models_root),
         "outputs_root": str(layout.outputs_root),
+        "temp_root": str(layout.temp_root),
+        "previews_dir": str(layout.previews_dir),
+        "comfy_staging_dir": str(layout.comfy_staging_dir),
         "comfy_root": str(layout.comfy_root),
         "runtime_dir": str(layout.runtime_dir),
     }
     layout.data_root.mkdir(parents=True, exist_ok=True)
     layout.runtime_dir.mkdir(parents=True, exist_ok=True)
     layout.outputs_root.mkdir(parents=True, exist_ok=True)
+    layout.previews_dir.mkdir(parents=True, exist_ok=True)
+    layout.comfy_staging_dir.mkdir(parents=True, exist_ok=True)
     (layout.outputs_root / "dreamforge" / "logs").mkdir(parents=True, exist_ok=True)
     layout.comfy_root.mkdir(parents=True, exist_ok=True)
     ensure_model_subdirs(layout.models_root)
@@ -463,6 +471,7 @@ def build_runtime_layout(
         else default_comfy_root(data, cfg)
     )
     outputs = data / "outputs"
+    temp = data / "temp"
     runtime_dir = data / RUNTIME_DIR_NAME
     embed_dir = default_embedded_python_dir(install)
     embed_exe = default_embedded_python_exe(install)
@@ -475,6 +484,9 @@ def build_runtime_layout(
         data_root=data,
         models_root=models,
         outputs_root=outputs,
+        temp_root=temp,
+        previews_dir=temp / "previews",
+        comfy_staging_dir=temp / "comfy-staging",
         comfy_root=comfy,
         embedded_python_dir=embed_dir,
         embedded_python_exe=embed_exe,
@@ -541,6 +553,9 @@ def runtime_status() -> dict[str, Any]:
             "data_root": str(layout.data_root),
             "models_root": str(layout.models_root),
             "outputs_root": str(layout.outputs_root),
+            "temp_root": str(layout.temp_root),
+            "previews_dir": str(layout.previews_dir),
+            "comfy_staging_dir": str(layout.comfy_staging_dir),
             "comfy_root": str(layout.comfy_root),
             "embedded_python_dir": str(layout.embedded_python_dir),
             "embedded_python": str(layout.embedded_python_exe),

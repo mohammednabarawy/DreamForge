@@ -571,7 +571,7 @@ export type LegacyOutputMigrationResult = {
   config_updated?: boolean;
 };
 
-/** Move root / legacy comfy outputs into outputs/dreamforge/ and fix manifests. */
+/** Flatten nested legacy outputs into outputs/ root and fix manifests. */
 export async function migrateLegacyOutputs(opts?: { dryRun?: boolean }) {
   return invoke<LegacyOutputMigrationResult>("migrate_legacy_outputs", {
     dryRun: opts?.dryRun ?? false,

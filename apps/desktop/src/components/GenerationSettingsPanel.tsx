@@ -50,7 +50,8 @@ export function isModernModel(label: string): boolean {
     lower.includes("qwen") ||
     lower.includes("hidream") ||
     lower.includes("sd3") ||
-    lower.includes("ideogram")
+    lower.includes("ideogram") ||
+    lower.includes("krea")
   );
 }
 

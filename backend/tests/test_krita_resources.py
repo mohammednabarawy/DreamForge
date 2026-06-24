@@ -15,25 +15,27 @@ from dreamforge_krita_resources import resolve_upscaler
 
 def test_resolve_upscaler_fast_2x():
     info = resolve_upscaler("fast_2x")
-    assert info["filename"] == "4x-UltraSharp.pth"
-    assert info["workflow"] == "ultimate_sd"
+    assert info["filename"] == "OmniSR_X2_DIV2K.safetensors"
+    assert info["workflow"] == "basic"
     assert info["scale"] == 2
 
 
 def test_resolve_upscaler_legacy_2x_alias():
     info = resolve_upscaler("2x")
-    assert info["filename"] == "4x-UltraSharp.pth"
+    assert info["filename"] == "OmniSR_X2_DIV2K.safetensors"
+    assert info["workflow"] == "basic"
 
 
 def test_resolve_upscaler_default_quality():
     info = resolve_upscaler("default")
     assert info["filename"] == "4x-UltraSharp.pth"
+    assert info["workflow"] == "ultimate_sd"
 
 
 def test_resolve_upscaler_pid_flux1_4k():
     info = resolve_upscaler("pid_flux1_4k")
-    assert info["workflow"] == "ultimate_sd"
-    assert info["filename"] == "4x-UltraSharp.pth"
+    assert info["workflow"] == "pid_flux"
+    assert info["filename"] == "pid_flux1_1024_to_4096_4step_mxfp8.safetensors"
 
 
 def test_resolve_upscaler_default_is_pid_flux1_4k():
@@ -124,8 +126,8 @@ def test_check_studio_upscale_requires_only_selected_upscaler(monkeypatch):
 
     fast_2x = check_studio_resources("upscale", upscale_method="fast_2x")
     fast_ids = {m.get("id") for m in fast_2x}
-    assert "upscaler_ultrasharp_legacy" in fast_ids
-    assert "upscaler_omnisr_2x" not in fast_ids
+    assert "upscaler_omnisr_2x" in fast_ids
+    assert "upscaler_ultrasharp_legacy" not in fast_ids
     assert "upscaler_nmkd_4x" not in fast_ids
 
     default = check_studio_resources("upscale", upscale_method="default")
@@ -136,13 +138,14 @@ def test_check_studio_upscale_requires_only_selected_upscaler(monkeypatch):
 
     pid = check_studio_resources("upscale", upscale_method="pid_flux1_4k")
     pid_ids = {m.get("id") for m in pid}
-    assert "upscaler_ultrasharp_legacy" in pid_ids
-    assert "pid_flux1_4k_model" not in pid_ids
+    assert "pid_flux1_4k_model" in pid_ids
+    assert "pid_gemma2_text_encoder" in pid_ids
+    assert "upscaler_ultrasharp_legacy" not in pid_ids
 
     pid_bf16 = check_studio_resources("upscale", upscale_method="pid_flux1_4k_bf16")
     pid_bf16_ids = {m.get("id") for m in pid_bf16}
-    assert "upscaler_ultrasharp_legacy" in pid_bf16_ids
-    assert "pid_flux1_4k_model_bf16" not in pid_bf16_ids
+    assert "pid_flux1_4k_model_bf16" in pid_bf16_ids
+    assert "upscaler_ultrasharp_legacy" not in pid_bf16_ids
 
 
 def test_check_studio_edit_skips_kontext_download_when_present(monkeypatch):

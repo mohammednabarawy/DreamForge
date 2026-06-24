@@ -11,6 +11,7 @@ from pathlib import Path
 MODERN_FAMILIES = frozenset({
     "flux", "flux2", "flux_kontext", "hidream", "hidream_o1",
     "qwen_image", "qwen_image_edit", "sd3", "z_image", "ideogram4",
+    "krea2",
 })
 
 GALLERY_CATEGORIES = ("checkpoints", "diffusion_models", "unet")
@@ -53,6 +54,7 @@ MISALIGNED_PERFORMANCE = {
     "flux_kontext": {"Lcm", "Pony XL", "SD3", "HiDream", "HiDream Full", "Flux"},
     "qwen_image": {"Lcm", "Pony XL", "SD3", "HiDream", "HiDream Full", "Flux"},
     "qwen_image_edit": {"Lcm", "Pony XL", "SD3", "HiDream", "HiDream Full", "Flux"},
+    "krea2": {"Lcm", "Pony XL", "SD3", "HiDream", "HiDream Full", "Flux"},
     "sd3": {"Lcm", "Pony XL", "HiDream", "HiDream Full", "SD3", "Flux"},
     "ideogram4": {"Lcm", "Pony XL", "SD3", "HiDream", "HiDream Full", "Flux"},
 }
@@ -62,6 +64,8 @@ def infer_model_family(name: str) -> str:
     lowered = (name or "").lower()
     if "ideogram" in lowered:
         return "ideogram4"
+    if "krea2" in lowered or "krea-2" in lowered or "krea_2" in lowered:
+        return "krea2"
     if "qwen" in lowered:
         return "qwen_image_edit" if "edit" in lowered else "qwen_image"
     if "hidream" in lowered:
@@ -210,6 +214,7 @@ def family_display_name(family: str) -> str:
         "hunyuan": "Hunyuan",
         "wan": "Wan",
         "ideogram4": "Ideogram 4",
+        "krea2": "Krea 2",
     }
     return labels.get(family, family)
 
@@ -288,6 +293,21 @@ def family_performance_settings(
             "Speed": (20, 3.0, "euler", "simple"),
             "Quality": (32, 3.5, "euler", "simple"),
         }
+    elif family == "krea2":
+        if "turbo" in name:
+            # Distilled 8-step checkpoint: CFG disabled, er_sde / simple.
+            table = {
+                "Lightning": (8, 1.0, "er_sde", "simple"),
+                "Speed": (8, 1.0, "er_sde", "simple"),
+                "Quality": (12, 1.0, "er_sde", "simple"),
+            }
+        else:
+            # RAW (undistilled) base checkpoint: needs CFG and more steps.
+            table = {
+                "Lightning": (28, 3.5, "euler", "simple"),
+                "Speed": (36, 3.5, "euler", "simple"),
+                "Quality": (52, 3.5, "euler", "simple"),
+            }
     else:
         table = {
             "Lightning": (4, 2.0, "dpmpp_sde", "karras"),
@@ -394,6 +414,15 @@ def _custom_sampling_for_family(family: str, model_name: str) -> dict:
             "scheduler": "simple",
             "clip_skip": 1,
         }
+    if family == "krea2":
+        turbo = "turbo" in name
+        return {
+            "custom_steps": 8 if turbo else 28,
+            "cfg": 1.0 if turbo else 3.5,
+            "sampler_name": "er_sde" if turbo else "euler",
+            "scheduler": "simple",
+            "clip_skip": 1,
+        }
     return {
         "custom_steps": 30,
         "cfg": 7.0,
@@ -471,6 +500,14 @@ def auto_generation_settings(
     elif family == "ideogram4":
         cfg, steps = 7.0, 20
         sampler_name, scheduler, clip_skip = "euler", "simple", 1
+        styles = []
+        negative = ""
+    elif family == "krea2":
+        turbo = "turbo" in model_name.lower()
+        cfg = 1.0 if turbo else 3.5
+        steps = 8 if turbo else 28
+        sampler_name = "er_sde" if turbo else "euler"
+        scheduler, clip_skip = "simple", 1
         styles = []
         negative = ""
     elif family == "sd15":

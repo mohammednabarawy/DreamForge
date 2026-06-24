@@ -210,6 +210,110 @@ def comfy_z_image_img2img(args: dict[str, Any]) -> dict[str, Any]:
     return g
 
 
+def _apply_krea2_model_sampling(
+    model_out: list[str | int],
+    g: dict[str, Any],
+    start_id: int,
+    args: dict[str, Any],
+) -> tuple[list[str | int], int]:
+    """Krea 2 flow-matching timestep shift (mu pinned to 1.15 for Turbo)."""
+    shift_value = args.get("krea2_shift")
+    if shift_value is None:
+        shift_value = args.get("shift")
+    if shift_value is None:
+        shift_value = 1.15
+    g[str(start_id)] = _node(
+        "ModelSamplingAuraFlow",
+        {"model": model_out, "shift": float(shift_value)},
+    )
+    return [str(start_id), 0], start_id + 1
+
+
+def comfy_krea2_txt2img(args: dict[str, Any]) -> dict[str, Any]:
+    """Krea 2 OSS txt2img (UNETLoader + CLIPLoader krea2 + Qwen Image VAE)."""
+    ckpt = str(args["ckpt_name"])
+    prompt = str(args.get("prompt", ""))
+    negative = str(args.get("negative", ""))
+    width = int(args.get("width", 1024))
+    height = int(args.get("height", 1024))
+    steps = int(args.get("steps", 8))
+    cfg = float(args.get("cfg", 1.0))
+    sampler = str(args.get("sampler_name", "er_sde"))
+    scheduler = str(args.get("scheduler", "simple"))
+    seed = int(args.get("seed", 0))
+
+    g: dict[str, Any] = {}
+    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_sampled, n = _apply_krea2_model_sampling(model_out, g, n, args)
+    g["2"] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
+    g["3"] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
+    g["4"] = _node("EmptySD3LatentImage", {"width": width, "height": height, "batch_size": 1})
+    g["5"] = _node(
+        "KSampler",
+        {
+            "model": model_sampled,
+            "positive": ["2", 0],
+            "negative": ["3", 0],
+            "latent_image": ["4", 0],
+            "seed": seed,
+            "steps": steps,
+            "cfg": cfg,
+            "sampler_name": sampler,
+            "scheduler": scheduler,
+            "denoise": 1.0,
+        },
+    )
+    g["6"] = _vae_decode_node(args, ["5", 0], vae_out)
+    g["7"] = _node(
+        "SaveImage",
+        {"images": ["6", 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+    )
+    return g
+
+
+def comfy_krea2_img2img(args: dict[str, Any]) -> dict[str, Any]:
+    """Krea 2 OSS img2img — VAEEncode reference + flow-matching sampling."""
+    ckpt = str(args["ckpt_name"])
+    prompt = str(args.get("prompt", ""))
+    negative = str(args.get("negative", ""))
+    image_filename = str(args["image"])
+    steps = int(args.get("steps", 8))
+    cfg = float(args.get("cfg", 1.0))
+    sampler = str(args.get("sampler_name", "er_sde"))
+    scheduler = str(args.get("scheduler", "simple"))
+    seed = int(args.get("seed", 0))
+    denoise = float(args.get("denoise", args.get("edit_strength", 0.6)))
+
+    g: dict[str, Any] = {}
+    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_sampled, n = _apply_krea2_model_sampling(model_out, g, n, args)
+    pixels = _img2img_source_pixels(g, args, image_filename, load_id="2", scale_id="20")
+    g["3"] = _node("VAEEncode", {"pixels": pixels, "vae": vae_out})
+    g["4"] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
+    g["5"] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
+    g["6"] = _node(
+        "KSampler",
+        {
+            "model": model_sampled,
+            "positive": ["4", 0],
+            "negative": ["5", 0],
+            "latent_image": ["3", 0],
+            "seed": seed,
+            "steps": steps,
+            "cfg": cfg,
+            "sampler_name": sampler,
+            "scheduler": scheduler,
+            "denoise": denoise,
+        },
+    )
+    g["7"] = _vae_decode_node(args, ["6", 0], vae_out)
+    g["8"] = _node(
+        "SaveImage",
+        {"images": ["7", 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+    )
+    return g
+
+
 def comfy_kandinsky5_txt2img(args: dict[str, Any]) -> dict[str, Any]:
     """Kandinsky 5 txt2img."""
     ckpt = str(args["ckpt_name"])
@@ -306,6 +410,10 @@ def comfy_feature_extraction(args: dict[str, Any]) -> dict[str, Any]:
         preprocessor = "DepthAnythingV2Preprocessor"
     elif extraction_type == "openpose":
         preprocessor = "OpenposePreprocessor"
+    elif extraction_type == "lineart":
+        preprocessor = "LineArtPreprocessor"
+    elif extraction_type == "scribble":
+        preprocessor = "ScribblePreprocessor"
     elif extraction_type == "hed":
         preprocessor = "HEDPreprocessor"
     elif extraction_type == "pidinet":
@@ -494,6 +602,29 @@ def _add_model_loader(g: dict[str, Any], args: dict[str, Any], *, start_id: int 
             clip_out = [str(i), 0]
             i += 1
             g[str(i)] = _node("VAELoader", {"vae_name": str(args.get("vae") or "ae.safetensors")})
+            vae_out = [str(i), 0]
+            i += 1
+            model_out, clip_out, i = _apply_user_lora_stack(
+                g, model_out, clip_out, args.get("loras"), i, clip_lora=False
+            )
+            model_out, i = _apply_easy_cache(g, model_out, args, i)
+            return model_out, clip_out, vae_out, i
+        if family == "krea2":
+            clip_name = str(
+                args.get("clip")
+                or args.get("clip_qwen")
+                or "qwen3vl_4b_fp8_scaled.safetensors"
+            )
+            if clip_name.endswith(".gguf"):
+                g[str(i)] = _node("CLIPLoaderGGUF", {"clip_name": clip_name, "type": "krea2"})
+            else:
+                g[str(i)] = _node("CLIPLoader", {"clip_name": clip_name, "type": "krea2"})
+            clip_out = [str(i), 0]
+            i += 1
+            g[str(i)] = _node(
+                "VAELoader",
+                {"vae_name": str(args.get("vae") or "qwen_image_vae.safetensors")},
+            )
             vae_out = [str(i), 0]
             i += 1
             model_out, clip_out, i = _apply_user_lora_stack(

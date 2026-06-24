@@ -118,12 +118,14 @@ export function computeGenerateReadiness(args: {
     };
   }
   if (args.settings.edit_type === "inpaint" && hasEditImage && !hasInpaintMask) {
-    return {
-      ok: false,
-      reason: "Create or attach an inpaint mask first",
-      missingCompanions: false,
-      companionBlockedOnly: false,
-    };
+    if (studio === "inpaint" || studio === "edit") {
+      return {
+        ok: false,
+        reason: "Create or attach an inpaint mask first",
+        missingCompanions: false,
+        companionBlockedOnly: false,
+      };
+    }
   }
   if (studio !== "upscale" && !args.modelDependenciesReady) {
     const n = args.missingCompanionCount;

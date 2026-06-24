@@ -55,6 +55,10 @@ COMPANION_SOURCES: dict[str, dict[str, Any]] = {
         "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b_fp4_mixed.safetensors",
         "min_bytes": 3200 * 1024 * 1024,
     },
+    "clip_krea2_qwen3vl_4b": {
+        "url": "https://huggingface.co/Comfy-Org/Qwen3-VL/resolve/main/text_encoders/qwen3vl_4b_fp8_scaled.safetensors",
+        "min_bytes": 5 * 1024 * 1024 * 1024,
+    },
     "clip_z_image_qwen3_4b_fp8": {
         "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b_fp8_mixed.safetensors",
         "min_bytes": 5200 * 1024 * 1024,

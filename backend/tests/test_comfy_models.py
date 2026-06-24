@@ -202,6 +202,51 @@ def test_resolve_z_image_does_not_pick_qwen_image_companions():
     assert args["vae"] == "ae.safetensors"
 
 
+def test_resolve_krea2_split_loaders_from_object_info():
+    """Krea 2 OSS loads via UNETLoader + CLIPLoader(type=krea2) + Qwen Image VAE."""
+    client = SimpleNamespace(
+        object_info=lambda: {
+            "UNETLoader": {
+                "input": {"required": {"unet_name": [["krea2_turbo_fp8_scaled.safetensors"], {}]}}
+            },
+            "CLIPLoader": {
+                "input": {
+                    "required": {
+                        "clip_name": [["qwen3vl_4b_fp8_scaled.safetensors"], {}],
+                    }
+                }
+            },
+            "CLIPLoaderGGUF": {"input": {"required": {"clip_name": [[], {}]}}},
+            "VAELoader": {
+                "input": {"required": {"vae_name": [["qwen_image_vae.safetensors"], {}]}}
+            },
+        }
+    )
+    model = {
+        "category": "diffusion_models",
+        "relative_path": "krea2_turbo_fp8_scaled.safetensors",
+        "name": "krea2_turbo_fp8_scaled.safetensors",
+        "family": "krea2",
+    }
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("dreamforge_comfy_models.companion_file_present", lambda req: True)
+        mp.setattr(
+            "dreamforge_comfy_models._krea2_companion_basenames_on_disk",
+            lambda family: {
+                "clip": "qwen3vl_4b_fp8_scaled.safetensors",
+                "vae": "qwen_image_vae.safetensors",
+            },
+        )
+        mp.setattr("dreamforge_comfy_models.check_model_dependencies", lambda m: [])
+
+        args = resolve_comfy_model_loader_args(client, model=model, model_family="krea2")
+
+    assert args["unet_name"] == "krea2_turbo_fp8_scaled.safetensors"
+    assert args["clip"] == "qwen3vl_4b_fp8_scaled.safetensors"
+    assert args["vae"] == "qwen_image_vae.safetensors"
+
+
 def test_resolve_qwen_gguf_uses_gguf_unet_loader_choices():
     client = SimpleNamespace(
         object_info=lambda: {

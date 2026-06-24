@@ -116,11 +116,23 @@ export type GenerationSettings = {
   inpaint_grow?: number;
   inpaint_feather?: number;
   inpaint_mask_grow_by?: number;
+  /** Named inpaint mode: default / improve_detail / modify_content. */
+  inpaint_intent?: "default" | "improve_detail" | "modify_content";
+  /** Extra prompt for improve_detail / modify_content passes. */
+  inpaint_additional_prompt?: string;
   /** Planner hints for edit-family preservation (UI toggles). */
   preserve_character?: boolean;
   preserve_style?: boolean;
   preserve_text?: boolean;
   inpaint_mask_path?: string;
+  /** What the attached image means for routing (explicit user intent). */
+  reference_role?:
+    | "image_prompt"
+    | "restyle"
+    | "source_edit"
+    | "inpaint"
+    | "upscale"
+    | "structure";
   /** Creative template bundle id. */
   template_id?: string;
   /** Run Ultimate SD Upscale after edit/inpaint completes. */

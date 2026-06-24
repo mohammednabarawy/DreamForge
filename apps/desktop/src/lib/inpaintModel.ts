@@ -1,6 +1,9 @@
 import type { ModelGalleryItem } from "./tauri-api";
 import type { GenerationSettings } from "./tauri-api";
 import { modelBasename, type StudioMode } from "./model-selection";
+import {
+  applyInpaintIntentAtSubmit,
+} from "./inpaintIntent";
 
 /** Canonical Flux Fill FP8 filename when the checkpoint is not yet in the gallery. */
 export const DEFAULT_FLUX_FILL_MODEL = "flux1-fill-dev-fp8.safetensors";
@@ -97,10 +100,9 @@ export function enforceInpaintJobSettings(
   _advancedMode?: boolean,
 ): GenerationSettings {
   if (studioMode !== "inpaint") return settings;
-  const fluxDefault = selectFluxFillModel(gallery) || DEFAULT_FLUX_FILL_MODEL;
+  const merged = applyInpaintIntentAtSubmit(settings, gallery);
   return {
-    ...settings,
-    model: settings.model?.trim() || fluxDefault,
+    ...merged,
     edit_type: "inpaint",
     cn_selection: "Custom...",
     cn_type: "inpaint",

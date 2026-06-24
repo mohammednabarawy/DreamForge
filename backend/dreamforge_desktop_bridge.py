@@ -589,6 +589,111 @@ def cmd_classify_models(_params: dict) -> dict:
     }
 
 
+def cmd_relocate_downloaded_model(params: dict) -> dict:
+    """Classify a freshly downloaded model and move it to its canonical folder.
+
+    Civitai / Discover downloads always land under the user-picked category
+    (usually ``checkpoints/``), but diffusion-only weights (Krea 2, Flux/Qwen
+    UNet-only files, ...) must live under ``diffusion_models/`` or ComfyUI's
+    ``CheckpointLoaderSimple`` rejects them with "Could not detect model type".
+    This reads the safetensors header (high-confidence role+family) and relocates
+    the single file when its canonical folder differs from where it landed.
+
+    Params:
+        path (str): absolute path to the downloaded file (preferred), or
+        category + filename: resolved against MODELS_ROOT.
+    """
+    from pathlib import Path
+
+    from dreamforge_cli_inventory import MODELS_ROOT
+    from modules.model_classifier import classify_model_file
+    from modules.model_organizer import _move_one, _unique_destination
+
+    raw_path = str(params.get("path") or "").strip()
+    if raw_path:
+        source = Path(raw_path)
+    else:
+        category = str(params.get("category") or "checkpoints").strip() or "checkpoints"
+        filename = str(params.get("filename") or "").strip()
+        if not filename:
+            return {"ok": False, "error": "relocate_downloaded_model requires path or filename"}
+        source = Path(MODELS_ROOT) / category / filename
+
+    if not source.is_file():
+        return {"ok": False, "error": f"file not found: {source}"}
+
+    classification = classify_model_file(source)
+    target_dir = classification.target_dir
+    if not target_dir:
+        return {
+            "ok": True,
+            "moved": False,
+            "reason": "no_canonical_target",
+            "family": classification.family,
+            "role": classification.role,
+            "path": str(source),
+        }
+
+    try:
+        current_folder = source.parent.name
+    except (AttributeError, IndexError):
+        current_folder = ""
+
+    # Already in the right place (canonical folder or its legacy alias).
+    from modules.model_classifier import LEGACY_ALIAS
+
+    if current_folder == target_dir or LEGACY_ALIAS.get(current_folder) == target_dir:
+        return {
+            "ok": True,
+            "moved": False,
+            "reason": "already_in_canonical_folder",
+            "family": classification.family,
+            "role": classification.role,
+            "path": str(source),
+        }
+
+    # Only relocate when the verdict is trustworthy (tensor-header derived).
+    if not classification.role_from_header and classification.confidence != "high":
+        return {
+            "ok": True,
+            "moved": False,
+            "reason": f"low_confidence:{classification.confidence}",
+            "family": classification.family,
+            "role": classification.role,
+            "path": str(source),
+        }
+
+    destination = _unique_destination(Path(MODELS_ROOT) / target_dir / source.name)
+    success, error = _move_one(source, destination)
+    if not success:
+        return {"ok": False, "error": error, "path": str(source)}
+
+    # Move sidecar metadata (.json / preview) alongside the weight file.
+    moved_sidecars = []
+    for ext in (".json", ".png", ".jpg", ".jpeg", ".webp", ".txt", ".civitai.info"):
+        sidecar = source.with_suffix(ext)
+        if sidecar.is_file():
+            sidecar_dst = _unique_destination(destination.parent / sidecar.name)
+            ok, _ = _move_one(sidecar, sidecar_dst)
+            if ok:
+                moved_sidecars.append(str(sidecar_dst))
+
+    from dreamforge_model_library_cache import invalidate_model_library_cache
+
+    invalidate_model_library_cache()
+
+    return {
+        "ok": True,
+        "moved": True,
+        "family": classification.family,
+        "role": classification.role,
+        "category": target_dir,
+        "source": str(source),
+        "destination": str(destination),
+        "sidecars": moved_sidecars,
+    }
+
+
 def cmd_organize_models(params: dict) -> dict:
     """Plan (and optionally apply) automatic model organization.
 
@@ -684,6 +789,16 @@ def cmd_check_studio_resources(params: dict) -> dict:
         "missing": missing,
         "ready": len(missing) == 0,
     }
+
+
+def cmd_check_image_prompt_resources(_params: dict) -> dict:
+    from dreamforge_krita_resources import check_image_prompt_resources
+    from dreamforge_companion_download import enrich_missing_dependency
+
+    missing = [
+        enrich_missing_dependency(item) for item in check_image_prompt_resources()
+    ]
+    return {"ok": True, "missing": missing, "ready": len(missing) == 0}
 
 
 def cmd_download_companion_entries(params: dict) -> dict:
@@ -1222,9 +1337,11 @@ HANDLERS = {
     "get_ui_defaults": cmd_get_ui_defaults,
     "classify_models": cmd_classify_models,
     "organize_models": cmd_organize_models,
+    "relocate_downloaded_model": cmd_relocate_downloaded_model,
     "check_model_dependencies": cmd_check_model_dependencies,
     "download_model_companions": cmd_download_model_companions,
     "check_studio_resources": cmd_check_studio_resources,
+    "check_image_prompt_resources": cmd_check_image_prompt_resources,
     "download_companion_entries": cmd_download_companion_entries,
     "verify_companion_entries": cmd_verify_companion_entries,
     "ensure_creative_task_ready": cmd_ensure_creative_task_ready,

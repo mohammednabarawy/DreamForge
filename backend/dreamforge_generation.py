@@ -322,52 +322,16 @@ def _preview_stream_payload(product) -> dict:
     return payload
 
 
-def _routing_model_blob(model: dict | None) -> str:
-    """Stable string for Flux/Kontext routing (matches Krita-style path + caption checks)."""
-    if not model:
-        return ""
-    parts = (
-        model.get("engine_name"),
-        model.get("name"),
-        model.get("relative_path"),
-        model.get("caption"),
-    )
-    return " ".join(str(p) for p in parts if p).lower()
-
-
 def _checkpoint_is_flux_kontext(model: dict | None, model_family: str) -> bool:
-    """True when weights are Flux.1 Kontext edit models (not base Flux img2img)."""
-    fam = (model_family or "").lower()
-    if fam == "flux_kontext":
-        return True
-    blob = _routing_model_blob(model)
-    if fam == "flux" and "kontext" in blob:
-        return True
-    # Split diffusion filenames / UI captions sometimes differ; keep explicit tokens.
-    hints = (
-        "flux-kontext",
-        "flux_kontext",
-        "flux1-kontext",
-        "flux.1-kontext",
-        "kontext-dev",
-        "flux.1 kontext",
-    )
-    return fam.startswith("flux") and any(h in blob for h in hints)
+    from dreamforge_workflow_routing import checkpoint_is_flux_kontext
+
+    return checkpoint_is_flux_kontext(model, model_family)
 
 
 def _checkpoint_is_flux_fill(model: dict | None, model_family: str) -> bool:
-    """True when weights are Flux.1 Fill / inpaint checkpoints."""
-    fam = (model_family or "").lower()
-    if fam == "flux_fill":
-        return True
-    blob = _routing_model_blob(model)
-    fill_hints = (
-        "flux1-fill",
-        "flux-fill",
-        "flux.1-fill",
-        "flux fill",
-    )
-    return any(h in blob for h in fill_hints)
+    from dreamforge_workflow_routing import checkpoint_is_flux_fill
+
+    return checkpoint_is_flux_fill(model, model_family)
 
 
 def _coerce_reference_image_paths(job) -> list[str]:
@@ -538,6 +502,8 @@ def _build_comfy_prompt_graph(
         comfy_qwen_image_edit,
         comfy_qwen_image_edit_plus,
         comfy_qwen_image_txt2img,
+        comfy_krea2_txt2img,
+        comfy_krea2_img2img,
         comfy_flux_img2img,
         comfy_pid_flux_upscale,
         comfy_txt2img_basic,
@@ -701,17 +667,24 @@ def _build_comfy_prompt_graph(
             }
         )
     elif mode == "controlnet":
+        ref_role = str(getattr(job, "reference_role", "") or "").strip().lower()
+        use_structure = ref_role == "structure"
+        control_image = (
+            getattr(job, "control_image", None)
+            or getattr(job, "reference_image", None)
+            or input_filename
+        )
         graph = comfy_controlnet_basic(
             {
                 **common,
-                "image": input_filename,
-                "control_image": getattr(job, "control_image", None) or input_filename,
+                "image": None if use_structure else input_filename,
+                "control_image": control_image,
                 "controlnet_model": getattr(job, "controlnet_model", None)
                 or _first_inventory_model("controlnet", (str(getattr(job, "cn_type", "") or "").lower(),)),
                 "cn_strength": getattr(job, "cn_strength", getattr(job, "controlnet_strength", 1.0)),
                 "cn_start": getattr(job, "cn_start", getattr(job, "controlnet_start", 0.0)),
                 "cn_stop": getattr(job, "cn_stop", getattr(job, "controlnet_end", 1.0)),
-                "denoise": edit_strength if input_filename else 1.0,
+                "denoise": edit_strength if input_filename and not use_structure else 1.0,
             }
         )
     elif mode == "extract" and input_filename:
@@ -740,7 +713,42 @@ def _build_comfy_prompt_graph(
         )
     elif input_filename:
         if mode == "upscale":
-            graph = comfy_ultimate_sd_upscale({**common, "image": input_filename})
+            from dreamforge_krita_resources import resolve_upscaler
+
+            upscale_info = resolve_upscaler(getattr(job, "upscale_method", None))
+            upscale_workflow = str(upscale_info.get("workflow") or "ultimate_sd")
+            if upscale_workflow == "pid_flux":
+                graph = comfy_pid_flux_upscale(
+                    {
+                        **common,
+                        "image": input_filename,
+                        "pid_model": upscale_info["filename"],
+                        "width": int(
+                            settings.get("width")
+                            or getattr(job, "width", None)
+                            or 4096
+                        ),
+                        "height": int(
+                            settings.get("height")
+                            or getattr(job, "height", None)
+                            or 4096
+                        ),
+                        "prompt": prompt,
+                        "negative": negative,
+                    }
+                )
+            elif upscale_workflow == "basic":
+                graph = comfy_upscale_basic(
+                    {
+                        "image": input_filename,
+                        "upscale_model": upscale_info["filename"],
+                        "filename_prefix": str(
+                            common.get("filename_prefix", "DreamForge")
+                        ),
+                    }
+                )
+            else:
+                graph = comfy_ultimate_sd_upscale({**common, "image": input_filename})
         elif mode == "inpaint" and mask_filename:
             graph = comfy_inpaint_basic(
                 {
@@ -815,6 +823,26 @@ def _build_comfy_prompt_graph(
                 # are only valid through the Plus node; do not stitch uploaded Comfy
                 # filenames into a fake local path.
                 graph = comfy_qwen_image_edit({**qwen_common, "image": input_filename})
+        elif (model_family or "").lower() == "krea2":
+            graph = comfy_krea2_img2img(
+                {
+                    "ckpt_name": ckpt_name,
+                    **loader_args,
+                    "image": input_filename,
+                    "prompt": prompt,
+                    "negative": negative,
+                    "width": settings["width"],
+                    "height": settings["height"],
+                    "steps": settings["steps"],
+                    "cfg": settings["cfg"],
+                    "sampler_name": settings["sampler_name"],
+                    "scheduler": settings["scheduler"],
+                    "seed": seed,
+                    "denoise": edit_strength,
+                    "filename_prefix": "DreamForge",
+                    "krea2_shift": settings.get("krea2_shift"),
+                }
+            )
         elif (model_family or "").lower() in ("z-image", "z_image"):
             graph = comfy_z_image_img2img(
                 {
@@ -942,6 +970,23 @@ def _build_comfy_prompt_graph(
                 "scheduler": settings["scheduler"],
                 "seed": seed,
                 "filename_prefix": "DreamForge",
+            }
+        )
+    elif model_family == "krea2":
+        graph = comfy_krea2_txt2img(
+            {
+                **loader_args,
+                "prompt": prompt,
+                "negative": negative,
+                "width": settings["width"],
+                "height": settings["height"],
+                "steps": settings["steps"],
+                "cfg": settings["cfg"],
+                "sampler_name": settings["sampler_name"],
+                "scheduler": settings["scheduler"],
+                "seed": seed,
+                "filename_prefix": "DreamForge",
+                "krea2_shift": settings.get("krea2_shift"),
             }
         )
     elif model_family in ("z-image", "z_image"):
@@ -1199,6 +1244,9 @@ def run_generation(
 
         prepared = prepare_generation_prompts(job, model, prompt, negative, settings)
         prompt = prepared["prompt"]
+        from dreamforge_inpaint_intent import merge_inpaint_additional_prompt
+
+        prompt = merge_inpaint_additional_prompt(prompt, job)
         negative = prepared["negative"]
         settings = dict(settings)
         settings["negative"] = negative
@@ -1308,23 +1356,48 @@ def run_generation(
                     job_id=job_id,
                 )
 
+        from dreamforge_workflow_routing import resolve_comfy_workflow_mode, resolve_input_routing
+
+        route = resolve_input_routing(
+            job,
+            model=model,
+            model_family=model_family,
+            studio_mode=getattr(job, "studio_mode", None),
+        )
         explicit_input_path = getattr(job, "input_image", None)
         upscale_input_path = getattr(job, "upscale_image", None)
-        cn_selection = getattr(job, "cn_selection", None) or "None"
-        cn_type = getattr(job, "cn_type", None) or "None"
-        edit_type = getattr(job, "edit_type", "auto")
-        workflow_mode = getattr(job, "workflow_mode", None) or getattr(job, "comfy_workflow_mode", None)
+        cn_selection = route.cn_selection
+        cn_type = route.cn_type
+        edit_type = route.edit_type
+        workflow_mode = route.workflow_mode
         inpaint_mask_path = getattr(job, "inpaint_mask_path", None)
-        is_inpaint_job = (
-            str(edit_type or "").lower() == "inpaint"
-            or str(cn_type or "").lower() == "inpaint"
-            or bool(inpaint_mask_path)
-        )
+        is_inpaint_job = route.is_inpaint_job
+        inpaint_intent_params: dict = {}
         if is_inpaint_job:
-            edit_type = "inpaint"
-            cn_selection = "Custom..."
-            cn_type = "inpaint"
-            if not _checkpoint_is_flux_fill(model, model_family) and (
+            from dreamforge_inpaint_intent import (
+                inpaint_intent_requires_fill_engine,
+                normalize_inpaint_intent,
+                pick_inpaint_base_model,
+                resolve_inpaint_intent_params,
+            )
+
+            inpaint_intent_params = resolve_inpaint_intent_params(job)
+            intent = normalize_inpaint_intent(getattr(job, "inpaint_intent", None))
+            requires_fill = inpaint_intent_requires_fill_engine(intent)
+            if not requires_fill:
+                base_model = pick_inpaint_base_model(
+                    gallery or [],
+                    current=str(getattr(job, "model", "") or model.get("engine_name") or ""),
+                )
+                if base_model:
+                    try:
+                        from dreamforge_cli_inventory import resolve_generation_model
+
+                        model = resolve_generation_model(base_model)
+                        model_family = str(model.get("family") or "").lower()
+                    except Exception:
+                        pass
+            if requires_fill and not _checkpoint_is_flux_fill(model, model_family) and (
                 model_family or ""
             ).lower() != "ideogram4":
                 from dreamforge_errors import invalid_request
@@ -1338,62 +1411,17 @@ def run_generation(
                 )
                 emit_event(stream_sink, err)
                 return {"status": "error", **err}
-        # Desktop state can briefly carry both input_image and a stale upscale_image
-        # when switching modes. An explicit edit input must win so Kontext/inpaint
-        # jobs do not silently become "upscale the original image".
-        is_upscale_job = bool(upscale_input_path) and not explicit_input_path
-        input_path = explicit_input_path or upscale_input_path
+
+        is_upscale_job = route.is_upscale_job
+        input_path = route.input_path
         style = str(getattr(job, "style", "none") or "none").lower()
 
         if not input_path:
-            if cn_selection == "Custom...":
-                cn_selection = "None"
-                cn_type = "None"
-            if edit_type in ("kontext", "inpaint", "img2img", "qwen_edit"):
-                edit_type = "auto"
             needs_reference = model_family in ("flux_kontext", "qwen_image_edit")
             if needs_reference:
                 err = missing_input_image(job_id=job_id)
                 emit_event(stream_sink, err)
                 return {"status": "error", **err}
-        elif cn_selection == "None" and is_upscale_job:
-            cn_selection = "Custom..."
-            cn_type = "upscale"
-        elif cn_selection == "None" and input_path:
-            # Studio Edit tab uses edit_type "kontext" for generic contextual edit; force Comfy
-            # kontext/ReferenceLatent routing only for real Kontext checkpoints (Krita convention).
-            wm = str(workflow_mode or "").lower()
-            if (
-                _checkpoint_is_flux_kontext(model, model_family)
-                or edit_type == "kontext"
-                or (wm == "generate" and edit_type == "kontext")
-            ):
-                cn_selection = "None"
-                cn_type = "None"
-            elif (
-                (model_family or "").lower() == "qwen_image_edit" or edit_type == "qwen_edit"
-            ) and not is_inpaint_job:
-                cn_selection = "None"
-                cn_type = "None"
-            else:
-                cn_selection = "Custom..."
-                if edit_type not in ("auto", "kontext", "None", None, ""):
-                    cn_type = edit_type
-                else:
-                    cn_type = "img2img"
-        elif input_path and cn_selection == "Custom...":
-            if is_upscale_job:
-                cn_type = "upscale"
-            elif _checkpoint_is_flux_kontext(model, model_family):
-                # cn_type img2img would skip ReferenceLatent and break Flux Kontext UNets.
-                cn_selection = "None"
-                cn_type = "None"
-            elif str(cn_type or "").lower() == "reference":
-                wf = str(workflow_mode or "").lower()
-                if wf not in ("ipadapter", "reference_ipadapter"):
-                    cn_type = "img2img"
-            elif edit_type not in ("auto", "None", None, ""):
-                cn_type = edit_type
 
         if is_upscale_job or str(cn_type or "").lower() == "upscale":
             from dreamforge_model_library_cache import get_cached_model_gallery
@@ -1528,18 +1556,24 @@ def run_generation(
 
         if str(cn_type or "").lower() == "upscale":
             from dreamforge_cli_inventory import check_studio_resources
+            from dreamforge_krita_resources import resolve_upscaler
             from dreamforge_workflow_planner import custom_node_pack_present
 
-            if not custom_node_pack_present("ComfyUI_UltimateSDUpscale"):
-                from dreamforge_errors import missing_custom_node_pack
+            upscale_info = resolve_upscaler(
+                str(getattr(job, "upscale_method", None) or "ultimate_sd_upscale")
+            )
+            upscale_workflow = str(upscale_info.get("workflow") or "ultimate_sd")
+            if upscale_workflow == "ultimate_sd":
+                if not custom_node_pack_present("ComfyUI_UltimateSDUpscale"):
+                    from dreamforge_errors import missing_custom_node_pack
 
-                err = missing_custom_node_pack(
-                    "ComfyUI_UltimateSDUpscale",
-                    job_id=job_id,
-                    nodes=("UltimateSDUpscale",),
-                )
-                emit_event(stream_sink, err)
-                return {"status": "error", **err}
+                    err = missing_custom_node_pack(
+                        "ComfyUI_UltimateSDUpscale",
+                        job_id=job_id,
+                        nodes=("UltimateSDUpscale",),
+                    )
+                    emit_event(stream_sink, err)
+                    return {"status": "error", **err}
             missing_upscale_assets = check_studio_resources(
                 "upscale",
                 upscale_method=str(getattr(job, "upscale_method", None) or "ultimate_sd_upscale"),
@@ -1728,27 +1762,18 @@ def run_generation(
                 emit_event(stream_sink, err)
                 return {"status": "error", **err}
 
-        comfy_mode = _comfy_workflow_mode(
-            input_filename=input_filename,
-            cn_type=str(cn_type or ""),
+        comfy_mode = resolve_comfy_workflow_mode(
+            route,
             model=model,
             model_family=model_family,
-            workflow_mode=str(workflow_mode or "") or None,
-            edit_type=str(edit_type or "") or None,
+            input_filename=input_filename,
         )
         if comfy_mode == "ipadapter":
             from dreamforge_workflow_planner import custom_node_pack_present
 
+            ipadapter_unavailable = False
             if not custom_node_pack_present("ComfyUI_IPAdapter_plus"):
-                from dreamforge_errors import missing_custom_node_pack
-
-                err = missing_custom_node_pack(
-                    "ComfyUI_IPAdapter_plus",
-                    job_id=job_id,
-                    nodes=("IPAdapterModelLoader", "IPAdapterAdvanced"),
-                )
-                emit_event(stream_sink, err)
-                return {"status": "error", **err}
+                ipadapter_unavailable = True
             missing_ipadapter_models: list[str] = []
             if not (getattr(job, "ipadapter_model", None) or _first_inventory_model("ipadapter")):
                 missing_ipadapter_models.append("ipadapter_model")
@@ -1759,6 +1784,55 @@ def run_generation(
             ):
                 missing_ipadapter_models.append("clip_vision")
             if missing_ipadapter_models:
+                ipadapter_unavailable = True
+
+            from dreamforge_workflow_routing import (
+                coerce_image_prompt_to_restyle_route,
+                should_coerce_image_prompt_to_restyle,
+            )
+
+            if ipadapter_unavailable and should_coerce_image_prompt_to_restyle(
+                route,
+                job,
+                studio_mode=getattr(job, "studio_mode", None),
+            ):
+                route = coerce_image_prompt_to_restyle_route(route, job)
+                try:
+                    job.reference_role = "restyle"
+                    job.workflow_mode = "generate"
+                except AttributeError:
+                    pass
+                cn_selection = route.cn_selection
+                cn_type = route.cn_type
+                edit_type = route.edit_type
+                workflow_mode = route.workflow_mode
+                input_path = route.input_path
+                for message in route.warnings:
+                    emit_event(
+                        stream_sink,
+                        {
+                            "type": "warning",
+                            "message": message,
+                            "job_id": job_id,
+                        },
+                    )
+                comfy_mode = resolve_comfy_workflow_mode(
+                    route,
+                    model=model,
+                    model_family=model_family,
+                    input_filename=input_filename,
+                )
+            elif not custom_node_pack_present("ComfyUI_IPAdapter_plus"):
+                from dreamforge_errors import missing_custom_node_pack
+
+                err = missing_custom_node_pack(
+                    "ComfyUI_IPAdapter_plus",
+                    job_id=job_id,
+                    nodes=("IPAdapterModelLoader", "IPAdapterAdvanced"),
+                )
+                emit_event(stream_sink, err)
+                return {"status": "error", **err}
+            elif missing_ipadapter_models:
                 from dreamforge_workflow_planner import _recommended_actions
 
                 missing = [
@@ -1850,14 +1924,34 @@ def run_generation(
                     },
                 )
         if comfy_mode == "upscale":
+            from dreamforge_krita_resources import resolve_upscaler
+
+            upscale_info = resolve_upscaler(
+                str(getattr(job, "upscale_method", None) or "ultimate_sd_upscale")
+            )
+            upscale_workflow = str(upscale_info.get("workflow") or "ultimate_sd")
             try:
                 object_info = client.object_info(timeout_s=30.0)
             except Exception:
                 object_info = {}
 
-            required_nodes = {"UltimateSDUpscale", "UpscaleModelLoader"}
+            if upscale_workflow == "pid_flux":
+                required_nodes = {
+                    "PiDConditioning",
+                    "UNETLoader",
+                    "CLIPLoader",
+                    "SamplerCustom",
+                }
+                pack_label = "PixelDiT / PiD upscale"
+            elif upscale_workflow == "basic":
+                required_nodes = {"UpscaleModelLoader", "ImageUpscaleWithModel"}
+                pack_label = "ComfyUI core upscale"
+            else:
+                required_nodes = {"UltimateSDUpscale", "UpscaleModelLoader"}
+                pack_label = "ComfyUI_UltimateSDUpscale"
+
             missing_nodes = sorted(node for node in required_nodes if node not in object_info)
-            if missing_nodes:
+            if missing_nodes and upscale_workflow == "ultimate_sd":
                 try:
                     from dreamforge_comfy_install import ensure_dreamforge_comfy_backend
                     from dreamforge_comfy_server import restart_managed_comfy_server
@@ -1881,7 +1975,7 @@ def run_generation(
                     pass
             if missing_nodes:
                 err = missing_custom_node_pack(
-                    "ComfyUI_UltimateSDUpscale",
+                    pack_label,
                     job_id=job_id,
                     nodes=missing_nodes,
                 )

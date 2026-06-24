@@ -3,14 +3,15 @@ import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import type { GenerationSettings } from "../lib/tauri-api";
 import type { StudioMode } from "../lib/model-selection";
+import { easyRouteSummary } from "../lib/easyModeRouting";
 import {
   isSimpleExperience,
   studioModesForExperience,
   type UiExperience,
 } from "../lib/experienceUi";
+import { sanitizeSettingsForStudioMode } from "../lib/routeResolution";
 import { detectAgentPromptHint } from "../lib/parseAgentPrompt";
 import {
-  activeReferenceMode,
   handleImagePathDragOver,
   readImagePathFromDrop,
   type ReferenceImageMode,
@@ -110,7 +111,7 @@ export function PromptBar({
   const dropReferenceMode = (): ReferenceImageMode => {
     if (studioMode === "inpaint") return "inpaint";
     if (studioMode === "upscale") return "upscale";
-    return activeReferenceMode(settings);
+    return "reference";
   };
   const showSimpleBatch =
     simpleExperience &&
@@ -177,9 +178,16 @@ export function PromptBar({
   const activeRouteLabel =
     studioMode === "agent" && agentPlannedMode
       ? `Planned ${agentPlannedMode}: ${activeModelLabel}`
-      : studioMode === "generate"
-        ? activeModelLabel
-        : `Selected: ${activeModelLabel}`;
+      : simpleExperience
+        ? easyRouteSummary(
+            settings,
+            studioMode,
+            referenceModelFamily,
+            activeModelLabel,
+          )
+        : studioMode === "generate"
+          ? activeModelLabel
+          : `Selected: ${activeModelLabel}`;
   const modes = studioModesForExperience(experience);
 
   const onPromptChange = (value: string) => {
@@ -289,16 +297,13 @@ export function PromptBar({
           </p>
         </div>
         ) : (
-        <div className="hidden min-h-8 min-w-0 flex-1 items-center px-2 text-[10px] text-dfui-muted md:flex">
-          {studioMode === "generate"
-            ? "Describe what you want to create"
-            : studioMode === "edit"
-              ? "Describe what should change"
-              : studioMode === "inpaint"
-                ? "Paint a region, then describe the fix"
-                : studioMode === "extract"
-                  ? "Extract structure, depth, or pose from image"
-                  : "Enhance resolution of your image"}
+        <div className="hidden min-h-8 min-w-0 flex-1 items-center px-2 md:flex">
+          <p
+            className="truncate text-[10px] font-medium text-df-blue/90"
+            title={activeRouteLabel}
+          >
+            {activeRouteLabel}
+          </p>
         </div>
         )}
         <div className="hidden shrink-0 items-center justify-end text-[10px] text-dfui-muted 2xl:flex">
@@ -318,6 +323,14 @@ export function PromptBar({
             onClear={onClearReferenceImage}
             onOpenInpaintMask={onOpenInpaintMask}
             onEditStrengthChange={(edit_strength) => onChange({ edit_strength })}
+            onPatchSettings={(patch) =>
+              onChange(
+                sanitizeSettingsForStudioMode(studioMode, {
+                  ...settings,
+                  ...patch,
+                }),
+              )
+            }
             disabled={generating}
             compact
           />

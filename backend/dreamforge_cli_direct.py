@@ -702,13 +702,9 @@ def build_plan(base_args, data=None):
             "warnings": [f"Workflow blueprint planning failed: {exc}"],
         }
     mode = _plan_mode_for_job(job)
-    clear_fields: set[str] = set()
-    if mode == "edit":
-        clear_fields.update({"upscale_image", "upscale_method", "inpaint_mask_path"})
-    elif mode == "inpaint":
-        clear_fields.update({"upscale_image", "upscale_method"})
-    elif mode == "upscale":
-        clear_fields.update({"input_image", "inpaint_mask_path"})
+    from dreamforge_workflow_routing import plan_clear_fields_for_mode
+
+    clear_fields = plan_clear_fields_for_mode(mode)
     proposed_patch = {
         "model": model.get("engine_name") or model.get("name"),
         "style": getattr(job, "style", None),
@@ -738,6 +734,7 @@ def build_plan(base_args, data=None):
         "cn_selection": getattr(job, "cn_selection", None),
         "cn_type": getattr(job, "cn_type", None),
         "workflow_mode": getattr(job, "workflow_mode", None),
+        "reference_role": getattr(job, "reference_role", None),
     }
     for field in clear_fields:
         proposed_patch[field] = None
@@ -795,14 +792,9 @@ def build_plan(base_args, data=None):
 
 
 def _plan_mode_for_job(job) -> str:
-    edit_type = str(getattr(job, "edit_type", "") or "").lower()
-    if getattr(job, "inpaint_mask_path", None) or edit_type == "inpaint":
-        return "inpaint"
-    if getattr(job, "input_image", None):
-        return "edit"
-    if getattr(job, "upscale_image", None):
-        return "upscale"
-    return "generate"
+    from dreamforge_workflow_routing import plan_mode_for_job
+
+    return plan_mode_for_job(job)
 
 
 def _load_input_image(path):

@@ -20,6 +20,7 @@ from dreamforge_comfy_workflows import (
     comfy_area_composition,
     comfy_controlnet_basic,
     comfy_face_detail_basic,
+    comfy_feature_extraction,
     comfy_flux_dev_txt2img,
     comfy_flux_kontext_edit,
     comfy_hires_two_pass,
@@ -342,6 +343,20 @@ def test_hires_workflow_uses_latent_upscale_second_pass():
     assert any(node.get("class_type") == "LatentUpscale" for node in graph.values())
 
 
+def test_feature_extraction_lineart_uses_lineart_preprocessor():
+    graph = comfy_feature_extraction(
+        {"image": "input.png", "extraction_type": "lineart"}
+    )
+    assert graph["2"]["class_type"] == "LineArtPreprocessor"
+
+
+def test_feature_extraction_scribble_uses_scribble_preprocessor():
+    graph = comfy_feature_extraction(
+        {"image": "input.png", "extraction_type": "scribble"}
+    )
+    assert graph["2"]["class_type"] == "ScribblePreprocessor"
+
+
 def test_face_detail_workflow_uses_impact_nodes():
     graph = comfy_face_detail_basic(
         {
@@ -489,6 +504,34 @@ def test_z_image_txt2img_uses_lumina2_clip_and_auraflow():
     )
     clip = next(n for n in graph.values() if n.get("class_type") == "CLIPLoader")
     assert clip["inputs"]["type"] == "lumina2"
+    assert any(n.get("class_type") == "ModelSamplingAuraFlow" for n in graph.values())
+    assert graph["4"]["class_type"] == "EmptySD3LatentImage"
+
+
+def test_krea2_txt2img_uses_krea2_clip_and_auraflow():
+    from dreamforge_comfy_workflows import comfy_krea2_txt2img
+
+    graph = comfy_krea2_txt2img(
+        {
+            "ckpt_name": "krea2_turbo_fp8_scaled.safetensors",
+            "relative_path": "krea2_turbo_fp8_scaled.safetensors",
+            "category": "diffusion_models",
+            "family": "krea2",
+            "clip": "qwen3vl_4b_fp8_scaled.safetensors",
+            "vae": "qwen_image_vae.safetensors",
+            "prompt": "a portrait",
+            "negative": "",
+            "width": 1024,
+            "height": 1024,
+        }
+    )
+    clip = next(n for n in graph.values() if n.get("class_type") == "CLIPLoader")
+    assert clip["inputs"]["type"] == "krea2"
+    assert clip["inputs"]["clip_name"] == "qwen3vl_4b_fp8_scaled.safetensors"
+    unet = next(n for n in graph.values() if n.get("class_type") == "UNETLoader")
+    assert unet["inputs"]["unet_name"] == "krea2_turbo_fp8_scaled.safetensors"
+    vae = next(n for n in graph.values() if n.get("class_type") == "VAELoader")
+    assert vae["inputs"]["vae_name"] == "qwen_image_vae.safetensors"
     assert any(n.get("class_type") == "ModelSamplingAuraFlow" for n in graph.values())
     assert graph["4"]["class_type"] == "EmptySD3LatentImage"
 

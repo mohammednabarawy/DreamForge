@@ -12,6 +12,7 @@ import {
   onDownloadProgress,
   type DownloadProgressPayload,
 } from "../lib/tauri-api";
+import { relocateDownloadedModel } from "../lib/studioBridge";
 
 type Props = {
   civitaiApiKey: string;
@@ -86,7 +87,16 @@ export function MarketplaceTab({
     }).then((u) => unsubs.push(u));
     void onDownloadComplete((p) => {
       setDownloads((prev) => ({ ...prev, [p.filename]: p }));
-      onRefreshInventory();
+      // Diffusion-only weights (Krea 2, Flux/Qwen UNet files) download into
+      // checkpoints/ but must live under diffusion_models/. Re-classify and
+      // relocate before refreshing the inventory so they load correctly.
+      void relocateDownloadedModel({
+        path: p.path,
+        category: p.category,
+        filename: p.filename,
+      })
+        .catch(() => undefined)
+        .finally(() => onRefreshInventory());
     }).then((u) => unsubs.push(u));
     return () => unsubs.forEach((u) => u());
   }, [onRefreshInventory]);

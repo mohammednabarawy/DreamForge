@@ -90,6 +90,37 @@ def test_classifier_detects_flux_unet_only(tmp_path: Path) -> None:
     assert verdict.target_dir == "diffusion_models"
 
 
+def test_classifier_detects_krea2_diffusion_from_header(tmp_path: Path) -> None:
+    target = tmp_path / "krea2TurboFP8_krea2TURBO.safetensors"
+    _write_safetensors(
+        target,
+        [
+            "img_in.weight",
+            "txt_in.weight",
+            "time_in.in_layer.weight",
+            "blocks.0.attn.qkv.weight",
+            "final_layer.linear.weight",
+        ],
+    )
+    verdict = classify_model_file(target)
+    assert verdict.family == "krea2"
+    assert verdict.role == "diffusion_model"
+    assert verdict.target_dir == "diffusion_models"
+    assert verdict.confidence == "high"
+    assert verdict.role_from_header is True
+
+
+def test_classifier_routes_krea2_filename_only_to_diffusion(tmp_path: Path) -> None:
+    # Unparseable / unknown tensor keys but a Krea 2 filename: must never land
+    # in checkpoints/ (CheckpointLoaderSimple cannot read diffusion-only weights).
+    target = tmp_path / "krea2_turbo_fp8_scaled.safetensors"
+    _write_safetensors(target, ["unknown.tensor.key"])
+    verdict = classify_model_file(target)
+    assert verdict.family == "krea2"
+    assert verdict.role == "diffusion_model"
+    assert verdict.target_dir == "diffusion_models"
+
+
 def test_classifier_detects_flux_kontext_from_filename(tmp_path: Path) -> None:
     target = tmp_path / "flux1-kontext-dev.safetensors"
     _write_safetensors(

@@ -445,20 +445,79 @@ def studio_edit_flux_unet_present(models_root: Path | None = None) -> bool:
     return False
 
 
+PID_FLUX_COMPANION_IDS: dict[str, list[str]] = {
+    "pid_flux1_4k": [
+        "pid_flux1_4k_model",
+        "pid_gemma2_text_encoder",
+        "pid_flux_vae_bf16",
+    ],
+    "pid_flux1_4k_mxfp8": [
+        "pid_flux1_4k_model",
+        "pid_gemma2_text_encoder",
+        "pid_flux_vae_bf16",
+    ],
+    "pid_flux1_4k_bf16": [
+        "pid_flux1_4k_model_bf16",
+        "pid_gemma2_text_encoder_bf16",
+        "pid_flux_vae_bf16",
+    ],
+}
+
+_BASIC_UPSCALE_METHODS = frozenset(
+    {"fast_2x", "fast_3x", "fast_4x", "quality", "sharp", "2x", "4x"}
+)
+
+
+def _catalog_upscaler_entry(key: str) -> dict[str, Any] | None:
+    if key in UPSCALER_CATALOG:
+        return dict(UPSCALER_CATALOG[key])
+    lowered = key.lower()
+    for catalog_key, entry in UPSCALER_CATALOG.items():
+        if catalog_key.lower() == lowered:
+            return dict(entry)
+    return None
+
+
 def resolve_upscaler(method: str | None) -> dict[str, Any]:
     """Map studio upscale_method / cn_upscale to a concrete upscaler filename."""
     key = (method or "ultimate_sd_upscale").strip()
     # Direct filename passthrough (gallery model or pathdb key)
     if key.endswith((".pth", ".safetensors", ".pt")):
-        return {
-            **UPSCALER_CATALOG["ultimate_sd_upscale"],
-            "method": "ultimate_sd_upscale",
-            "filename": key,
-            "label": f"Ultimate SD Upscale ({Path(key).name})",
-        }
-    entry = dict(UPSCALER_CATALOG["ultimate_sd_upscale"])
-    entry["method"] = "ultimate_sd_upscale"
-    entry["workflow"] = "ultimate_sd"
+        basename = Path(key).name
+        lowered = key.lower()
+        if "pid_flux" in lowered or "pixeldit" in lowered:
+            base = dict(UPSCALER_CATALOG["pid_flux1_4k_mxfp8"])
+            base["method"] = key
+            base["filename"] = basename
+            base["workflow"] = "pid_flux"
+            base["label"] = f"PiD / PixelDiT 4K ({basename})"
+            return base
+        entry = dict(UPSCALER_CATALOG["ultimate_sd_upscale"])
+        entry["method"] = key
+        entry["filename"] = basename
+        entry["workflow"] = "ultimate_sd"
+        entry["label"] = f"Ultimate SD Upscale ({basename})"
+        return entry
+
+    entry = _catalog_upscaler_entry(key)
+    if entry is None:
+        fallback = dict(UPSCALER_CATALOG["ultimate_sd_upscale"])
+        fallback["method"] = "ultimate_sd_upscale"
+        fallback["workflow"] = "ultimate_sd"
+        return fallback
+
+    catalog_key = key
+    if catalog_key not in UPSCALER_CATALOG:
+        for catalog_key_candidate in UPSCALER_CATALOG:
+            if catalog_key_candidate.lower() == key.lower():
+                catalog_key = catalog_key_candidate
+                break
+    entry["method"] = catalog_key
+    if "workflow" not in entry:
+        if catalog_key in _BASIC_UPSCALE_METHODS:
+            entry["workflow"] = "basic"
+        else:
+            entry["workflow"] = "ultimate_sd"
     return entry
 
 
@@ -528,6 +587,12 @@ def _resource_ids_for_studio_mode(
     key = (mode or "").lower()
     if key == "upscale":
         info = resolve_upscaler(upscale_method)
+        if info.get("workflow") == "pid_flux":
+            method_key = str(info.get("method") or "pid_flux1_4k").lower()
+            return list(
+                PID_FLUX_COMPANION_IDS.get(method_key)
+                or PID_FLUX_COMPANION_IDS["pid_flux1_4k"]
+            )
         filename = info["filename"]
         ids: list[str] = []
         for rid, src in STUDIO_RESOURCE_SOURCES.items():
@@ -556,6 +621,23 @@ def check_studio_resources(studio_mode: str, *, upscale_method: str | None = Non
         missing.append(entry)
     if mode in STUDIO_MODE_DEFAULTS:
         _merge_mode_companion_missing(missing, mode)
+    return missing
+
+
+def check_image_prompt_resources() -> list[dict]:
+    """Missing IP-Adapter + CLIP-Vision assets for Create image-prompt guidance."""
+    missing: list[dict] = []
+    for resource_id in ("ipadapter_sdxl_vith", "clip_vision_ipadapter_vith"):
+        entry = STUDIO_RESOURCE_SOURCES.get(resource_id)
+        if not entry:
+            continue
+        item = {"id": resource_id, **entry}
+        if companion_file_present(
+            {"id": resource_id, "relative": entry["relative"]},
+            min_bytes=int(entry.get("min_bytes", 1024 * 1024)),
+        ):
+            continue
+        missing.append(item)
     return missing
 
 

@@ -35,6 +35,8 @@ export function FeatureExtractionPanel({ settings, onChange }: Props) {
             <option value="depth">Depth Map</option>
             <option value="openpose">OpenPose (Pose)</option>
             <option value="lineart">Lineart</option>
+            <option value="scribble">Scribble</option>
+            <option value="hed">HED</option>
           </select>
         </label>
 

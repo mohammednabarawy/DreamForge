@@ -476,6 +476,18 @@ MODEL_DEPENDENCIES = {
             "note": "AE VAE for Z-Image Turbo.",
         },
     ],
+    "krea2": [
+        {
+            "id": "clip_krea2_qwen3vl_4b",
+            "relative": "text_encoders/qwen3vl_4b_fp8_scaled.safetensors",
+            "note": "Required Qwen3-VL-4B text encoder for Krea 2 (CLIP type krea2).",
+        },
+        {
+            "id": "vae_qwen_image",
+            "relative": "vae/qwen_image_vae.safetensors",
+            "note": "Qwen Image VAE used by Krea 2 decode.",
+        },
+    ],
 }
 
 

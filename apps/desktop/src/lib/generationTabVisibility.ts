@@ -51,7 +51,8 @@ export function buildGenerationTabContext(input: {
     activeModelLower.includes("qwen") ||
     activeModelLower.includes("hidream") ||
     activeModelLower.includes("sd3") ||
-    activeModelLower.includes("ideogram");
+    activeModelLower.includes("ideogram") ||
+    activeModelLower.includes("krea");
 
   return {
     studioMode,
@@ -98,8 +99,10 @@ export function generationSectionVisible(
       return !ctx.isUpscale;
     case "customSampling":
       return Boolean(
-        (ctx.isGenerateFamily && ctx.showGenerateLikeSettings) ||
-          (ctx.advancedMode && (ctx.isEdit || ctx.isInpaint)),
+        ctx.advancedMode &&
+          ((ctx.isGenerateFamily && ctx.showGenerateLikeSettings) ||
+            ctx.isEdit ||
+            ctx.isInpaint),
       );
     case "controlNet":
       return ctx.isGenerateFamily && !ctx.isModernModel && Boolean(ctx.advancedMode);
@@ -161,7 +164,8 @@ export function inspectorTabsForMode(input: {
 
 export const MODE_AUTO_SUMMARY: Partial<Record<string, string>> = {
   generate:
-    "Auto: model route · performance preset · VRAM detect · seed (random default)",
-  edit: "Auto: Flux Kontext route · edit graph · performance preset · VRAM detect",
-  inpaint: "Auto: Flux Fill route · inpaint graph · mask from canvas · performance preset",
+    "Auto: best create route · performance preset · VRAM detect · optional reference guidance",
+  edit: "Auto: best edit model · describe the change · performance preset",
+  inpaint: "Auto: Flux Fill inpaint · mask from canvas · performance preset",
+  upscale: "Auto: SDXL upscale route · tile settings tuned for quality",
 };

@@ -2,7 +2,14 @@ import { ImagePlus, Maximize2, Paintbrush, SlidersHorizontal, Wand2, X } from "l
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { readImagePreviewQueued } from "../lib/preview-queue";
+import { routeBadgeLabel } from "../lib/routeResolution";
 import {
+  inferReferenceRole,
+  proReferenceRolesForStudio,
+  type ReferenceRole,
+} from "../lib/referenceRole";
+import {
+  buildReferenceRolePatch,
   REFERENCE_IMAGE_MODES,
   activeReferenceMode,
   activeReferencePath,
@@ -29,6 +36,7 @@ type Props = {
   onClear: () => void;
   onOpenInpaintMask?: () => void;
   onEditStrengthChange?: (value: number) => void;
+  onPatchSettings?: (patch: Partial<GenerationSettings>) => void;
   disabled?: boolean;
   compact?: boolean;
 };
@@ -44,19 +52,20 @@ export function ReferenceImageControl({
   onClear,
   onOpenInpaintMask,
   onEditStrengthChange,
+  onPatchSettings,
   disabled = false,
   compact = false,
 }: Props) {
   const [dragOver, setDragOver] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [mode, setMode] = useState<ReferenceImageMode>(() =>
-    activeReferenceMode(settings),
+    activeReferenceMode(settings, studioMode),
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
   const extraInputRef = useRef<HTMLInputElement>(null);
 
-  const attachedPath = activeReferencePath(settings);
-  const attachedMode = activeReferenceMode(settings);
+  const attachedPath = activeReferencePath(settings, studioMode);
+  const attachedMode = activeReferenceMode(settings, studioMode);
   const extraReferences = (settings.reference_images ?? []).filter(
     (path) => path.trim() && path.trim() !== attachedPath,
   );
@@ -71,6 +80,26 @@ export function ReferenceImageControl({
     Boolean(onEditStrengthChange);
   const editStrength = effectiveReferenceEditStrength(settings, modelFamily);
   const editStrengthDefault = defaultReferenceEditStrength(settings, modelFamily);
+  const routeBadge = routeBadgeLabel(settings, studioMode, modelFamily);
+  const activeReferenceRole = inferReferenceRole(settings, studioMode);
+  const proReferenceRoles = proReferenceRolesForStudio(studioMode);
+  const showProReferenceRoles =
+    !simpleAttach && attachedPath && onPatchSettings && proReferenceRoles.length > 1;
+
+  const applyReferenceRole = (role: ReferenceRole) => {
+    if (!attachedPath || !onPatchSettings) return;
+    const patch = buildReferenceRolePatch(
+      role,
+      attachedPath,
+      () => settings.output ?? "",
+      {
+        studioMode,
+        modelFamily,
+        currentModel: settings.model,
+      },
+    );
+    onPatchSettings(patch);
+  };
 
   useEffect(() => {
     if (attachedPath) {
@@ -101,6 +130,10 @@ export function ReferenceImageControl({
     if (studioMode === "upscale") return "upscale";
     return "reference";
   };
+
+  useEffect(() => {
+    setMode(taskReferenceMode());
+  }, [studioMode]);
 
   const attachPath = (path: string, nextMode = simpleAttach ? taskReferenceMode() : mode) => {
     onAttach(path, nextMode);
@@ -229,6 +262,9 @@ export function ReferenceImageControl({
                 ? "Drop or pick the image for this task"
                 : "Reference, inpaint source, or upscale target"}
             </p>
+            {routeBadge ? (
+              <p className="mt-0.5 text-[9px] font-medium text-df-blue/90">{routeBadge}</p>
+            ) : null}
           </div>
           {attachedPath ? (
             <button
@@ -271,6 +307,38 @@ export function ReferenceImageControl({
             );
           })}
         </div>
+        ) : null}
+
+        {showProReferenceRoles ? (
+          <div
+            className={`mt-1.5 grid gap-1 rounded-md border border-dfui-border/45 bg-dfui-bg/40 p-0.5 ${
+              proReferenceRoles.length >= 3
+                ? "grid-cols-3"
+                : proReferenceRoles.length > 1
+                  ? "grid-cols-2"
+                  : "grid-cols-1"
+            }`}
+          >
+            {proReferenceRoles.map((item) => {
+              const active = activeReferenceRole === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => applyReferenceRole(item.id)}
+                  title={item.label}
+                  className={`min-h-7 rounded px-1.5 text-[9px] font-medium transition ${
+                    active
+                      ? "bg-df-blue/20 text-df-blue"
+                      : "text-dfui-muted hover:bg-dfui-surface-hover hover:text-dfui-fg"
+                  }`}
+                >
+                  {item.short}
+                </button>
+              );
+            })}
+          </div>
         ) : null}
       </div>
 

@@ -399,6 +399,39 @@ export async function checkStudioResources(
   });
 }
 
+export async function checkImagePromptResources() {
+  return bridgeInvoke<{
+    missing: StudioResourceItem[];
+    ready: boolean;
+  }>("check_image_prompt_resources", {});
+}
+
+/**
+ * Re-classify a just-downloaded model and move it to its canonical ComfyUI
+ * folder (e.g. diffusion-only Krea 2 / Flux UNet files land in checkpoints/ but
+ * must live under diffusion_models/). Safe no-op when already correct.
+ */
+export async function relocateDownloadedModel(args: {
+  path?: string;
+  category?: string;
+  filename?: string;
+}) {
+  return bridgeInvoke<{
+    ok: boolean;
+    moved?: boolean;
+    family?: string;
+    role?: string;
+    category?: string;
+    destination?: string;
+    reason?: string;
+    error?: string;
+  }>("relocate_downloaded_model", {
+    path: args.path ?? null,
+    category: args.category ?? null,
+    filename: args.filename ?? null,
+  });
+}
+
 export async function downloadStudioResources(
   studioMode: string,
   upscaleMethod?: string,

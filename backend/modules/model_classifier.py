@@ -7,8 +7,8 @@ Reads the safetensors header (no tensor data, no GPU) and decides:
                  controlnet / clip_vision / upscale_model / embedding / unknown)
   * **family** – which architecture family
                  (sdxl / sd15 / sd3 / flux / flux_kontext / flux2 / hidream /
-                  hidream_o1 / qwen_image / qwen_image_edit / wan / z_image /
-                  hunyuan / unknown)
+                  hidream_o1 / qwen_image / qwen_image_edit / krea2 / wan /
+                  z_image / hunyuan / unknown)
   * **target_dir** – the canonical ComfyUI subfolder
 
 Detection priority is:
@@ -208,9 +208,28 @@ def _family_from_keys(keys: Sequence[str], filename_tokens: set[str]) -> tuple[s
     """
     reasons: list[str] = []
 
+    krea_hint = any("krea" in token for token in filename_tokens)
+
     if _has_key_contains(keys, "double_stream_modulation_img.lin.weight"):
         reasons.append("tensor 'double_stream_modulation_img.lin.weight' is Flux 2")
         return "flux2", reasons
+
+    # Krea 2 OSS – single-stream MMDiT (SingleStreamDiT). Detected via the
+    # filename ('krea2' / 'krea-2') paired with a diffusion-transformer
+    # signature so it never collides with Flux/Qwen MMDiT branches below.
+    if krea_hint and _has_key_contains(
+        keys,
+        "blocks.",
+        "transformer_blocks.",
+        "single_blocks.",
+        "double_blocks.",
+        "img_in.",
+        "txt_in.",
+        "time_in.",
+        "final_layer.",
+    ):
+        reasons.append("Krea 2 single-stream DiT (filename + transformer blocks)")
+        return "krea2", reasons
 
     if _has_key_contains(
         keys,
@@ -300,6 +319,9 @@ def _family_from_filename(name: str) -> tuple[str, list[str]]:
     """Lowest-confidence fallback (used for GGUF / ckpt / pt files)."""
     lowered = (name or "").lower()
     reasons: list[str] = []
+    if "krea2" in lowered or "krea-2" in lowered or "krea_2" in lowered:
+        reasons.append("filename hints 'krea2'")
+        return "krea2", reasons
     if "qwen" in lowered:
         family = "qwen_image_edit" if "edit" in lowered else "qwen_image"
         reasons.append(f"filename hints '{family}'")
@@ -708,7 +730,7 @@ def classify_model_file(path: Path) -> ModelClassification:
         and role in ("checkpoint", "unknown")
         and family in {
             "flux", "flux_kontext", "flux2",
-            "qwen_image", "qwen_image_edit",
+            "qwen_image", "qwen_image_edit", "krea2",
             "hidream", "wan", "z_image", "hunyuan", "sd3",
         }
     ):
@@ -725,6 +747,24 @@ def classify_model_file(path: Path) -> ModelClassification:
             result.warnings.append(
                 "HiDream-O1 needs its bundled tokenizer; placing under checkpoints/."
             )
+
+    # Krea 2 ships diffusion-only weights (no bundled CLIP/VAE). The size
+    # heuristic mistakes the ~12B fp8 file for a full checkpoint, which routes
+    # it to checkpoints/ and crashes CheckpointLoaderSimple. Force it under
+    # diffusion_models/ unless the file genuinely carries a text encoder.
+    if family == "krea2" and role in ("checkpoint", "unknown"):
+        if not keys or not _looks_like_text_encoder(keys):
+            role = "diffusion_model"
+            result.reasons.append(
+                "Krea 2 is diffusion-only (no bundled CLIP/VAE); routing to diffusion_models/"
+            )
+            # When the family came from the safetensors header, treat the role
+            # as header-derived too so the organizer / post-download relocation
+            # confidently move it out of checkpoints/.
+            if family_from_header:
+                role_from_header = True
+                result.role_from_header = True
+                result.confidence = "high"
 
     # Flux Kontext is structurally identical to Flux – role stays diffusion_model.
     if family == "flux_kontext" and role == "checkpoint":

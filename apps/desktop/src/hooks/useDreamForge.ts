@@ -33,7 +33,7 @@ import {
   type StudioMode,
   type StyleRecipe,
 } from "../lib/model-selection";
-import { isAdvancedMode, type UiExperience } from "../lib/experienceUi";
+import { isAdvancedMode, isSimpleExperience, type UiExperience } from "../lib/experienceUi";
 import { ideogram4SettingsDefaults, looksLikeIdeogramJson } from "../lib/ideogram4Ui";
 import { enhancePrefsFromAppConfig, shouldAutoEnhanceOnGenerate } from "../lib/promptEnhance";
 import { inpaintModelWarning } from "../lib/inpaintModel";
@@ -144,6 +144,7 @@ import {
 import {
   aggregateLoraKeywords,
   checkStudioResources,
+  checkImagePromptResources,
   clearUserStyleProfile,
   downloadCompanionEntries,
   ensureCreativeTaskReady,
@@ -183,6 +184,13 @@ import {
   sanitizeEditFamilySettings,
   type ReferenceImageMode,
 } from "../lib/referenceImage";
+import {
+  isGenerateReferenceWorkflow,
+  resolveEffectiveRoute,
+  sanitizeSettingsForStudioMode,
+} from "../lib/routeResolution";
+import { buildEasyCreateReferencePatch } from "../lib/easyModeRouting";
+import { applyExplicitReferenceRoleParams } from "../lib/generateReferenceParams";
 import {
   buildPlanSnapshotFromDryRun,
   canRunApprovedPlan,
@@ -419,6 +427,10 @@ export function useDreamForge() {
     ready: boolean;
   }>({ missing: [], ready: true });
   const [studioResources, setStudioResources] = useState<{
+    missing: ModelDependencyItem[];
+    ready: boolean;
+  }>({ missing: [], ready: true });
+  const [imagePromptResources, setImagePromptResources] = useState<{
     missing: ModelDependencyItem[];
     ready: boolean;
   }>({ missing: [], ready: true });
@@ -1493,17 +1505,11 @@ export function useDreamForge() {
   const syncOutputPathForSession = useCallback(
     (sessionId: string) => {
       const sid = sessionId.trim() || DEFAULT_SESSION_ID;
-      const current = settingsRef.current;
-      const kind = current.upscale_image
-        ? "upscale"
-        : current.input_image
-          ? current.edit_type === "inpaint"
-            ? "inpaint"
-            : "edit"
-          : "gen";
-      patchSettings({ output: outputPathForSession(sid, kind) });
+      const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+      const route = resolveEffectiveRoute(studioMode, settingsRef.current);
+      patchSettings({ output: outputPathForSession(sid, route.outputKind) });
     },
-    [patchSettings],
+    [appConfig?.ui.studio_mode, patchSettings],
   );
 
   const switchSession = useCallback(
@@ -2159,14 +2165,8 @@ export function useDreamForge() {
       }
 
       const sid = activeSessionIdRef.current || DEFAULT_SESSION_ID;
-      const output = sanitized.upscale_image
-        ? outputPathForSession(sid, "upscale")
-        : sanitized.input_image && isEditFamilyMode(studioMode)
-          ? outputPathForSession(
-              sid,
-              sanitized.edit_type === "inpaint" ? "inpaint" : "edit",
-            )
-          : outputPathForSession(sid, "gen");
+      const route = resolveEffectiveRoute(studioMode, sanitized);
+      const output = outputPathForSession(sid, route.outputKind);
 
       let params: GenerationSettings = {
         ...sanitized,
@@ -2180,66 +2180,18 @@ export function useDreamForge() {
       };
       const activeModel = findGalleryModel(modelGalleryAll, params.model ?? "");
       const modelFamily = (activeModel?.family ?? "").toLowerCase();
-      if (
-        studioMode === "generate" &&
-        (params.input_image?.trim() || params.reference_image?.trim())
-      ) {
-        const refPath =
-          params.input_image?.trim() || params.reference_image?.trim() || "";
-        if (modelFamily.includes("kontext") && refPath) {
-          params = {
-            ...params,
-            input_image: refPath,
-            edit_type: "kontext",
-            cn_selection: "None",
-            cn_type: "None",
-            edit_strength: params.edit_strength ?? 0.92,
-          };
-        } else if (modelFamily === "qwen_image_edit" && refPath) {
-          if (params.edit_type !== "inpaint") {
-            params = {
-              ...params,
-              input_image: refPath,
-              edit_type: "qwen_edit",
-              cn_selection: "None",
-              cn_type: "None",
-            };
-          }
-          if (params.edit_strength == null || params.edit_strength <= 0) {
-            params = { ...params, edit_strength: 1.0 };
-          }
-        } else if (refPath) {
-          params = {
-            ...params,
-            input_image: refPath,
-            cn_selection: "Custom...",
-            cn_type: "img2img",
-            edit_type:
-              params.edit_type === "kontext" || params.edit_type === "qwen_edit"
-                ? "auto"
-                : (params.edit_type ?? "auto"),
-            workflow_mode: "generate",
-            edit_strength:
-              params.edit_strength ??
-              defaultReferenceEditStrength(params, modelFamily),
-            face_preservation: undefined,
-            identity_mode: undefined,
-          };
-        }
-      }
-      if (modelFamily === "qwen_image_edit" && params.input_image?.trim()) {
-        if (params.edit_type !== "inpaint") {
-          params = {
-            ...params,
-            edit_type: "qwen_edit",
-            cn_selection: "None",
-            cn_type: "None",
-          };
-        }
-        if (params.edit_strength == null || params.edit_strength <= 0) {
-          params = { ...params, edit_strength: 1.0 };
-        }
-      }
+      const routed = applyExplicitReferenceRoleParams(
+        params,
+        studioMode,
+        modelFamily,
+        {
+          modelMissing: modelDependencies.missing,
+          studioMissing: studioResources.missing,
+          imagePromptMissing: imagePromptResources.missing,
+        },
+      );
+      params = routed.params;
+      const routeWarning = routed.warning;
       params = await enforceCreativeTaskSettingsRemote(params, {
         studioMode,
         gallery: modelGalleryAll,
@@ -2295,8 +2247,9 @@ export function useDreamForge() {
       setEngineState("generating");
       const mapped = meta?.mapped ? ` · ${meta.mapped}` : "";
       const hint = meta?.hint ? ` · ${meta.hint}` : "";
+      const routeHint = routeWarning ? `${routeWarning} · ` : "";
       setStatus(
-        `Generating with ${modelBasename(params.model ?? "model")}…${mapped}${hint}`,
+        `${routeHint}Generating with ${modelBasename(params.model ?? "model")}…${mapped}${hint}`,
       );
       setAgentPlan(null);
       setGenerationLog("");
@@ -2383,8 +2336,13 @@ export function useDreamForge() {
           ? plan.mode
           : ((appConfig?.ui.studio_mode ?? "generate") as StudioMode);
       if (plan.mode && plan.mode !== "agent" && plan.mode !== appConfig?.ui.studio_mode) {
-        await saveAppConfigPatch({ ui: { studio_mode: plan.mode } });
-        setAgentPlannedMode(null);
+        const currentMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+        const keepGenerateTab =
+          currentMode === "generate" && isGenerateReferenceWorkflow(merged);
+        if (!keepGenerateTab) {
+          await saveAppConfigPatch({ ui: { studio_mode: plan.mode } });
+          setAgentPlannedMode(null);
+        }
       }
       return { merged, targetMode };
     },
@@ -2837,6 +2795,44 @@ export function useDreamForge() {
     companionDownloadPhase,
   ]);
 
+  useEffect(() => {
+    const mode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+    if (mode !== "generate" && mode !== "agent") {
+      setImagePromptResources({ ready: true, missing: [] });
+      return;
+    }
+    const hasRef = Boolean(
+      settings.reference_image?.trim() ||
+        settings.input_image?.trim() ||
+        settings.reference_images?.some((item) => item.trim()),
+    );
+    if (!hasRef) {
+      setImagePromptResources({ ready: true, missing: [] });
+      return;
+    }
+    let cancelled = false;
+    void checkImagePromptResources()
+      .then((res) => {
+        if (cancelled) return;
+        setImagePromptResources({
+          ready: res.ready,
+          missing: (res.missing ?? []) as ModelDependencyItem[],
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setImagePromptResources({ ready: true, missing: [] });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    appConfig?.ui.studio_mode,
+    settings.input_image,
+    settings.reference_image,
+    settings.reference_images,
+    companionDownloadPhase,
+  ]);
+
   const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
   const planSettingsSnapshot = useMemo(
     () => computePlanSettingsSnapshot(settings, studioMode),
@@ -2944,7 +2940,8 @@ export function useDreamForge() {
             : mode === "reference" &&
                 studioMode !== "generate" &&
                 studioMode !== "edit" &&
-                studioMode !== "agent"
+                studioMode !== "agent" &&
+                studioMode !== "inpaint"
               ? "edit"
               : null;
 
@@ -2973,17 +2970,31 @@ export function useDreamForge() {
 
       const patch =
         studioMode === "generate" && mode === "reference"
-          ? buildGenerateIdentityReferencePatch(
-              resolved,
-              modelGalleryAll,
-              outputFor,
-              {
-                currentModel: settingsRef.current.model,
-                userPickedModel: userPickedModelRef.current,
-                modelFamily: family,
-              },
-            )
-          : buildReferenceImagePatch(resolved, mode, outputFor, family);
+          ? isSimpleExperience(uiExperience)
+            ? buildEasyCreateReferencePatch(
+                resolved,
+                modelGalleryAll,
+                outputFor,
+                {
+                  currentModel: settingsRef.current.model,
+                  userPickedModel: userPickedModelRef.current,
+                  modelFamily: family,
+                  modelMissing: modelDependencies.missing,
+                  studioMissing: studioResources.missing,
+                  imagePromptMissing: imagePromptResources.missing,
+                },
+              )
+            : buildGenerateIdentityReferencePatch(
+                resolved,
+                modelGalleryAll,
+                outputFor,
+                {
+                  currentModel: settingsRef.current.model,
+                  userPickedModel: userPickedModelRef.current,
+                  modelFamily: family,
+                },
+              )
+          : buildReferenceImagePatch(resolved, mode, outputFor, family, studioMode);
       if (patch.model && patch.model !== settingsRef.current.model) {
         userPickedModelRef.current = false;
       }
@@ -2999,7 +3010,11 @@ export function useDreamForge() {
           );
         }
       }
-      patchSettings(patch);
+      const mergedPatch = sanitizeSettingsForStudioMode(studioMode, {
+        ...settingsRef.current,
+        ...patch,
+      });
+      patchSettings(mergedPatch);
       setAgentPlan(null);
       if (mode === "inpaint") {
         openInpaintMaskEditor();
@@ -3020,7 +3035,7 @@ export function useDreamForge() {
         setStatus(`Attached ${referenceStatusLabel(mode, resolved)}`);
       }
     },
-    [appConfig?.ui.studio_mode, modelGalleryAll, openInpaintMaskEditor, patchSettings, uiExperience],
+    [appConfig?.ui.studio_mode, imagePromptResources.missing, modelDependencies.missing, modelGalleryAll, openInpaintMaskEditor, patchSettings, studioResources.missing, uiExperience],
   );
 
   const clearReferenceImage = useCallback(() => {
@@ -3089,25 +3104,36 @@ export function useDreamForge() {
       if (mode === "generate") {
         userPickedLorasRef.current = false;
         userPickedStyleRef.current = false;
+        const sanitized = sanitizeSettingsForStudioMode(
+          "generate",
+          settingsRef.current,
+        );
         const resetPatch = buildClearReferenceImagePatch();
         const ideogram = selectIdeogram4GalleryModel(modelGalleryAll);
-        const hasModeCarryover = Boolean(
-          settingsRef.current.input_image?.trim() ||
-            settingsRef.current.upscale_image?.trim() ||
-            settingsRef.current.reference_image?.trim() ||
-            settingsRef.current.reference_images?.some((item) => item.trim()) ||
+        const hasIntentionalReference = Boolean(
+          sanitized.input_image?.trim() ||
+            sanitized.reference_image?.trim() ||
+            sanitized.reference_images?.some((item) => item.trim()),
+        );
+        const hasStaleCarryover = Boolean(
+          settingsRef.current.upscale_image?.trim() ||
             settingsRef.current.inpaint_mask_path?.trim() ||
             settingsRef.current.edit_type === "inpaint" ||
-            settingsRef.current.upscale_method?.trim(),
+            settingsRef.current.upscale_method?.trim() ||
+            (settingsRef.current.edit_type &&
+              settingsRef.current.edit_type !== "auto" &&
+              !hasIntentionalReference),
         );
-        if (ideogram) {
+        if (ideogram && !hasIntentionalReference) {
           patchSettings({
             ...resetPatch,
             model: ideogram.engine_name,
             ...ideogram4SettingsDefaults(),
           });
           void applyModelProfile(ideogram);
-        } else if (hasModeCarryover) {
+        } else if (hasIntentionalReference) {
+          patchSettings(sanitized);
+        } else if (hasStaleCarryover) {
           patchSettings(resetPatch);
         }
         setStatus("Generation mode - model library selection is unlocked");
@@ -3256,6 +3282,7 @@ export function useDreamForge() {
                   : "edit",
             ),
           family,
+          mode,
         ),
       );
       if (mapped === "inpaint") {

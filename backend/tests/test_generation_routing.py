@@ -27,53 +27,43 @@ def _route_input(
     model_family: str = "",
     engine_name: str = "",
     upscale_image: str | None = None,
+    workflow_mode: str | None = None,
+    reference_role: str | None = None,
 ) -> tuple[str, str, str]:
-    """Mirror dreamforge_generation.py routing without loading the engine."""
-    cn_sel = cn_selection
-    cn_t = cn_type
-    ed = edit_type
-    explicit_input = input_path
-    effective_input = explicit_input or upscale_image
-    is_upscale_job = bool(upscale_image) and not explicit_input
+    """Resolve cn_selection/cn_type/edit_type via the central workflow router."""
+    from dreamforge_workflow_routing import resolve_input_routing
 
-    def _is_flux_kontext_model(fam: str, eng: str) -> bool:
-        fam = fam or ""
-        eng_l = (eng or "").lower()
-        return fam == "flux_kontext" or (
-            fam == "flux" and "kontext" in eng_l
-        )
+    model = {"engine_name": engine_name, "name": engine_name, "family": model_family}
+    job = SimpleNamespace(
+        input_image=input_path,
+        upscale_image=upscale_image,
+        cn_selection=cn_selection,
+        cn_type=cn_type,
+        edit_type=edit_type,
+        workflow_mode=workflow_mode,
+        reference_role=reference_role,
+        inpaint_mask_path=None,
+    )
+    route = resolve_input_routing(job, model=model, model_family=model_family)
+    return route.cn_selection, route.cn_type, route.edit_type
 
-    if not effective_input:
-        if cn_sel == "Custom...":
-            cn_sel = "None"
-            cn_t = "None"
-        if ed in ("kontext", "inpaint", "img2img", "qwen_edit"):
-            ed = "auto"
-    elif cn_sel == "None" and is_upscale_job:
-        cn_sel = "Custom..."
-        cn_t = "upscale"
-    elif cn_sel == "None" and effective_input:
-        if _is_flux_kontext_model(model_family, engine_name):
-            cn_sel = "None"
-            cn_t = "None"
-        else:
-            cn_sel = "Custom..."
-            if ed not in ("auto", "kontext", "None", None, ""):
-                cn_t = ed
-            else:
-                cn_t = "img2img"
-    elif effective_input and cn_sel == "Custom...":
-        if is_upscale_job:
-            cn_t = "upscale"
-        elif _is_flux_kontext_model(model_family, engine_name):
-            cn_sel = "None"
-            cn_t = "None"
-        elif str(cn_t or "").lower() == "reference":
-            cn_t = "img2img"
-        elif ed not in ("auto", "None", None, ""):
-            cn_t = ed
 
-    return cn_sel, cn_t, ed
+def test_generate_explicit_restyle_routes_z_image_img2img():
+    """Phase 6: Create + reference + Z-Image stays img2img, not edit/upscale."""
+    sel, typ, ed = _route_input(
+        input_path="/tmp/ref.png",
+        reference_role="restyle",
+        workflow_mode="generate",
+        cn_selection="None",
+        cn_type="None",
+        edit_type="auto",
+        upscale_image="/tmp/stale-upscale.png",
+        model_family="z_image",
+        engine_name="z_image_turbo_nvfp4.safetensors",
+    )
+    assert sel == "Custom..."
+    assert typ == "img2img"
+    assert ed == "auto"
 
 
 def test_reference_cn_type_with_input_routes_img2img():
@@ -310,7 +300,7 @@ def test_studio_upscale_uses_upscale_image_field():
     assert typ == "upscale"
 
 
-def test_legacy_upscale_method_builds_ultimate_sd_workflow():
+def test_pid_upscale_method_builds_pixeldit_workflow():
     graph, _template = _build_comfy_prompt_graph(
         job=SimpleNamespace(upscale_method="pid_flux1_4k"),
         mode="upscale",
@@ -329,7 +319,7 @@ def test_legacy_upscale_method_builds_ultimate_sd_workflow():
         negative="",
         seed=123,
         edit_strength=1.0,
-        cn_upscale="4x-UltraSharp.pth",
+        cn_upscale="pid_flux1_1024_to_4096_4step_mxfp8.safetensors",
         input_filename="source.png",
         mask_filename=None,
         reference_stitch_filename=None,
@@ -337,13 +327,42 @@ def test_legacy_upscale_method_builds_ultimate_sd_workflow():
         model_loader_args={},
     )
 
-    assert any(node.get("class_type") == "UltimateSDUpscale" for node in graph.values())
-    assert not any(node.get("class_type") == "PiDConditioning" for node in graph.values())
-    upscale = next(node for node in graph.values() if node.get("class_type") == "UltimateSDUpscale")
-    assert upscale["inputs"]["upscale_by"] == 2.0
-    assert upscale["inputs"]["tile_width"] == 1024
+    assert any(node.get("class_type") == "PiDConditioning" for node in graph.values())
+    assert not any(node.get("class_type") == "UltimateSDUpscale" for node in graph.values())
+    loader = next(node for node in graph.values() if node.get("class_type") == "UNETLoader")
+    assert loader["inputs"]["unet_name"] == "pid_flux1_1024_to_4096_4step_mxfp8.safetensors"
+
+
+def test_fast_2x_upscale_method_builds_basic_workflow():
+    graph, _template = _build_comfy_prompt_graph(
+        job=SimpleNamespace(upscale_method="fast_2x"),
+        mode="upscale",
+        model={"name": "ignored.safetensors", "category": "checkpoints"},
+        model_family="",
+        settings={
+            "steps": 20,
+            "cfg": 7.0,
+            "sampler_name": "euler",
+            "scheduler": "normal",
+            "width": 2048,
+            "height": 2048,
+            "comfy_loras": [],
+        },
+        prompt="",
+        negative="",
+        seed=123,
+        edit_strength=1.0,
+        cn_upscale="OmniSR_X2_DIV2K.safetensors",
+        input_filename="source.png",
+        mask_filename=None,
+        reference_stitch_filename=None,
+        grow_mask_by=0,
+        model_loader_args={},
+    )
+
+    assert any(node.get("class_type") == "ImageUpscaleWithModel" for node in graph.values())
     loader = next(node for node in graph.values() if node.get("class_type") == "UpscaleModelLoader")
-    assert loader["inputs"]["model_name"] == "4x-UltraSharp.pth"
+    assert loader["inputs"]["model_name"] == "OmniSR_X2_DIV2K.safetensors"
 
 
 def test_default_upscale_method_builds_ultimate_sd_workflow():
@@ -485,6 +504,175 @@ def test_dry_run_edit_plan_clears_stale_upscale_image(monkeypatch):
     assert plan["proposed_patch"]["input_image"] == "/tmp/edit-source.png"
     assert plan["proposed_patch"]["upscale_image"] is None
     assert plan["proposed_patch"]["upscale_method"] is None
+
+
+def test_dry_run_generate_reference_stays_generate_mode(monkeypatch):
+    import dreamforge_cli_direct as cli
+
+    selected = {
+        "name": "z_image_turbo_bf16.safetensors",
+        "stem": "z_image_turbo_bf16",
+        "relative_path": "z_image_turbo_bf16.safetensors",
+        "path": "/models/z_image_turbo_bf16.safetensors",
+        "size_mb": 8000,
+        "category": "diffusion_models",
+        "engine_name": "z_image_turbo_bf16.safetensors",
+        "family": "z_image",
+    }
+    monkeypatch.setattr(cli, "resolve_generation_model", lambda _name: selected)
+
+    plan = cli.build_plan(
+        SimpleNamespace(
+            dry_run=True,
+            json=True,
+            model="z_image_turbo_bf16.safetensors",
+            prompt="same person in a forest",
+            negative_prompt="",
+            aspect_ratio=None,
+            width=None,
+            height=None,
+            seed=1,
+            image_number=1,
+            output=None,
+            performance="Speed",
+            steps=None,
+            cfg_scale=None,
+            sampler=None,
+            scheduler=None,
+            styles=None,
+            lora=[],
+            input_image="/tmp/reference.png",
+            reference_image="/tmp/reference.png",
+            inpaint_mask_path=None,
+            upscale_image="/tmp/stale-upscale.png",
+            upscale_method="fast_2x",
+            edit_type="auto",
+            edit_strength=0.35,
+            inpaint_grow=None,
+            inpaint_feather=None,
+            inpaint_mask_grow_by=None,
+            preserve_character=True,
+            preserve_style=False,
+            preserve_text=False,
+            face_preservation=False,
+            vram_profile="16gb",
+            style="none",
+            brand_kit=None,
+            subject=None,
+            composition=None,
+            lighting=None,
+            camera=None,
+            brand_colors=None,
+            materials=None,
+            visual_style=None,
+            validate_output=False,
+            no_manifest=False,
+            workflow_mode="generate",
+            cn_selection="Custom...",
+            cn_type="img2img",
+        )
+    )
+
+    assert plan["mode"] == "generate"
+    assert plan["proposed_patch"]["input_image"] == "/tmp/reference.png"
+    assert plan["proposed_patch"]["workflow_mode"] == "generate"
+    assert plan["proposed_patch"]["upscale_image"] is None
+    assert plan["proposed_patch"]["upscale_method"] is None
+    assert plan["proposed_patch"]["inpaint_mask_path"] is None
+
+
+def test_dry_run_generate_reference_includes_reference_role(monkeypatch):
+    import dreamforge_cli_direct as cli
+
+    selected = {
+        "name": "z_image_turbo_bf16.safetensors",
+        "stem": "z_image_turbo_bf16",
+        "relative_path": "z_image_turbo_bf16.safetensors",
+        "path": "/models/z_image_turbo_bf16.safetensors",
+        "size_mb": 8000,
+        "category": "diffusion_models",
+        "engine_name": "z_image_turbo_bf16.safetensors",
+        "family": "z_image",
+    }
+    monkeypatch.setattr(cli, "resolve_generation_model", lambda _name: selected)
+
+    plan = cli.build_plan(
+        SimpleNamespace(
+            dry_run=True,
+            json=True,
+            model="z_image_turbo_bf16.safetensors",
+            prompt="same person in a forest",
+            negative_prompt="",
+            aspect_ratio=None,
+            width=None,
+            height=None,
+            seed=1,
+            image_number=1,
+            output=None,
+            performance="Speed",
+            steps=None,
+            cfg_scale=None,
+            sampler=None,
+            scheduler=None,
+            styles=None,
+            lora=[],
+            input_image="/tmp/reference.png",
+            reference_image="/tmp/reference.png",
+            reference_role="restyle",
+            inpaint_mask_path=None,
+            upscale_image="/tmp/stale-upscale.png",
+            upscale_method="fast_2x",
+            edit_type="auto",
+            edit_strength=0.35,
+            inpaint_grow=None,
+            inpaint_feather=None,
+            inpaint_mask_grow_by=None,
+            preserve_character=True,
+            preserve_style=False,
+            preserve_text=False,
+            face_preservation=False,
+            vram_profile="16gb",
+            style="none",
+            brand_kit=None,
+            subject=None,
+            composition=None,
+            lighting=None,
+            camera=None,
+            brand_colors=None,
+            materials=None,
+            visual_style=None,
+            validate_output=False,
+            no_manifest=False,
+            workflow_mode="generate",
+            cn_selection="Custom...",
+            cn_type="img2img",
+        )
+    )
+
+    assert plan["mode"] == "generate"
+    assert plan["proposed_patch"]["reference_role"] == "restyle"
+
+
+def test_plan_mode_for_job_honors_generate_workflow_mode():
+    from dreamforge_cli_direct import _plan_mode_for_job
+
+    job = SimpleNamespace(
+        workflow_mode="generate",
+        input_image="/tmp/ref.png",
+        upscale_image="/tmp/stale.png",
+        edit_type="auto",
+        inpaint_mask_path=None,
+    )
+    assert _plan_mode_for_job(job) == "generate"
+
+    edit_job = SimpleNamespace(
+        workflow_mode="",
+        input_image="/tmp/edit.png",
+        upscale_image=None,
+        edit_type="kontext",
+        inpaint_mask_path=None,
+    )
+    assert _plan_mode_for_job(edit_job) == "edit"
 
 
 def test_dry_run_accepts_explicit_qwen_edit_model_name():

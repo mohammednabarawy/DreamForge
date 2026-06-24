@@ -1,10 +1,11 @@
 import type { GenerationSettings, ModelGalleryItem } from "./tauri-api";
 import { readImagePreview } from "./tauri-api";
 import {
-  isEditFamilyMode,
   selectIdentityGenerateModel,
   type StudioMode,
 } from "./model-selection";
+import { sanitizeSettingsForStudioMode } from "./routeResolution";
+import { referenceRoleFromAttach, type ReferenceRole } from "./referenceRole";
 import { qwenEdit2511LightningPatch } from "./qwenEditDefaults";
 
 export const DREAMFORGE_IMAGE_PATH_MIME = "application/x-dreamforge-image-path";
@@ -14,12 +15,14 @@ export type ReferenceImageMode = "reference" | "inpaint" | "upscale";
 export const UPSCALE_METHOD_LABELS: Record<string, string> = {
   ultimate_sd_upscale: "Ultimate SD Upscale",
   default: "Ultimate SD Upscale",
-  pid_flux1_4k: "Ultimate SD Upscale",
-  pid_flux1_4k_bf16: "Ultimate SD Upscale",
-  pid_flux1_4k_mxfp8: "Ultimate SD Upscale",
-  fast_2x: "Ultimate SD Upscale",
-  fast_3x: "Ultimate SD Upscale",
-  fast_4x: "Ultimate SD Upscale",
+  pid_flux1_4k: "PiD 4K (mxfp8)",
+  pid_flux1_4k_bf16: "PiD 4K (bf16)",
+  pid_flux1_4k_mxfp8: "PiD 4K (mxfp8)",
+  fast_2x: "Fast 2× (OmniSR)",
+  fast_3x: "Fast 3× (OmniSR)",
+  fast_4x: "Fast 4× (OmniSR)",
+  quality: "High quality 4× (HAT)",
+  sharp: "Sharper 4×",
 };
 
 export const REFERENCE_IMAGE_MODES: Array<{
@@ -57,10 +60,20 @@ export function basename(path: string | undefined | null): string {
 
 export function activeReferencePath(
   settings: GenerationSettings,
+  studioMode: StudioMode = "generate",
 ): string | undefined {
+  if (studioMode === "upscale") {
+    return (
+      settings.upscale_image?.trim() ||
+      settings.input_image?.trim() ||
+      undefined
+    );
+  }
+  if (studioMode === "inpaint" || studioMode === "edit") {
+    return settings.input_image?.trim() || undefined;
+  }
   return (
     settings.input_image?.trim() ||
-    settings.upscale_image?.trim() ||
     settings.reference_image?.trim() ||
     settings.reference_images?.find((item) => item.trim())?.trim() ||
     undefined
@@ -69,8 +82,34 @@ export function activeReferencePath(
 
 export function activeReferenceMode(
   settings: GenerationSettings,
+  studioMode: StudioMode = "generate",
 ): ReferenceImageMode {
-  if (settings.upscale_image?.trim()) return "upscale";
+  if (studioMode === "inpaint") {
+    if (
+      settings.input_image?.trim() ||
+      settings.inpaint_mask_path?.trim() ||
+      settings.edit_type === "inpaint"
+    ) {
+      return "inpaint";
+    }
+    return "reference";
+  }
+  if (studioMode === "upscale") {
+    if (settings.upscale_image?.trim() || settings.input_image?.trim()) {
+      return "upscale";
+    }
+    return "reference";
+  }
+  if (studioMode === "generate" || studioMode === "agent") {
+    if (
+      settings.input_image?.trim() ||
+      settings.reference_image?.trim() ||
+      settings.reference_images?.some((item) => item.trim())
+    ) {
+      return "reference";
+    }
+    return "reference";
+  }
   if (settings.edit_type === "inpaint") return "inpaint";
   return "reference";
 }
@@ -85,12 +124,16 @@ export function buildReferenceImagePatch(
   mode: ReferenceImageMode,
   outputFor: (suffix: string) => string,
   modelFamily?: string,
+  studioMode: StudioMode = "edit",
 ): Partial<GenerationSettings> {
   const imagePath = typeof path === "string" ? path : "";
+  const referenceRole = referenceRoleFromAttach(mode, studioMode);
   if (mode === "upscale") {
     return {
+      reference_role: referenceRole,
       upscale_image: imagePath,
       input_image: undefined,
+      reference_image: undefined,
       inpaint_mask_path: undefined,
       edit_type: "auto",
       cn_selection: "Custom...",
@@ -103,6 +146,7 @@ export function buildReferenceImagePatch(
 
   if (mode === "inpaint") {
     return {
+      reference_role: referenceRole,
       input_image: imagePath,
       upscale_image: undefined,
       inpaint_mask_path: undefined,
@@ -116,6 +160,7 @@ export function buildReferenceImagePatch(
 
   if (modelFamily === "qwen_image_edit") {
     return {
+      reference_role: referenceRole,
       input_image: imagePath,
       upscale_image: undefined,
       inpaint_mask_path: undefined,
@@ -126,6 +171,7 @@ export function buildReferenceImagePatch(
 
   if (modelFamily === "flux_kontext") {
     return {
+      reference_role: referenceRole,
       input_image: imagePath,
       upscale_image: undefined,
       inpaint_mask_path: undefined,
@@ -140,6 +186,7 @@ export function buildReferenceImagePatch(
   }
 
   return {
+    reference_role: referenceRole,
     input_image: imagePath,
     upscale_image: undefined,
     inpaint_mask_path: undefined,
@@ -164,8 +211,19 @@ function buildGenerateReferenceImg2imgPatch(
   shared: Partial<GenerationSettings>,
   modelFamily?: string,
 ): Partial<GenerationSettings> {
+  return buildRestyleReferencePatch(imagePath, shared, modelFamily);
+}
+
+/** Generate-tab restyle / img2img reference (keeps workflow on Create). */
+export function buildRestyleReferencePatch(
+  imagePath: string,
+  shared: Partial<GenerationSettings> = {},
+  modelFamily?: string,
+): Partial<GenerationSettings> {
   return {
     ...shared,
+    reference_role: "restyle",
+    workflow_mode: shared.workflow_mode ?? "generate",
     input_image: imagePath,
     reference_image: imagePath,
     edit_type: "auto",
@@ -178,6 +236,92 @@ function buildGenerateReferenceImg2imgPatch(
       modelFamily,
     ),
   };
+}
+
+/** Image-prompt guidance via IP-Adapter (text-to-image + reference). */
+export function buildImagePromptReferencePatch(
+  path: string,
+  outputFor: (suffix: string) => string,
+): Partial<GenerationSettings> {
+  const imagePath = typeof path === "string" ? path : "";
+  return {
+    reference_role: "image_prompt",
+    workflow_mode: "ipadapter",
+    reference_image: imagePath,
+    input_image: undefined,
+    upscale_image: undefined,
+    inpaint_mask_path: undefined,
+    style: "none",
+    output: outputFor("gen"),
+    cn_selection: "None",
+    cn_type: "None",
+    edit_type: "auto",
+    face_preservation: undefined,
+    identity_mode: undefined,
+  };
+}
+
+/** Structure / ControlNet guidance from a reference map or photo. */
+export function buildStructureReferencePatch(
+  path: string,
+  outputFor: (suffix: string) => string,
+  structureType = "canny",
+): Partial<GenerationSettings> {
+  const imagePath = typeof path === "string" ? path : "";
+  return {
+    reference_role: "structure",
+    workflow_mode: "controlnet",
+    reference_image: imagePath,
+    input_image: undefined,
+    upscale_image: undefined,
+    inpaint_mask_path: undefined,
+    style: "none",
+    output: outputFor("gen"),
+    cn_selection: "Custom...",
+    cn_type: structureType,
+    edit_type: "auto",
+    face_preservation: undefined,
+    identity_mode: undefined,
+  };
+}
+
+export function buildReferenceRolePatch(
+  role: ReferenceRole,
+  path: string,
+  outputFor: (suffix: string) => string,
+  options: {
+    studioMode?: StudioMode;
+    modelFamily?: string;
+    currentModel?: string;
+  } = {},
+): Partial<GenerationSettings> {
+  const studioMode = options.studioMode ?? "generate";
+  if (role === "image_prompt") {
+    return buildImagePromptReferencePatch(path, outputFor);
+  }
+  if (role === "restyle") {
+    return buildRestyleReferencePatch(
+      path,
+      { output: outputFor(studioMode === "generate" ? "gen" : "edit") },
+      options.modelFamily,
+    );
+  }
+  if (role === "upscale") {
+    return buildReferenceImagePatch(path, "upscale", outputFor, options.modelFamily, studioMode);
+  }
+  if (role === "inpaint") {
+    return buildReferenceImagePatch(path, "inpaint", outputFor, options.modelFamily, studioMode);
+  }
+  if (role === "source_edit") {
+    return {
+      ...buildReferenceImagePatch(path, "reference", outputFor, options.modelFamily, studioMode),
+      reference_role: "source_edit",
+    };
+  }
+  if (role === "structure") {
+    return buildStructureReferencePatch(path, outputFor);
+  }
+  return buildReferenceImagePatch(path, "reference", outputFor, options.modelFamily, studioMode);
 }
 
 export function buildGenerateIdentityReferencePatch(
@@ -217,6 +361,7 @@ export function buildGenerateIdentityReferencePatch(
   if (routed.route === "kontext") {
     return {
       ...shared,
+      reference_role: "restyle",
       model: routed.engine_name,
       input_image: imagePath,
       reference_image: imagePath,
@@ -233,6 +378,7 @@ export function buildGenerateIdentityReferencePatch(
   if (routed.route === "qwen_edit") {
     return {
       ...shared,
+      reference_role: "restyle",
       model: routed.engine_name,
       input_image: imagePath,
       reference_image: imagePath,
@@ -268,6 +414,7 @@ export function buildClearReferenceImagePatch(): Partial<GenerationSettings> {
     identity_mode: undefined,
     preserve_character: undefined,
     workflow_mode: undefined,
+    reference_role: undefined,
     // Return to text-to-image defaults so a cleared reference does not keep edit routing.
     style: "none",
   };
@@ -535,23 +682,12 @@ export async function resolveGenerationImagePaths(
   return next;
 }
 
-/** Drop cross-mode image fields so Kontext edit never reads a stale upscale path. */
+/** Drop cross-mode image fields so the active studio tab stays authoritative. */
 export function sanitizeEditFamilySettings(
   settings: GenerationSettings,
   studioMode: StudioMode,
 ): GenerationSettings {
-  if (!isEditFamilyMode(studioMode)) return settings;
-  const next = { ...settings };
-  if (studioMode === "upscale") {
-    next.input_image = undefined;
-    next.inpaint_mask_path = undefined;
-    return next;
-  }
-  next.upscale_image = undefined;
-  if (studioMode === "edit") {
-    next.inpaint_mask_path = undefined;
-  }
-  return next;
+  return sanitizeSettingsForStudioMode(studioMode, settings);
 }
 
 /** Optimal default edit strength for reference / inpaint workflows (Krita-aligned). */

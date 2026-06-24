@@ -339,7 +339,7 @@ export function InspectorPanel({
   }, [tab, tabs]);
 
   useEffect(() => {
-    if (isUpscale && tab !== "settings" && tab !== "models") {
+    if (isUpscale && tab !== "settings" && tab !== "models" && tab !== "discover") {
       setTab("settings");
     }
   }, [isUpscale, tab]);

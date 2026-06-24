@@ -133,30 +133,30 @@ export function inspectorTabsForMode(input: {
   const { studioMode, simpleInspectorLocked, powerUserInspector, isInpaint, isUpscale } = input;
 
   if (isUpscale) {
-    return ["models", "settings"];
+    return ["discover", "models", "settings"];
   }
   if (studioMode === "extract") {
     return ["settings"];
   }
   if (simpleInspectorLocked) {
-    return ["settings", "models"];
+    return ["discover", "settings", "models"];
   }
   if (isInpaint) {
     return powerUserInspector
-      ? ["models", "loras", "settings", "automation"]
-      : ["models", "settings"];
+      ? ["discover", "models", "loras", "settings", "automation"]
+      : ["discover", "models", "settings"];
   }
   if (studioMode === "edit") {
     return powerUserInspector
-      ? ["models", "loras", "settings", "automation"]
-      : ["models", "settings"];
+      ? ["discover", "models", "loras", "settings", "automation"]
+      : ["discover", "models", "settings"];
   }
   if (isGenerateFamilyMode(studioMode)) {
     return powerUserInspector
-      ? ["models", "loras", "styles", "settings", "automation"]
-      : ["models", "styles", "settings"];
+      ? ["discover", "models", "loras", "styles", "settings", "automation"]
+      : ["discover", "models", "styles", "settings"];
   }
-  return ["models", "settings"];
+  return ["discover", "models", "settings"];
 }
 
 export const MODE_AUTO_SUMMARY: Partial<Record<string, string>> = {

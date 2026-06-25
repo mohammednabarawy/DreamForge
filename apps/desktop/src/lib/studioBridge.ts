@@ -368,10 +368,13 @@ export async function renderIdeogram4CaptionTemplate(params: {
   );
 }
 
-export async function interrogateImage(path: string, prompt?: string) {
-  return bridgeInvoke<{ prompt?: string; gallery?: unknown }>(
+export async function interrogateImage(path: string, interrogator?: string) {
+  return bridgeInvoke<{ ok?: boolean; prompt?: string; gallery?: unknown; error?: string }>(
     "interrogate_image",
-    { path, prompt },
+    {
+      path,
+      ...(interrogator ? { interrogator } : {}),
+    },
   );
 }
 
@@ -663,7 +666,24 @@ export async function exportUserStyleProfile() {
 }
 
 export async function writeTempPng(dataUrl: string) {
-  return invoke<string>("write_temp_png", { dataBase64: dataUrl });
+  try {
+    const res = await bridgeInvoke<{ path?: string; error?: string }>(
+      "write_studio_mask_png",
+      { data_base64: dataUrl },
+    );
+    if (res.path) return res.path;
+    throw new Error(res.error || "write_studio_mask_png_missing_path");
+  } catch (bridgeError) {
+    try {
+      return await invoke<string>("write_temp_png", { dataBase64: dataUrl });
+    } catch {
+      try {
+        return await invoke<string>("write_temp_png", { data_base64: dataUrl });
+      } catch {
+        throw bridgeError;
+      }
+    }
+  }
 }
 
 export type InpaintSelectionKind =

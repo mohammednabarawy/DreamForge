@@ -492,6 +492,7 @@ def _build_comfy_prompt_graph(
         comfy_feature_extraction,
         comfy_flux_dev_txt2img,
         comfy_flux_kontext_edit,
+        comfy_flux_fill_inpaint,
         comfy_face_detail_basic,
         comfy_hires_two_pass,
         comfy_img2img_basic,
@@ -794,23 +795,25 @@ def _build_comfy_prompt_graph(
             else:
                 graph = comfy_ultimate_sd_upscale({**common, "image": input_filename})
         elif mode == "inpaint" and mask_filename:
-            graph = comfy_inpaint_basic(
-                {
-                    **loader_args,
-                    "image": input_filename,
-                    "mask": mask_filename,
-                    "prompt": prompt,
-                    "negative": negative,
-                    "steps": settings["steps"],
-                    "cfg": settings["cfg"],
-                    "sampler_name": settings["sampler_name"],
-                    "scheduler": settings["scheduler"],
-                    "seed": seed,
-                    "denoise": edit_strength,
-                    "grow_mask_by": grow_mask_by,
-                    "filename_prefix": "DreamForge",
-                }
-            )
+            inpaint_args = {
+                **loader_args,
+                "image": input_filename,
+                "mask": mask_filename,
+                "prompt": prompt,
+                "negative": negative,
+                "steps": settings["steps"],
+                "cfg": settings["cfg"],
+                "sampler_name": settings["sampler_name"],
+                "scheduler": settings["scheduler"],
+                "seed": seed,
+                "denoise": edit_strength,
+                "grow_mask_by": grow_mask_by,
+                "filename_prefix": "DreamForge",
+            }
+            if _checkpoint_is_flux_fill(model, model_family):
+                graph = comfy_flux_fill_inpaint(inpaint_args)
+            else:
+                graph = comfy_inpaint_basic(inpaint_args)
         elif mode == "kontext":
             graph = comfy_flux_kontext_edit(
                 {
@@ -1922,10 +1925,13 @@ def run_generation(
                 main_path = resolve_image_path_or_raise(str(input_path))
                 mask_resolved = resolve_image_path_or_raise(str(mask_path))
                 main_size = Image.open(main_path).size
+                mask_grow = int(inpaint_grow)
+                if _checkpoint_is_flux_fill(model, model_family):
+                    mask_grow += int(grow_mask_by)
                 mask_bytes, inpaint_mask_img = prepare_inpaint_mask_bytes(
                     mask_resolved,
                     image_size=main_size,
-                    grow=inpaint_grow,
+                    grow=mask_grow,
                     feather=inpaint_feather,
                 )
                 mask_name = f"{Path(str(mask_path)).stem}_df_inpaint.png"
@@ -2181,8 +2187,6 @@ def run_generation(
 
         if str(cn_type or "").lower() == "upscale" and input_path:
             try:
-                from PIL import Image
-
                 from dreamforge_krita_resources import resolve_upscaler
                 from dreamforge_vram_profiles import profile_tier
 
@@ -2207,6 +2211,20 @@ def run_generation(
                     job.width = tw
                     job.height = th
             except Exception:
+                pass
+
+        if str(cn_type or "").lower() == "inpaint" and input_path:
+            try:
+                from dreamforge_paths import resolve_image_path_or_raise
+
+                src_w, src_h = Image.open(
+                    resolve_image_path_or_raise(str(input_path))
+                ).size
+                settings["width"] = int(src_w)
+                settings["height"] = int(src_h)
+                job.width = int(src_w)
+                job.height = int(src_h)
+            except OSError:
                 pass
 
         settings = finalize_hidream_generation_settings(settings, model, job)
@@ -2235,6 +2253,22 @@ def run_generation(
             model_loader_args=resolved_loaders,
             qwen_reference_filenames=qwen_reference_filenames or None,
         )
+        comfy_workflow_class_types = sorted(
+            {
+                str(node.get("class_type"))
+                for node in prompt_graph.values()
+                if isinstance(node, dict) and node.get("class_type")
+            }
+        )
+        comfy_workflow_builder = (
+            "comfy_flux_fill_inpaint"
+            if "InpaintModelConditioning" in comfy_workflow_class_types
+            else (
+                "comfy_inpaint_basic"
+                if "VAEEncodeForInpaint" in comfy_workflow_class_types
+                else (Path(template_used).stem if template_used else None)
+            )
+        )
 
         emit_event(
             stream_sink,
@@ -2245,7 +2279,8 @@ def run_generation(
                 "progress": 0,
                 "message": (
                     f"Submitting workflow to ComfyUI"
-                    f"{f' ({Path(template_used).name})' if template_used else ''}…"
+                    f"{f' ({comfy_workflow_builder})' if comfy_workflow_builder else ''}"
+                    f"{f' [{Path(template_used).name}]' if template_used else ''}…"
                 ),
             },
         )
@@ -2316,7 +2351,13 @@ def run_generation(
             target.write_bytes(payload)
             saved_paths.append(str(target))
 
-        if cn_type == "inpaint" and input_path and inpaint_mask_img is not None and saved_paths:
+        if (
+            cn_type == "inpaint"
+            and input_path
+            and inpaint_mask_img is not None
+            and saved_paths
+            and not _checkpoint_is_flux_fill(model, model_family)
+        ):
             try:
                 from dreamforge_paths import resolve_image_path_or_raise
 
@@ -2382,6 +2423,11 @@ def run_generation(
             "model": model,
             "settings": settings,
             "validation": validation,
+            "comfy_workflow": {
+                "builder": comfy_workflow_builder,
+                "template": str(template_used) if template_used else None,
+                "class_types": comfy_workflow_class_types,
+            },
         }
 
         chain_steps = None
@@ -2452,6 +2498,8 @@ def run_generation(
                 "raw_images": raw_images,
                 "validation": validation,
             }
+            if primary_result.get("comfy_workflow"):
+                manifest_payload["comfy_workflow"] = primary_result["comfy_workflow"]
             if job_data and job_data.get("automation_id"):
                 manifest_payload["automation"] = {
                     "automation_id": job_data.get("automation_id"),

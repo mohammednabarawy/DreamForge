@@ -6,6 +6,7 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 _BACKEND = Path(__file__).resolve().parents[1]
 if str(_BACKEND) not in sys.path:
@@ -16,6 +17,7 @@ from dreamforge_comfy_workflow_import import (
     load_api_workflow_template,
     patch_api_workflow,
 )
+from dreamforge_generation import _build_comfy_prompt_graph
 from dreamforge_comfy_workflows import (
     comfy_area_composition,
     comfy_controlnet_basic,
@@ -23,6 +25,7 @@ from dreamforge_comfy_workflows import (
     comfy_feature_extraction,
     comfy_flux_dev_txt2img,
     comfy_flux_kontext_edit,
+    comfy_flux_fill_inpaint,
     comfy_hires_two_pass,
     comfy_ideogram4_img2img,
     comfy_ideogram4_inpaint,
@@ -294,6 +297,76 @@ def test_inpaint_workflow_passes_grow_mask_by():
         }
     )
     assert graph["5"]["inputs"]["grow_mask_by"] == 20
+
+
+def test_flux_fill_inpaint_uses_inpaint_model_conditioning():
+    graph = comfy_flux_fill_inpaint(
+        {
+            "ckpt_name": "flux1-fill-dev.safetensors",
+            "relative_path": "flux1-fill-dev.safetensors",
+            "category": "diffusion_models",
+            "family": "flux_fill",
+            "image": "main.png",
+            "mask": "mask.png",
+            "prompt": "black shirt",
+            "negative": "",
+            "cfg": 30.0,
+            "steps": 20,
+            "grow_mask_by": 8,
+            "denoise": 0.9,
+        }
+    )
+    assert any(node.get("class_type") == "InpaintModelConditioning" for node in graph.values())
+    assert any(node.get("class_type") == "DifferentialDiffusion" for node in graph.values())
+    assert not any(node.get("class_type") == "VAEEncodeForInpaint" for node in graph.values())
+    assert not any(node.get("class_type") == "ETN_DefineRegion" for node in graph.values())
+    guidance = next(node for node in graph.values() if node.get("class_type") == "FluxGuidance")
+    assert guidance["inputs"]["guidance"] == 30.0
+    assert not any(node.get("class_type") == "GrowMask" for node in graph.values())
+    sampler = next(node for node in graph.values() if node.get("class_type") == "KSampler")
+    assert sampler["inputs"]["cfg"] == 1.0
+    assert sampler["inputs"]["denoise"] == 0.9
+    zero_out = next(node for node in graph.values() if node.get("class_type") == "ConditioningZeroOut")
+    assert zero_out is not None
+
+
+def test_flux_fill_inpaint_routes_from_generation_graph_builder():
+    graph, _template = _build_comfy_prompt_graph(
+        job=SimpleNamespace(),
+        mode="inpaint",
+        model={
+            "name": "FLUX.1-Fill-dev_fp8.safetensors",
+            "category": "diffusion_models",
+            "relative_path": "FLUX.1-Fill-dev_fp8.safetensors",
+        },
+        model_family="flux_fill",
+        settings={
+            "steps": 20,
+            "cfg": 30.0,
+            "sampler_name": "euler",
+            "scheduler": "simple",
+            "width": 768,
+            "height": 768,
+            "comfy_loras": [],
+        },
+        prompt="fill masked region",
+        negative="",
+        seed=42,
+        edit_strength=0.9,
+        cn_upscale="",
+        input_filename="main.png",
+        mask_filename="mask.png",
+        reference_stitch_filename=None,
+        grow_mask_by=8,
+        model_loader_args={
+            "ckpt_name": "FLUX.1-Fill-dev_fp8.safetensors",
+            "relative_path": "FLUX.1-Fill-dev_fp8.safetensors",
+            "category": "diffusion_models",
+            "family": "flux_fill",
+        },
+    )
+    assert any(node.get("class_type") == "InpaintModelConditioning" for node in graph.values())
+    assert not any(node.get("class_type") == "VAEEncodeForInpaint" for node in graph.values())
 
 
 def test_controlnet_workflow_uses_apply_advanced():

@@ -42,7 +42,7 @@ EDIT_RECIPES: dict[str, dict[str, Any]] = {
         "custom_steps": 20,
         "cfg": 30.0,
         "sampler_name": "euler",
-        "scheduler": "simple",
+        "scheduler": "normal",
         "clip_skip": 1,
         "edit_strength": 1.0,
         "inpaint_grow": 4,

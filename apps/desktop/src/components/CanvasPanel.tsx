@@ -5,7 +5,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { PointerEvent } from "react";
 import { BRAND } from "../lib/brand";
 import { studioPrepareFallbackLabel } from "../lib/loadingMessages";
@@ -30,6 +30,25 @@ type Mention = { kind: "model" | "style"; label: string; value: string };
 type CompareMode = "before" | "after" | "split";
 
 const CANVAS_ZOOM_STEP = 1.25;
+
+type CanvasLayout = {
+  frameW: number;
+  frameH: number;
+  imgW: number;
+  imgH: number;
+};
+
+function canvasPanLimits(layout: CanvasLayout, zoom: number) {
+  const { frameW, frameH, imgW, imgH } = layout;
+  if (frameW <= 0 || frameH <= 0 || imgW <= 0 || imgH <= 0) {
+    return { maxX: 0, maxY: 0, canPan: false };
+  }
+  const scaledW = imgW * zoom;
+  const scaledH = imgH * zoom;
+  const maxX = Math.max(0, (scaledW - frameW) / 2);
+  const maxY = Math.max(0, (scaledH - frameH) / 2);
+  return { maxX, maxY, canPan: maxX > 0 || maxY > 0 };
+}
 
 type Props = {
   previewUrl: string | null;
@@ -72,6 +91,7 @@ type Props = {
   enhancePromptBusy?: boolean;
   onDescribeImage?: () => void;
   describeImageBusy?: boolean;
+  describeImagePath?: string;
   onImportImageMetadata?: (path: string) => void;
   onGenerate: () => void;
   onGenerateVariants?: (count: number) => void;
@@ -135,6 +155,7 @@ export function CanvasPanel({
   enhancePromptBusy,
   onDescribeImage,
   describeImageBusy,
+  describeImagePath,
   onImportImageMetadata,
   onGenerate,
   onGenerateVariants,
@@ -165,10 +186,17 @@ export function CanvasPanel({
   const compareImageRef = useRef<HTMLDivElement | null>(null);
   const canvasShellRef = useRef<HTMLDivElement | null>(null);
   const canvasViewportRef = useRef<HTMLDivElement | null>(null);
+  const canvasImageRef = useRef<HTMLImageElement | null>(null);
+  const [canvasLayout, setCanvasLayout] = useState<CanvasLayout>({
+    frameW: 0,
+    frameH: 0,
+    imgW: 0,
+    imgH: 0,
+  });
   const compareModeRef = useRef<CompareMode>(compareMode);
   compareModeRef.current = compareMode;
   const compareImageClass =
-    "block max-h-[calc(100vh-12rem)] max-w-full select-none object-contain";
+    "block max-h-full max-w-full select-none object-contain";
   const panStartRef = useRef({
     pointerId: -1,
     x: 0,
@@ -209,7 +237,38 @@ export function CanvasPanel({
     setCanvasZoom(1);
     setCanvasPan({ x: 0, y: 0 });
     setIsCanvasPanning(false);
+    setCanvasLayout({ frameW: 0, frameH: 0, imgW: 0, imgH: 0 });
   }, [previewUrl, compareSourcePath]);
+
+  const measureCanvasLayout = useCallback(() => {
+    const frame = canvasViewportRef.current;
+    const img = canvasImageRef.current;
+    if (!frame || !img) return;
+    setCanvasLayout({
+      frameW: frame.clientWidth,
+      frameH: frame.clientHeight,
+      imgW: img.clientWidth,
+      imgH: img.clientHeight,
+    });
+  }, []);
+
+  useEffect(() => {
+    const frame = canvasViewportRef.current;
+    if (!frame || !showCompareCanvas || showInlineMask) return;
+    const ro = new ResizeObserver(() => measureCanvasLayout());
+    ro.observe(frame);
+    const img = canvasImageRef.current;
+    if (img) ro.observe(img);
+    measureCanvasLayout();
+    return () => ro.disconnect();
+  }, [
+    showCompareCanvas,
+    showInlineMask,
+    previewUrl,
+    canvasPreviewUrl,
+    compareMode,
+    measureCanvasLayout,
+  ]);
 
   const clampCanvasZoom = (value: number) => Math.max(0.25, Math.min(8, value));
 
@@ -217,16 +276,15 @@ export function CanvasPanel({
     pan: { x: number; y: number },
     zoom: number,
   ): { x: number; y: number } => {
-    if (zoom <= 1) return { x: 0, y: 0 };
-    const frame = canvasViewportRef.current;
-    if (!frame) return pan;
-    const maxX = Math.max(0, (frame.clientWidth * (zoom - 1)) / 2);
-    const maxY = Math.max(0, (frame.clientHeight * (zoom - 1)) / 2);
+    const { maxX, maxY, canPan } = canvasPanLimits(canvasLayout, zoom);
+    if (!canPan) return { x: 0, y: 0 };
     return {
       x: Math.max(-maxX, Math.min(maxX, pan.x)),
       y: Math.max(-maxY, Math.min(maxY, pan.y)),
     };
   };
+
+  const canvasCanPan = canvasPanLimits(canvasLayout, canvasZoom).canPan;
 
   useEffect(() => {
     const el = canvasShellRef.current;
@@ -273,7 +331,7 @@ export function CanvasPanel({
   };
 
   const handleCanvasPanStart = (event: PointerEvent<HTMLDivElement>) => {
-    if (canvasZoom <= 1) return;
+    if (!canvasCanPan) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     panStartRef.current = {
@@ -376,10 +434,10 @@ export function CanvasPanel({
             initial={false}
             animate={{ opacity: 1 }}
             transition={{ duration: generating ? 0.12 : 0 }}
-            className={`relative max-h-full max-w-full overflow-hidden rounded-xl border border-dfui-border/50 shadow-glass ${
+            className={`relative flex h-full w-full min-h-0 min-w-0 max-h-full max-w-full items-center justify-center overflow-hidden rounded-xl border border-dfui-border/50 shadow-glass ${
               showCompareSplit
                 ? "cursor-ew-resize"
-                : canvasZoom > 1
+                : canvasCanPan
                   ? isCanvasPanning
                     ? "cursor-grabbing"
                     : "cursor-grab"
@@ -402,33 +460,36 @@ export function CanvasPanel({
                 ? handleComparePointerEnd
                 : handleCanvasPanEnd
             }
-            title="Mouse wheel to zoom. Drag to pan when zoomed."
+            title="Mouse wheel to zoom. Drag to pan when the image overflows the canvas."
           >
             {showCompareSplit ? (
               <div
-                ref={compareImageRef}
-                className="relative inline-block max-w-full"
+                className="inline-flex items-center justify-center"
                 style={canvasTransformStyle}
               >
-                <img
-                  src={previewUrl ?? undefined}
-                  alt="After"
-                  decoding="async"
-                  draggable={false}
-                  className={compareImageClass}
-                />
-                <div
-                  className="pointer-events-none absolute inset-0 overflow-hidden"
-                  style={{ clipPath: `inset(0 ${100 - compareSplit}% 0 0)` }}
-                >
+                <div ref={compareImageRef} className="relative inline-block max-w-full">
                   <img
-                    src={sourceAssetUrl ?? undefined}
-                    alt="Before"
+                    ref={canvasImageRef}
+                    key={previewUrl ?? "after"}
+                    src={previewUrl ?? undefined}
+                    alt="After"
                     decoding="async"
                     draggable={false}
-                    className="h-full w-full select-none object-contain"
+                    className={compareImageClass}
+                    onLoad={measureCanvasLayout}
                   />
-                </div>
+                  <div
+                    className="pointer-events-none absolute inset-0 overflow-hidden"
+                    style={{ clipPath: `inset(0 ${100 - compareSplit}% 0 0)` }}
+                  >
+                    <img
+                      src={sourceAssetUrl ?? undefined}
+                      alt="Before"
+                      decoding="async"
+                      draggable={false}
+                      className={`${compareImageClass} h-full w-full`}
+                    />
+                  </div>
                 <div
                   role="slider"
                   aria-label="Before after split position"
@@ -463,16 +524,24 @@ export function CanvasPanel({
                 <div className="pointer-events-none absolute right-3 top-3 rounded bg-dfui-panel/80 px-2 py-1 text-[10px] font-medium text-dfui-fg backdrop-blur">
                   After
                 </div>
+                </div>
               </div>
             ) : (
-              <img
-                src={canvasPreviewUrl ?? undefined}
-                alt={generating ? "Live generation preview" : "Active generation"}
-                decoding="async"
-                draggable={false}
-                className={compareImageClass}
+              <div
+                className="inline-flex items-center justify-center"
                 style={canvasTransformStyle}
-              />
+              >
+                <img
+                  ref={canvasImageRef}
+                  key={canvasPreviewUrl ?? "preview"}
+                  src={canvasPreviewUrl ?? undefined}
+                  alt={generating ? "Live generation preview" : "Active generation"}
+                  decoding="async"
+                  draggable={false}
+                  className={compareImageClass}
+                  onLoad={measureCanvasLayout}
+                />
+              </div>
             )}
           </motion.div>
         ) : generating ? (
@@ -720,6 +789,7 @@ export function CanvasPanel({
         enhancePromptBusy={enhancePromptBusy}
         onDescribeImage={onDescribeImage}
         describeImageBusy={describeImageBusy}
+        describeImagePath={describeImagePath}
         onImportImageMetadata={onImportImageMetadata}
         onGenerate={onGenerate}
         onGenerateVariants={onGenerateVariants}

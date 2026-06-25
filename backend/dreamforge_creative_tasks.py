@@ -216,13 +216,14 @@ def resolve_creative_task(
 
         previous_src = (base.get("input_image") or "").strip()
 
-        src = (selected_image or base.get("input_image") or patch.get("input_image") or "").strip()
+        # Keep the attached inpaint source authoritative; history selection is only a fallback.
+        src = (previous_src or selected_image or patch.get("input_image") or "").strip()
 
         if src:
 
             patch["input_image"] = src
 
-        if selected_image and src != previous_src:
+        if previous_src and src and src != previous_src:
 
             patch["inpaint_mask_path"] = None
 

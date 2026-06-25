@@ -18,7 +18,11 @@ import {
   writeMaskImageData,
 } from "../lib/inpaintMaskMorph";
 import { readImagePreviewQueued } from "../lib/preview-queue";
-import { useMaskPublisher } from "../lib/useMaskPublisher";
+import {
+  MASK_PUBLISH_DEBOUNCE_MS,
+  maskHasSelection,
+  useMaskPublisher,
+} from "../lib/useMaskPublisher";
 import {
   generateInpaintSelectionMask,
   type InpaintSelectionKind,
@@ -91,6 +95,7 @@ export function InpaintMaskModal({
   const overlayHelperRef = useRef<HTMLCanvasElement | null>(null);
   const baseImageRef = useRef<HTMLImageElement | null>(null);
   const dimsRef = useRef({ w: 512, h: 512 });
+  const [applying, setApplying] = useState(false);
 
   const [viewSize, setViewSize] = useState({ w: 512, h: 512 });
   const [brush, setBrush] = useState(24);
@@ -104,11 +109,12 @@ export function InpaintMaskModal({
   const [ready, setReady] = useState(false);
   const drawing = useRef(false);
   const getMaskCanvas = useCallback(() => maskRef.current, []);
-  const { publishMask, syncing: maskSyncing, cancelScheduled } = useMaskPublisher(
+  const { publishMask, exportMaskNow, syncing: maskSyncing, cancelScheduled } = useMaskPublisher(
     getMaskCanvas,
     onMaskChange,
+    MASK_PUBLISH_DEBOUNCE_MS,
   );
-  const busy = detecting || morphBusy || maskSyncing;
+  const busy = detecting || morphBusy || maskSyncing || applying;
   const activeToolLabel = (typeof tool === "string" ? tool : "paint").replace(/_/g, " ");
 
   const redrawView = useCallback(() => {
@@ -306,7 +312,7 @@ export function InpaintMaskModal({
 
   const endStroke = useCallback(() => {
     drawing.current = false;
-    void publishMask();
+    void publishMask({ immediate: true });
   }, [publishMask]);
 
   const clearMask = useCallback(() => {
@@ -447,11 +453,33 @@ export function InpaintMaskModal({
   );
 
   const exportMask = async () => {
-    cancelScheduled();
-    const path = await publishMask({ immediate: true });
-    if (!path) return;
-    onSave(path);
-    onClose();
+    if (applying) return;
+    const { w, h } = dimsRef.current;
+    if (!ready || w <= 0 || h <= 0) {
+      setStatus("Image is still loading — wait a moment and try again.");
+      return;
+    }
+    getOffscreenMask(w, h, maskRef);
+    const mask = maskRef.current;
+    if (!mask || !maskHasSelection(mask)) {
+      setStatus("Paint or select a region before applying.");
+      return;
+    }
+    setApplying(true);
+    setStatus("Saving mask…");
+    try {
+      const path = await exportMaskNow();
+      if (!path) {
+        setStatus("Could not save the mask. Try again or restart the GPU engine.");
+        return;
+      }
+      onSave(path);
+      onClose();
+    } catch (error) {
+      setStatus(`Could not save mask: ${String(error)}`);
+    } finally {
+      setApplying(false);
+    }
   };
 
   if (!open) return null;

@@ -53,8 +53,24 @@ def test_resolve_inpaint_clears_mask_when_selected_image_changes():
         selected_image="D:/new.png",
     )
     patch = result["patch"]
-    assert patch["input_image"] == "D:/new.png"
-    assert patch.get("inpaint_mask_path") in (None, "")
+    assert patch["input_image"] == "D:/old.png"
+    assert patch.get("inpaint_mask_path") == "D:/old-mask.png"
+
+
+def test_resolve_inpaint_preserves_mask_when_history_selection_differs():
+    result = resolve_creative_task(
+        "inpaint",
+        {
+            "prompt": "fix the sky",
+            "input_image": "D:/photo.png",
+            "inpaint_mask_path": "D:/mask.png",
+        },
+        GALLERY,
+        selected_image="D:/other-history.png",
+    )
+    patch = result["patch"]
+    assert patch["input_image"] == "D:/photo.png"
+    assert patch.get("inpaint_mask_path") == "D:/mask.png"
 
 
 def test_resolve_edit_routes_kontext():

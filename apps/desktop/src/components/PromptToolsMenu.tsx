@@ -4,18 +4,25 @@ import type { GenerationSettings } from "../lib/tauri-api";
 import {
   applyStylesToPrompt,
   evolvePrompts,
-  interrogateImage,
   randomOnebuttonPrompt,
 } from "../lib/studioBridge";
-import { resolveDescribeImagePath } from "../lib/describeImage";
+import { describeImageToPrompt, resolveDescribeImagePath } from "../lib/describeImage";
 
 type Props = {
   settings: GenerationSettings;
   onChange: (patch: Partial<GenerationSettings>) => void;
   disabled?: boolean;
+  describeImagePath?: string;
+  onDescribeStatus?: (message: string) => void;
 };
 
-export function PromptToolsMenu({ settings, onChange, disabled }: Props) {
+export function PromptToolsMenu({
+  settings,
+  onChange,
+  disabled,
+  describeImagePath,
+  onDescribeStatus,
+}: Props) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [evolveOpen, setEvolveOpen] = useState(false);
@@ -90,16 +97,28 @@ export function PromptToolsMenu({ settings, onChange, disabled }: Props) {
             <Wand2 size={14} />
             Evolve prompt…
           </button>
-          {resolveDescribeImagePath(settings) && (
+          {(describeImagePath || resolveDescribeImagePath(settings)) && (
             <button
               type="button"
               className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-dfui-accent/10"
               onClick={() =>
                 void run(async () => {
-                  const path = resolveDescribeImagePath(settings);
+                  const path =
+                    describeImagePath?.trim() ||
+                    resolveDescribeImagePath(settings);
                   if (!path) return;
-                  const res = await interrogateImage(path, settings.prompt);
-                  if (res.prompt) onChange({ prompt: res.prompt });
+                  onDescribeStatus?.("Describing image…");
+                  const res = await describeImageToPrompt(path);
+                  if (!res.ok || !res.prompt) {
+                    onDescribeStatus?.(
+                      res.error === "empty_caption"
+                        ? "Describe returned no caption"
+                        : `Describe failed: ${res.error ?? "unknown"}`,
+                    );
+                    return;
+                  }
+                  onChange({ prompt: res.prompt });
+                  onDescribeStatus?.("Prompt filled from image description");
                 })
               }
             >

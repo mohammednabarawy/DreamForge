@@ -1042,6 +1042,41 @@ def cmd_generate_inpaint_selection_mask(params: dict) -> dict:
     return result
 
 
+def cmd_write_studio_mask_png(params: dict) -> dict:
+    """Persist a UI-painted inpaint mask PNG under backend temp/studio_masks."""
+    import base64
+    import binascii
+    import re
+    import time
+
+    from _paths import TEMP_ROOT, bootstrap_paths
+
+    bootstrap_paths()
+    raw = str(
+        params.get("data_base64")
+        or params.get("dataBase64")
+        or params.get("data_url")
+        or ""
+    ).strip()
+    if not raw:
+        return {"ok": False, "error": "data_base64_required"}
+    payload = raw
+    match = re.match(r"^data:image/(?:png|jpeg|webp);base64,(.+)$", raw, flags=re.I)
+    if match:
+        payload = match.group(1)
+    try:
+        data = base64.b64decode(payload, validate=False)
+    except (ValueError, binascii.Error) as exc:
+        return {"ok": False, "error": f"invalid_base64: {exc}"}
+    if not data:
+        return {"ok": False, "error": "empty_image_payload"}
+    folder = TEMP_ROOT / "studio_masks"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"mask_{int(time.time() * 1000)}.png"
+    path.write_bytes(data)
+    return {"ok": True, "path": str(path.resolve())}
+
+
 def cmd_suggest_dynamic_preset(params: dict) -> dict:
     from dreamforge_dynamic_presets import suggest_dynamic_preset
 
@@ -1344,6 +1379,7 @@ HANDLERS = {
     "clear_user_style_profile": cmd_clear_user_style_profile,
     "export_user_style_profile": cmd_export_user_style_profile,
     "generate_inpaint_selection_mask": cmd_generate_inpaint_selection_mask,
+    "write_studio_mask_png": cmd_write_studio_mask_png,
     "suggest_dynamic_preset": cmd_suggest_dynamic_preset,
     "check_custom_node_packs": cmd_check_custom_node_packs,
     "install_custom_node_packs": cmd_install_custom_node_packs,

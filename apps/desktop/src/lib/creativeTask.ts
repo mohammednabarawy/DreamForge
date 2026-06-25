@@ -179,6 +179,22 @@ export function enforceCreativeTaskSettings(
   );
 }
 
+/** History selection must not override an explicit inpaint/edit source image. */
+export function selectedImageForCreativeTask(
+  studioMode: StudioMode,
+  settings: GenerationSettings,
+  historyImage?: string,
+): string {
+  const history = (historyImage ?? "").trim();
+  if (studioMode === "inpaint" || studioMode === "edit") {
+    return (settings.input_image ?? history).trim();
+  }
+  if (studioMode === "upscale") {
+    return (settings.upscale_image ?? settings.input_image ?? history).trim();
+  }
+  return history || (settings.input_image ?? "").trim();
+}
+
 /** Backend-authoritative routing for edit / inpaint / upscale / extract tasks. */
 export async function enforceCreativeTaskSettingsRemote(
   settings: GenerationSettings,
@@ -211,7 +227,7 @@ export async function enforceCreativeTaskSettingsRemote(
       vram_profile: vramProfile ?? settings.vram_profile ?? null,
       advanced_mode: advancedMode ?? false,
       user_picked_model: userPickedModel ?? false,
-      selected_image: selectedImage ?? "",
+      selected_image: selectedImageForCreativeTask(studioMode, settings, selectedImage),
       enforce: true,
     });
     if (res.patch) {

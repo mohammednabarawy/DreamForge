@@ -1693,6 +1693,73 @@ def comfy_ideogram4_inpaint(args: dict[str, Any]) -> dict[str, Any]:
     return g
 
 
+def comfy_flux_fill_inpaint(args: dict[str, Any]) -> dict[str, Any]:
+    """Flux.1 Fill inpaint via InpaintModelConditioning + DifferentialDiffusion.
+
+    Matches ComfyUI's official Flux Fill blueprint: guidance lives in FluxGuidance;
+    KSampler runs at cfg=1.
+    """
+    ckpt = str(args["ckpt_name"])
+    prompt = str(args.get("prompt", ""))
+    negative = str(args.get("negative", "")).strip()
+    image_filename = str(args["image"])
+    mask_filename = str(args["mask"])
+    steps = int(args.get("steps", 20))
+    guidance = float(args.get("guidance", args.get("cfg", 30.0)))
+    sampler = str(args.get("sampler_name", "euler"))
+    scheduler = str(args.get("scheduler", "normal"))
+    seed = int(args.get("seed", 0))
+    denoise = float(args.get("denoise", args.get("edit_strength", 1.0)))
+    g: dict[str, Any] = {}
+    model_out, clip_out, vae_out, _next = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    g["2"] = _node("LoadImage", {"image": image_filename, "upload": "image"})
+    g["3"] = _node("LoadImage", {"image": mask_filename, "upload": "image"})
+    g["4"] = _node("ImageToMask", {"image": ["3", 0], "channel": "red"})
+    # Mask grow/feather is applied in prepare_inpaint_mask_bytes before upload.
+    mask_link: list[str | int] = ["4", 0]
+    g["6"] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
+    if negative:
+        g["7"] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
+        negative_out: list[str | int] = ["7", 0]
+    else:
+        g["7"] = _node("ConditioningZeroOut", {"conditioning": ["6", 0]})
+        negative_out = ["7", 0]
+    g["8"] = _node("FluxGuidance", {"conditioning": ["6", 0], "guidance": guidance})
+    g["9"] = _node(
+        "InpaintModelConditioning",
+        {
+            "positive": ["8", 0],
+            "negative": negative_out,
+            "vae": vae_out,
+            "pixels": ["2", 0],
+            "mask": mask_link,
+            "noise_mask": True,
+        },
+    )
+    g["10"] = _node("DifferentialDiffusion", {"model": model_out})
+    g["11"] = _node(
+        "KSampler",
+        {
+            "model": ["10", 0],
+            "positive": ["9", 0],
+            "negative": ["9", 1],
+            "latent_image": ["9", 2],
+            "seed": seed,
+            "steps": steps,
+            "cfg": 1.0,
+            "sampler_name": sampler,
+            "scheduler": scheduler,
+            "denoise": denoise,
+        },
+    )
+    g["12"] = _vae_decode_node(args, ["11", 0], vae_out)
+    g["13"] = _node(
+        "SaveImage",
+        {"images": ["12", 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+    )
+    return g
+
+
 def comfy_inpaint_basic(args: dict[str, Any]) -> dict[str, Any]:
     """Standard VAEEncodeForInpaint + KSampler workflow."""
     ckpt = str(args["ckpt_name"])

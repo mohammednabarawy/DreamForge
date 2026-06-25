@@ -61,6 +61,25 @@ def _namespace_from_dict(data: dict) -> SimpleNamespace:
     return SimpleNamespace(**data)
 
 
+def _reload_generation_modules():
+    """Reload generation modules so the desktop worker picks up code changes."""
+    import importlib
+
+    import dreamforge_comfy_workflow_import
+    import dreamforge_comfy_workflows
+    import dreamforge_generation
+    import dreamforge_krita_resources
+
+    for mod in (
+        dreamforge_comfy_workflows,
+        dreamforge_comfy_workflow_import,
+        dreamforge_krita_resources,
+        dreamforge_generation,
+    ):
+        importlib.reload(mod)
+    return dreamforge_generation.run_generation
+
+
 def _shutdown_worker(events_path: Path, *, reason: str = "shutdown") -> None:
     request_stop()
     stop_managed_comfy_server()
@@ -212,7 +231,7 @@ def serve() -> None:
                 try:
                     # Run in-process (do not use execute_job's nested queue — avoids extra
                     # threads and VRAM cleanup racing the managed Comfy server).
-                    from dreamforge_generation import run_generation
+                    run_generation = _reload_generation_modules()
 
                     result = run_generation(
                         DreamForgeEngine._to_namespace(params),

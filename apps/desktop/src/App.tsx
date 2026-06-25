@@ -187,6 +187,7 @@ function DreamForgeStudio() {
             enhancePromptBusy={mc.enhancePromptBusy}
             onDescribeImage={() => void mc.runDescribeImage()}
             describeImageBusy={mc.describeImageBusy}
+            describeImagePath={mc.describeImagePath}
             onImportImageMetadata={(path) => void mc.runImportImageMetadata(path)}
             onGenerate={() => void mc.runGenerate()}
             onGenerateVariants={(count) => void mc.runGenerateVariants(count)}

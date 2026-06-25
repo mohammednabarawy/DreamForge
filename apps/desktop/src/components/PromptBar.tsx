@@ -51,6 +51,7 @@ type Props = {
   enhancePromptBusy?: boolean;
   onDescribeImage?: () => void;
   describeImageBusy?: boolean;
+  describeImagePath?: string;
   onImportImageMetadata?: (path: string) => void;
   onGenerate: () => void;
   onGenerateVariants?: (count: number) => void;
@@ -87,6 +88,7 @@ export function PromptBar({
   enhancePromptBusy = false,
   onDescribeImage,
   describeImageBusy = false,
+  describeImagePath,
   onImportImageMetadata,
   onGenerate,
   onGenerateVariants,
@@ -114,10 +116,12 @@ export function PromptBar({
     Boolean(promptText) &&
     !generating &&
     !enhancePromptBusy;
-  const describeImagePath = resolveDescribeImagePath(settings);
+  const effectiveDescribePath =
+    describeImagePath?.trim() ||
+    resolveDescribeImagePath(settings, { studioMode });
   const canDescribeImage =
     !isAgentMode &&
-    Boolean(describeImagePath) &&
+    Boolean(effectiveDescribePath) &&
     !generating &&
     !describeImageBusy &&
     Boolean(onDescribeImage);
@@ -486,6 +490,7 @@ export function PromptBar({
                 settings={settings}
                 onChange={onChange}
                 disabled={generating || studioMode === "edit" || studioMode === "inpaint"}
+                describeImagePath={effectiveDescribePath}
               />
               ) : null}
               {!simpleExperience ? (

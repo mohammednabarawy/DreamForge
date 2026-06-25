@@ -2553,10 +2553,14 @@ export function useDreamForge() {
 
   const runDescribeImage = useCallback(
     async (imagePath?: string) => {
-      const path = resolveDescribeImagePath(
-        settingsRef.current,
-        imagePath ?? selected?.images?.[0],
-      );
+      const path = (
+        imagePath ??
+        resolveDescribeImagePath(settingsRef.current, {
+          selectedImagePath: selected?.images?.[0],
+          canvasPreviewPath: canvasPreviewPathRef.current,
+          studioMode: (appConfig?.ui.studio_mode ?? "generate") as StudioMode,
+        })
+      ).trim();
       if (!path) {
         setStatus("Attach or select an image to describe");
         return;
@@ -2564,7 +2568,7 @@ export function useDreamForge() {
       setDescribeImageBusy(true);
       setStatus("Describing image…");
       try {
-        const res = await describeImageToPrompt(path, settingsRef.current.prompt);
+        const res = await describeImageToPrompt(path);
         if (!res.ok || !res.prompt) {
           setStatus(
             res.error === "empty_caption"
@@ -2581,7 +2585,7 @@ export function useDreamForge() {
         setDescribeImageBusy(false);
       }
     },
-    [patchSettings, selected],
+    [appConfig?.ui.studio_mode, patchSettings, selected],
   );
 
   const runImportImageMetadata = useCallback(
@@ -2920,6 +2924,15 @@ export function useDreamForge() {
   const editPlanState = useMemo(
     () => editFamilyPlanState(agentPlan, studioMode, planSettingsSnapshot),
     [agentPlan, studioMode, planSettingsSnapshot],
+  );
+  const describeImagePath = useMemo(
+    () =>
+      resolveDescribeImagePath(settings, {
+        selectedImagePath: selected?.images?.[0],
+        canvasPreviewPath: canvasPreviewPathRef.current,
+        studioMode,
+      }),
+    [settings, selected, previewUrl, studioMode],
   );
   const generateReadiness = useMemo(
     () => {
@@ -4113,6 +4126,7 @@ export function useDreamForge() {
     enhancePromptBusy,
     runDescribeImage,
     describeImageBusy,
+    describeImagePath,
     runImportImageMetadata,
     runGenerate,
     runGenerateVariants,

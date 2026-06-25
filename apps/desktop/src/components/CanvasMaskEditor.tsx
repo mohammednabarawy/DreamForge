@@ -246,7 +246,7 @@ export function CanvasMaskEditor({
 
   const endStroke = useCallback(() => {
     drawing.current = false;
-    void publishMask();
+    void publishMask({ immediate: true });
   }, [publishMask]);
 
   const clearMask = useCallback(() => {

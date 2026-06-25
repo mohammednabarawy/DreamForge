@@ -86,3 +86,25 @@ def test_bridge_command_roundtrip(tmp_path: Path, monkeypatch):
     )
     assert out["ok"] is True
     assert Path(out["mask_path"]).is_file()
+
+
+def test_write_studio_mask_png_roundtrip(tmp_path: Path, monkeypatch):
+    import base64
+    import io
+
+    from dreamforge_desktop_bridge import cmd_write_studio_mask_png
+
+    monkeypatch.setattr("_paths.TEMP_ROOT", tmp_path / "temp")
+    tiny = Image.new("L", (8, 8), 0)
+    tiny.putpixel((4, 4), 255)
+    buf = io.BytesIO()
+    tiny.save(buf, format="PNG")
+    data_url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+
+    out = cmd_write_studio_mask_png({"data_base64": data_url})
+    assert out["ok"] is True
+    saved = Path(out["path"])
+    assert saved.is_file()
+    assert saved.parent == (tmp_path / "temp" / "studio_masks").resolve()
+    mask = np.array(Image.open(saved).convert("L"))
+    assert mask[4, 4] > 127

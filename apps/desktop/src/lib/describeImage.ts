@@ -1,16 +1,29 @@
 import type { GenerationSettings } from "./tauri-api";
 import { activeReferencePath } from "./referenceImage";
+import type { StudioMode } from "./model-selection";
 import { interrogateImage } from "./studioBridge";
 
-/** Best local file path to describe (reference, canvas result, or attach). */
+export type DescribeImageSource = {
+  selectedImagePath?: string | null;
+  canvasPreviewPath?: string | null;
+  studioMode?: StudioMode;
+};
+
+/** Best local file path to describe (canvas, history, or attached reference). */
 export function resolveDescribeImagePath(
   settings: GenerationSettings,
-  selectedImagePath?: string | null,
+  source?: DescribeImageSource,
 ): string {
-  const selected = (selectedImagePath ?? "").trim();
+  const selected = (source?.selectedImagePath ?? "").trim();
   if (selected) return selected;
-  const ref = activeReferencePath(settings)?.trim();
+
+  const canvas = (source?.canvasPreviewPath ?? "").trim();
+  if (canvas) return canvas;
+
+  const studioMode = source?.studioMode ?? "generate";
+  const ref = activeReferencePath(settings, studioMode)?.trim();
   if (ref) return ref;
+
   return (
     settings.input_image?.trim() ||
     settings.reference_image?.trim() ||
@@ -21,14 +34,14 @@ export function resolveDescribeImagePath(
 
 export async function describeImageToPrompt(
   path: string,
-  hint?: string,
+  options?: { interrogator?: "brainblip" | "clip" | "florence" },
 ): Promise<{ ok: boolean; prompt?: string; error?: string }> {
   const normalized = path.trim();
   if (!normalized) {
     return { ok: false, error: "no_image" };
   }
   try {
-    const res = await interrogateImage(normalized, hint);
+    const res = await interrogateImage(normalized, options?.interrogator);
     const prompt = (res.prompt ?? "").trim();
     if (!prompt) {
       return { ok: false, error: "empty_caption" };

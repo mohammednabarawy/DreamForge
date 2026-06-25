@@ -384,9 +384,19 @@ def cmd_interrogate_image(params: dict) -> dict:
     path = (params.get("path") or "").strip()
     if not path:
         return _error("path required")
+    from dreamforge_paths import resolve_image_path_or_raise
+
     try:
+        resolved = resolve_image_path_or_raise(path)
+    except Exception as exc:
+        return _error(f"invalid_image_path: {exc}")
+
+    try:
+        from dreamforge_generation import boot_headless
         from modules.interrogate import look
         from PIL import Image
+
+        boot_headless()
     except ImportError as exc:
         return _error(f"interrogate_unavailable: {exc}")
 
@@ -394,23 +404,41 @@ def cmd_interrogate_image(params: dict) -> dict:
         def update(self, **kwargs):
             return kwargs
 
+        def Info(self, _message: str) -> None:
+            return None
+
     gr = _GradioStub()
-    with Image.open(path) as image:
-        result = look(image, params.get("prompt") or "", gr)
+    interrogator = str(params.get("interrogator") or "").strip().lower()
+    hint = interrogator if interrogator in {"brainblip", "clip", "florence"} else ""
+    try:
+        with Image.open(resolved) as image:
+            result = look(image.copy(), hint, gr)
+    except OSError as exc:
+        return _error(f"invalid_image: {exc}")
+    except Exception as exc:
+        return _error(f"interrogate_failed: {exc}")
+
     if isinstance(result, dict):
         prompt_update = result.get("prompt")
         if hasattr(prompt_update, "get"):
             prompt_val = prompt_update.get("value")
         else:
-            prompt_val = None
+            prompt_val = prompt_update
         gallery = result.get("gallery")
         gallery_val = gallery.get("value") if hasattr(gallery, "get") else None
+        caption = str(prompt_val or "").strip()
+        if not caption:
+            return _error("empty_caption")
         return {
             "ok": True,
-            "prompt": prompt_val,
+            "prompt": caption,
             "gallery": gallery_val,
         }
-    return {"ok": True, "prompt": params.get("prompt")}
+
+    caption = str(result or "").strip()
+    if not caption:
+        return _error("empty_caption")
+    return {"ok": True, "prompt": caption}
 
 
 def cmd_organize_models_preview(params: dict) -> dict:

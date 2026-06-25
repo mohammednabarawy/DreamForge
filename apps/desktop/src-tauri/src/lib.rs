@@ -1172,7 +1172,7 @@ fn preview_bytes_from_path(path: &Path, max_edge: u32) -> Option<Vec<u8>> {
             .ok()?;
         buf
     } else {
-        let thumb = img.resize(max_edge, max_edge, FilterType::Triangle);
+        let thumb = img.thumbnail(max_edge, max_edge);
         let mut buf = Vec::new();
         thumb
             .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)

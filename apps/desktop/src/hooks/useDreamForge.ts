@@ -1200,6 +1200,9 @@ export function useDreamForge() {
           result: (p as { result?: { images?: Array<{ path: string }> } })
             .result,
         });
+        // Leave the inpaint mask editor so the canvas shows the finished
+        // result with before/after compare instead of the original + mask.
+        setInpaintCanvasFocus(false);
         void refreshOutputs({ selectNewest: true });
         void freeWorkerVram().catch(() => {});
       } else {

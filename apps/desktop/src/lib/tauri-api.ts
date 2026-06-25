@@ -79,7 +79,7 @@ export type GenerationSettings = {
   upscale_mode_type?: string;
   cn_upscale?: string;
   batch_size?: number;
-  edit_type?: "auto" | "kontext" | "inpaint" | "img2img" | "qwen_edit" | "extract";
+  edit_type?: "auto" | "kontext" | "inpaint" | "img2img" | "qwen_edit";
   edit_strength?: number;
   /** Fooocus-style img2img variation strength preset. */
   vary_amount?: "subtle" | "strong";
@@ -188,7 +188,6 @@ export type GenerationSettings = {
   enhance_target?: "face" | "hands" | "eyes" | "auto";
   enhance_detection_prompt?: string;
   enhance_post_upscale?: boolean;
-  extraction_type?: string;
   /** HiDream-O1 Dev: flash noise scale (locked 7.6 on Dev mxfp8). */
   hidream_noise_scale?: number;
   hidream_s_noise?: number;

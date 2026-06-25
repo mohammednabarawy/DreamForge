@@ -131,21 +131,6 @@ ROUTE_MATRIX = [
         "expected": "upscale",
     },
     {
-        "id": "extract_mode",
-        "studio_mode": "extract",
-        "job": {
-            "input_image": "/tmp/src.png",
-            "extraction_type": "lineart",
-            "edit_type": "extract",
-            "cn_type": "extract",
-            "workflow_mode": "extract",
-        },
-        "model": {"name": "sdxl.safetensors"},
-        "family": "sdxl",
-        "input": "/tmp/src.png",
-        "expected": "extract",
-    },
-    {
         "id": "face_detail_auto_enhance",
         "studio_mode": "upscale",
         "job": {
@@ -231,19 +216,6 @@ def test_inpaint_intent_presets(intent):
     job = SimpleNamespace(inpaint_intent=intent)
     params = resolve_inpaint_intent_params(job)
     assert "edit_strength" in params
-
-
-def test_extract_comfy_workflow_mode():
-    mode = comfy_workflow_mode(
-        input_filename="src.png",
-        cn_type="extract",
-        model={"name": "sdxl.safetensors"},
-        model_family="sdxl",
-        checkpoint_is_flux_kontext=checkpoint_is_flux_kontext,
-        edit_type="extract",
-        workflow_mode="extract",
-    )
-    assert mode == "extract"
 
 
 def test_feature_surface_audit_clean():

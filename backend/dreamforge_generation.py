@@ -489,7 +489,6 @@ def _build_comfy_prompt_graph(
     from dreamforge_comfy_workflows import (
         comfy_area_composition,
         comfy_controlnet_basic,
-        comfy_feature_extraction,
         comfy_flux_dev_txt2img,
         comfy_flux_kontext_edit,
         comfy_flux_fill_inpaint,
@@ -730,14 +729,6 @@ def _build_comfy_prompt_graph(
                 "cn_start": getattr(job, "cn_start", getattr(job, "controlnet_start", 0.0)),
                 "cn_stop": getattr(job, "cn_stop", getattr(job, "controlnet_end", 1.0)),
                 "denoise": edit_strength if input_filename and not use_structure else 1.0,
-            }
-        )
-    elif mode == "extract" and input_filename:
-        graph = comfy_feature_extraction(
-            {
-                "image": input_filename,
-                "extraction_type": getattr(job, "extraction_type", settings.get("extraction_type", "canny")),
-                "filename_prefix": "DreamForge_Extract",
             }
         )
     elif mode == "outpaint" and input_filename:

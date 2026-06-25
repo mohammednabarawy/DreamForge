@@ -7,7 +7,6 @@ export const SIMPLE_STUDIO_MODES: Array<{ id: StudioMode; label: string }> = [
   { id: "edit", label: "Edit" },
   { id: "inpaint", label: "Fix region" },
   { id: "upscale", label: "Enhance" },
-  { id: "extract", label: "Extract" },
 ];
 
 export const PRO_STUDIO_MODES: Array<{ id: StudioMode; label: string }> = [
@@ -15,7 +14,6 @@ export const PRO_STUDIO_MODES: Array<{ id: StudioMode; label: string }> = [
   { id: "edit", label: "Edit" },
   { id: "inpaint", label: "Inpaint" },
   { id: "upscale", label: "Upscale" },
-  { id: "extract", label: "Extract" },
   { id: "agent", label: "Agent" },
 ];
 
@@ -38,6 +36,7 @@ export function normalizeStudioModeForExperience(
   mode: StudioMode,
   experience?: UiExperience | null,
 ): StudioMode {
+  if ((mode as string) === "extract") return "generate";
   if (!isSimpleExperience(experience)) return mode;
   if (mode === "agent") return "generate";
   return mode;

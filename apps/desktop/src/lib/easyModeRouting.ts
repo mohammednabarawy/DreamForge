@@ -157,8 +157,6 @@ export function easyRouteSummary(
       const preset = inferUpscalePreset(settings);
       return preset ? `Enhance · ${preset} upscale` : "Enhance image resolution";
     }
-    case "extract":
-      return "Extract structure from image";
     default:
       return "";
   }

@@ -58,7 +58,7 @@ export type DreamForgeAppConfig = {
     allow_cloud_image_context?: boolean;
   };
   ui: {
-    studio_mode: "generate" | "edit" | "inpaint" | "upscale" | "extract" | "agent";
+    studio_mode: "generate" | "edit" | "inpaint" | "upscale" | "agent";
     experience: "simple" | "pro";
     advanced_mode: boolean;
     auto_enhance_on_generate?: boolean;
@@ -154,7 +154,7 @@ export type AgentPlanResult = {
   provider?: string;
   provider_model?: string;
   message: string;
-  mode: "generate" | "edit" | "inpaint" | "upscale" | "extract" | "agent";
+  mode: "generate" | "edit" | "inpaint" | "upscale" | "agent";
   patch: Partial<GenerationSettings>;
   actions: string[];
   downloads: string[];

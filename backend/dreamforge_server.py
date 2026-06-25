@@ -97,7 +97,7 @@ class DreamForgeRESTHandler(BaseHTTPRequestHandler):
         parsed_url = urlparse(self.path)
         path = parsed_url.path.rstrip('/')
 
-        if path in ("/generate", "/edit", "/upscale", "/extract"):
+        if path in ("/generate", "/edit", "/upscale"):
             try:
                 params = self._read_json_body()
                 
@@ -108,10 +108,6 @@ class DreamForgeRESTHandler(BaseHTTPRequestHandler):
                 elif path == "/upscale":
                     params.setdefault("cn_type", "upscale")
                     params.setdefault("upscale_method", "ultimate_sd_upscale")
-                    params.setdefault("use_comfy_server", True)
-                elif path == "/extract":
-                    params.setdefault("studio_mode", "extract")
-                    params.setdefault("edit_type", "extract")
                     params.setdefault("use_comfy_server", True)
 
                 print(f"[DreamForge Server] Running generation for {path} with params: {params}", file=sys.stderr)

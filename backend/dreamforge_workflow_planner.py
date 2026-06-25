@@ -268,19 +268,6 @@ TEMPLATE_REGISTRY: dict[str, WorkflowTemplateSpec] = {
         required_models=["checkpoint_or_unet", "clip_l", "t5", "vae"],
         research_basis=["chroma official workflows"],
     ),
-    "feature_extraction": WorkflowTemplateSpec(
-        id="feature_extraction",
-        label="Feature Extraction",
-        operation="extract_features",
-        mode="extract",
-        summary="Extract structural maps (Depth, Canny, OpenPose, HED) from an input image without generating a new image.",
-        builder="comfy_feature_extraction",
-        node_pattern=["LoadImage", "PreprocessorNode", "SaveImage"],
-        required_inputs=["input_image", "extraction_type"],
-        optional_inputs=["model"],
-        required_models=[],
-        research_basis=["comfyui_controlnet_aux preprocessors"],
-    ),
 }
 
 
@@ -360,10 +347,6 @@ def filter_operations_for_plan_mode(
         filtered = [op for op in ops if op in {"upscale", "hires_fix"}]
         return filtered or ["upscale"]
 
-    if mode == "extract":
-        filtered = [op for op in ops if op in {"extract_features"}]
-        return filtered or ["extract_features"]
-
     return ops
 
 
@@ -400,8 +383,6 @@ def resolve_operations_from_intent(
         operations.append("hires_fix")
     elif _contains_any(text, ("upscale", "4k", "8k", "high resolution", "hi-res", "hires", "print")):
         operations.append("upscale")
-    if _contains_any(text, ("extract", "depth map", "canny edge", "openpose", "pose map", "preprocessor")):
-        operations.append("extract_features")
     if not operations:
         operations.append("edit_image" if has_image else "generate_image")
     return _dedupe(operations)
@@ -449,8 +430,6 @@ def template_ids_for_operations(
             ids.append("face_detail_optional")
         elif op == "text_integrate":
             ids.append("arabic_text_composite")
-        elif op == "extract_features":
-            ids.append("feature_extraction")
     return _dedupe(ids)
 
 

@@ -114,8 +114,6 @@ def route_label(reference_role: str, model_family: str = "") -> str:
 
 def plan_mode_for_job(job, studio_mode: str | None = None) -> str:
     """Resolve dry-run / studio plan mode from image role and legacy fields."""
-    if _norm(studio_mode or getattr(job, "studio_mode", None)) == "extract":
-        return "extract"
     role = _reference_role(job, studio_mode=studio_mode)
     workflow_mode = _norm(getattr(job, "workflow_mode", None))
     edit_type = _norm(getattr(job, "edit_type", None))
@@ -177,23 +175,6 @@ def resolve_input_routing(
     )
     inpaint_mask_path = getattr(job, "inpaint_mask_path", None)
     wm = _norm(workflow_mode)
-    studio = _norm(studio_mode or getattr(job, "studio_mode", None))
-
-    if studio == "extract":
-        input_path = explicit_input_path or reference_image_path
-        return WorkflowRoute(
-            plan_mode="extract",
-            reference_role=reference_role or "source_edit",
-            is_upscale_job=False,
-            is_inpaint_job=False,
-            input_path=input_path,
-            cn_selection="Custom...",
-            cn_type="extract",
-            edit_type="extract",
-            workflow_mode="extract",
-            route_label="Extract features",
-            warnings=[],
-        )
 
     from dreamforge_auto_enhance import is_auto_enhance_job
 

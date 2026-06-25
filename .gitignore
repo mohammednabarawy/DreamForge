@@ -76,6 +76,14 @@ backend/.dreamforge_python_stack_ok
 # --- Research clones ---
 .research/
 .codex_upstream/
+.tmp-agency-agents/
+
+# --- Local Cursor agency install (user-wide copy lives in ~/.cursor/) ---
+.cursor/*
+!.cursor/skills/
+!.cursor/skills/README.md
+!.cursor/skills/agency-manifest.json
+!.cursor/skills/install.ps1
 
 # --- Stray icon copies at repo root ---
 /icon.ico

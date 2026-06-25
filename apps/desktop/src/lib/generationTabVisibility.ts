@@ -27,7 +27,6 @@ export type GenerationTabContext = {
   isEdit: boolean;
   isInpaint: boolean;
   isUpscale: boolean;
-  isExtract: boolean;
   isGenerateFamily: boolean;
 };
 
@@ -66,7 +65,6 @@ export function buildGenerationTabContext(input: {
     isEdit: studioMode === "edit",
     isInpaint: studioMode === "inpaint",
     isUpscale: studioMode === "upscale",
-    isExtract: studioMode === "extract",
     isGenerateFamily: isGenerateFamilyMode(studioMode),
   };
 }
@@ -76,10 +74,6 @@ export function generationSectionVisible(
   section: GenerationSection,
   ctx: GenerationTabContext,
 ): boolean {
-  if (ctx.isExtract) {
-    return false;
-  }
-
   switch (section) {
     case "creativeTemplate":
       return Boolean(ctx.advancedMode) && !ctx.isUpscale;
@@ -137,9 +131,6 @@ export function inspectorTabsForMode(input: {
 
   if (isUpscale) {
     return ["discover", "models", "settings"];
-  }
-  if (studioMode === "extract") {
-    return ["settings"];
   }
   if (simpleInspectorLocked) {
     return ["discover", "settings", "models"];

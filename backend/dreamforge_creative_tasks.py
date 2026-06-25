@@ -259,22 +259,6 @@ def resolve_creative_task(
 
         patch.pop("post_upscale", None)
 
-    elif mode == "extract":
-
-        src = (selected_image or base.get("input_image") or patch.get("input_image") or "").strip()
-
-        if src:
-
-            patch["input_image"] = src
-
-        patch["upscale_image"] = None
-
-        patch["inpaint_mask_path"] = None
-
-        patch.pop("post_upscale", None)
-
-
-
     merged = _complete_patch_for_mode(mode, {**base, **patch}, selected_image, gallery)
 
     if (
@@ -421,7 +405,7 @@ def enforce_creative_task_settings(
 
     patch = resolved.get("patch") if isinstance(resolved.get("patch"), dict) else {}
 
-    if mode not in {"edit", "inpaint", "upscale", "extract"}:
+    if mode not in {"edit", "inpaint", "upscale"}:
 
         return apply_vram_quality_defaults(
 

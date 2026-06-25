@@ -17,10 +17,10 @@ export type StyleRecipe = {
   notes?: string;
 };
 
-export type StudioMode = "generate" | "edit" | "inpaint" | "upscale" | "agent" | "extract";
+export type StudioMode = "generate" | "edit" | "inpaint" | "upscale" | "agent";
 
 export function isEditFamilyMode(mode?: StudioMode): boolean {
-  return mode === "edit" || mode === "inpaint" || mode === "upscale" || mode === "extract";
+  return mode === "edit" || mode === "inpaint" || mode === "upscale";
 }
 
 export function modelBasename(path: string | null | undefined): string {

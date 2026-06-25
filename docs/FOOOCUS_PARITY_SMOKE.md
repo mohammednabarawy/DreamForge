@@ -12,7 +12,6 @@
 - [ ] **Vary subtle / strong** — canvas Vary buttons on a result
 - [ ] **Upscale 1.5× / 2× / Fast 2×** — preset chips in Enhance inspector
 - [ ] **PiD upscale** — when PiD assets present, upscale method routes to pid_flux
-- [ ] **Extract** — each type: canny, depth, openpose, lineart, scribble, hed
 - [ ] **Auto-fix face** — canvas Fix Face or Enhance panel
 - [ ] **Keep face / character** — reference + checkbox, Kontext/Qwen route
 - [ ] **Describe** — Describe button fills prompt from image

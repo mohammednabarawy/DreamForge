@@ -13,7 +13,6 @@ export type EffectiveTask =
   | "edit"
   | "inpaint"
   | "upscale"
-  | "extract"
   | "agent";
 
 export type OutputKind = "gen" | "edit" | "inpaint" | "upscale";
@@ -94,14 +93,6 @@ export function resolveEffectiveRoute(
       sourcePath: settings.input_image?.trim(),
       isGenerateReference: false,
       outputKind: "inpaint",
-    };
-  }
-
-  if (studioMode === "extract") {
-    return {
-      task: "extract",
-      isGenerateReference: false,
-      outputKind: "gen",
     };
   }
 

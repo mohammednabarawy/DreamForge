@@ -22,7 +22,6 @@ from dreamforge_comfy_workflows import (
     comfy_area_composition,
     comfy_controlnet_basic,
     comfy_face_detail_basic,
-    comfy_feature_extraction,
     comfy_flux_dev_txt2img,
     comfy_flux_kontext_edit,
     comfy_flux_fill_inpaint,
@@ -414,20 +413,6 @@ def test_hires_workflow_uses_latent_upscale_second_pass():
     assert len(samplers) == 2
     assert samplers[1]["inputs"]["denoise"] == 0.25
     assert any(node.get("class_type") == "LatentUpscale" for node in graph.values())
-
-
-def test_feature_extraction_lineart_uses_lineart_preprocessor():
-    graph = comfy_feature_extraction(
-        {"image": "input.png", "extraction_type": "lineart"}
-    )
-    assert graph["2"]["class_type"] == "LineArtPreprocessor"
-
-
-def test_feature_extraction_scribble_uses_scribble_preprocessor():
-    graph = comfy_feature_extraction(
-        {"image": "input.png", "extraction_type": "scribble"}
-    )
-    assert graph["2"]["class_type"] == "ScribblePreprocessor"
 
 
 def test_face_detail_workflow_uses_impact_nodes():

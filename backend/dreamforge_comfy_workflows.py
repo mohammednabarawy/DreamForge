@@ -397,36 +397,6 @@ def comfy_kandinsky5_img2img(args: dict[str, Any]) -> dict[str, Any]:
     return g
 
 
-def comfy_feature_extraction(args: dict[str, Any]) -> dict[str, Any]:
-    """Feature extraction workflow."""
-    image_filename = str(args["image"])
-    extraction_type = str(args.get("extraction_type", "canny")).lower()
-    
-    g: dict[str, Any] = {}
-    g["1"] = _node("LoadImage", {"image": image_filename, "upload": "image"})
-    
-    preprocessor = "CannyEdgePreprocessor"
-    if extraction_type == "depth":
-        preprocessor = "DepthAnythingV2Preprocessor"
-    elif extraction_type == "openpose":
-        preprocessor = "OpenposePreprocessor"
-    elif extraction_type == "lineart":
-        preprocessor = "LineArtPreprocessor"
-    elif extraction_type == "scribble":
-        preprocessor = "ScribblePreprocessor"
-    elif extraction_type == "hed":
-        preprocessor = "HEDPreprocessor"
-    elif extraction_type == "pidinet":
-        preprocessor = "PiDiNetPreprocessor"
-        
-    g["2"] = _node(preprocessor, {"image": ["1", 0]})
-    g["3"] = _node(
-        "SaveImage",
-        {"images": ["2", 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge_Extract"))},
-    )
-    return g
-
-
 def _apply_user_lora_stack(
     g: dict[str, Any],
     model_out: list[str | int],

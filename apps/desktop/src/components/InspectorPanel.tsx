@@ -41,7 +41,6 @@ import { MarketplaceTab } from "./MarketplaceTab";
 import { LoraStackPanel } from "./LoraStackPanel";
 import { GenerationSettingsPanel } from "./GenerationSettingsPanel";
 import { AutomationPanel } from "./AutomationPanel";
-import { FeatureExtractionPanel } from "./FeatureExtractionPanel";
 import {
   aggregateLoraKeywords,
   type StudioSettings,
@@ -620,12 +619,7 @@ export function InspectorPanel({
           />
         )}
 
-        {tab === "settings" && studioMode === "extract" && (
-          <div className="h-full min-h-0 overflow-y-auto">
-            <FeatureExtractionPanel settings={settings} onChange={onChange} />
-          </div>
-        )}
-        {tab === "settings" && studioMode !== "extract" && (
+        {tab === "settings" && (
           <div className="h-full min-h-0 overflow-y-auto">
             <GenerationSettingsPanel
               settings={settings}

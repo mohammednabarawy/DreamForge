@@ -16,9 +16,6 @@ UI_REFERENCE_ROLES = frozenset(
 UI_INPAINT_INTENTS = frozenset({"default", "improve_detail", "modify_content"})
 UI_VARY_AMOUNTS = frozenset({"subtle", "strong"})
 UI_UPSCALE_PRESETS = frozenset({"1.5x", "2x", "fast_2x"})
-UI_EXTRACTION_TYPES = frozenset(
-    {"canny", "depth", "openpose", "lineart", "scribble", "hed"}
-)
 UI_IDENTITY_MODES = frozenset(
     {"preserve_face", "kontext", "qwen_edit", "ipadapter_faceid", "auto"}
 )
@@ -37,7 +34,6 @@ BACKEND_COMFY_MODES = frozenset(
         "ipadapter_controlnet",
         "controlnet",
         "face_detail",
-        "extract",
         "outpaint",
         "hires",
         "area_composition",
@@ -60,7 +56,6 @@ UI_SURFACE_TO_COMFY_MODES: dict[str, frozenset[str]] = {
     "studio_mode:edit": frozenset({"kontext", "qwen_edit", "img2img"}),
     "studio_mode:inpaint": frozenset({"inpaint"}),
     "studio_mode:upscale": frozenset({"upscale"}),
-    "studio_mode:extract": frozenset({"extract"}),
     "inpaint_intent:default": frozenset({"inpaint"}),
     "inpaint_intent:improve_detail": frozenset({"inpaint"}),
     "inpaint_intent:modify_content": frozenset({"inpaint"}),
@@ -84,7 +79,6 @@ COMFY_MODE_GRAPH_BUILDERS: dict[str, str] = {
     "ipadapter_controlnet": "comfy_ipadapter_controlnet_hybrid",
     "face_detail": "comfy_face_detail_basic",
     "controlnet": "comfy_controlnet_basic",
-    "extract": "comfy_feature_extraction",
     "outpaint": "comfy_outpaint_basic",
     "upscale": "comfy_ultimate_sd_upscale",
     "inpaint": "comfy_inpaint_basic",
@@ -138,11 +132,6 @@ def audit_ui_enum_backend_coverage() -> list[str]:
         for value in values:
             if value not in text:
                 issues.append(f"UI value {value!r} not referenced in {filename}")
-
-    extraction_py = _read_text(backend_dir / "dreamforge_comfy_workflows.py")
-    for ext in UI_EXTRACTION_TYPES:
-        if ext not in extraction_py:
-            issues.append(f"extraction_type {ext!r} missing from comfy_feature_extraction")
 
     return issues
 
@@ -213,10 +202,4 @@ def audit_frontend_surface_tokens() -> list[str]:
     for value in UI_UPSCALE_PRESETS:
         if value not in api_text:
             issues.append(f"upscale_preset {value!r} missing from tauri-api.ts")
-    extract_panel = _read_text(
-        REPO_ROOT / "apps" / "desktop" / "src" / "components" / "FeatureExtractionPanel.tsx"
-    )
-    for value in UI_EXTRACTION_TYPES:
-        if f'value="{value}"' not in extract_panel:
-            issues.append(f"extraction_type {value!r} missing from FeatureExtractionPanel")
     return issues

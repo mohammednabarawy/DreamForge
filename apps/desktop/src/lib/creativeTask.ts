@@ -142,17 +142,6 @@ export function enforceCreativeTaskSettings(
     next = enforceInpaintJobSettings(next, studioMode, gallery, advancedMode);
   } else if (studioMode === "upscale") {
     next = enforceUpscaleJobSettings(next, studioMode);
-  } else if (studioMode === "extract") {
-    next = {
-      ...next,
-      workflow_mode: "extract",
-      edit_type: "extract",
-      cn_selection: "Custom...",
-      cn_type: "extract",
-      style: "image_edit",
-      upscale_image: undefined,
-      inpaint_mask_path: undefined,
-    };
   }
   if (next.post_upscale && (studioMode === "edit" || studioMode === "inpaint")) {
     next = {
@@ -195,7 +184,7 @@ export function selectedImageForCreativeTask(
   return history || (settings.input_image ?? "").trim();
 }
 
-/** Backend-authoritative routing for edit / inpaint / upscale / extract tasks. */
+/** Backend-authoritative routing for edit / inpaint / upscale tasks. */
 export async function enforceCreativeTaskSettingsRemote(
   settings: GenerationSettings,
   ctx: Omit<CreativeTaskContext, "settings">,
@@ -211,11 +200,7 @@ export async function enforceCreativeTaskSettingsRemote(
     userPickedModel,
   } = ctx;
 
-  if (
-    studioMode === "generate" ||
-    studioMode === "agent" ||
-    studioMode === "extract"
-  ) {
+  if (studioMode === "generate" || studioMode === "agent") {
     return enforceCreativeTaskSettings(settings, ctx);
   }
 

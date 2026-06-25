@@ -1,0 +1,20 @@
+{
+  "source": "%USERPROFILE%\\.cursor\\skills",
+  "description": "Curated agency-agents skills for DreamForge (image generation desktop app).",
+  "skills": [
+    "agency-ai-engineer",
+    "agency-prompt-engineer",
+    "agency-frontend-developer",
+    "agency-backend-architect",
+    "agency-software-architect",
+    "agency-code-reviewer",
+    "agency-ui-designer",
+    "agency-ux-architect",
+    "agency-devops-automator",
+    "agency-minimal-change-engineer",
+    "agency-reality-checker",
+    "agency-test-results-analyzer",
+    "agency-workflow-architect",
+    "agency-sre-site-reliability-engineer"
+  ]
+}

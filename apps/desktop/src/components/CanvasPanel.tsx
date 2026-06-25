@@ -106,6 +106,7 @@ type Props = {
   inpaintCanvasFocus?: boolean;
   onInpaintCanvasFocusChange?: (focused: boolean) => void;
   onInpaintMaskChange?: (path: string) => void;
+  onInpaintMaskSyncingChange?: (syncing: boolean) => void;
   onOpenFullLog: () => void;
   activeModelLabel: string;
   referenceModelFamily?: string;
@@ -170,6 +171,7 @@ export function CanvasPanel({
   inpaintCanvasFocus = false,
   onInpaintCanvasFocusChange,
   onInpaintMaskChange,
+  onInpaintMaskSyncingChange,
   onOpenFullLog,
   activeModelLabel,
   referenceModelFamily,
@@ -422,6 +424,7 @@ export function CanvasPanel({
             imagePath={inputImagePath}
             initialMaskPath={inpaintMaskPath}
             onMaskChange={onInpaintMaskChange}
+            onMaskSyncingChange={onInpaintMaskSyncingChange}
             disabled={generating}
             onOpenExpanded={
               !simpleExperience && onOpenInpaintMaskModal

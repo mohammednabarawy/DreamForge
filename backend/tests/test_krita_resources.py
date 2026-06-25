@@ -184,3 +184,50 @@ def test_base_flux_dev_does_not_satisfy_kontext_readiness(tmp_path, monkeypatch)
     from dreamforge_krita_resources import studio_edit_flux_unet_present
 
     assert studio_edit_flux_unet_present(models) is False
+
+
+def test_plan_inpaint_crop_stitch_for_large_image_with_small_mask():
+    pytest = __import__("pytest")
+    Image = pytest.importorskip("PIL.Image")
+    from dreamforge_krita_resources import (
+        plan_inpaint_crop_stitch,
+        prepare_inpaint_mask_image,
+        stitch_inpaint_crop,
+    )
+
+    image = Image.new("RGB", (2400, 1800), color=(10, 20, 30))
+    mask = Image.new("L", (2400, 1800), color=0)
+    for x in range(900, 1100):
+        for y in range(700, 900):
+            mask.putpixel((x, y), 255)
+    plan = plan_inpaint_crop_stitch(image, mask, grow=8, feather=4)
+    assert plan is not None
+    box = plan["box"]
+    assert box[2] - box[0] < 2400
+    assert box[3] - box[1] < 1800
+    stitched = stitch_inpaint_crop(
+        image,
+        Image.new("RGB", plan["crop_image"].size, color=(200, 100, 50)),
+        box,
+    )
+    assert stitched.size == image.size
+    assert stitched.getpixel((0, 0)) == (10, 20, 30)
+    assert stitched.getpixel((1000, 800)) == (200, 100, 50)
+
+    soft_bytes, soft = prepare_inpaint_mask_image(mask.crop(box), grow=4, feather=8, hard=False)
+    hard_bytes, hard = prepare_inpaint_mask_image(mask.crop(box), grow=4, feather=8, hard=True)
+    plain_bytes, plain = prepare_inpaint_mask_image(mask.crop(box), grow=4, feather=0, hard=False)
+    assert len(soft_bytes) > 0 and len(hard_bytes) > 0
+    assert list(hard.getdata()) == list(plain.getdata())
+    assert list(soft.getdata()) != list(hard.getdata())
+
+
+def test_plan_inpaint_crop_stitch_skips_small_images():
+    pytest = __import__("pytest")
+    Image = pytest.importorskip("PIL.Image")
+    from dreamforge_krita_resources import plan_inpaint_crop_stitch
+
+    image = Image.new("RGB", (1024, 1024), color=(0, 0, 0))
+    mask = Image.new("L", (1024, 1024), color=0)
+    mask.putpixel((512, 512), 255)
+    assert plan_inpaint_crop_stitch(image, mask) is None

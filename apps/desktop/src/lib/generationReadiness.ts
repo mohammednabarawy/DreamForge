@@ -32,6 +32,8 @@ export function computeGenerateReadiness(args: {
   modelGallery: ModelGalleryItem[];
   studioMode?: StudioMode;
   editPlanState?: EditFamilyPlanState;
+  /** True while debounced mask export is still writing to disk. */
+  inpaintMaskSyncing?: boolean;
 }): GenerateReadiness {
   if (args.generating) {
     return { ok: false, reason: "Generation in progress", missingCompanions: false, companionBlockedOnly: false };
@@ -87,6 +89,17 @@ export function computeGenerateReadiness(args: {
     return {
       ok: false,
       reason: "Create or attach an inpaint mask first",
+      missingCompanions: false,
+      companionBlockedOnly: false,
+    };
+  }
+  if (
+    (studio === "inpaint" || args.settings.edit_type === "inpaint") &&
+    args.inpaintMaskSyncing
+  ) {
+    return {
+      ok: false,
+      reason: "Saving inpaint mask — wait a moment before generating",
       missingCompanions: false,
       companionBlockedOnly: false,
     };

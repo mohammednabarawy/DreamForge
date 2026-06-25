@@ -204,6 +204,7 @@ function DreamForgeStudio() {
             inpaintCanvasFocus={mc.inpaintCanvasFocus}
             onInpaintCanvasFocusChange={mc.setInpaintCanvasFocus}
             onInpaintMaskChange={(path) => mc.setInpaintMaskPath(path)}
+            onInpaintMaskSyncingChange={mc.setInpaintMaskSyncing}
             onOpenFullLog={() => setFullLogOpen(true)}
             activeModelLabel={mc.activeModelLabel}
             referenceModelFamily={mc.referenceModelFamily}
@@ -268,6 +269,7 @@ function DreamForgeStudio() {
         initialMaskPath={mc.settings.inpaint_mask_path}
         onClose={() => mc.setInpaintMaskOpen(false)}
         onMaskChange={(path) => mc.setInpaintMaskPath(path)}
+        onMaskSyncingChange={mc.setInpaintMaskSyncing}
         onSave={(path) => {
           mc.setInpaintMaskPath(path);
           mc.setInpaintMaskOpen(false);

@@ -19,6 +19,7 @@ export type MaskPublisherOptions = {
   /** Full-resolution source size — mask is scaled up on export when set. */
   getExportSize?: () => { width: number; height: number } | null;
   onError?: (message: string) => void;
+  onSyncingChange?: (syncing: boolean) => void;
 };
 
 /**
@@ -30,18 +31,27 @@ export function useMaskPublisher(
   onMaskChange?: (path: string) => void,
   options: MaskPublisherOptions = {},
 ) {
-  const { debounceMs = MASK_PUBLISH_DEBOUNCE_MS, getExportSize, onError } = options;
+  const { debounceMs = MASK_PUBLISH_DEBOUNCE_MS, getExportSize, onError, onSyncingChange } =
+    options;
   const sequenceRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onSyncingChangeRef = useRef(onSyncingChange);
+  onSyncingChangeRef.current = onSyncingChange;
   const [syncing, setSyncing] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
+
+  const setSyncingState = useCallback((next: boolean) => {
+    setSyncing(next);
+    onSyncingChangeRef.current?.(next);
+  }, []);
 
   const cancelScheduled = useCallback(() => {
     if (timerRef.current) {
       clearTimeout(timerRef.current);
       timerRef.current = null;
+      setSyncingState(false);
     }
-  }, []);
+  }, [setSyncingState]);
 
   const reportError = useCallback(
     (message: string) => {
@@ -70,7 +80,7 @@ export function useMaskPublisher(
     const mask = getMaskCanvas();
     if (!mask || mask.width <= 0 || mask.height <= 0) return undefined;
 
-    setSyncing(true);
+    setSyncingState(true);
     try {
       return await writeMask(mask);
     } catch (err) {
@@ -79,9 +89,9 @@ export function useMaskPublisher(
       reportError(message);
       return undefined;
     } finally {
-      setSyncing(false);
+      setSyncingState(false);
     }
-  }, [cancelScheduled, getMaskCanvas, reportError, writeMask]);
+  }, [cancelScheduled, getMaskCanvas, reportError, setSyncingState, writeMask]);
 
   const publishMask = useCallback(
     async (opts?: { immediate?: boolean }): Promise<string | undefined> => {
@@ -90,6 +100,7 @@ export function useMaskPublisher(
 
       if (!opts?.immediate) {
         cancelScheduled();
+        setSyncingState(true);
         return new Promise((resolve) => {
           timerRef.current = setTimeout(() => {
             timerRef.current = null;
@@ -99,7 +110,7 @@ export function useMaskPublisher(
       }
 
       const seq = ++sequenceRef.current;
-      setSyncing(true);
+      setSyncingState(true);
       try {
         const path = await writeMask(mask);
         if (seq !== sequenceRef.current) return undefined;
@@ -111,13 +122,21 @@ export function useMaskPublisher(
         reportError(message);
         return undefined;
       } finally {
-        if (seq === sequenceRef.current) setSyncing(false);
+        if (seq === sequenceRef.current) setSyncingState(false);
       }
     },
-    [cancelScheduled, debounceMs, getMaskCanvas, reportError, writeMask],
+    [cancelScheduled, debounceMs, getMaskCanvas, reportError, setSyncingState, writeMask],
   );
 
   useEffect(() => cancelScheduled, [cancelScheduled]);
+
+  useEffect(
+    () => () => {
+      cancelScheduled();
+      setSyncingState(false);
+    },
+    [cancelScheduled, setSyncingState],
+  );
 
   return { publishMask, exportMaskNow, syncing, lastError, cancelScheduled };
 }

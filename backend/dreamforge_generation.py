@@ -1783,6 +1783,8 @@ def run_generation(
         inpaint_grow = _job_inpaint_int("inpaint_grow", "inpaint_grow")
         inpaint_feather = _job_inpaint_int("inpaint_feather", "inpaint_feather")
         inpaint_mask_img = None
+        inpaint_crop_box: tuple[int, int, int, int] | None = None
+        inpaint_original_image = None
 
         input_filename = None
         if input_path:
@@ -1915,16 +1917,74 @@ def run_generation(
 
                 main_path = resolve_image_path_or_raise(str(input_path))
                 mask_resolved = resolve_image_path_or_raise(str(mask_path))
-                main_size = Image.open(main_path).size
+                main_img = Image.open(main_path).convert("RGB")
+                main_size = main_img.size
+                hard_mask = bool(getattr(job, "inpaint_hard_mask", False))
                 mask_grow = int(inpaint_grow)
                 if _checkpoint_is_flux_fill(model, model_family):
                     mask_grow += int(grow_mask_by)
-                mask_bytes, inpaint_mask_img = prepare_inpaint_mask_bytes(
-                    mask_resolved,
-                    image_size=main_size,
-                    grow=mask_grow,
-                    feather=inpaint_feather,
+                raw_mask = Image.open(mask_resolved).convert("L")
+                if raw_mask.size != main_size:
+                    raw_mask = raw_mask.resize(main_size, Image.Resampling.LANCZOS)
+                from dreamforge_krita_resources import (
+                    pil_png_bytes,
+                    plan_inpaint_crop_stitch,
+                    prepare_inpaint_mask_bytes,
+                    prepare_inpaint_mask_image,
                 )
+
+                crop_plan = plan_inpaint_crop_stitch(
+                    main_img,
+                    raw_mask,
+                    grow=mask_grow,
+                    feather=0 if hard_mask else inpaint_feather,
+                )
+                if crop_plan:
+                    inpaint_crop_box = crop_plan["box"]
+                    inpaint_original_image = main_img
+                    mask_bytes, _ = prepare_inpaint_mask_image(
+                        crop_plan["crop_mask"],
+                        grow=mask_grow,
+                        feather=inpaint_feather,
+                        hard=hard_mask,
+                    )
+                    _, inpaint_mask_img = prepare_inpaint_mask_bytes(
+                        mask_resolved,
+                        image_size=main_size,
+                        grow=mask_grow,
+                        feather=inpaint_feather,
+                        hard=hard_mask,
+                    )
+                    crop_name = f"{Path(str(input_path)).stem}_df_crop.png"
+                    crop_upload = client.upload_image(
+                        image_bytes=pil_png_bytes(crop_plan["crop_image"]),
+                        filename=crop_name,
+                        folder_type="input",
+                        overwrite=True,
+                    )
+                    input_filename = str(crop_upload.get("name") or crop_name)
+                    x0, y0, x1, y1 = inpaint_crop_box
+                    emit_event(
+                        stream_sink,
+                        {
+                            "type": "progress",
+                            "job_id": job_id,
+                            "phase": "preflight",
+                            "progress": 5,
+                            "message": (
+                                f"Inpaint crop-and-stitch: {x1 - x0}×{y1 - y0} region "
+                                f"of {main_size[0]}×{main_size[1]} image"
+                            ),
+                        },
+                    )
+                else:
+                    mask_bytes, inpaint_mask_img = prepare_inpaint_mask_bytes(
+                        mask_resolved,
+                        image_size=main_size,
+                        grow=mask_grow,
+                        feather=inpaint_feather,
+                        hard=hard_mask,
+                    )
                 mask_name = f"{Path(str(mask_path)).stem}_df_inpaint.png"
                 mask_upload = client.upload_image(
                     image_bytes=mask_bytes,
@@ -2362,6 +2422,45 @@ def run_generation(
             saved_paths.append(str(target))
 
         if (
+            cn_type == "inpaint"
+            and inpaint_mask_img is not None
+            and saved_paths
+            and inpaint_crop_box
+            and inpaint_original_image is not None
+        ):
+            try:
+                from dreamforge_krita_resources import stitch_inpaint_crop
+
+                composited_paths: list[str] = []
+                for saved in saved_paths:
+                    generated = Image.open(saved).convert("RGB")
+                    stitched = stitch_inpaint_crop(
+                        inpaint_original_image,
+                        generated,
+                        inpaint_crop_box,
+                    )
+                    merged = composite_inpaint_result(
+                        inpaint_original_image,
+                        stitched,
+                        inpaint_mask_img,
+                    )
+                    merged_path = Path(saved).with_name(f"{Path(saved).stem}_composite.png")
+                    merged.save(merged_path, format="PNG")
+                    composited_paths.append(str(merged_path))
+                saved_paths = composited_paths
+            except OSError as exc:
+                emit_event(
+                    stream_sink,
+                    {
+                        "type": "warning",
+                        "message": (
+                            "Inpaint crop-and-stitch composite failed; returning raw Comfy output. "
+                            f"{exc}"
+                        ),
+                        "job_id": job_id,
+                    },
+                )
+        elif (
             cn_type == "inpaint"
             and input_path
             and inpaint_mask_img is not None

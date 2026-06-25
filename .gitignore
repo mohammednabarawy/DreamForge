@@ -86,6 +86,8 @@ backend/.dreamforge_python_stack_ok
 !.cursor/skills/install.ps1
 .cursor/skills/agency-*/
 
+/agency-agents/
+
 # --- Stray icon copies at repo root ---
 /icon.ico
 /icon.icns

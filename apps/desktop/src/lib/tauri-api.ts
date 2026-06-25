@@ -148,6 +148,8 @@ export type GenerationSettings = {
   preserve_style?: boolean;
   preserve_text?: boolean;
   inpaint_mask_path?: string;
+  /** Skip feathering on inpaint mask edges (advanced). */
+  inpaint_hard_mask?: boolean;
   /** What the attached image means for routing (explicit user intent). */
   reference_role?:
     | "image_prompt"

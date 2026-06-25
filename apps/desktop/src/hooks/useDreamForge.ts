@@ -407,6 +407,7 @@ export function useDreamForge() {
   );
   const [imageNumberMax, setImageNumberMax] = useState(8);
   const [inpaintMaskOpen, setInpaintMaskOpen] = useState(false);
+  const [inpaintMaskSyncing, setInpaintMaskSyncing] = useState(false);
   const [inpaintCanvasFocus, setInpaintCanvasFocus] = useState(false);
   const [activeSessionId, setActiveSessionId] = useState(() =>
     loadActiveSessionId(),
@@ -2134,6 +2135,7 @@ export function useDreamForge() {
         settings: sanitized,
         modelGallery: modelGalleryAll,
         studioMode,
+        inpaintMaskSyncing,
       });
       if (!readiness.ok) {
         setStatus(readiness.reason);
@@ -2448,6 +2450,7 @@ export function useDreamForge() {
             settings: mergedForCheck,
             modelGallery: modelGalleryAll,
             studioMode: targetMode,
+            inpaintMaskSyncing,
           });
           if (!localReady.ok && !localReady.missingCompanions) {
             setStatus(localReady.reason);
@@ -2950,6 +2953,7 @@ export function useDreamForge() {
         modelGallery: modelGalleryAll,
         studioMode,
         editPlanState: isEditFamilyMode(studioMode) ? editPlanState : undefined,
+        inpaintMaskSyncing,
       });
     },
     [
@@ -2965,6 +2969,7 @@ export function useDreamForge() {
       modelGalleryAll,
       studioMode,
       editPlanState,
+      inpaintMaskSyncing,
     ],
   );
   const effectiveGenerateReadiness = useMemo(() => generateReadiness, [generateReadiness]);
@@ -4161,6 +4166,8 @@ export function useDreamForge() {
     imageNumberMax,
     inpaintMaskOpen,
     setInpaintMaskOpen,
+    inpaintMaskSyncing,
+    setInpaintMaskSyncing,
     inpaintCanvasFocus,
     setInpaintCanvasFocus,
     openInpaintMaskEditor,

@@ -14,6 +14,7 @@ type Props = {
   imagePath: string;
   initialMaskPath?: string;
   onMaskChange?: (path: string) => void;
+  onMaskSyncingChange?: (syncing: boolean) => void;
   disabled?: boolean;
   maxDimension?: number;
   /** Pro: open full-screen mask modal with brush, tap selection, and morphology tools. */
@@ -24,6 +25,7 @@ export function CanvasMaskEditor({
   imagePath,
   initialMaskPath,
   onMaskChange,
+  onMaskSyncingChange,
   disabled = false,
   maxDimension = 768,
   onOpenExpanded,
@@ -51,7 +53,7 @@ export function CanvasMaskEditor({
   const { publishMask, syncing, cancelScheduled } = useMaskPublisher(
     getMaskCanvas,
     onMaskChange,
-    { getExportSize },
+    { getExportSize, onSyncingChange: onMaskSyncingChange },
   );
   const busy = detecting || syncing || disabled;
 

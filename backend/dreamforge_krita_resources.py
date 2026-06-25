@@ -641,16 +641,100 @@ def check_image_prompt_resources() -> list[dict]:
     return missing
 
 
-def preprocess_inpaint_mask(mask_img, *, grow: int = 4, feather: int = 4):
+def preprocess_inpaint_mask(mask_img, *, grow: int = 4, feather: int = 4, hard: bool = False):
     """Grow and soften inpaint masks (Krita grow/feather defaults, simplified)."""
     from PIL import Image, ImageFilter
 
     if grow > 0:
         k = max(1, grow * 2 + 1)
         mask_img = mask_img.filter(ImageFilter.MaxFilter(k))
-    if feather > 0:
+    if not hard and feather > 0:
         mask_img = mask_img.filter(ImageFilter.GaussianBlur(radius=max(1, feather // 2)))
     return mask_img
+
+
+INPAINT_CROP_STITCH_MAX_SIDE = 1536
+INPAINT_CROP_STITCH_MAX_PIXELS = 1536 * 1536
+INPAINT_CROP_MIN_MARGIN = 64
+
+
+def mask_bounding_box(mask_img, *, threshold: int = 8) -> tuple[int, int, int, int] | None:
+    """Return (left, upper, right, lower) for mask pixels above threshold."""
+    binary = mask_img.convert("L").point(lambda p: 255 if p > threshold else 0)
+    return binary.getbbox()
+
+
+def _snap_dimension(value: int, *, align: int = 8) -> int:
+    if value <= 0:
+        return align
+    return max(align, ((value + align - 1) // align) * align)
+
+
+def plan_inpaint_crop_stitch(
+    image,
+    mask_img,
+    *,
+    max_side: int = INPAINT_CROP_STITCH_MAX_SIDE,
+    max_pixels: int = INPAINT_CROP_STITCH_MAX_PIXELS,
+    margin: int = INPAINT_CROP_MIN_MARGIN,
+    grow: int = 0,
+    feather: int = 0,
+) -> dict[str, Any] | None:
+    """Crop a masked region for faster inpaint when the source image is large."""
+    from PIL import Image
+
+    width, height = image.size
+    if max(width, height) <= max_side and width * height <= max_pixels:
+        return None
+    bbox = mask_bounding_box(mask_img)
+    if not bbox:
+        return None
+    pad = int(margin) + int(grow) + int(feather) + 16
+    x0, y0, x1, y1 = bbox
+    x0 = max(0, x0 - pad)
+    y0 = max(0, y0 - pad)
+    x1 = min(width, x1 + pad)
+    y1 = min(height, y1 + pad)
+    crop_w = x1 - x0
+    crop_h = y1 - y0
+    if crop_w <= 0 or crop_h <= 0:
+        return None
+    if crop_w * crop_h >= int(width * height * 0.92):
+        return None
+    crop_w = min(width - x0, _snap_dimension(crop_w))
+    crop_h = min(height - y0, _snap_dimension(crop_h))
+    x1 = min(width, x0 + crop_w)
+    y1 = min(height, y0 + crop_h)
+    box = (x0, y0, x1, y1)
+    base = image.convert("RGB")
+    mask = mask_img.convert("L")
+    return {
+        "box": box,
+        "crop_image": base.crop(box),
+        "crop_mask": mask.crop(box),
+    }
+
+
+def stitch_inpaint_crop(full_image, crop_image, box: tuple[int, int, int, int]):
+    """Paste an inpainted crop back into the full-resolution source image."""
+    from PIL import Image
+
+    x0, y0, x1, y1 = box
+    result = full_image.convert("RGB").copy()
+    patch = crop_image.convert("RGB")
+    target_size = (x1 - x0, y1 - y0)
+    if patch.size != target_size:
+        patch = patch.resize(target_size, Image.Resampling.LANCZOS)
+    result.paste(patch, (x0, y0))
+    return result
+
+
+def pil_png_bytes(image) -> bytes:
+    from io import BytesIO
+
+    buf = BytesIO()
+    image.save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def inpaint_mask_recipe_values(edit_type: str = "inpaint") -> dict[str, int]:
@@ -673,6 +757,7 @@ def prepare_inpaint_mask_bytes(
     image_size: tuple[int, int] | None = None,
     grow: int | None = None,
     feather: int | None = None,
+    hard: bool = False,
 ) -> tuple[bytes, Any]:
     """Load, resize-to-image, grow/feather, and serialize an inpaint mask."""
     from io import BytesIO
@@ -681,14 +766,38 @@ def prepare_inpaint_mask_bytes(
 
     recipe = inpaint_mask_recipe_values("inpaint")
     grow_v = int(recipe["inpaint_grow"] if grow is None else grow)
-    feather_v = int(recipe["inpaint_feather"] if feather is None else feather)
+    feather_v = 0 if hard else int(recipe["inpaint_feather"] if feather is None else feather)
     mask_img = Image.open(mask_path).convert("L")
     if image_size and mask_img.size != image_size:
         mask_img = mask_img.resize(image_size, Image.Resampling.LANCZOS)
-    mask_img = preprocess_inpaint_mask(mask_img, grow=grow_v, feather=feather_v)
+    mask_img = preprocess_inpaint_mask(mask_img, grow=grow_v, feather=feather_v, hard=hard)
     buf = BytesIO()
     mask_img.save(buf, format="PNG")
     return buf.getvalue(), mask_img
+
+
+def prepare_inpaint_mask_image(
+    mask_img,
+    *,
+    grow: int | None = None,
+    feather: int | None = None,
+    hard: bool = False,
+) -> tuple[bytes, Any]:
+    """Grow/feather an in-memory mask image and return PNG bytes + processed image."""
+    from io import BytesIO
+
+    recipe = inpaint_mask_recipe_values("inpaint")
+    grow_v = int(recipe["inpaint_grow"] if grow is None else grow)
+    feather_v = 0 if hard else int(recipe["inpaint_feather"] if feather is None else feather)
+    processed = preprocess_inpaint_mask(
+        mask_img.convert("L"),
+        grow=grow_v,
+        feather=feather_v,
+        hard=hard,
+    )
+    buf = BytesIO()
+    processed.save(buf, format="PNG")
+    return buf.getvalue(), processed
 
 
 def composite_inpaint_result(original, generated, mask_img):

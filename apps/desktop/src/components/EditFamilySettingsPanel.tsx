@@ -16,6 +16,7 @@ type Props = {
   routedModelLabel: string;
   editRouteSubtitle?: string;
   showEditStrength: boolean;
+  advancedMode?: boolean;
   modelGallery?: ModelGalleryItem[];
 };
 
@@ -61,6 +62,7 @@ export function EditFamilySettingsPanel({
   routedModelLabel,
   editRouteSubtitle,
   showEditStrength,
+  advancedMode = false,
   modelGallery = [],
 }: Props) {
   const autoSummary = isInpaint ? MODE_AUTO_SUMMARY.inpaint : MODE_AUTO_SUMMARY.edit;
@@ -75,6 +77,7 @@ export function EditFamilySettingsPanel({
   };
 
   const panelTitle = editPanelTitle(settings, modelGallery, isInpaint);
+  const hardMask = Boolean(settings.inpaint_hard_mask);
 
   return (
     <div className="overflow-hidden rounded-md border border-[#4a4a4a] bg-[#353535] font-mono shadow-[0_2px_8px_rgba(0,0,0,0.35)]">
@@ -210,9 +213,6 @@ export function EditFamilySettingsPanel({
               </label>
             ) : null}
 
-            <p className="text-[10px] leading-snug text-[#777777]">
-              Paint or tap-select the mask on the canvas, then tune grow and feather.
-            </p>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               <label className="block">
                 <FieldLabel>Mask grow — {settings.inpaint_grow ?? 4}px</FieldLabel>
@@ -226,14 +226,23 @@ export function EditFamilySettingsPanel({
                 />
               </label>
               <label className="block">
-                <FieldLabel>Feather — {settings.inpaint_feather ?? 4}px</FieldLabel>
+                <FieldLabel
+                  hint={
+                    hardMask
+                      ? "Feather is off while hard mask is enabled."
+                      : undefined
+                  }
+                >
+                  Feather — {settings.inpaint_feather ?? 4}px
+                </FieldLabel>
                 <input
                   type="range"
                   min={0}
                   max={24}
                   value={settings.inpaint_feather ?? 4}
+                  disabled={hardMask}
                   onChange={(e) => onChange({ inpaint_feather: Number(e.target.value) })}
-                  className="mt-1 w-full accent-[#6a9955]"
+                  className="mt-1 w-full accent-[#6a9955] disabled:cursor-not-allowed disabled:opacity-40"
                 />
               </label>
               <label className="block">
@@ -248,6 +257,24 @@ export function EditFamilySettingsPanel({
                 />
               </label>
             </div>
+            {advancedMode ? (
+              <label className="inline-flex items-center gap-1.5 text-[10px] text-[#aaaaaa]">
+                <input
+                  type="checkbox"
+                  checked={Boolean(settings.inpaint_hard_mask)}
+                  onChange={(e) =>
+                    onChange({ inpaint_hard_mask: e.target.checked || undefined })
+                  }
+                  className="h-3.5 w-3.5 accent-[#6a9955]"
+                />
+                Hard mask (no feather)
+              </label>
+            ) : null}
+            <p className="text-[10px] leading-snug text-[#777777]">
+              {hardMask
+                ? "Hard mask is on — grow and Comfy expand still apply; feather is skipped at export."
+                : "Paint or tap-select the mask on the canvas, then tune grow and feather."}
+            </p>
           </>
         )}
       </div>

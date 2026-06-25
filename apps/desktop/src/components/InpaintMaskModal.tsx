@@ -38,6 +38,7 @@ type Props = {
   onSave: (maskPath: string) => void;
   /** Live sync to app settings (debounced while painting). */
   onMaskChange?: (maskPath: string) => void;
+  onMaskSyncingChange?: (syncing: boolean) => void;
 };
 
 type SelectTool = "paint" | "erase" | "tap_object" | "tap_background";
@@ -87,6 +88,7 @@ export function InpaintMaskModal({
   onClose,
   onSave,
   onMaskChange,
+  onMaskSyncingChange,
 }: Props) {
   /** Visible: photo + pale red selection preview. */
   const viewCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -122,6 +124,7 @@ export function InpaintMaskModal({
       debounceMs: MASK_PUBLISH_DEBOUNCE_MS,
       getExportSize,
       onError: (message) => setStatus(message),
+      onSyncingChange: onMaskSyncingChange,
     },
   );
   const busy = detecting || morphBusy || maskSyncing || applying;

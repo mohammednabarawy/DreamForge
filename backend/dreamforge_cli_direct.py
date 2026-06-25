@@ -144,6 +144,11 @@ def build_parser():
         dest="inpaint_mask_grow_by",
         help="Comfy grow_mask_by expansion for inpaint sampling",
     )
+    parser.add_argument(
+        "--inpaint-hard-mask",
+        action="store_true",
+        help="Skip feathering on inpaint mask edges (hard mask)",
+    )
     parser.add_argument("--preserve-character", action="store_true", help="Planner hint: preserve character identity")
     parser.add_argument("--preserve-style", action="store_true", help="Planner hint: preserve overall style")
     parser.add_argument("--preserve-text", action="store_true", help="Planner hint: preserve text and logos")

@@ -1272,6 +1272,7 @@ def cmd_build_cli_argv(params: dict) -> dict:
     add("--inpaint-grow", params.get("inpaint_grow"))
     add("--inpaint-feather", params.get("inpaint_feather"))
     add("--inpaint-mask-grow-by", params.get("inpaint_mask_grow_by"))
+    add("--inpaint-hard-mask", params.get("inpaint_hard_mask"))
     add("--preserve-character", params.get("preserve_character"))
     add("--preserve-style", params.get("preserve_style"))
     add("--preserve-text", params.get("preserve_text"))

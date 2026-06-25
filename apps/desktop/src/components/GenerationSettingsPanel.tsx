@@ -314,6 +314,7 @@ export function GenerationSettingsPanel({
           routedModelLabel={routedModelLabel}
           editRouteSubtitle={editRouteSubtitle}
           showEditStrength={showEditStrength}
+          advancedMode={advancedMode}
           modelGallery={modelGallery}
         />
       )}

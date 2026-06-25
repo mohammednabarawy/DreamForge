@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from dreamforge_prompt.flux_llm_enhance import (
+    family_prompt_profile_label,
     normalize_enhance_strength,
     resolve_enhance_prefs,
     resolve_flux_enhance_purpose,
@@ -64,13 +65,14 @@ def _enhance_hint(
             return f"No enhancement needed ({skipped_reason})"
         return "No enhancement applied"
     if enhancer == "flux_llm":
+        profile = family_prompt_profile_label(fam)
         if mode == "inpaint":
-            return f"Enhanced for inpaint via local brain{strength_note}"
+            return f"Enhanced for {profile} inpaint via local brain{strength_note}"
         if mode == "edit" and fam.startswith("qwen"):
             return f"Enhanced for Qwen Image Edit via local brain{strength_note}"
         if mode == "edit" and "kontext" in fam:
             return f"Enhanced for Flux Kontext via local brain{strength_note}"
-        return f"Enhanced for {fam or 'Flux'} via local brain{strength_note}"
+        return f"Enhanced for {profile} via local brain{strength_note}"
     if mode == "upscale":
         return "Enhanced for upscale: detail restoration wording"
     if mode == "inpaint":

@@ -16,6 +16,21 @@ from dreamforge_prompt.studio_enhance import studio_enhancer_for_preview  # noqa
 
 
 class StudioPromptEnhanceTests(unittest.TestCase):
+    def test_studio_enhancer_flux2_uses_flux_llm(self):
+        self.assertEqual(studio_enhancer_for_preview("generate", "flux2"), "flux_llm")
+
+    def test_studio_enhancer_krea2_uses_flux_llm(self):
+        self.assertEqual(studio_enhancer_for_preview("generate", "krea2"), "flux_llm")
+
+    def test_studio_enhancer_z_image_uses_flux_llm(self):
+        self.assertEqual(studio_enhancer_for_preview("generate", "z_image"), "flux_llm")
+
+    def test_studio_enhancer_hunyuan_uses_flux_llm(self):
+        self.assertEqual(studio_enhancer_for_preview("generate", "hunyuan"), "flux_llm")
+
+    def test_studio_enhancer_ideogram4_uses_none(self):
+        self.assertEqual(studio_enhancer_for_preview("generate", "ideogram4"), "none")
+
     def test_studio_enhancer_sdxl_generate_uses_flufferizer(self):
         self.assertEqual(studio_enhancer_for_preview("generate", "sdxl"), "flufferizer")
 

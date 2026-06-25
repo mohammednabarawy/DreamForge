@@ -8,8 +8,12 @@ if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 from dreamforge_prompt.flux_llm_enhance import (  # noqa: E402
+    FAMILY_PROMPT_PURPOSES,
+    PURPOSE_FILES,
     _clean_llm_output,
     build_enhance_messages,
+    family_prompt_profile_label,
+    load_enhance_template,
     normalize_enhance_strength,
     resolve_enhance_prefs,
     resolve_flux_enhance_purpose,
@@ -20,6 +24,74 @@ from dreamforge_prompt.studio_enhance import studio_enhancer_for_preview  # noqa
 
 
 class FluxLlmEnhanceTests(unittest.TestCase):
+    def test_family_prompt_purposes_cover_new_families(self):
+        expected = {
+            "flux2": "flux2_generate",
+            "qwen": "qwen_generate",
+            "qwen_image": "qwen_generate",
+            "hidream": "hidream_generate",
+            "hidream_o1": "hidream_generate",
+            "krea2": "krea2_generate",
+            "z_image": "z_image_generate",
+            "hunyuan": "hunyuan_generate",
+            "flux_fill": "flux_generate",
+        }
+        for family, purpose in expected.items():
+            self.assertEqual(FAMILY_PROMPT_PURPOSES[family], purpose)
+
+    def test_resolve_flux2_generate(self):
+        self.assertEqual(resolve_flux_enhance_purpose("generate", "flux2"), "flux2_generate")
+
+    def test_resolve_qwen_generate(self):
+        self.assertEqual(resolve_flux_enhance_purpose("generate", "qwen_image"), "qwen_generate")
+
+    def test_resolve_hidream_generate(self):
+        self.assertEqual(
+            resolve_flux_enhance_purpose("generate", "hidream_o1"),
+            "hidream_generate",
+        )
+
+    def test_resolve_krea2_generate(self):
+        self.assertEqual(resolve_flux_enhance_purpose("generate", "krea2"), "krea2_generate")
+
+    def test_resolve_z_image_generate(self):
+        self.assertEqual(resolve_flux_enhance_purpose("generate", "z_image"), "z_image_generate")
+
+    def test_resolve_hunyuan_generate(self):
+        self.assertEqual(resolve_flux_enhance_purpose("generate", "hunyuan"), "hunyuan_generate")
+
+    def test_resolve_flux_fill_generate(self):
+        self.assertEqual(resolve_flux_enhance_purpose("generate", "flux_fill"), "flux_generate")
+
+    def test_all_purpose_templates_load_with_sections(self):
+        for purpose in PURPOSE_FILES:
+            system, user = load_enhance_template(purpose)
+            self.assertTrue(system.strip(), f"{purpose} missing [SYSTEM]")
+            self.assertTrue(user.strip(), f"{purpose} missing [USER]")
+
+    def test_family_prompt_profile_label(self):
+        self.assertEqual(family_prompt_profile_label("z_image"), "Z-Image")
+        self.assertEqual(family_prompt_profile_label("krea2"), "Krea 2")
+        self.assertEqual(family_prompt_profile_label("hunyuan"), "HunyuanImage")
+
+    def test_should_not_skip_short_qwen_generate(self):
+        short = "a red car in the rain"
+        skip, _reason = should_skip_llm_enhance(short, "qwen_generate", enhance_strength="balanced")
+        self.assertFalse(skip)
+
+    def test_should_not_skip_short_z_image_generate(self):
+        short = "portrait of a woman"
+        skip, _reason = should_skip_llm_enhance(short, "z_image_generate", enhance_strength="balanced")
+        self.assertFalse(skip)
+
+    def test_should_skip_long_hidream_generate(self):
+        long = " ".join(["word"] * 52) + " with warm lighting and a natural scene atmosphere"
+        skip, reason = should_skip_llm_enhance(
+            long, "hidream_generate", enhance_strength="balanced"
+        )
+        self.assertTrue(skip)
+        self.assertEqual(reason, "prompt already detailed")
+
     def test_resolve_flux_generate(self):
         self.assertEqual(resolve_flux_enhance_purpose("generate", "flux"), "flux_generate")
 

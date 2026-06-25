@@ -13,11 +13,16 @@ export const ENHANCE_STRENGTH_OPTIONS: Array<{
 const MODERN_LLM_GENERATE_FAMILIES = new Set([
   "flux",
   "flux_kontext",
+  "flux_fill",
+  "flux2",
   "sd3",
   "qwen",
   "qwen_image",
   "hidream",
   "hidream_o1",
+  "krea2",
+  "z_image",
+  "hunyuan",
 ]);
 
 export function isModernLlmGenerateFamily(family: string | undefined | null): boolean {
@@ -28,7 +33,10 @@ export function isModernLlmGenerateFamily(family: string | undefined | null): bo
     fam.startsWith("flux") ||
     fam.startsWith("qwen") ||
     fam.startsWith("hidream") ||
-    fam === "sd3"
+    fam === "sd3" ||
+    fam === "krea2" ||
+    fam === "z_image" ||
+    fam === "hunyuan"
   );
 }
 

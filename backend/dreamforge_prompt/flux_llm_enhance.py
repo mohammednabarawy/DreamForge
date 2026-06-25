@@ -1,4 +1,4 @@
-"""LLM-based prompt enhancement for Flux and modern natural-language families."""
+"""LLM-based prompt enhancement for modern image model families."""
 
 from __future__ import annotations
 
@@ -14,18 +14,67 @@ from dreamforge_prompt.pipeline import (
     _prompt_is_rich,
 )
 
-_PURPOSE_FILES = {
+# Generate-mode profile per model family (edit/inpaint use mode-specific purposes).
+FAMILY_PROMPT_PURPOSES: dict[str, str] = {
+    "flux": "flux_generate",
+    "flux_kontext": "flux_generate",
+    "flux_fill": "flux_generate",
+    "flux2": "flux2_generate",
+    "sd3": "flux_generate",
+    "qwen": "qwen_generate",
+    "qwen_image": "qwen_generate",
+    "hidream": "hidream_generate",
+    "hidream_o1": "hidream_generate",
+    "krea2": "krea2_generate",
+    "z_image": "z_image_generate",
+    "hunyuan": "hunyuan_generate",
+}
+
+PURPOSE_FILES: dict[str, str] = {
     "flux_generate": "flux_generate_enhance.txt",
+    "flux2_generate": "flux2_generate_enhance.txt",
+    "qwen_generate": "qwen_generate_enhance.txt",
+    "hidream_generate": "hidream_generate_enhance.txt",
+    "krea2_generate": "krea2_generate_enhance.txt",
+    "z_image_generate": "z_image_generate_enhance.txt",
+    "hunyuan_generate": "hunyuan_generate_enhance.txt",
     "flux_kontext_edit": "flux_kontext_edit_enhance.txt",
     "flux_inpaint": "flux_inpaint_enhance.txt",
     "qwen_edit": "qwen_edit_enhance.txt",
 }
 
-_MAX_TOKENS = {
+_PURPOSE_FILES = PURPOSE_FILES
+
+PURPOSE_MAX_TOKENS: dict[str, int] = {
     "flux_generate": 512,
+    "flux2_generate": 512,
+    "qwen_generate": 640,
+    "hidream_generate": 384,
+    "krea2_generate": 512,
+    "z_image_generate": 640,
+    "hunyuan_generate": 640,
     "flux_kontext_edit": 256,
     "flux_inpaint": 256,
     "qwen_edit": 320,
+}
+
+_MAX_TOKENS = PURPOSE_MAX_TOKENS
+
+_FAMILY_PROFILE_LABELS: dict[str, str] = {
+    "flux": "Flux",
+    "flux_kontext": "Flux Kontext",
+    "flux_fill": "Flux Fill",
+    "flux2": "Flux 2",
+    "sd3": "SD3",
+    "qwen": "Qwen Image",
+    "qwen_image": "Qwen Image",
+    "qwen_image_edit": "Qwen Image Edit",
+    "hidream": "HiDream",
+    "hidream_o1": "HiDream",
+    "krea2": "Krea 2",
+    "z_image": "Z-Image",
+    "hunyuan": "HunyuanImage",
+    "ideogram4": "Ideogram 4",
 }
 
 _VALID_STRENGTHS = frozenset({"minimal", "balanced", "rich"})
@@ -50,8 +99,33 @@ _STRENGTH_TOKEN_SCALE = {
 _TEMPLATE_CACHE: dict[str, tuple[str, str]] = {}
 
 
+def family_prompt_profile_label(family: str) -> str:
+    """Human-readable model family name for UI hints."""
+    fam = (family or "").strip().lower()
+    if fam in _FAMILY_PROFILE_LABELS:
+        return _FAMILY_PROFILE_LABELS[fam]
+    if fam.startswith("qwen"):
+        return "Qwen Image"
+    if "kontext" in fam:
+        return "Flux Kontext"
+    if fam.startswith("flux"):
+        return "Flux"
+    if fam.startswith("hidream"):
+        return "HiDream"
+    return fam or "model"
+
+
+def _resolve_generate_purpose(family: str) -> str | None:
+    fam = (family or "").strip().lower()
+    if fam in FAMILY_PROMPT_PURPOSES:
+        return FAMILY_PROMPT_PURPOSES[fam]
+    if _is_modern_for_llm(fam):
+        return "flux_generate"
+    return None
+
+
 def _template_path(purpose: str) -> Path:
-    filename = _PURPOSE_FILES.get(purpose)
+    filename = PURPOSE_FILES.get(purpose)
     if not filename:
         raise ValueError(f"Unknown enhance purpose: {purpose}")
     return Path(__file__).with_name(filename)
@@ -137,9 +211,7 @@ def resolve_flux_enhance_purpose(studio_mode: str, family: str) -> str | None:
         return None
 
     if mode == "generate":
-        if _is_modern_for_llm(fam):
-            return "flux_generate"
-        return None
+        return _resolve_generate_purpose(fam)
 
     if mode == "edit":
         if fam.startswith("qwen"):
@@ -175,15 +247,40 @@ def should_skip_llm_enhance(
 
     strength = normalize_enhance_strength(enhance_strength)
     purpose_key = (purpose or "").strip().lower()
-    if purpose_key == "flux_generate":
+    word_count = len(text.split())
+
+    if purpose_key in {"flux_generate", "flux2_generate"}:
         if strength == "rich":
             return False, ""
-        word_count = len(text.split())
         if strength == "minimal":
             if word_count >= 40 or (word_count >= 32 and _prompt_is_rich(text)):
                 return True, "prompt already detailed"
             return False, ""
         if _prompt_is_rich(text):
+            return True, "prompt already detailed"
+        return False, ""
+
+    if purpose_key in {
+        "qwen_generate",
+        "krea2_generate",
+        "z_image_generate",
+        "hunyuan_generate",
+    }:
+        if strength == "rich":
+            return False, ""
+        if strength == "minimal" and word_count >= 80:
+            return True, "prompt already detailed"
+        if strength == "balanced" and word_count >= 120 and _prompt_is_rich(text):
+            return True, "prompt already detailed"
+        return False, ""
+
+    if purpose_key == "hidream_generate":
+        if strength == "rich":
+            return False, ""
+        lower = text.lower()
+        if word_count >= 50 and any(
+            token in lower for token in ("lighting", "light", "atmosphere", "scene")
+        ):
             return True, "prompt already detailed"
         return False, ""
 
@@ -260,7 +357,7 @@ def run_flux_llm_enhance(
     from dreamforge_prompt.ideogram4 import _configure_brain_from_app_config
 
     purpose_key = str(purpose or "").strip().lower()
-    if purpose_key not in _PURPOSE_FILES:
+    if purpose_key not in PURPOSE_FILES:
         return {"ok": False, "error": f"Unknown enhance purpose: {purpose}"}
 
     strength, _use_fluff = resolve_enhance_prefs(params)
@@ -294,7 +391,7 @@ def run_flux_llm_enhance(
 
     brain = AiBrain()
     _configure_brain_from_app_config(brain, params)
-    max_tokens = _strength_max_tokens(_MAX_TOKENS.get(purpose_key, 384), strength)
+    max_tokens = _strength_max_tokens(PURPOSE_MAX_TOKENS.get(purpose_key, 384), strength)
 
     try:
         raw = brain.think(user_msg, system, max_tokens=max_tokens)

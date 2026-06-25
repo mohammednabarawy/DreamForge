@@ -2596,19 +2596,6 @@ async fn search_outputs(
 }
 
 #[tauri::command]
-async fn migrate_legacy_outputs(
-    state: State<'_, Arc<AppState>>,
-    dry_run: Option<bool>,
-) -> Result<Value, String> {
-    bridge_request_async(
-        state.inner(),
-        "migrate_legacy_outputs",
-        json!({ "dry_run": dry_run.unwrap_or(false) }),
-    )
-    .await
-}
-
-#[tauri::command]
 async fn delete_output(
     state: State<'_, Arc<AppState>>,
     manifest_path: String,
@@ -3803,7 +3790,6 @@ pub fn run() {
             delete_output,
             delete_output_image,
             delete_session,
-            migrate_legacy_outputs,
             reveal_path_in_explorer,
             dry_run,
             list_styles,

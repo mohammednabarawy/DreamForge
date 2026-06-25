@@ -86,7 +86,6 @@ import {
   deleteOutputImage,
   deleteSession,
   listOutputsPage,
-  migrateLegacyOutputs,
   revealPathInExplorer,
   searchOutputsPage,
   listStyles,
@@ -1238,19 +1237,6 @@ export function useDreamForge() {
 
   useEffect(() => {
     void (async () => {
-      try {
-        const migration = await migrateLegacyOutputs();
-        if (
-          (migration.moved_count ?? 0) > 0 ||
-          (migration.updated_count ?? 0) > 0
-        ) {
-          setStatus(
-            `Moved ${migration.moved_count ?? 0} generation file(s) into outputs/`,
-          );
-        }
-      } catch {
-        /* migration is best-effort on startup */
-      }
       await loadStudioCatalog();
       await refreshOutputs();
     })();

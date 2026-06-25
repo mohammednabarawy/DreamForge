@@ -560,23 +560,6 @@ export async function deleteSession(session: string) {
   return res;
 }
 
-export type LegacyOutputMigrationResult = {
-  ok?: boolean;
-  target?: string;
-  moved_count?: number;
-  updated_count?: number;
-  moved?: Array<{ from: string; to: string }>;
-  updated_manifests?: string[];
-  skipped?: string[];
-  config_updated?: boolean;
-};
-
-/** Flatten nested legacy outputs into outputs/ root and fix manifests. */
-export async function migrateLegacyOutputs(opts?: { dryRun?: boolean }) {
-  return invoke<LegacyOutputMigrationResult>("migrate_legacy_outputs", {
-    dryRun: opts?.dryRun ?? false,
-  });
-}
 
 export async function dryRun(params: GenerationSettings) {
   const res = await invoke<{ ok?: boolean; plan?: Record<string, unknown> }>(

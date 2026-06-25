@@ -502,13 +502,6 @@ def cmd_delete_session(params: dict) -> dict:
     return {**result, "ok": True}
 
 
-def cmd_migrate_legacy_outputs(params: dict) -> dict:
-    from dreamforge_output_migration import migrate_legacy_outputs
-
-    dry_run = bool(params.get("dry_run"))
-    return migrate_legacy_outputs(dry_run=dry_run)
-
-
 def cmd_list_styles(_params: dict) -> dict:
     from dreamforge_agent_tools import list_style_recipes_for_agent
 
@@ -1353,7 +1346,6 @@ HANDLERS = {
     "delete_output": cmd_delete_output,
     "delete_output_image": cmd_delete_output_image,
     "delete_session": cmd_delete_session,
-    "migrate_legacy_outputs": cmd_migrate_legacy_outputs,
     "dry_run": cmd_dry_run,
     "brain_plan": cmd_brain_plan,
     "build_cli_argv": cmd_build_cli_argv,

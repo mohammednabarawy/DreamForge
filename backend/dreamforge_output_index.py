@@ -457,6 +457,8 @@ def _collect_delete_paths_for_image(
 
 def delete_generation(manifest_path: str) -> dict:
     """Delete a manifest and all image files referenced by it."""
+    from dreamforge_output_cleanup import purge_generation_artifacts
+
     manifest = _resolve_manifest_path(manifest_path)
     if not manifest:
         return {"ok": False, "error": "invalid_manifest_path"}
@@ -477,6 +479,11 @@ def delete_generation(manifest_path: str) -> dict:
                 delete_paths.append(str(sidecar))
 
     deleted_images = _delete_output_files(delete_paths)
+    deleted_external = purge_generation_artifacts(
+        image_paths=delete_paths,
+        manifest_data=data,
+        exclude_manifest=manifest,
+    )
 
     try:
         manifest.unlink()
@@ -487,11 +494,14 @@ def delete_generation(manifest_path: str) -> dict:
         "ok": True,
         "manifest_path": str(manifest),
         "deleted_images": deleted_images,
+        "deleted_external": deleted_external,
     }
 
 
 def delete_output_image(manifest_path: str, image_path: str) -> dict:
     """Delete one image file and update or remove its manifest."""
+    from dreamforge_output_cleanup import purge_generation_artifacts
+
     manifest = _resolve_manifest_path(manifest_path)
     if not manifest:
         return {"ok": False, "error": "invalid_manifest_path"}
@@ -504,6 +514,9 @@ def delete_output_image(manifest_path: str, image_path: str) -> dict:
     if not data:
         delete_paths = _collect_delete_paths_for_image({}, image, exclude_manifest=manifest)
         deleted_files = _delete_output_files(delete_paths)
+        deleted_external = purge_generation_artifacts(
+            image_paths=delete_paths,
+        )
         try:
             manifest.unlink(missing_ok=True)
         except OSError as exc:
@@ -512,6 +525,7 @@ def delete_output_image(manifest_path: str, image_path: str) -> dict:
             "ok": True,
             "deleted_image": str(image),
             "deleted_files": deleted_files,
+            "deleted_external": deleted_external,
             "manifest_removed": True,
         }
 
@@ -524,6 +538,11 @@ def delete_output_image(manifest_path: str, image_path: str) -> dict:
 
     remaining = _image_paths_from_manifest(data)
     deleted_files = _delete_output_files(delete_paths)
+    deleted_external = purge_generation_artifacts(
+        image_paths=delete_paths,
+        manifest_data=data,
+        exclude_manifest=manifest,
+    )
 
     if not remaining:
         try:
@@ -534,6 +553,7 @@ def delete_output_image(manifest_path: str, image_path: str) -> dict:
             "ok": True,
             "deleted_image": str(image),
             "deleted_files": deleted_files,
+            "deleted_external": deleted_external,
             "manifest_removed": True,
         }
 
@@ -547,6 +567,7 @@ def delete_output_image(manifest_path: str, image_path: str) -> dict:
         "ok": True,
         "deleted_image": str(image),
         "deleted_files": deleted_files,
+        "deleted_external": deleted_external,
         "manifest_path": str(manifest),
         "remaining_images": len(remaining),
     }
@@ -579,6 +600,14 @@ def delete_session(session_id: str) -> dict:
     if not session_dir.is_dir():
         return {"ok": False, "error": "session_not_found"}
 
+    deleted = 0
+    for manifest in sorted(session_dir.rglob("*manifest*.json")):
+        if not manifest.is_file():
+            continue
+        result = delete_generation(str(manifest))
+        if result.get("ok"):
+            deleted += 1
+
     try:
         shutil.rmtree(session_dir)
     except OSError as exc:
@@ -587,5 +616,6 @@ def delete_session(session_id: str) -> dict:
     return {
         "ok": True,
         "session": session,
+        "deleted_generations": deleted,
         "deleted_directory": str(session_dir),
     }

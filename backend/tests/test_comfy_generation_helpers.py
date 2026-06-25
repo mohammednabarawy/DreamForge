@@ -142,3 +142,15 @@ def test_comfy_workflow_mode_inpaint():
         checkpoint_is_flux_kontext=_checkpoint_is_flux_kontext,
     )
     assert mode == "inpaint"
+
+
+def test_comfy_workflow_mode_qwen_edit():
+    mode = comfy_workflow_mode(
+        input_filename="main.png",
+        cn_type="None",
+        edit_type="qwen_edit",
+        model={"name": "qwen-image-edit-2511-Q4_K_M.gguf"},
+        model_family="qwen_image_edit",
+        checkpoint_is_flux_kontext=_checkpoint_is_flux_kontext,
+    )
+    assert mode == "qwen_edit"

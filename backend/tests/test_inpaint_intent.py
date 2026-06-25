@@ -27,15 +27,17 @@ def test_resolve_inpaint_intent_params_modify_content():
     params = resolve_inpaint_intent_params(job)
     assert params["inpaint_intent"] == "modify_content"
     assert params["edit_strength"] == 1.0
-    assert params["inpaint_mask_grow_by"] == 0
+    assert params["inpaint_grow"] == 8
+    assert params["inpaint_feather"] == 8
+    assert params["inpaint_mask_grow_by"] == 16
     assert params["requires_fill_engine"] is True
 
 
-def test_resolve_inpaint_intent_params_improve_detail_uses_base_engine():
+def test_resolve_inpaint_intent_params_improve_detail():
     job = SimpleNamespace(inpaint_intent="improve_detail")
     params = resolve_inpaint_intent_params(job)
     assert params["edit_strength"] == 0.52
-    assert params["requires_fill_engine"] is False
+    assert params["requires_fill_engine"] is True
 
 
 def test_resolve_inpaint_intent_params_job_override_wins():

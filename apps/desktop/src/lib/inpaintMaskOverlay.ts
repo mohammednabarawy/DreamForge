@@ -84,3 +84,23 @@ export function scaleImageDimensions(
   const scale = Math.min(1, maxDim / Math.max(w, h));
   return { w: Math.round(w * scale), h: Math.round(h * scale) };
 }
+
+/** Scale editor mask to source image pixels before Comfy upload. */
+export function exportMaskPngDataUrl(
+  mask: HTMLCanvasElement,
+  exportSize?: { width: number; height: number } | null,
+): string {
+  const targetW = exportSize?.width ?? mask.width;
+  const targetH = exportSize?.height ?? mask.height;
+  if (targetW === mask.width && targetH === mask.height) {
+    return mask.toDataURL("image/png");
+  }
+  const out = document.createElement("canvas");
+  out.width = targetW;
+  out.height = targetH;
+  const ctx = out.getContext("2d");
+  if (!ctx) return mask.toDataURL("image/png");
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(mask, 0, 0, targetW, targetH);
+  return out.toDataURL("image/png");
+}

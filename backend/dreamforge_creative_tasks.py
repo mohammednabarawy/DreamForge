@@ -60,11 +60,15 @@ def apply_vram_quality_defaults(
 
             out.setdefault("cfg_scale", 1.0)
 
-        elif mode in {"edit", "inpaint"}:
+        elif mode == "edit":
 
             out["steps"] = min(steps, 12)
 
             out["cfg_scale"] = min(float(out.get("cfg_scale") or 7.0), 5.0)
+
+        elif mode == "inpaint":
+
+            out["steps"] = min(steps, 12)
 
         elif mode == "generate":
 

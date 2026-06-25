@@ -179,6 +179,35 @@ def resolve_identity_route(job, *, model_family: str | None = None) -> dict[str,
     return {"route": "img2img", "reference_image": ref}
 
 
+def _studio_mode(job) -> str:
+    return str(getattr(job, "studio_mode", None) or "").strip().lower()
+
+
+def _edit_studio_identity_patch(
+    ref: str,
+    *,
+    edit_type: str,
+    edit_strength: float,
+    model: str | None = None,
+) -> dict[str, Any]:
+    """Keep Edit tab routing while enabling identity preservation flags."""
+    patch: dict[str, Any] = {
+        "reference_role": "source_edit",
+        "input_image": ref,
+        "reference_image": ref,
+        "preserve_character": True,
+        "face_preservation": True,
+        "identity_mode": "preserve_face",
+        "edit_type": edit_type,
+        "edit_strength": edit_strength,
+        "cn_selection": "None",
+        "cn_type": "None",
+    }
+    if model:
+        patch["model"] = model
+    return patch
+
+
 def _kontext_patch(ref: str, model: str | None = None) -> dict[str, Any]:
     patch: dict[str, Any] = {
         "reference_role": "restyle",
@@ -255,10 +284,25 @@ def apply_identity_to_job(job) -> dict[str, Any]:
 
     route = plan["route"]
     ref = plan["reference_image"]
+    studio = _studio_mode(job)
     out: dict[str, Any] = {}
 
     if route == "ipadapter_faceid":
         out = _faceid_patch(ref, plan)
+    elif studio == "edit" and route == "kontext":
+        out = _edit_studio_identity_patch(
+            ref,
+            edit_type="kontext",
+            edit_strength=KONTEXT_IDENTITY_STRENGTH,
+            model=plan.get("model"),
+        )
+    elif studio == "edit" and route == "qwen_edit":
+        out = _edit_studio_identity_patch(
+            ref,
+            edit_type="qwen_edit",
+            edit_strength=QWEN_IDENTITY_STRENGTH,
+            model=plan.get("model"),
+        )
     elif route == "kontext":
         out = _kontext_patch(ref, plan.get("model"))
     elif route == "qwen_edit":

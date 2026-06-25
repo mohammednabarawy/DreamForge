@@ -1208,6 +1208,38 @@ def test_flux_inpaint_custom_performance_uses_high_cfg(monkeypatch):
     assert out["steps"] == 20
 
 
+def test_flux_inpaint_restores_guidance_when_cfg_scale_capped(monkeypatch):
+    monkeypatch.chdir(_BACKEND)
+    from dreamforge_generation import _tune_edit_job_settings
+
+    job = SimpleNamespace(
+        performance="Custom...",
+        steps=12,
+        cfg_scale=5.0,
+        sampler=None,
+        scheduler=None,
+        edit_type="inpaint",
+        input_image="/tmp/reference.png",
+        upscale_image=None,
+    )
+
+    out = _tune_edit_job_settings(
+        {
+            "performance_selection": "Custom...",
+            "steps": 12,
+            "cfg": 5.0,
+            "sampler_name": "euler",
+            "scheduler": "simple",
+            "clip_skip": 1,
+        },
+        job,
+        "flux_fill",
+        is_live=False,
+    )
+
+    assert out["cfg"] == 30.0
+
+
 def test_flux_inpaint_live_preview_uses_krita_live_steps(monkeypatch):
     monkeypatch.chdir(_BACKEND)
     from dreamforge_generation import _tune_edit_job_settings

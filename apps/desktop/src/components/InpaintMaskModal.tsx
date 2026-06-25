@@ -17,6 +17,7 @@ import {
   readMaskBinary,
   writeMaskImageData,
 } from "../lib/inpaintMaskMorph";
+import { scaleImageDimensions } from "../lib/inpaintMaskOverlay";
 import { readImagePreviewQueued } from "../lib/preview-queue";
 import {
   MASK_PUBLISH_DEBOUNCE_MS,
@@ -95,6 +96,7 @@ export function InpaintMaskModal({
   const overlayHelperRef = useRef<HTMLCanvasElement | null>(null);
   const baseImageRef = useRef<HTMLImageElement | null>(null);
   const dimsRef = useRef({ w: 512, h: 512 });
+  const sourceDimsRef = useRef({ w: 0, h: 0 });
   const [applying, setApplying] = useState(false);
 
   const [viewSize, setViewSize] = useState({ w: 512, h: 512 });
@@ -109,10 +111,18 @@ export function InpaintMaskModal({
   const [ready, setReady] = useState(false);
   const drawing = useRef(false);
   const getMaskCanvas = useCallback(() => maskRef.current, []);
+  const getExportSize = useCallback(() => {
+    const s = sourceDimsRef.current;
+    return s.w > 0 && s.h > 0 ? { width: s.w, height: s.h } : null;
+  }, []);
   const { publishMask, exportMaskNow, syncing: maskSyncing, cancelScheduled } = useMaskPublisher(
     getMaskCanvas,
     onMaskChange,
-    MASK_PUBLISH_DEBOUNCE_MS,
+    {
+      debounceMs: MASK_PUBLISH_DEBOUNCE_MS,
+      getExportSize,
+      onError: (message) => setStatus(message),
+    },
   );
   const busy = detecting || morphBusy || maskSyncing || applying;
   const activeToolLabel = (typeof tool === "string" ? tool : "paint").replace(/_/g, " ");
@@ -260,12 +270,11 @@ export function InpaintMaskModal({
           setStatus("Could not load image preview");
           return;
         }
-        const max = 768;
-        let w = img.naturalWidth;
-        let h = img.naturalHeight;
-        const scale = Math.min(1, max / Math.max(w, h));
-        w = Math.round(w * scale);
-        h = Math.round(h * scale);
+        sourceDimsRef.current = {
+          w: img.naturalWidth,
+          h: img.naturalHeight,
+        };
+        const { w, h } = scaleImageDimensions(img.naturalWidth, img.naturalHeight, 768);
         requestAnimationFrame(() => {
           if (cancelled) return;
           setupSession(w, h, img);

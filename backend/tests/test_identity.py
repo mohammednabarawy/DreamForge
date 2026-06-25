@@ -101,6 +101,26 @@ def test_apply_identity_kontext_patch(monkeypatch):
     assert job.model == "flux1-dev-kontext_fp8_scaled.safetensors"
 
 
+def test_apply_identity_preserves_edit_studio_mode(monkeypatch):
+    monkeypatch.setattr(
+        "dreamforge_identity.resolve_identity_route",
+        lambda job, **kwargs: {
+            "route": "kontext",
+            "reference_image": "/tmp/face.png",
+            "model": "flux1-dev-kontext_fp8_scaled.safetensors",
+        },
+    )
+    job = SimpleNamespace(
+        studio_mode="edit",
+        preserve_character=True,
+        input_image="/tmp/face.png",
+    )
+    apply_identity_to_job(job)
+    assert job.reference_role == "source_edit"
+    assert job.edit_type == "kontext"
+    assert getattr(job, "workflow_mode", None) in (None, "")
+
+
 def test_apply_identity_skips_when_vary_active():
     job = SimpleNamespace(
         preserve_character=True,

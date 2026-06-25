@@ -405,6 +405,9 @@ def comfy_workflow_mode(
             return "upscale"
         if cn == "inpaint":
             return "inpaint"
+        family = (model_family or "").lower()
+        if family == "qwen_image_edit" or edit == "qwen_edit":
+            return "qwen_edit"
         if checkpoint_is_flux_kontext(model, model_family):
             return "kontext"
         return "img2img"

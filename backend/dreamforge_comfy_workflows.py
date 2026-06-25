@@ -1761,24 +1761,11 @@ def comfy_inpaint_basic(args: dict[str, Any]) -> dict[str, Any]:
     )
     g["6"] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
     g["7"] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
-    
-    # ETN Regional Prompting implementation
-    g["11"] = _node("CLIPTextEncode", {"clip": clip_out, "text": ""})  # Background prompt (empty)
-    g["12"] = _node("ETN_BackgroundRegion", {"conditioning": ["11", 0]})
-    g["13"] = _node(
-        "ETN_DefineRegion",
-        {"mask": ["4", 0], "conditioning": ["6", 0], "regions": ["12", 0]},
-    )
-    g["14"] = _node(
-        "ETN_AttentionMask",
-        {"model": model_out, "regions": ["13", 0]},
-    )
-    patched_model_out = ["14", 0]
 
     g["8"] = _node(
         "KSampler",
         {
-            "model": patched_model_out,
+            "model": model_out,
             "positive": ["6", 0],
             "negative": ["7", 0],
             "latent_image": ["5", 0],

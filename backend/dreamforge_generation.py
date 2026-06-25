@@ -2261,6 +2261,25 @@ def run_generation(
             )
         )
 
+        if comfy_workflow_class_types:
+            try:
+                object_info = client.object_info(timeout_s=30.0)
+            except Exception:
+                object_info = {}
+            missing_workflow_nodes = sorted(
+                node_type
+                for node_type in comfy_workflow_class_types
+                if node_type not in object_info
+            )
+            if missing_workflow_nodes:
+                err = missing_custom_node_pack(
+                    str(comfy_workflow_builder or "ComfyUI workflow"),
+                    job_id=job_id,
+                    nodes=missing_workflow_nodes,
+                )
+                emit_event(stream_sink, err)
+                return {"status": "error", **err}
+
         emit_event(
             stream_sink,
             {
@@ -2365,8 +2384,18 @@ def run_generation(
                     merged.save(merged_path, format="PNG")
                     composited_paths.append(str(merged_path))
                 saved_paths = composited_paths
-            except OSError:
-                pass
+            except OSError as exc:
+                emit_event(
+                    stream_sink,
+                    {
+                        "type": "warning",
+                        "message": (
+                            "Inpaint composite failed; returning raw Comfy output. "
+                            f"{exc}"
+                        ),
+                        "job_id": job_id,
+                    },
+                )
 
         output_target = getattr(job, "output", None) or str(OUTPUTS_ROOT)
         images = _resolve_output_paths(saved_paths, output_target)
@@ -2808,13 +2837,15 @@ def _tune_edit_job_settings(
             out["scheduler"] = str(job.scheduler)
         out["performance_selection"] = "Custom..."
 
-    # Flux Fill inpaint needs high CFG (≈30). Custom... performance from a prior Kontext
-    # edit must not leave Kontext-style CFG on the job.
+    # Flux Fill inpaint needs high guidance (≈30). Generic cfg_scale caps from
+    # low-VRAM profiles or prior Kontext edits must not drive FluxGuidance.
     if edit_type == "inpaint" and recipe:
-        if getattr(job, "cfg_scale", None) is None:
-            out["cfg"] = float(
-                recipe.get("live_cfg" if is_live else "cfg", recipe.get("cfg", 30.0))
-            )
+        fill_guidance = float(
+            recipe.get("live_cfg" if is_live else "cfg", recipe.get("cfg", 30.0))
+        )
+        job_cfg = getattr(job, "cfg_scale", None)
+        if job_cfg is None or float(job_cfg) < 15:
+            out["cfg"] = fill_guidance
         if getattr(job, "steps", None) is None:
             step_key = "live_steps" if is_live else "custom_steps"
             if step_key in recipe:

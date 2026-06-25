@@ -26,16 +26,16 @@ INPAINT_INTENT_PRESETS: dict[str, dict[str, Any]] = {
         "inpaint_grow": 2,
         "inpaint_feather": 2,
         "inpaint_mask_grow_by": 6,
-        "requires_fill_engine": False,
+        "requires_fill_engine": True,
         "hint": "Refine masked details only — lower strength, minimal context bleed.",
     },
     "modify_content": {
         "edit_strength": 1.0,
-        "inpaint_grow": 0,
-        "inpaint_feather": 0,
-        "inpaint_mask_grow_by": 0,
+        "inpaint_grow": 8,
+        "inpaint_feather": 8,
+        "inpaint_mask_grow_by": 16,
         "requires_fill_engine": True,
-        "hint": "Replace masked content — full strength, masked-only context.",
+        "hint": "Replace masked content — full strength with blended edges.",
     },
 }
 

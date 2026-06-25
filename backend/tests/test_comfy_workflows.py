@@ -296,6 +296,7 @@ def test_inpaint_workflow_passes_grow_mask_by():
         }
     )
     assert graph["5"]["inputs"]["grow_mask_by"] == 20
+    assert not any(node.get("class_type", "").startswith("ETN_") for node in graph.values())
 
 
 def test_flux_fill_inpaint_uses_inpaint_model_conditioning():

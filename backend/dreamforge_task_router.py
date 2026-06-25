@@ -61,23 +61,38 @@ def pick_curated_edit_model(gallery: list[Any]) -> tuple[str, str]:
     return "", "kontext"
 
 
-def edit_routing_patch(gallery: list[Any], engine_name: str) -> dict[str, Any]:
+def edit_routing_patch(
+    gallery: list[Any],
+    engine_name: str,
+    *,
+    preferred_edit_type: str | None = None,
+) -> dict[str, Any]:
     item = find_gallery_item(gallery, engine_name) or {}
     family = str(item.get("family") or "").lower()
-    if family == "qwen_image_edit" or _is_qwen_edit_item(item):
-        return {
-            "edit_type": "qwen_edit",
-            "edit_strength": 1.0,
-            "cn_selection": "None",
-            "cn_type": "None",
-        }
-    return {
+    engine_hay = str(engine_name or "").lower()
+    qwen_patch = {
+        "edit_type": "qwen_edit",
+        "edit_strength": 1.0,
+        "cn_selection": "None",
+        "cn_type": "None",
+    }
+    kontext_patch = {
         "edit_type": "kontext",
         "edit_strength": 1.0,
         "cn_selection": "None",
         "cn_type": "None",
         "steps": 20,
     }
+    if family == "qwen_image_edit" or _is_qwen_edit_item(item):
+        return dict(qwen_patch)
+    if family == "flux_kontext" or _is_kontext_item(item):
+        return dict(kontext_patch)
+    if "qwen" in engine_hay and "edit" in engine_hay:
+        return dict(qwen_patch)
+    pref = str(preferred_edit_type or "").lower()
+    if pref == "qwen_edit":
+        return dict(qwen_patch)
+    return dict(kontext_patch)
 
 
 @dataclass
@@ -115,7 +130,13 @@ def apply_task_routing(
                 warnings.append(
                     "Ideogram 4 is a generation model — Flux Kontext or Qwen Edit are recommended for photo edits."
                 )
-            out.update(edit_routing_patch(gallery_list, current))
+            out.update(
+                edit_routing_patch(
+                    gallery_list,
+                    current,
+                    preferred_edit_type=str(out.get("edit_type") or ""),
+                )
+            )
             reason = "pro_user_override"
         else:
             item = find_gallery_item(gallery_list, current) or {}
@@ -129,13 +150,25 @@ def apply_task_routing(
                 )
             )
             if valid:
-                out.update(edit_routing_patch(gallery_list, current))
+                out.update(
+                    edit_routing_patch(
+                        gallery_list,
+                        current,
+                        preferred_edit_type=str(out.get("edit_type") or ""),
+                    )
+                )
                 reason = "compatible_edit_model"
             else:
                 model, _edit_type = pick_curated_edit_model(gallery_list)
                 if model:
                     out["model"] = model
-                out.update(edit_routing_patch(gallery_list, out.get("model") or model))
+                out.update(
+                    edit_routing_patch(
+                        gallery_list,
+                        out.get("model") or model,
+                        preferred_edit_type=str(out.get("edit_type") or _edit_type),
+                    )
+                )
                 if family in EDIT_FORBIDDEN_SIMPLE_FAMILIES and model:
                     warnings.append(
                         f"Routed edit away from {current or family} to {model} (task-appropriate edit model)."

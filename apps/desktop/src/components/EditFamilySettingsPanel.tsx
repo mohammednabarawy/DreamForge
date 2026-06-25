@@ -1,5 +1,6 @@
 import type { GenerationSettings, ModelGalleryItem } from "../lib/tauri-api";
 import { MODE_AUTO_SUMMARY } from "../lib/generationTabVisibility";
+import { isFluxKontextEditModel, isQwenEditModel } from "../lib/editModel";
 import {
   INPAINT_INTENTS,
   normalizeInpaintIntent,
@@ -35,6 +36,23 @@ function FieldLabel({
   );
 }
 
+function editPanelTitle(
+  settings: GenerationSettings,
+  modelGallery: ModelGalleryItem[],
+  isInpaint: boolean,
+): string {
+  if (isInpaint) return "Flux Fill inpaint";
+  const editType = (settings.edit_type ?? "").toLowerCase();
+  if (editType === "qwen_edit") return "Qwen Image Edit";
+  if (editType === "kontext") return "Flux Kontext edit";
+  const model = modelGallery.find((item) => item.engine_name === settings.model);
+  if (model) {
+    if (isQwenEditModel(model)) return "Qwen Image Edit";
+    if (isFluxKontextEditModel(model)) return "Flux Kontext edit";
+  }
+  return "Image edit";
+}
+
 /** Edit / inpaint controls only — routing and sampling stay on DreamForge defaults. */
 export function EditFamilySettingsPanel({
   settings,
@@ -56,11 +74,13 @@ export function EditFamilySettingsPanel({
     });
   };
 
+  const panelTitle = editPanelTitle(settings, modelGallery, isInpaint);
+
   return (
     <div className="overflow-hidden rounded-md border border-[#4a4a4a] bg-[#353535] font-mono shadow-[0_2px_8px_rgba(0,0,0,0.35)]">
       <div className="flex items-center justify-between border-b border-[#4a4a4a] bg-[#232629] px-2.5 py-1.5">
         <span className="text-[12px] font-semibold text-[#cccccc]">
-          {isInpaint ? "Flux Fill inpaint" : "Flux Kontext edit"}
+          {panelTitle}
         </span>
         <span className="text-[9px] uppercase tracking-wide text-[#777777]">
           {isInpaint ? "image/inpaint" : "image/edit"}
@@ -169,9 +189,6 @@ export function EditFamilySettingsPanel({
               {activeIntent ? (
                 <p className="mt-1.5 text-[9px] leading-snug text-[#777777]">
                   {activeIntent.hint}
-                  {inpaintIntent === "improve_detail"
-                    ? " Re-inpaint the result with Improve detail for a second polish pass."
-                    : null}
                 </p>
               ) : null}
             </div>

@@ -29,7 +29,7 @@ export const INPAINT_INTENTS: Array<{
     id: "modify_content",
     label: "Modify content",
     short: "Modify",
-    hint: "Replace masked content — full strength, masked-only context.",
+    hint: "Replace masked content — full strength with blended edges.",
   },
 ];
 
@@ -52,13 +52,13 @@ const PRESETS: Record<
     inpaint_grow: 2,
     inpaint_feather: 2,
     inpaint_mask_grow_by: 6,
-    requiresFillEngine: false,
+    requiresFillEngine: true,
   },
   modify_content: {
     edit_strength: 1.0,
-    inpaint_grow: 0,
-    inpaint_feather: 0,
-    inpaint_mask_grow_by: 0,
+    inpaint_grow: 8,
+    inpaint_feather: 8,
+    inpaint_mask_grow_by: 16,
     requiresFillEngine: true,
   },
 };
@@ -86,33 +86,18 @@ export function patchForInpaintIntent(intent: InpaintIntent): Partial<Generation
   };
 }
 
-function modelHaystack(item: ModelGalleryItem): string {
-  return `${item.family} ${item.caption} ${item.engine_name} ${item.relative_path}`.toLowerCase();
-}
-
-/** Flux dev FP8 for improve-detail passes; otherwise Flux Fill. */
+/** Always route inpaint intents through Flux Fill. */
 export function selectInpaintModelForIntent(
   gallery: ModelGalleryItem[],
-  intent: InpaintIntent,
+  _intent: InpaintIntent,
   current?: string,
 ): string {
-  const preset = PRESETS[intent];
-  if (preset.requiresFillEngine) {
-    return current?.trim() || selectFluxFillModel(gallery) || DEFAULT_FLUX_FILL_MODEL;
-  }
-  const needles = ["flux1-dev-fp8", "flux1-dev", "flux-dev", "flux_dev"];
-  const hit = gallery.find((item) => {
-    const hay = modelHaystack(item);
-    return (
-      needles.some((needle) => hay.includes(needle)) &&
-      !hay.includes("fill") &&
-      !hay.includes("kontext")
-    );
-  });
-  if (hit?.engine_name) return hit.engine_name;
-  if (current?.trim()) {
-    const item = gallery.find((m) => m.engine_name === current);
-    if (item && !isFluxFillModel(item)) return current.trim();
+  const trimmed = current?.trim();
+  const currentItem = trimmed
+    ? gallery.find((m) => m.engine_name === trimmed)
+    : undefined;
+  if (currentItem && isFluxFillModel(currentItem)) {
+    return trimmed!;
   }
   return selectFluxFillModel(gallery) || DEFAULT_FLUX_FILL_MODEL;
 }

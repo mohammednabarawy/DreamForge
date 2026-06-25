@@ -129,10 +129,20 @@ def test_resolve_edit_with_post_upscale_template():
     assert patch.get("upscale_image") in (None, "")
 
 
-def test_vram_quality_caps_inpaint_steps():
+def test_vram_quality_caps_inpaint_steps_without_cfg_clamp():
     patch = apply_vram_quality_defaults(
         {"steps": 28, "cfg_scale": 7},
         studio_mode="inpaint",
+        vram_profile="5gb",
+    )
+    assert patch["steps"] <= 12
+    assert patch["cfg_scale"] == 7
+
+
+def test_vram_quality_caps_edit_cfg_on_5gb():
+    patch = apply_vram_quality_defaults(
+        {"steps": 28, "cfg_scale": 7},
+        studio_mode="edit",
         vram_profile="5gb",
     )
     assert patch["steps"] <= 12

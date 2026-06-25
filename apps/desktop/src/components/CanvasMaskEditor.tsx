@@ -33,6 +33,7 @@ export function CanvasMaskEditor({
   const overlayHelperRef = useRef<HTMLCanvasElement | null>(null);
   const baseImageRef = useRef<HTMLImageElement | null>(null);
   const dimsRef = useRef({ w: 512, h: 512 });
+  const sourceDimsRef = useRef({ w: 0, h: 0 });
   const drawing = useRef(false);
   const restoredMaskKeyRef = useRef<string | null>(null);
 
@@ -43,9 +44,14 @@ export function CanvasMaskEditor({
   const [ready, setReady] = useState(false);
 
   const getMaskCanvas = useCallback(() => maskRef.current, []);
+  const getExportSize = useCallback(() => {
+    const s = sourceDimsRef.current;
+    return s.w > 0 && s.h > 0 ? { width: s.w, height: s.h } : null;
+  }, []);
   const { publishMask, syncing, cancelScheduled } = useMaskPublisher(
     getMaskCanvas,
     onMaskChange,
+    { getExportSize },
   );
   const busy = detecting || syncing || disabled;
 
@@ -99,6 +105,10 @@ export function CanvasMaskEditor({
       const img = new Image();
       img.onload = () => {
         if (cancelled || img.naturalWidth <= 0 || img.naturalHeight <= 0) return;
+        sourceDimsRef.current = {
+          w: img.naturalWidth,
+          h: img.naturalHeight,
+        };
         const { w, h } = scaleImageDimensions(
           img.naturalWidth,
           img.naturalHeight,

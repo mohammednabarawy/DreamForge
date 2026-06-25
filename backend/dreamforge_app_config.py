@@ -915,24 +915,25 @@ def _complete_patch_for_mode(
 ) -> dict[str, Any]:
     next_patch = dict(patch)
     if mode == "edit":
+        from dreamforge_task_router import edit_routing_patch, pick_curated_edit_model
+
         next_patch.setdefault("style", "image_edit")
         edit_type = str(next_patch.get("edit_type") or "").lower()
         if not edit_type or edit_type == "auto":
-            if _gallery_has_qwen_edit(model_gallery):
-                next_patch.update(_qwen_edit_lightning_patch())
-                edit_type = "qwen_edit"
-            else:
-                edit_type = "kontext"
-                next_patch["edit_type"] = edit_type
-        if edit_type == "qwen_edit":
-            next_patch["edit_type"] = "qwen_edit"
-            next_patch["cn_selection"] = "Custom..."
-            next_patch["cn_type"] = "qwen_edit"
+            picked, edit_type = pick_curated_edit_model(model_gallery)
+            if picked:
+                next_patch["model"] = picked
+            next_patch["edit_type"] = edit_type
+        engine = str(next_patch.get("model") or "")
+        next_patch.update(
+            edit_routing_patch(
+                model_gallery,
+                engine,
+                preferred_edit_type=str(next_patch.get("edit_type") or ""),
+            )
+        )
+        if str(next_patch.get("edit_type") or "") == "qwen_edit":
             _force_qwen_lightning_defaults(next_patch)
-        elif edit_type == "kontext":
-            next_patch["edit_type"] = "kontext"
-            next_patch["cn_selection"] = "None"
-            next_patch["cn_type"] = "None"
         if selected_image:
             next_patch.setdefault("input_image", selected_image)
     elif mode == "inpaint":

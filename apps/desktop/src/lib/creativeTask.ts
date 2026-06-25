@@ -68,9 +68,11 @@ export function applyVramQualityDefaults(
       next.performance = "Lightning";
       next.steps = Math.min(steps, 8);
       next.cfg_scale = Math.min(cfg, 1.5);
-    } else if (studioMode === "edit" || studioMode === "inpaint") {
+    } else if (studioMode === "edit") {
       next.steps = Math.min(steps, 12);
       next.cfg_scale = Math.min(cfg, 5);
+    } else if (studioMode === "inpaint") {
+      next.steps = Math.min(steps, 12);
     } else if (studioMode === "generate") {
       next.steps = Math.min(steps, 20);
     }

@@ -221,8 +221,8 @@ def test_provider_plan_uses_schema_then_text_fallback(tmp_path: Path, monkeypatc
     assert result["mode"] == "edit"
     assert result["patch"]["input_image"] == "D:/image.png"
     assert result["patch"]["edit_type"] == "qwen_edit"
-    assert result["patch"]["cn_selection"] == "Custom..."
-    assert result["patch"]["cn_type"] == "qwen_edit"
+    assert result["patch"]["cn_selection"] == "None"
+    assert result["patch"]["cn_type"] == "None"
     assert result["patch"]["performance"] == "Lightning"
     assert "aspect_ratio" not in result["patch"]
 
@@ -295,8 +295,8 @@ def test_provider_route_sanitizes_invalid_control_values(tmp_path: Path, monkeyp
         }
     )
 
-    assert result["patch"]["cn_selection"] == "Custom..."
-    assert result["patch"]["cn_type"] == "qwen_edit"
+    assert result["patch"]["cn_selection"] == "None"
+    assert result["patch"]["cn_type"] == "None"
     assert result["patch"]["performance"] == "Quality"
     assert result["patch"]["steps"] == 8
     assert result["patch"]["cfg_scale"] == 1.0

@@ -32,6 +32,7 @@ MODEL_CATEGORIES = {
     "clip_vision": "clip_vision",
     "embeddings": "embeddings",
     "inpaint": "inpaint",
+    "ipadapter": "ipadapter",
 }
 
 GENERATION_MODEL_CATEGORIES = ("checkpoints", "diffusion_models", "unet")

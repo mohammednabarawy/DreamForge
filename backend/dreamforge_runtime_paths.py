@@ -56,6 +56,7 @@ MODEL_SUBDIRS: tuple[str, ...] = (
     "faceswap",
     "llm",
     "inbox",
+    "insightface",
 )
 
 

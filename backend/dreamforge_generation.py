@@ -847,7 +847,10 @@ def _build_comfy_prompt_graph(
                     "scheduler": settings["scheduler"],
                     "seed": seed,
                     "denoise": edit_strength,
-                    "identity_generate": route.reference_role == "image_prompt",
+                    "identity_generate": str(
+                        getattr(job, "reference_role", "") or ""
+                    ).strip().lower()
+                    == "image_prompt",
                     "filename_prefix": "DreamForge",
                 }
             )

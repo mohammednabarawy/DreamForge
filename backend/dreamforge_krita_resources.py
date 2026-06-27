@@ -7,7 +7,7 @@ DreamForge stores download URLs and filenames only; logic is reimplemented here.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from dreamforge_cli_inventory import MODELS_ROOT, companion_file_present
 
@@ -201,6 +201,18 @@ STUDIO_RESOURCE_SOURCES: dict[str, dict[str, Any]] = {
         "relative": "ipadapter/ip-adapter_sd15.safetensors",
         "url": "https://huggingface.co/h94/IP-Adapter/resolve/main/models/ip-adapter_sd15.safetensors",
         "min_bytes": 50 * 1024 * 1024,
+        "optional": True,
+    },
+    "ipadapter_faceid_sdxl": {
+        "relative": "ipadapter/ip-adapter-faceid_sdxl.bin",
+        "url": "https://huggingface.co/h94/IP-Adapter-FaceID/resolve/main/ip-adapter-faceid_sdxl.bin",
+        "min_bytes": 800 * 1024 * 1024,
+        "optional": True,
+    },
+    "ipadapter_faceid_sdxl_lora": {
+        "relative": "loras/ip-adapter-faceid_sdxl_lora.safetensors",
+        "url": "https://huggingface.co/h94/IP-Adapter-FaceID/resolve/main/ip-adapter-faceid_sdxl_lora.safetensors",
+        "min_bytes": 40 * 1024 * 1024,
         "optional": True,
     },
     "upscaler_ultrasharp_legacy": {
@@ -639,6 +651,84 @@ def check_image_prompt_resources() -> list[dict]:
             continue
         missing.append(item)
     return missing
+
+
+def check_faceid_resources() -> list[dict]:
+    """Missing IP-Adapter FaceID + InsightFace assets for identity preservation."""
+    from dreamforge_identity import _insightface_pack_present
+
+    missing: list[dict] = []
+    for resource_id in ("ipadapter_faceid_sdxl", "ipadapter_faceid_sdxl_lora"):
+        entry = STUDIO_RESOURCE_SOURCES.get(resource_id)
+        if not entry:
+            continue
+        item = {"id": resource_id, **entry}
+        if companion_file_present(
+            {"id": resource_id, "relative": entry["relative"]},
+            min_bytes=int(entry.get("min_bytes", 1024 * 1024)),
+        ):
+            continue
+        missing.append(item)
+    if not _insightface_pack_present():
+        missing.append(
+            {
+                "id": "insightface_buffalo_l",
+                "relative": "insightface/models/buffalo_l",
+                "url": "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip",
+                "min_bytes": 200 * 1024 * 1024,
+                "optional": True,
+                "note": "InsightFace buffalo_l ONNX pack for IP-Adapter FaceID",
+            }
+        )
+    return missing
+
+
+def install_faceid_resources(*, progress: Callable[[str], None] | None = None) -> dict:
+    """Download FaceID IP-Adapter weights, LoRA, and InsightFace buffalo_l pack."""
+    import zipfile
+    from urllib.request import urlretrieve
+
+    from dreamforge_companion_download import download_missing_companions
+
+    def _report(message: str) -> None:
+        if progress:
+            progress(message)
+
+    _report("Checking FaceID stack…")
+    missing = check_faceid_resources()
+    payload: dict[str, Any] = {"missing_before": [item.get("id") for item in missing], "results": [], "errors": []}
+
+    downloadable = [item for item in missing if item.get("url") and item.get("id") != "insightface_buffalo_l"]
+    if downloadable:
+        _report("Downloading IP-Adapter FaceID weights…")
+        dl = download_missing_companions(downloadable, progress=progress)
+        payload["results"].extend(dl.get("results") or [])
+        payload["errors"].extend(dl.get("errors") or [])
+
+    if any(item.get("id") == "insightface_buffalo_l" for item in missing):
+        from dreamforge_identity import _insightface_pack_present
+
+        if not _insightface_pack_present():
+            _report("Downloading InsightFace buffalo_l…")
+            dest_root = MODELS_ROOT / "insightface"
+            dest_root.mkdir(parents=True, exist_ok=True)
+            zip_path = dest_root / "buffalo_l.zip"
+            url = "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip"
+            try:
+                urlretrieve(url, zip_path)
+                with zipfile.ZipFile(zip_path, "r") as archive:
+                    archive.extractall(dest_root)
+                zip_path.unlink(missing_ok=True)
+                payload["results"].append(
+                    {"status": "downloaded", "id": "insightface_buffalo_l", "path": str(dest_root)}
+                )
+            except Exception as exc:
+                payload["errors"].append({"id": "insightface_buffalo_l", "error": str(exc)})
+
+    still_missing = check_faceid_resources()
+    payload["missing_after"] = [item.get("id") for item in still_missing]
+    payload["status"] = "ok" if not still_missing else "missing"
+    return payload
 
 
 def preprocess_inpaint_mask(mask_img, *, grow: int = 4, feather: int = 4, hard: bool = False):

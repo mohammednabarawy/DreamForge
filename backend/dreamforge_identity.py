@@ -76,6 +76,18 @@ def identity_intent_from_prompt(prompt: Any) -> bool:
     return any(term in text for term in identity_terms)
 
 
+def _insightface_pack_present() -> str | None:
+    """Return buffalo_l / antelopev2 pack name when InsightFace ONNX weights exist."""
+    from _paths import MODELS_ROOT
+
+    root = MODELS_ROOT / "insightface"
+    for pack in ("buffalo_l", "antelopev2"):
+        folder = root / "models" / pack
+        if folder.is_dir() and any(folder.glob("*.onnx")):
+            return pack
+    return None
+
+
 def faceid_assets_available() -> dict[str, Any]:
     """Return whether real FaceID weights + insightface stack are on disk."""
     from dreamforge_workflow_planner import custom_node_pack_present
@@ -86,13 +98,13 @@ def faceid_assets_available() -> dict[str, Any]:
     faceid_model = _inventory_model("ipadapter", ("faceid", "face-id", "face_id"))
     if not faceid_model:
         missing.append("ipadapter_faceid_model")
-    insightface = _inventory_model("insightface")
-    if not insightface:
+    insightface_pack = _insightface_pack_present()
+    if not insightface_pack:
         missing.append("insightface_model")
     return {
         "ok": not missing,
         "ipadapter_faceid_model": faceid_model,
-        "insightface_model": insightface,
+        "insightface_model": insightface_pack,
         "missing": missing,
     }
 

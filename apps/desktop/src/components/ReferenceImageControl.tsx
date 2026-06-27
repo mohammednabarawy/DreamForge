@@ -1,4 +1,4 @@
-import { ImagePlus, Maximize2, Paintbrush, SlidersHorizontal, Wand2, X } from "lucide-react";
+import { ImagePlus, Paintbrush, SlidersHorizontal, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { readImagePreviewQueued } from "../lib/preview-queue";
@@ -10,16 +10,16 @@ import {
 } from "../lib/referenceRole";
 import {
   buildReferenceRolePatch,
-  REFERENCE_IMAGE_MODES,
-  activeReferenceMode,
   activeReferencePath,
   basename,
   defaultReferenceEditStrength,
   effectiveReferenceEditStrength,
   handleImagePathDragOver,
   readImagePathFromDrop,
-  upscaleMethodLabel,
-  type ReferenceImageMode,
+  referenceAttachedLabel,
+  referenceModeForStudio,
+  referencePanelSubtitle,
+  referencePanelTitle,
 } from "../lib/referenceImage";
 import type { GenerationSettings } from "../lib/tauri-api";
 import { pickImageFile } from "../lib/tauri-api";
@@ -42,8 +42,9 @@ type Props = {
   settings: GenerationSettings;
   modelFamily?: string;
   studioMode?: StudioMode;
-  simpleAttach?: boolean;
-  onAttach: (path: string, mode: ReferenceImageMode) => void;
+  /** Simple UI: fewer role chips and slot controls; routing still follows studio tab + model. */
+  simpleExperience?: boolean;
+  onAttach: (path: string) => void;
   onAttachExtra?: (path: string) => void;
   onRemoveExtra?: (index: number) => void;
   onClear: () => void;
@@ -58,7 +59,7 @@ export function ReferenceImageControl({
   settings,
   modelFamily,
   studioMode = "generate",
-  simpleAttach = false,
+  simpleExperience = false,
   onAttach,
   onAttachExtra,
   onRemoveExtra,
@@ -71,25 +72,17 @@ export function ReferenceImageControl({
 }: Props) {
   const [dragOver, setDragOver] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [mode, setMode] = useState<ReferenceImageMode>(() =>
-    activeReferenceMode(settings, studioMode),
-  );
   const fileInputRef = useRef<HTMLInputElement>(null);
   const extraInputRef = useRef<HTMLInputElement>(null);
 
   const attachedPath = activeReferencePath(settings, studioMode);
-  const attachedMode = activeReferenceMode(settings, studioMode);
+  const attachMode = referenceModeForStudio(studioMode);
   const extraReferences = (settings.reference_images ?? []).filter(
     (path) => path.trim() && path.trim() !== attachedPath,
   );
-  const showExtraRefs =
-    !simpleAttach &&
-    Boolean(attachedPath) &&
-    attachedMode === "reference" &&
-    Boolean(onAttachExtra);
   const showEditStrength =
     Boolean(attachedPath) &&
-    attachedMode !== "upscale" &&
+    attachMode !== "upscale" &&
     Boolean(onEditStrengthChange);
   const editStrength = effectiveReferenceEditStrength(settings, modelFamily);
   const editStrengthDefault = defaultReferenceEditStrength(settings, modelFamily);
@@ -97,17 +90,29 @@ export function ReferenceImageControl({
   const activeReferenceRole = inferReferenceRole(settings, studioMode);
   const proReferenceRoles = proReferenceRolesForStudio(studioMode);
   const showProReferenceRoles =
-    !simpleAttach && attachedPath && onPatchSettings && proReferenceRoles.length > 1;
+    !simpleExperience &&
+    attachedPath &&
+    onPatchSettings &&
+    proReferenceRoles.length > 1;
 
+  const supportsMultiReferences =
+    studioMode === "generate" || studioMode === "edit" || studioMode === "agent";
   const showMultiSlots =
-    !simpleAttach &&
-    studioMode === "generate" &&
+    !simpleExperience &&
+    supportsMultiReferences &&
     Boolean(onPatchSettings) &&
     Boolean(attachedPath);
   const referenceSlots = coerceReferenceSlots(settings, studioMode);
 
+  const showExtraRefs =
+    simpleExperience &&
+    supportsMultiReferences &&
+    Boolean(attachedPath) &&
+    Boolean(onAttachExtra) &&
+    !showMultiSlots;
+
   const showKeepFace =
-    !simpleAttach &&
+    !simpleExperience &&
     studioMode === "generate" &&
     Boolean(attachedPath) &&
     Boolean(onPatchSettings);
@@ -136,12 +141,6 @@ export function ReferenceImageControl({
   };
 
   useEffect(() => {
-    if (attachedPath) {
-      setMode(attachedMode);
-    }
-  }, [attachedPath, attachedMode]);
-
-  useEffect(() => {
     if (!attachedPath) {
       setPreviewUrl(null);
       return;
@@ -159,19 +158,8 @@ export function ReferenceImageControl({
     };
   }, [attachedPath]);
 
-  const taskReferenceMode = (): ReferenceImageMode => {
-    if (studioMode === "inpaint") return "inpaint";
-    if (studioMode === "upscale") return "upscale";
-    return "reference";
-  };
-
-  useEffect(() => {
-    setMode(taskReferenceMode());
-  }, [studioMode]);
-
-  const attachPath = (path: string, nextMode = simpleAttach ? taskReferenceMode() : mode) => {
-    onAttach(path, nextMode);
-    setMode(nextMode);
+  const attachPath = (path: string) => {
+    onAttach(path);
     setDragOver(false);
   };
 
@@ -184,8 +172,14 @@ export function ReferenceImageControl({
     if (path) attachPath(path);
   };
 
-  const dropModeLabel =
-    REFERENCE_IMAGE_MODES.find((item) => item.id === mode)?.short ?? "Ref";
+  const dropActionLabel =
+    studioMode === "inpaint"
+      ? "inpaint source"
+      : studioMode === "upscale"
+        ? "enhance source"
+        : studioMode === "edit"
+          ? "edit source"
+          : "reference";
 
   const onChooseFile = async () => {
     try {
@@ -225,21 +219,6 @@ export function ReferenceImageControl({
     }
   };
 
-  const modeIcon = (id: ReferenceImageMode) => {
-    if (id === "upscale") return Maximize2;
-    if (id === "inpaint") return Paintbrush;
-    return Wand2;
-  };
-
-  const simpleAttachLabel =
-    studioMode === "inpaint"
-      ? "Fix region source"
-      : studioMode === "upscale"
-        ? "Enhance source"
-        : studioMode === "edit"
-          ? "Edit source"
-          : "Reference image";
-
   return (
     <motion.div
       onDragEnterCapture={(event) => {
@@ -268,7 +247,7 @@ export function ReferenceImageControl({
             ? "border-dfui-accent/35 bg-dfui-bg/55"
             : "border-dfui-border/50 bg-dfui-bg/25"
       }`}
-      title="Attach a reference, inpaint, or upscale source image"
+      title="Attach reference images — routing follows the active studio tab and model"
     >
       <input
         ref={fileInputRef}
@@ -289,12 +268,10 @@ export function ReferenceImageControl({
         <div className={`${compact ? "mb-1" : "mb-2"} flex items-center justify-between gap-2`}>
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-wide text-dfui-muted">
-              {compact ? (simpleAttach ? "Image" : "References") : simpleAttach ? simpleAttachLabel : "Input image"}
+              {referencePanelTitle(studioMode, compact)}
             </p>
             <p className={`${compact ? "hidden" : "block"} text-[9px] text-dfui-tertiary`}>
-              {simpleAttach
-                ? "Drop or pick the image for this task"
-                : "Reference, inpaint source, or upscale target"}
+              {referencePanelSubtitle(studioMode)}
             </p>
             {routeBadge ? (
               <p className="mt-0.5 text-[9px] font-medium text-df-blue/90">{routeBadge}</p>
@@ -306,7 +283,7 @@ export function ReferenceImageControl({
               disabled={disabled}
               onClick={() => void onChooseFile()}
               className="inline-flex items-center gap-1 rounded-md border border-dfui-border/60 bg-dfui-panel px-2 py-1 text-[10px] font-medium text-dfui-secondary hover:border-df-blue/40 hover:text-dfui-fg disabled:opacity-50"
-              title="Replace input image"
+              title="Replace attached image"
             >
               <ImagePlus size={12} className="text-df-blue" />
               Replace
@@ -314,38 +291,9 @@ export function ReferenceImageControl({
           ) : null}
         </div>
 
-        {!simpleAttach ? (
-        <div className="grid grid-cols-3 gap-1 rounded-md border border-dfui-border/45 bg-dfui-bg/40 p-0.5">
-          {REFERENCE_IMAGE_MODES.map((item) => {
-            const Icon = modeIcon(item.id);
-            const active = (attachedPath ? attachedMode : mode) === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                disabled={disabled}
-                onClick={() => {
-                  setMode(item.id);
-                  if (attachedPath) attachPath(attachedPath, item.id);
-                }}
-                title={item.description}
-                className={`flex min-h-7 items-center justify-center gap-1 rounded px-1.5 text-[9px] font-medium transition ${
-                  active
-                    ? "bg-dfui-accent/20 text-dfui-accent"
-                    : "text-dfui-muted hover:bg-dfui-surface-hover hover:text-dfui-fg"
-                }`}
-              >
-                <Icon size={11} />
-                {item.short}
-              </button>
-            );
-          })}
-        </div>
-        ) : null}
-
         {showProReferenceRoles ? (
           <div
-            className={`mt-1.5 grid gap-1 rounded-md border border-dfui-border/45 bg-dfui-bg/40 p-0.5 ${
+            className={`grid gap-1 rounded-md border border-dfui-border/45 bg-dfui-bg/40 p-0.5 ${
               proReferenceRoles.length >= 3
                 ? "grid-cols-3"
                 : proReferenceRoles.length > 1
@@ -395,10 +343,7 @@ export function ReferenceImageControl({
                     {basename(attachedPath)}
                   </p>
                   <p className="mt-0.5 text-[9px] text-dfui-muted">
-                    {REFERENCE_IMAGE_MODES.find((item) => item.id === attachedMode)?.label}
-                    {attachedMode === "upscale"
-                      ? ` - ${upscaleMethodLabel(settings.upscale_method)}`
-                      : ""}
+                    {referenceAttachedLabel(studioMode, settings)}
                   </p>
                 </div>
                 <button
@@ -412,12 +357,12 @@ export function ReferenceImageControl({
                 </button>
               </div>
               <div className={`${compact ? "mt-1" : "mt-2"} flex flex-wrap items-center gap-1`}>
-                {attachedMode !== "upscale" && (
+                {attachMode !== "upscale" && (
                   <span className="inline-flex rounded border border-dfui-border/50 bg-dfui-bg/60 px-1.5 py-0.5 text-[9px] text-dfui-secondary">
                     Strength {Math.round(editStrength * 100)}%
                   </span>
                 )}
-              {attachedMode === "inpaint" && !simpleAttach && (
+                {studioMode === "inpaint" && (
                   <span
                     className={`rounded border px-1.5 py-0.5 text-[9px] ${
                       settings.inpaint_mask_path
@@ -428,13 +373,13 @@ export function ReferenceImageControl({
                     {settings.inpaint_mask_path ? "Mask ready" : "Mask needed"}
                   </span>
                 )}
-                {extraReferences.length > 0 && (
+                {(extraReferences.length > 0 || referenceSlots.length > 1) && (
                   <span className="rounded border border-df-blue/30 bg-df-blue/10 px-1.5 py-0.5 text-[9px] text-df-blue">
-                    +{extraReferences.length} control
+                    +{Math.max(extraReferences.length, referenceSlots.length - 1)} ref
                   </span>
                 )}
               </div>
-              {attachedMode === "inpaint" && onOpenInpaintMask && !simpleAttach && (
+              {studioMode === "inpaint" && onOpenInpaintMask && (
                 <button
                   type="button"
                   disabled={disabled}
@@ -443,7 +388,7 @@ export function ReferenceImageControl({
                   title="Open full-screen mask editor (brush, tap selection, grow/shrink)"
                 >
                   <Paintbrush size={12} />
-                  Full-screen mask
+                  {simpleExperience ? "Paint mask" : "Full-screen mask"}
                 </button>
               )}
             </div>
@@ -461,7 +406,7 @@ export function ReferenceImageControl({
           >
             <ImagePlus size={compact ? 14 : 18} className={`${compact ? "" : "mb-1"} text-df-blue`} />
             <span className="text-[11px] font-medium">
-              {dragOver ? `Drop as ${dropModeLabel}` : "Attach image"}
+              {dragOver ? `Drop as ${dropActionLabel}` : "Attach image"}
             </span>
             <span className={`${compact ? "hidden" : "mt-0.5"} text-[9px] text-dfui-tertiary`}>
               Drag from session history, or click to browse
@@ -541,6 +486,7 @@ export function ReferenceImageControl({
       {showMultiSlots && (
         <ReferenceSlotsEditor
           settings={settings}
+          studioMode={studioMode}
           disabled={disabled}
           onAddSlot={(slot) => {
             const patch = appendReferenceSlot(settings, slot, studioMode);
@@ -568,7 +514,7 @@ export function ReferenceImageControl({
                   disabled={disabled}
                   onClick={() => onRemoveExtra(index)}
                   className="shrink-0 text-dfui-muted hover:text-red-300 disabled:opacity-50"
-                  title="Remove control reference"
+                  title="Remove reference"
                 >
                   <X size={10} />
                 </button>
@@ -580,9 +526,9 @@ export function ReferenceImageControl({
             disabled={disabled}
             onClick={() => void onChooseExtraFile()}
             className="rounded border border-dashed border-dfui-border/70 px-1.5 py-0.5 text-[9px] text-dfui-accent hover:border-dfui-accent/50 disabled:opacity-50"
-            title="Add Kontext control reference (stitched with main image)"
+            title="Add another reference image"
           >
-            + control ref
+            + reference
           </button>
         </div>
       )}

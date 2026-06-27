@@ -507,6 +507,7 @@ def _build_comfy_prompt_graph(
     grow_mask_by: int,
     model_loader_args: dict | None = None,
     qwen_reference_filenames: list[str] | None = None,
+    kontext_reference_filenames: list[str] | None = None,
 ):
     from dreamforge_comfy_workflow_import import (
         build_prompt_from_template,
@@ -628,6 +629,12 @@ def _build_comfy_prompt_graph(
     }
 
     if model_family == "ideogram4" and mode != "upscale":
+        # Ideogram 4 (local dual-UNet) has no reference-latent/IP-Adapter path,
+        # so fold any extra references into the img2img init (not for inpaint,
+        # where the mask must align to the original input).
+        ideogram_input = input_filename
+        if reference_stitch_filename and not mask_filename:
+            ideogram_input = reference_stitch_filename
         return _build_ideogram4_comfy_graph_bundle(
             job=job,
             mode=mode,
@@ -636,7 +643,7 @@ def _build_comfy_prompt_graph(
             seed=seed,
             edit_strength=edit_strength,
             loader_args=loader_args,
-            input_filename=input_filename,
+            input_filename=ideogram_input,
             mask_filename=mask_filename,
             grow_mask_by=grow_mask_by,
             edit_type=getattr(job, "edit_type", None),
@@ -832,28 +839,35 @@ def _build_comfy_prompt_graph(
             else:
                 graph = comfy_inpaint_basic(inpaint_args)
         elif mode == "kontext":
-            graph = comfy_flux_kontext_edit(
-                {
-                    **loader_args,
-                    "image": input_filename,
-                    "reference_stitch": reference_stitch_filename or input_filename,
-                    "prompt": prompt,
-                    "negative": negative,
-                    "width": settings["width"],
-                    "height": settings["height"],
-                    "steps": settings["steps"],
-                    "guidance": settings["cfg"],
-                    "sampler_name": settings["sampler_name"],
-                    "scheduler": settings["scheduler"],
-                    "seed": seed,
-                    "denoise": edit_strength,
-                    "identity_generate": str(
-                        getattr(job, "reference_role", "") or ""
-                    ).strip().lower()
-                    == "image_prompt",
-                    "filename_prefix": "DreamForge",
-                }
-            )
+            kontext_args = {
+                **loader_args,
+                "image": input_filename,
+                "prompt": prompt,
+                "negative": negative,
+                "width": settings["width"],
+                "height": settings["height"],
+                "steps": settings["steps"],
+                "guidance": settings["cfg"],
+                "sampler_name": settings["sampler_name"],
+                "scheduler": settings["scheduler"],
+                "seed": seed,
+                "denoise": edit_strength,
+                "identity_generate": str(
+                    getattr(job, "reference_role", "") or ""
+                ).strip().lower()
+                == "image_prompt",
+                "filename_prefix": "DreamForge",
+            }
+            # Auto: stitch for <=2 references (source + 1 extra), chained
+            # ReferenceLatents for 3-4 references (per ComfyUI Kontext guidance).
+            extra_refs = list(kontext_reference_filenames or [])
+            if len(extra_refs) >= 2:
+                kontext_args["reference_latents"] = [input_filename, *extra_refs]
+            else:
+                kontext_args["reference_stitch"] = (
+                    reference_stitch_filename or input_filename
+                )
+            graph = comfy_flux_kontext_edit(kontext_args)
         elif (model_family or "").startswith("qwen") and (
             model_family == "qwen_image_edit" or mode == "qwen_edit" or model_family == "qwen_image"
         ):
@@ -898,7 +912,7 @@ def _build_comfy_prompt_graph(
                 {
                     "ckpt_name": ckpt_name,
                     **loader_args,
-                    "image": input_filename,
+                    "image": reference_stitch_filename or input_filename,
                     "prompt": prompt,
                     "negative": negative,
                     "width": settings["width"],
@@ -918,7 +932,7 @@ def _build_comfy_prompt_graph(
                 {
                     "ckpt_name": ckpt_name,
                     **loader_args,
-                    "image": input_filename,
+                    "image": reference_stitch_filename or input_filename,
                     "prompt": prompt,
                     "negative": negative,
                     "width": settings["width"],
@@ -941,7 +955,7 @@ def _build_comfy_prompt_graph(
                 {
                     "ckpt_name": ckpt_name,
                     **loader_args,
-                    "image": input_filename,
+                    "image": reference_stitch_filename or input_filename,
                     "prompt": prompt,
                     "negative": negative,
                     "width": settings["width"],
@@ -960,7 +974,7 @@ def _build_comfy_prompt_graph(
                 {
                     "ckpt_name": ckpt_name,
                     **loader_args,
-                    "image": input_filename,
+                    "image": reference_stitch_filename or input_filename,
                     "prompt": prompt,
                     "negative": negative,
                     "width": settings["width"],
@@ -979,7 +993,7 @@ def _build_comfy_prompt_graph(
                 {
                     "ckpt_name": ckpt_name,
                     **loader_args,
-                    "image": input_filename,
+                    "image": reference_stitch_filename or input_filename,
                     "prompt": prompt,
                     "negative": negative,
                     "width": settings["width"],
@@ -1858,6 +1872,7 @@ def run_generation(
 
         reference_stitch_filename = None
         qwen_reference_filenames: list[str] = []
+        kontext_reference_filenames: list[str] = []
         extra_reference_paths = _coerce_reference_image_paths(job)
         if extra_reference_paths and input_path:
             if model_family == "qwen_image_edit":
@@ -1887,6 +1902,23 @@ def run_generation(
             else:
                 try:
                     from dreamforge_paths import resolve_image_path_or_raise
+
+                    # Upload each extra reference individually so Kontext can
+                    # chain ReferenceLatents for 3-4 references; also build a
+                    # stitched composite for the <=2 case and as the img2img
+                    # init for families without reference conditioning.
+                    for ref_path in extra_reference_paths[:3]:
+                        resolved = resolve_image_path_or_raise(str(ref_path))
+                        ref_local_name = Path(resolved).name
+                        ref_upload = client.upload_image(
+                            image_bytes=Path(resolved).read_bytes(),
+                            filename=ref_local_name,
+                            folder_type="input",
+                            overwrite=True,
+                        )
+                        kontext_reference_filenames.append(
+                            str(ref_upload.get("name") or ref_local_name)
+                        )
 
                     main_img = Image.open(
                         resolve_image_path_or_raise(str(input_path))
@@ -2365,6 +2397,7 @@ def run_generation(
             grow_mask_by=grow_mask_by,
             model_loader_args=resolved_loaders,
             qwen_reference_filenames=qwen_reference_filenames or None,
+            kontext_reference_filenames=kontext_reference_filenames or None,
         )
         comfy_workflow_class_types = sorted(
             {

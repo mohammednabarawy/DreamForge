@@ -1009,23 +1009,60 @@ def comfy_flux_kontext_edit(args: dict[str, Any]) -> dict[str, Any]:
     width = int(args.get("width", 1024) or 1024)
     height = int(args.get("height", 1024) or 1024)
 
+    reference_latents_raw = args.get("reference_latents")
+    reference_latents: list[str] = []
+    if isinstance(reference_latents_raw, (list, tuple)):
+        seen_ref: set[str] = set()
+        for item in reference_latents_raw:
+            name = str(item or "").strip()
+            if name and name.lower() not in seen_ref:
+                seen_ref.add(name.lower())
+                reference_latents.append(name)
+
     g: dict[str, Any] = {}
     model_out, clip_out, vae_out, _next = _add_model_loader(g, {**args, "ckpt_name": ckpt})
     g["2"] = _node("LoadImage", {"image": image_filename, "upload": "image"})
     g["3"] = _node("FluxKontextImageScale", {"image": ["2", 0]})
     g["4"] = _node("VAEEncode", {"pixels": ["3", 0], "vae": vae_out})
-    if reference_filename != image_filename:
-        g["13"] = _node("LoadImage", {"image": reference_filename, "upload": "image"})
-        g["14"] = _node("FluxKontextImageScale", {"image": ["13", 0]})
-        ref_latent_src = ["14", 0]
-    else:
-        ref_latent_src = ["3", 0]
-    g["15"] = _node("VAEEncode", {"pixels": ref_latent_src, "vae": vae_out})
     g["5"] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
     g["6"] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
     g["7"] = _node("FluxGuidance", {"conditioning": ["5", 0], "guidance": guidance})
-    g["8"] = _node("ReferenceLatent", {"conditioning": ["7", 0], "latent": ["15", 0]})
-    g["9"] = _node("ReferenceLatent", {"conditioning": ["6", 0], "latent": ["15", 0]})
+
+    if reference_latents:
+        # Chained Reference Latents: encode each reference independently and
+        # daisy-chain ReferenceLatent nodes so 3-4 references keep separate
+        # conditioning (per ComfyUI multi-image Kontext guidance).
+        pos_cond: list[Any] = ["7", 0]
+        neg_cond: list[Any] = ["6", 0]
+        nid = 20
+        for filename in reference_latents:
+            g[str(nid)] = _node("LoadImage", {"image": filename, "upload": "image"})
+            g[str(nid + 1)] = _node("FluxKontextImageScale", {"image": [str(nid), 0]})
+            g[str(nid + 2)] = _node("VAEEncode", {"pixels": [str(nid + 1), 0], "vae": vae_out})
+            g[str(nid + 3)] = _node(
+                "ReferenceLatent",
+                {"conditioning": pos_cond, "latent": [str(nid + 2), 0]},
+            )
+            pos_cond = [str(nid + 3), 0]
+            g[str(nid + 4)] = _node(
+                "ReferenceLatent",
+                {"conditioning": neg_cond, "latent": [str(nid + 2), 0]},
+            )
+            neg_cond = [str(nid + 4), 0]
+            nid += 5
+        positive_out, negative_out = pos_cond, neg_cond
+    else:
+        if reference_filename != image_filename:
+            g["13"] = _node("LoadImage", {"image": reference_filename, "upload": "image"})
+            g["14"] = _node("FluxKontextImageScale", {"image": ["13", 0]})
+            ref_latent_src = ["14", 0]
+        else:
+            ref_latent_src = ["3", 0]
+        g["15"] = _node("VAEEncode", {"pixels": ref_latent_src, "vae": vae_out})
+        g["8"] = _node("ReferenceLatent", {"conditioning": ["7", 0], "latent": ["15", 0]})
+        g["9"] = _node("ReferenceLatent", {"conditioning": ["6", 0], "latent": ["15", 0]})
+        positive_out, negative_out = ["8", 0], ["9", 0]
+
     sampler_latent = ["4", 0]
     if identity_generate:
         g["16"] = _node(
@@ -1037,8 +1074,8 @@ def comfy_flux_kontext_edit(args: dict[str, Any]) -> dict[str, Any]:
         "KSampler",
         {
             "model": model_out,
-            "positive": ["8", 0],
-            "negative": ["9", 0],
+            "positive": positive_out,
+            "negative": negative_out,
             "latent_image": sampler_latent,
             "seed": seed,
             "steps": steps,

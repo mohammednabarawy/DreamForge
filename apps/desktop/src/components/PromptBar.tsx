@@ -14,7 +14,6 @@ import { detectAgentPromptHint } from "../lib/parseAgentPrompt";
 import {
   handleImagePathDragOver,
   readImagePathFromDrop,
-  type ReferenceImageMode,
 } from "../lib/referenceImage";
 import { SIMPLE_ASPECT_PRESETS } from "../lib/aspectPresets";
 import { resolveDescribeImagePath } from "../lib/describeImage";
@@ -58,7 +57,7 @@ type Props = {
   onGenerateVariants?: (count: number) => void;
   imageNumberMax?: number;
   onCancel: () => void;
-  onAttachReferenceImage: (path: string, mode: ReferenceImageMode) => void;
+  onAttachReferenceImage: (path: string) => void;
   onAttachExtraReferenceImage?: (path: string) => void;
   onRemoveExtraReferenceImage?: (index: number) => void;
   onClearReferenceImage: () => void;
@@ -131,11 +130,6 @@ export function PromptBar({
     Boolean(onDescribeImage);
   const primaryActionLabel = "Generate";
   const simpleBatchCount = Math.min(4, Math.max(2, imageNumberMax >= 4 ? 4 : imageNumberMax));
-  const dropReferenceMode = (): ReferenceImageMode => {
-    if (studioMode === "inpaint") return "inpaint";
-    if (studioMode === "upscale") return "upscale";
-    return "reference";
-  };
   const showSimpleBatch =
     simpleExperience &&
     studioMode === "generate" &&
@@ -279,7 +273,7 @@ export function PromptBar({
           void onImportImageMetadata(path);
           return;
         }
-        onAttachReferenceImage(path, dropReferenceMode());
+        onAttachReferenceImage(path);
       }}
     >
       {filtered.length > 0 && (
@@ -386,7 +380,7 @@ export function PromptBar({
             settings={settings}
             modelFamily={referenceModelFamily}
             studioMode={studioMode}
-            simpleAttach={simpleExperience}
+            simpleExperience={simpleExperience}
             onAttach={onAttachReferenceImage}
             onAttachExtra={onAttachExtraReferenceImage}
             onRemoveExtra={onRemoveExtraReferenceImage}

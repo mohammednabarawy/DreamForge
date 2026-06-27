@@ -136,16 +136,32 @@ def resolve_reference_composition(slots: list[dict[str, Any]]) -> dict[str, Any]
         return {"mode": "none"}
     ipa = [s for s in slots if s.get("role") == "image_prompt"]
     structure = [s for s in slots if s.get("role") == "structure"]
-    restyle = [s for s in slots if s.get("role") == "restyle"]
-    if restyle and (ipa or structure):
+    # restyle (img2img) and source_edit (Kontext/Qwen) are both single base
+    # images that anchor the workflow; extra image-prompt slots ride along.
+    base = [s for s in slots if s.get("role") in ("restyle", "source_edit")]
+    if len(base) > 1:
         return {
             "mode": "invalid",
-            "reason": "Restyle cannot combine with image-prompt or structure slots.",
+            "reason": "Only one source / base image is supported.",
         }
     if len(structure) > 1:
         return {
             "mode": "invalid",
             "reason": "Only one structure slot is supported.",
+        }
+    if base and structure:
+        return {
+            "mode": "invalid",
+            "reason": "Source / base cannot combine with a structure slot.",
+        }
+    # A restyle/source base may carry extra image-prompt references; they ride
+    # along as Kontext reference latents / img2img stitch handled per-model.
+    if base:
+        return {
+            "mode": str(base[0].get("role") or "restyle"),
+            "base_slot": base[0],
+            "restyle_slot": base[0],
+            "ipadapter_slots": ipa,
         }
     if ipa and structure:
         return {
@@ -159,10 +175,46 @@ def resolve_reference_composition(slots: list[dict[str, Any]]) -> dict[str, Any]
         return {"mode": "ipadapter", "ipadapter_slots": ipa}
     if structure:
         return {"mode": "controlnet", "structure_slot": structure[0]}
-    if restyle:
-        return {"mode": "restyle", "restyle_slot": restyle[0]}
     primary = slots[0]
     return {"mode": primary.get("role") or "restyle", "primary_slot": primary}
+
+
+# Families that have no native reference conditioning (no ReferenceLatent,
+# IP-Adapter, or ControlNet). Extra references for these are folded into a single
+# stitched img2img init image instead of being dropped.
+NON_REFERENCE_FAMILIES = frozenset(
+    {
+        "krea2",
+        "z-image",
+        "z_image",
+        "zimage",
+        "z-image-turbo",
+    }
+)
+
+
+def family_reference_mechanism(
+    model_family: Any,
+    *,
+    mode: Any = "",
+    is_kontext: bool = False,
+) -> str:
+    """How a model family ingests multiple reference images.
+
+    Returns one of: ``kontext`` (ReferenceLatent stitch/chain), ``qwen_plus``
+    (multi-image edit node), ``ipadapter`` (chained IP-Adapter), or
+    ``img2img_init`` (stitch references into a single init image) for families
+    without native reference conditioning.
+    """
+    family = str(model_family or "").strip().lower()
+    m = str(mode or "").strip().lower()
+    if is_kontext or m == "kontext" or "kontext" in family:
+        return "kontext"
+    if m == "qwen_edit" or family.startswith("qwen"):
+        return "qwen_plus"
+    if m in {"ipadapter", "ipadapter_faceid", "ipadapter_controlnet", "controlnet"}:
+        return "ipadapter"
+    return "img2img_init"
 
 
 def apply_reference_slots_to_job(job) -> dict[str, Any]:

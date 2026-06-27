@@ -319,37 +319,67 @@ def build_prompt_from_template(path: str | Path, bindings: dict[str, Any]) -> di
 
 
 def coerce_reference_image_paths(job) -> list[str]:
-    """Extra Kontext/control reference images (Krita multi-reference conditioning)."""
+    """Extra Kontext/control reference images (Krita multi-reference conditioning).
+
+    Merges two channels so every additional reference reaches the stitch/chain
+    and Qwen Plus consumers:
+    - ``reference_images`` / ``control_images`` (Krita-style extra refs), and
+    - the non-primary slots of the multi-slot ``references`` array (Pro Create),
+      excluding the primary, which is already projected onto ``input_image`` /
+      ``reference_image``.
+    """
     raw = getattr(job, "reference_images", None)
     if raw is None:
         raw = getattr(job, "control_images", None)
-    if raw is None:
-        return []
     if isinstance(raw, str):
         text = raw.strip()
         if not text:
-            return []
-        if text.startswith("["):
+            raw = None
+        elif text.startswith("["):
             try:
-                parsed = json.loads(text)
-                raw = parsed
+                raw = json.loads(text)
             except json.JSONDecodeError:
                 raw = [part.strip() for part in text.split(",") if part.strip()]
         else:
             raw = [part.strip() for part in text.split(",") if part.strip()]
-    if not isinstance(raw, (list, tuple)):
-        return []
+
     out: list[str] = []
     seen: set[str] = set()
-    for item in raw:
-        path = str(item or "").strip()
-        if not path:
-            continue
-        key = path.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(path)
+    if isinstance(raw, (list, tuple)):
+        for item in raw:
+            path = str(item or "").strip()
+            if not path:
+                continue
+            key = path.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(path)
+
+    try:
+        from dreamforge_references import coerce_reference_slots
+
+        slots = coerce_reference_slots(job)
+    except Exception:
+        slots = []
+    if len(slots) > 1:
+        primary_paths = {
+            str(getattr(job, "input_image", None) or "").strip().lower(),
+            str(getattr(job, "reference_image", None) or "").strip().lower(),
+        }
+        primary_paths.discard("")
+        for slot in slots:
+            role = str(slot.get("role") or "").strip().lower()
+            if role not in {"image_prompt", "restyle", "source_edit"}:
+                continue
+            path = str(slot.get("path") or "").strip()
+            if not path:
+                continue
+            key = path.lower()
+            if key in seen or key in primary_paths:
+                continue
+            seen.add(key)
+            out.append(path)
     return out
 
 

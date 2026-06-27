@@ -58,10 +58,44 @@ def test_apply_reference_slots_sets_hybrid_workflow_mode():
     assert job.cn_type == "canny"
 
 
-def test_invalid_restyle_mix():
+def test_restyle_plus_image_prompt_is_valid_multi_reference():
     slots = [
         {"path": "/a.png", "role": "restyle"},
         {"path": "/b.png", "role": "image_prompt"},
+    ]
+    comp = resolve_reference_composition(slots)
+    assert comp["mode"] == "restyle"
+    assert comp["restyle_slot"]["path"] == "/a.png"
+    assert [s["path"] for s in comp["ipadapter_slots"]] == ["/b.png"]
+
+
+def test_source_edit_plus_image_prompt_keeps_edit_workflow():
+    job = SimpleNamespace(
+        references=[
+            {"path": "/src.png", "role": "source_edit", "weight": 0.9},
+            {"path": "/face.png", "role": "image_prompt", "weight": 0.7},
+        ],
+        input_image="/src.png",
+        edit_type="kontext",
+        workflow_mode="kontext",
+    )
+    apply_reference_slots_to_job(job)
+    assert job.workflow_mode != "ipadapter"
+
+
+def test_invalid_restyle_structure_mix():
+    slots = [
+        {"path": "/a.png", "role": "restyle"},
+        {"path": "/b.png", "role": "structure"},
+    ]
+    comp = resolve_reference_composition(slots)
+    assert comp["mode"] == "invalid"
+
+
+def test_invalid_two_restyle_slots():
+    slots = [
+        {"path": "/a.png", "role": "restyle"},
+        {"path": "/b.png", "role": "restyle"},
     ]
     comp = resolve_reference_composition(slots)
     assert comp["mode"] == "invalid"

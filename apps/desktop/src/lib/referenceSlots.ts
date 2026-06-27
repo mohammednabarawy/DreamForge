@@ -141,13 +141,16 @@ export function validateReferenceSlotMix(
     };
   }
   const roles = slots.map((s) => s.role);
-  const ipa = roles.filter((r) => r === "image_prompt").length;
   const structure = roles.filter((r) => r === "structure").length;
-  const restyle = roles.filter((r) => r === "restyle").length;
-  if (restyle > 0 && (ipa > 0 || structure > 0)) {
+  // restyle (img2img) and source_edit (Kontext/Qwen) are both single base
+  // images. A base may combine with extra image-prompt references (img2img /
+  // edit + IP-Adapter or Kontext reference latents is valid), but two base
+  // images make no sense and base + ControlNet has no defined composition.
+  const base = roles.filter((r) => r === "restyle" || r === "source_edit").length;
+  if (base > 1) {
     return {
-      code: "restyle_mixed",
-      message: "Restyle cannot combine with image-prompt or structure slots.",
+      code: "multi_base",
+      message: "Only one source / base image is supported.",
     };
   }
   if (structure > 1) {
@@ -156,10 +159,10 @@ export function validateReferenceSlotMix(
       message: "Only one structure slot is supported.",
     };
   }
-  if (ipa > 0 && structure > 0 && ipa + structure !== slots.length) {
+  if (base > 0 && structure > 0) {
     return {
-      code: "unsupported_mix",
-      message: "Mixed slots must be image-prompt and/or structure only.",
+      code: "base_structure_mixed",
+      message: "Source / base cannot combine with a structure slot.",
     };
   }
   return null;
@@ -172,6 +175,16 @@ export function resolveReferenceComposition(slots: ReferenceSlot[]): {
 } {
   const ipa = slots.filter((s) => s.role === "image_prompt");
   const structure = slots.filter((s) => s.role === "structure");
+  const base = slots.filter(
+    (s) => s.role === "restyle" || s.role === "source_edit",
+  );
+  // A restyle/source base keeps the workflow on img2img/Kontext/edit; any extra
+  // image-prompt slots ride along as reference latents handled per-model.
+  if (base.length) {
+    return ipa.length
+      ? { mode: "base_reference", ipadapterSlots: ipa }
+      : { mode: base[0].role };
+  }
   if (ipa.length && structure.length) {
     return {
       mode: "ipadapter_controlnet",

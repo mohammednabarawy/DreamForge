@@ -15,9 +15,11 @@ import {
   type ReferenceSlot,
 } from "../lib/referenceSlots";
 import { pickImageFile } from "../lib/tauri-api";
+import type { StudioMode } from "../lib/model-selection";
 
 type Props = {
   settings: GenerationSettings;
+  studioMode?: StudioMode;
   disabled?: boolean;
   onAddSlot: (slot: ReferenceSlot) => void;
   onUpdateSlot: (index: number, patch: Partial<ReferenceSlot>) => void;
@@ -51,12 +53,13 @@ function SlotPreview({ path }: { path: string }) {
 
 export function ReferenceSlotsEditor({
   settings,
+  studioMode = "generate",
   disabled = false,
   onAddSlot,
   onUpdateSlot,
   onRemoveSlot,
 }: Props) {
-  const slots = coerceReferenceSlots(settings, "generate");
+  const slots = coerceReferenceSlots(settings, studioMode);
   const extraSlots = slots.slice(1);
   const canAdd = slots.length < MAX_REFERENCE_SLOTS;
 

@@ -178,12 +178,12 @@ import {
   buildGenerateIdentityReferencePatch,
   buildReferenceImagePatch,
   defaultReferenceEditStrength,
+  referenceModeForStudio,
   referenceStatusLabel,
   removeExtraReferenceAt,
   resolveGenerationImagePaths,
   resolveReferenceImagePath,
   sanitizeEditFamilySettings,
-  type ReferenceImageMode,
 } from "../lib/referenceImage";
 import {
   isGenerateReferenceWorkflow,
@@ -3207,27 +3207,10 @@ export function useDreamForge() {
   }, [stopLogPoll, workerReady]);
 
   const attachReferenceImage = useCallback(
-    async (path: string, mode: ReferenceImageMode) => {
+    async (path: string) => {
       const resolved = await resolveReferenceImagePath(path);
-      let studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
-
-      const targetStudio: StudioMode | null =
-        mode === "inpaint" && studioMode !== "inpaint"
-          ? "inpaint"
-          : mode === "upscale" && studioMode !== "upscale"
-            ? "upscale"
-            : mode === "reference" &&
-                studioMode !== "generate" &&
-                studioMode !== "edit" &&
-                studioMode !== "agent" &&
-                studioMode !== "inpaint"
-              ? "edit"
-              : null;
-
-      if (targetStudio) {
-        await setStudioModeRef.current(targetStudio);
-        studioMode = targetStudio;
-      }
+      const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+      const mode = referenceModeForStudio(studioMode);
 
       const activeModel = findGalleryModel(
         modelGalleryAll,
@@ -3302,8 +3285,8 @@ export function useDreamForge() {
         openInpaintMaskEditor();
         setStatus(
           uiExperience === "simple"
-            ? `Attached ${referenceStatusLabel(mode, resolved)} — paint on the canvas`
-            : `Attached ${referenceStatusLabel(mode, resolved)} — paint on the canvas or use full-screen mask tools`,
+            ? `Attached ${referenceStatusLabel(studioMode, resolved)} — paint on the canvas`
+            : `Attached ${referenceStatusLabel(studioMode, resolved)} — paint on the canvas or use full-screen mask tools`,
         );
       } else if (studioMode === "generate" && mode === "reference") {
         const routeModel = findGalleryModel(
@@ -3314,7 +3297,7 @@ export function useDreamForge() {
           routeModel?.caption ?? routeModel?.engine_name ?? "selected model";
         setStatus(`Reference image attached — img2img with ${routeLabel}`);
       } else {
-        setStatus(`Attached ${referenceStatusLabel(mode, resolved)}`);
+        setStatus(`Attached ${referenceStatusLabel(studioMode, resolved)}`);
       }
     },
     [appConfig?.ui.studio_mode, imagePromptResources.missing, modelDependencies.missing, modelGalleryAll, openInpaintMaskEditor, patchSettings, studioResources.missing, uiExperience],
@@ -3329,7 +3312,10 @@ export function useDreamForge() {
     async (path: string) => {
       const resolved = await resolveReferenceImagePath(path);
       const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
-      if (studioMode === "generate" && !isSimpleExperience(uiExperience)) {
+      const useReferenceSlots =
+        (studioMode === "generate" || studioMode === "edit" || studioMode === "agent") &&
+        !isSimpleExperience(uiExperience);
+      if (useReferenceSlots) {
         const patch = appendReferenceSlot(
           settingsRef.current,
           {
@@ -3579,8 +3565,7 @@ export function useDreamForge() {
           );
         }
       }
-      const mapped: ReferenceImageMode =
-        mode === "upscale" ? "upscale" : mode === "inpaint" ? "inpaint" : "reference";
+      const mapped = referenceModeForStudio(mode);
       const resolved = await resolveReferenceImagePath(path);
       const activeModel = findGalleryModel(
         modelGalleryAll,
@@ -3611,11 +3596,11 @@ export function useDreamForge() {
         }
         setStatus(
           uiExperience === "simple"
-            ? `Attached ${referenceStatusLabel(mapped, resolved)} — paint on the canvas`
-            : `Attached ${referenceStatusLabel(mapped, resolved)} - paint a fresh mask`,
+            ? `Attached ${referenceStatusLabel(mode, resolved)} — paint on the canvas`
+            : `Attached ${referenceStatusLabel(mode, resolved)} - paint a fresh mask`,
         );
       } else if (currentMode === mode) {
-        setStatus(`Attached ${referenceStatusLabel(mapped, resolved)}`);
+        setStatus(`Attached ${referenceStatusLabel(mode, resolved)}`);
       }
     },
     [

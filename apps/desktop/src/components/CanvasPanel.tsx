@@ -10,7 +10,6 @@ import type { PointerEvent } from "react";
 import { BRAND } from "../lib/brand";
 import { studioPrepareFallbackLabel } from "../lib/loadingMessages";
 import { summarizeGenerationLog } from "../lib/generationLogUi";
-import type { ReferenceImageMode } from "../lib/referenceImage";
 import type { GenerationSettings } from "../lib/tauri-api";
 import { EngineBootOverlay } from "./EngineBootOverlay";
 import { PromptBar } from "./PromptBar";
@@ -102,7 +101,7 @@ type Props = {
   onGenerateVariants?: (count: number) => void;
   imageNumberMax?: number;
   onCancel: () => void;
-  onAttachReferenceImage: (path: string, mode: ReferenceImageMode) => void;
+  onAttachReferenceImage: (path: string) => void;
   onAttachExtraReferenceImage?: (path: string) => void;
   onRemoveExtraReferenceImage?: (index: number) => void;
   onClearReferenceImage: () => void;

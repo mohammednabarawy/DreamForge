@@ -25,31 +25,43 @@ export const UPSCALE_METHOD_LABELS: Record<string, string> = {
   sharp: "Sharper 4×",
 };
 
-export const REFERENCE_IMAGE_MODES: Array<{
-  id: ReferenceImageMode;
-  label: string;
-  short: string;
-  description: string;
-}> = [
-  {
-    id: "reference",
-    label: "Reference / edit",
-    short: "Ref",
-    description: "Kontext-style image editing with a source photo",
-  },
-  {
-    id: "inpaint",
-    label: "Inpaint",
-    short: "Inpaint",
-    description: "Localized edits and inpaint guidance",
-  },
-  {
-    id: "upscale",
-    label: "Upscale 4K",
-    short: "4K",
-    description: "Upscale the attached image",
-  },
-];
+/** How an attached image is routed — derived from the active studio tab, not a manual picker. */
+export function referenceModeForStudio(studioMode: StudioMode): ReferenceImageMode {
+  if (studioMode === "inpaint") return "inpaint";
+  if (studioMode === "upscale") return "upscale";
+  return "reference";
+}
+
+export function referencePanelTitle(studioMode: StudioMode, compact = false): string {
+  if (compact) return "References";
+  if (studioMode === "inpaint") return "Inpaint source";
+  if (studioMode === "upscale") return "Enhance source";
+  if (studioMode === "edit") return "Edit source";
+  return "References";
+}
+
+export function referencePanelSubtitle(studioMode: StudioMode): string {
+  if (studioMode === "inpaint") {
+    return "Source image for masked edits — paint the region on the canvas";
+  }
+  if (studioMode === "upscale") return "Image to upscale or restore";
+  if (studioMode === "edit") {
+    return "Source and extra references route by model (Kontext, Qwen, IP-Adapter, img2img)";
+  }
+  return "Attach references — routing follows model and role (face, style, structure)";
+}
+
+export function referenceAttachedLabel(
+  studioMode: StudioMode,
+  settings: GenerationSettings,
+): string {
+  if (studioMode === "inpaint") return "Inpaint source";
+  if (studioMode === "upscale") {
+    return `Upscale — ${upscaleMethodLabel(settings.upscale_method)}`;
+  }
+  if (studioMode === "edit") return "Edit source";
+  return "Reference";
+}
 
 export function basename(path: string | undefined | null): string {
   const value = typeof path === "string" ? path : "";
@@ -81,37 +93,10 @@ export function activeReferencePath(
 }
 
 export function activeReferenceMode(
-  settings: GenerationSettings,
+  _settings: GenerationSettings,
   studioMode: StudioMode = "generate",
 ): ReferenceImageMode {
-  if (studioMode === "inpaint") {
-    if (
-      settings.input_image?.trim() ||
-      settings.inpaint_mask_path?.trim() ||
-      settings.edit_type === "inpaint"
-    ) {
-      return "inpaint";
-    }
-    return "reference";
-  }
-  if (studioMode === "upscale") {
-    if (settings.upscale_image?.trim() || settings.input_image?.trim()) {
-      return "upscale";
-    }
-    return "reference";
-  }
-  if (studioMode === "generate" || studioMode === "agent") {
-    if (
-      settings.input_image?.trim() ||
-      settings.reference_image?.trim() ||
-      settings.reference_images?.some((item) => item.trim())
-    ) {
-      return "reference";
-    }
-    return "reference";
-  }
-  if (settings.edit_type === "inpaint") return "inpaint";
-  return "reference";
+  return referenceModeForStudio(studioMode);
 }
 
 export function upscaleMethodLabel(method: string | undefined): string {
@@ -647,11 +632,17 @@ export function readImagePathFromDrop(
 }
 
 export function referenceStatusLabel(
-  mode: ReferenceImageMode,
+  studioMode: StudioMode,
   path: string,
 ): string {
   const modeLabel =
-    REFERENCE_IMAGE_MODES.find((item) => item.id === mode)?.short ?? "Ref";
+    studioMode === "inpaint"
+      ? "Inpaint"
+      : studioMode === "upscale"
+        ? "Upscale"
+        : studioMode === "edit"
+          ? "Edit"
+          : "Reference";
   return `${modeLabel}: ${basename(path)}`;
 }
 

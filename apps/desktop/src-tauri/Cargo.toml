@@ -1,6 +1,6 @@
 [package]
 name = "dreamforge"
-version = "0.1.0"
+version = "0.2.0-beta"
 description = "DreamForge — AI image creation studio"
 authors = ["DreamForge"]
 edition = "2021"

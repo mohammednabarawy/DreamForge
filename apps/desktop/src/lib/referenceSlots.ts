@@ -209,6 +209,20 @@ export function patchPrimaryReferenceSlot(
   return syncLegacyFromPrimarySlot(settings, slots);
 }
 
+/**
+ * Resolve role conflicts in favour of the user's latest pick instead of
+ * rejecting it. A plain `restyle` (img2img) base cannot combine with a
+ * `structure` slot, but an `image_prompt` base can (IP-Adapter + ControlNet
+ * hybrid), so promote restyle → image_prompt whenever a structure slot is
+ * present. This lets "face + structure" compose correctly.
+ */
+export function reconcileSlotRoles(slots: ReferenceSlot[]): ReferenceSlot[] {
+  if (!slots.some((s) => s.role === "structure")) return slots;
+  return slots.map((s) =>
+    s.role === "restyle" ? { ...s, role: "image_prompt" as ReferenceRole } : s,
+  );
+}
+
 export function appendReferenceSlot(
   settings: GenerationSettings,
   slot: ReferenceSlot,
@@ -218,9 +232,10 @@ export function appendReferenceSlot(
   if (slots.length >= MAX_REFERENCE_SLOTS) return null;
   if (slots.some((item) => item.path === slot.path)) return null;
   slots.push(slot);
-  const issue = validateReferenceSlotMix(slots);
+  const reconciled = reconcileSlotRoles(slots);
+  const issue = validateReferenceSlotMix(reconciled);
   if (issue) return null;
-  return syncLegacyFromPrimarySlot(settings, slots);
+  return syncLegacyFromPrimarySlot(settings, reconciled);
 }
 
 export function updateReferenceSlotAt(
@@ -234,9 +249,10 @@ export function updateReferenceSlotAt(
   const merged = normalizeReferenceSlot({ ...slots[index], ...patch });
   if (!merged) return null;
   slots[index] = merged;
-  const issue = validateReferenceSlotMix(slots);
+  const reconciled = reconcileSlotRoles(slots);
+  const issue = validateReferenceSlotMix(reconciled);
   if (issue) return null;
-  return syncLegacyFromPrimarySlot(settings, slots);
+  return syncLegacyFromPrimarySlot(settings, reconciled);
 }
 
 export function removeReferenceSlotAt(

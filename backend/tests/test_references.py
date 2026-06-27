@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from dreamforge_references import (
     apply_reference_slots_to_job,
     coerce_reference_slots,
+    reconcile_slot_roles,
     resolve_reference_composition,
 )
 
@@ -83,7 +84,29 @@ def test_source_edit_plus_image_prompt_keeps_edit_workflow():
     assert job.workflow_mode != "ipadapter"
 
 
-def test_invalid_restyle_structure_mix():
+def test_reconcile_promotes_restyle_base_with_structure():
+    slots = [
+        {"path": "/face.png", "role": "restyle"},
+        {"path": "/edge.png", "role": "structure"},
+    ]
+    reconciled = reconcile_slot_roles(slots)
+    assert reconciled[0]["role"] == "image_prompt"
+    comp = resolve_reference_composition(reconciled)
+    assert comp["mode"] == "ipadapter_controlnet"
+
+
+def test_apply_face_plus_structure_routes_hybrid():
+    job = SimpleNamespace(
+        references=[
+            {"path": "/face.png", "role": "restyle", "weight": 0.8},
+            {"path": "/edge.png", "role": "structure", "weight": 0.9},
+        ]
+    )
+    apply_reference_slots_to_job(job)
+    assert job.workflow_mode == "ipadapter_controlnet"
+
+
+def test_invalid_restyle_structure_mix_without_reconcile():
     slots = [
         {"path": "/a.png", "role": "restyle"},
         {"path": "/b.png", "role": "structure"},

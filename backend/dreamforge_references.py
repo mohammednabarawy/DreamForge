@@ -217,11 +217,30 @@ def family_reference_mechanism(
     return "img2img_init"
 
 
+def reconcile_slot_roles(slots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Promote a restyle base to image_prompt when a structure slot is present.
+
+    A plain restyle (img2img) base cannot combine with a structure (ControlNet)
+    slot, but an image_prompt base can (IP-Adapter + ControlNet hybrid). Mirror
+    the desktop reconcile so direct API/CLI callers get the same behaviour.
+    """
+    if not any(s.get("role") == "structure" for s in slots):
+        return slots
+    out: list[dict[str, Any]] = []
+    for slot in slots:
+        if slot.get("role") == "restyle":
+            out.append({**slot, "role": "image_prompt"})
+        else:
+            out.append(slot)
+    return out
+
+
 def apply_reference_slots_to_job(job) -> dict[str, Any]:
     """Project slots onto legacy job fields used by routing/graph builders."""
     slots = coerce_reference_slots(job)
     if not slots:
         return {}
+    slots = reconcile_slot_roles(slots)
     composition = resolve_reference_composition(slots)
     if composition.get("mode") == "invalid":
         return {"references": slots, "reference_composition_error": composition.get("reason")}

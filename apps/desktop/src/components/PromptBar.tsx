@@ -18,6 +18,7 @@ import {
 } from "../lib/referenceImage";
 import { SIMPLE_ASPECT_PRESETS } from "../lib/aspectPresets";
 import { resolveDescribeImagePath } from "../lib/describeImage";
+import { isTypingTarget } from "../lib/keyboard";
 import { ReferenceImageControl } from "./ReferenceImageControl";
 import { PromptToolsMenu } from "./PromptToolsMenu";
 import { IdeogramCaptionTemplatesMenu } from "./IdeogramCaptionTemplatesMenu";
@@ -62,6 +63,8 @@ type Props = {
   onRemoveExtraReferenceImage?: (index: number) => void;
   onClearReferenceImage: () => void;
   onOpenInpaintMask?: () => void;
+  /** Leave inline mask editor while the user types in the prompt. */
+  onInpaintCanvasFocusChange?: (focused: boolean) => void;
   activeModelLabel: string;
   referenceModelFamily?: string;
   experience?: UiExperience;
@@ -99,6 +102,7 @@ export function PromptBar({
   onRemoveExtraReferenceImage,
   onClearReferenceImage,
   onOpenInpaintMask,
+  onInpaintCanvasFocusChange,
   activeModelLabel,
   referenceModelFamily,
   experience = "pro",
@@ -158,6 +162,10 @@ export function PromptBar({
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        // Allow Ctrl/Cmd+Enter in the prompt; ignore when typing elsewhere (settings, search, etc.).
+        if (isTypingTarget(e.target) && !(e.target instanceof HTMLTextAreaElement)) {
+          return;
+        }
         e.preventDefault();
         if (generating) onCancel();
         else if (canRunPrimary) onGenerate();
@@ -402,15 +410,18 @@ export function PromptBar({
             <textarea
               value={settings.prompt ?? ""}
               onChange={(e) => onPromptChange(e.target.value)}
+              onFocus={() => onInpaintCanvasFocusChange?.(false)}
               rows={2}
               placeholder="Optional enhancement — leave empty for auto restoration prompt"
               className="df-textarea-glowing min-h-[48px] flex-1 py-1.5 text-xs leading-snug"
+              data-df-prompt-input
             />
           ) : (
           <div className="flex min-w-0 items-stretch gap-1.5">
             <textarea
               value={settings.prompt ?? ""}
               onChange={(e) => onPromptChange(e.target.value)}
+              onFocus={() => onInpaintCanvasFocusChange?.(false)}
               rows={2}
               placeholder={
                 isAgentMode
@@ -418,6 +429,7 @@ export function PromptBar({
                   : "Describe the shot… Type @ to pick a model or style"
               }
               className="df-textarea-glowing min-h-[48px] flex-1 py-1.5 text-xs leading-snug"
+              data-df-prompt-input
             />
             {!isAgentMode && studioMode === "generate" && onEnhancePrompt ? (
               <motion.button

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dreamforge_mode_contract import build_mode_contract
+from dreamforge_mode_contract import build_final_edit_request, build_mode_contract
 
 
 def test_generate_contract_preserves_user_model():
@@ -54,3 +54,21 @@ def test_edit_contract_preserves_user_model_when_engine_path_resolves():
     assert contract["model_policy"] == "preserve_user_model"
     assert contract["model_source"] == "user_selected"
     assert "model" not in contract["changed_fields"]
+
+
+def test_final_edit_request_exposes_user_and_model_instruction():
+    request = build_final_edit_request(
+        "inpaint",
+        user_instruction="remove the lamp",
+        model_instruction="remove the lamp and preserve the background",
+        negative_prompt="blur",
+        settings={"preserve_style": True, "inpaint_intent": "remove"},
+        model_family="flux",
+        edit_type="inpaint",
+    )
+
+    assert request["scope"] == "masked_region"
+    assert request["task"] == "remove"
+    assert request["user_instruction"] == "remove the lamp"
+    assert request["model_instruction"] == "remove the lamp and preserve the background"
+    assert "Preserve overall style and palette" in request["preservation_hints"]

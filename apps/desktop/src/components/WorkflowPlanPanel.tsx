@@ -98,6 +98,9 @@ export function WorkflowPlanPanel({
   );
   const presetSources = textList(plan.dynamic_preset?.source);
   const modeContract = plan.mode_contract;
+  const inpaintContext = plan.inpaint_context;
+  const finalEditRequest = plan.final_edit_request;
+  const editTaskDefaults = plan.edit_task_defaults;
   const changedFields = textList(modeContract?.changed_fields);
   const preservedFields = textList(modeContract?.preserved_fields);
   const preservationHints = textList(modeContract?.preservation_hints);
@@ -107,6 +110,9 @@ export function WorkflowPlanPanel({
     !runCheck.ok ||
     !canRunGeneration ||
     Boolean(runBlockReason);
+  const modelCapabilities = plan.model_capabilities;
+  const requiredCapabilities = textList(modelCapabilities?.required);
+  const missingCapabilities = textList(modelCapabilities?.missing);
 
   const proposedSteps = plan.proposed?.steps;
   const proposedCfg = plan.proposed?.cfg_scale;
@@ -161,6 +167,20 @@ export function WorkflowPlanPanel({
           <p className="rounded border border-dfui-border/60 bg-dfui-surface/40 px-2 py-1 font-mono text-[10px] text-dfui-fg">
             {modelLabel}
           </p>
+          {modelCapabilities && requiredCapabilities.length > 0 && (
+            <p
+              className={`mt-1 rounded border px-2 py-1 font-mono text-[9px] ${
+                modelCapabilities.compatible
+                  ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-200"
+                  : "border-amber-500/30 bg-amber-500/10 text-amber-200"
+              }`}
+            >
+              route needs {requiredCapabilities.join(", ")}
+              {missingCapabilities.length > 0
+                ? `; missing ${missingCapabilities.join(", ")}`
+                : "; model supports route"}
+            </p>
+          )}
         </div>
       )}
 
@@ -234,6 +254,97 @@ export function WorkflowPlanPanel({
               <p className="font-mono">
                 <span className="text-dfui-tertiary">intents: </span>
                 <span>{preservationHints.join(" · ")}</span>
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {inpaintContext && inpaintContext.status !== "missing_input" && (
+        <div>
+          <p className="mb-1 font-mono text-[9px] uppercase tracking-wider text-dfui-tertiary">
+            Inpaint context
+          </p>
+          <div className="space-y-1 rounded border border-dfui-border/60 bg-dfui-surface/40 px-2 py-1.5 text-[10px] text-dfui-secondary">
+            {inpaintContext.status === "outpaint" ? (
+              <>
+                <p className="font-mono">
+                  <span className="text-dfui-tertiary">extend: </span>
+                  <span className="text-dfui-fg">
+                    {inpaintContext.outpaint?.direction ?? "right"} ·{" "}
+                    {inpaintContext.outpaint?.amount ?? 256}px
+                  </span>
+                </p>
+                <p className="font-mono">
+                  <span className="text-dfui-tertiary">edge feather: </span>
+                  <span>{inpaintContext.outpaint?.feathering ?? 40}px</span>
+                </p>
+              </>
+            ) : inpaintContext.mask_empty ? (
+              <p className="text-amber-300">Mask is empty — paint a selection before generating.</p>
+            ) : (
+              <>
+                {typeof inpaintContext.mask_coverage === "number" && (
+                  <p className="font-mono">
+                    <span className="text-dfui-tertiary">coverage: </span>
+                    <span className="text-dfui-fg">
+                      {(inpaintContext.mask_coverage * 100).toFixed(2)}%
+                    </span>
+                  </p>
+                )}
+                {Array.isArray(inpaintContext.mask_bbox) && (
+                  <p className="font-mono">
+                    <span className="text-dfui-tertiary">mask bbox: </span>
+                    <span>{inpaintContext.mask_bbox.join(", ")}</span>
+                  </p>
+                )}
+                {inpaintContext.crop?.enabled && Array.isArray(inpaintContext.crop.size) && (
+                  <p className="font-mono">
+                    <span className="text-dfui-tertiary">crop: </span>
+                    <span>
+                      {inpaintContext.crop.size[0]}×{inpaintContext.crop.size[1]}
+                      {Array.isArray(inpaintContext.crop.box)
+                        ? ` @ ${inpaintContext.crop.box.join(", ")}`
+                        : ""}
+                    </span>
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {(finalEditRequest || editTaskDefaults) && (
+        <div>
+          <p className="mb-1 font-mono text-[9px] uppercase tracking-wider text-dfui-tertiary">
+            Model instruction
+          </p>
+          <div className="space-y-1 rounded border border-dfui-border/60 bg-dfui-surface/40 px-2 py-1.5 text-[10px] text-dfui-secondary">
+            {(editTaskDefaults?.label || finalEditRequest?.task) && (
+              <p className="font-mono">
+                <span className="text-dfui-tertiary">task: </span>
+                <span className="text-dfui-fg">
+                  {editTaskDefaults?.label ?? finalEditRequest?.task}
+                </span>
+                {finalEditRequest?.scope ? (
+                  <span className="text-dfui-tertiary"> · {finalEditRequest.scope}</span>
+                ) : null}
+              </p>
+            )}
+            {(editTaskDefaults?.hint || finalEditRequest?.task_hint) && (
+              <p className="text-dfui-fg">{editTaskDefaults?.hint ?? finalEditRequest?.task_hint}</p>
+            )}
+            {finalEditRequest?.user_instruction && (
+              <p className="font-mono">
+                <span className="text-dfui-tertiary">user: </span>
+                <span className="text-dfui-fg">{finalEditRequest.user_instruction}</span>
+              </p>
+            )}
+            {finalEditRequest?.model_instruction && (
+              <p className="font-mono">
+                <span className="text-dfui-tertiary">model: </span>
+                <span className="text-dfui-fg">{finalEditRequest.model_instruction}</span>
               </p>
             )}
           </div>

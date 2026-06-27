@@ -79,7 +79,7 @@ export type GenerationSettings = {
   upscale_mode_type?: string;
   cn_upscale?: string;
   batch_size?: number;
-  edit_type?: "auto" | "kontext" | "inpaint" | "img2img" | "qwen_edit";
+  edit_type?: "auto" | "kontext" | "inpaint" | "img2img" | "qwen_edit" | "outpaint";
   edit_strength?: number;
   /** Fooocus-style img2img variation strength preset. */
   vary_amount?: "subtle" | "strong";
@@ -141,6 +141,18 @@ export type GenerationSettings = {
   inpaint_mask_grow_by?: number;
   /** Named inpaint mode: default / improve_detail / modify_content. */
   inpaint_intent?: "default" | "improve_detail" | "modify_content";
+  /** Backend-owned edit/inpaint task preset resolved during dry-run. */
+  edit_task?:
+    | "remove"
+    | "replace"
+    | "add"
+    | "repair"
+    | "refine"
+    | "recolor"
+    | "relight"
+    | "restyle"
+    | "extend"
+    | "global_edit";
   /** Extra prompt for improve_detail / modify_content passes. */
   inpaint_additional_prompt?: string;
   /** Planner hints for edit-family preservation (UI toggles). */
@@ -150,6 +162,10 @@ export type GenerationSettings = {
   inpaint_mask_path?: string;
   /** Skip feathering on inpaint mask edges (advanced). */
   inpaint_hard_mask?: boolean;
+  /** Outpaint / canvas extend direction and padding. */
+  outpaint_direction?: "left" | "right" | "top" | "bottom" | "";
+  outpaint_amount?: number;
+  outpaint_feathering?: number;
   /** What the attached image means for routing (explicit user intent). */
   reference_role?:
     | "image_prompt"

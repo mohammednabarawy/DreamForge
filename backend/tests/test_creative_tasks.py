@@ -24,6 +24,12 @@ GALLERY = [
         "engine_name": "qwen-image-edit-2511-Q4_K_M.gguf",
         "relative_path": "qwen-image-edit-2511-Q4_K_M.gguf",
     },
+    {
+        "family": "sdxl",
+        "caption": "Juggernaut XL Inpaint",
+        "engine_name": "juggernautxl_inpaint.safetensors",
+        "relative_path": "juggernautxl_inpaint.safetensors",
+    },
 ]
 
 
@@ -152,18 +158,17 @@ def test_vram_quality_caps_edit_cfg_on_5gb():
 def test_enforce_on_submit_inpaint_preserves_user_model_override():
     out = enforce_creative_task_settings(
         {
-            "model": "wrong-model.safetensors",
+            "model": "juggernautxl_inpaint.safetensors",
             "edit_type": "auto",
             "cn_type": "img2img",
             "prompt": "fix",
         },
         studio_mode="inpaint",
         model_gallery=GALLERY,
-        advanced_mode=True,
         user_picked_model=True,
     )
     assert out["edit_type"] == "inpaint"
-    assert out["model"] == "wrong-model.safetensors"
+    assert out["model"] == "juggernautxl_inpaint.safetensors"
 
 
 def test_enforce_on_submit_inpaint_uses_default_when_model_empty():

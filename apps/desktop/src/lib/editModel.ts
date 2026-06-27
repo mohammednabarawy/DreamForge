@@ -12,6 +12,18 @@ export const FLUX_KONTEXT_NEEDLES = [
   "flux kontext",
 ] as const;
 
+const IMG2IMG_EDIT_FAMILIES = new Set([
+  "sdxl",
+  "sd15",
+  "flux",
+  "flux2",
+  "hidream",
+  "hidream_o1",
+  "ideogram4",
+  "krea2",
+  "z_image",
+]);
+
 export function modelHaystack(item: ModelGalleryItem): string {
   return `${item.family} ${item.caption} ${item.engine_name} ${item.relative_path}`.toLowerCase();
 }
@@ -25,8 +37,28 @@ export function isFluxKontextEditModel(item: ModelGalleryItem): boolean {
 }
 
 export function isQwenEditModel(item: ModelGalleryItem): boolean {
+  const family = (item.family ?? "").toLowerCase();
+  if (family === "qwen_image_edit") return true;
   const hay = modelHaystack(item);
   return hay.includes("qwen") && hay.includes("edit");
+}
+
+export function isImg2ImgEditModel(item: ModelGalleryItem): boolean {
+  const family = (item.family ?? "").toLowerCase();
+  if (IMG2IMG_EDIT_FAMILIES.has(family)) return true;
+  const hay = modelHaystack(item);
+  if (hay.includes("flux") && !hay.includes("fill") && !hay.includes("kontext")) {
+    return true;
+  }
+  return false;
+}
+
+export function isEditCapableModel(item: ModelGalleryItem): boolean {
+  return (
+    isFluxKontextEditModel(item) ||
+    isQwenEditModel(item) ||
+    isImg2ImgEditModel(item)
+  );
 }
 
 export function selectFluxKontextEditModel(gallery: ModelGalleryItem[]): string {
@@ -74,10 +106,10 @@ export function selectQwenEditModel(gallery: ModelGalleryItem[]): string {
   return bestEngine;
 }
 
-export function selectCuratedEditModel(_gallery: ModelGalleryItem[]): string {
-  const kontext = selectFluxKontextEditModel(_gallery);
+export function selectCuratedEditModel(gallery: ModelGalleryItem[]): string {
+  const kontext = selectFluxKontextEditModel(gallery);
   if (kontext) return kontext;
-  return selectQwenEditModel(_gallery);
+  return selectQwenEditModel(gallery);
 }
 
 export function editModelWarning(
@@ -85,8 +117,8 @@ export function editModelWarning(
   mode: StudioMode,
 ): string | null {
   if (mode !== "edit") return null;
-  if (isFluxKontextEditModel(item) || isQwenEditModel(item)) return null;
-  return `"${modelBasename(item.caption)}" is not a curated edit model — results may vary. Default route is Flux Kontext.`;
+  if (isEditCapableModel(item)) return null;
+  return `"${modelBasename(item.caption)}" may not support instruction edits — Flux Kontext, Qwen Edit, or img2img checkpoints work best.`;
 }
 
 export function sortGalleryForEditMode(
@@ -96,13 +128,15 @@ export function sortGalleryForEditMode(
   if (mode !== "edit") return gallery;
   const kontext: ModelGalleryItem[] = [];
   const qwen: ModelGalleryItem[] = [];
+  const img2img: ModelGalleryItem[] = [];
   const other: ModelGalleryItem[] = [];
   for (const item of gallery) {
     if (isFluxKontextEditModel(item)) kontext.push(item);
     else if (isQwenEditModel(item)) qwen.push(item);
+    else if (isImg2ImgEditModel(item)) img2img.push(item);
     else other.push(item);
   }
-  return [...kontext, ...qwen, ...other];
+  return [...kontext, ...qwen, ...img2img, ...other];
 }
 
 /** Map a user-selected edit model to the correct edit_type / control-net routing. */
@@ -118,8 +152,7 @@ export function buildEditRoutingPatch(
       steps: 20,
     };
   }
-  const family = (item.family ?? "").toLowerCase();
-  if (family === "qwen_image_edit" || isQwenEditModel(item)) {
+  if (isQwenEditModel(item)) {
     return {
       edit_type: "qwen_edit",
       edit_strength: 1.0,
@@ -127,15 +160,7 @@ export function buildEditRoutingPatch(
       cn_type: "None",
     };
   }
-  if (family === "ideogram4") {
-    return {
-      edit_type: "kontext",
-      edit_strength: 1.0,
-      cn_selection: "None",
-      cn_type: "None",
-    };
-  }
-  if (isFluxKontextEditModel(item) || family === "flux_kontext") {
+  if (isFluxKontextEditModel(item) || (item.family ?? "").toLowerCase() === "flux_kontext") {
     return {
       edit_type: "kontext",
       edit_strength: 1.0,
@@ -144,10 +169,27 @@ export function buildEditRoutingPatch(
       steps: 20,
     };
   }
+  if ((item.family ?? "").toLowerCase() === "ideogram4") {
+    return {
+      edit_type: "kontext",
+      edit_strength: 1.0,
+      cn_selection: "None",
+      cn_type: "None",
+    };
+  }
+  if (isImg2ImgEditModel(item)) {
+    return {
+      edit_type: "img2img",
+      edit_strength: 0.75,
+      cn_selection: "Custom...",
+      cn_type: "img2img",
+    };
+  }
   return {
-    edit_type: "auto",
-    edit_strength: 0.75,
-    cn_selection: "Custom...",
-    cn_type: "img2img",
+    edit_type: "kontext",
+    edit_strength: 1.0,
+    cn_selection: "None",
+    cn_type: "None",
+    steps: 20,
   };
 }

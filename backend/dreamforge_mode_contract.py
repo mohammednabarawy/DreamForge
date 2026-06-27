@@ -147,3 +147,43 @@ def build_preservation_hints(settings: dict[str, Any] | None) -> list[str]:
     if data.get("preserve_text"):
         hints.append("Preserve text, logos, and typography")
     return hints
+
+
+def build_final_edit_request(
+    mode: str,
+    *,
+    user_instruction: str,
+    model_instruction: str | None = None,
+    negative_prompt: str | None = None,
+    settings: dict[str, Any] | None = None,
+    model_family: str | None = None,
+    edit_type: str | None = None,
+) -> dict[str, Any]:
+    """Expose the user intent and final model instruction used by edit routes."""
+    data = settings if isinstance(settings, dict) else {}
+    normalized_mode = (mode or "generate").strip().lower()
+    task = (
+        data.get("task_preset")
+        or data.get("edit_task")
+        or data.get("inpaint_intent")
+        or edit_type
+        or normalized_mode
+    )
+    if normalized_mode == "inpaint":
+        scope = "masked_region"
+    elif normalized_mode == "edit":
+        scope = "source_image"
+    else:
+        scope = normalized_mode
+    return {
+        "schema_version": "1.0",
+        "mode": normalized_mode,
+        "task": str(task or normalized_mode),
+        "scope": scope,
+        "user_instruction": str(user_instruction or ""),
+        "model_instruction": str(model_instruction if model_instruction is not None else user_instruction or ""),
+        "negative_prompt": str(negative_prompt or ""),
+        "preservation_hints": build_preservation_hints(data),
+        "model_family": str(model_family or ""),
+        "edit_type": str(edit_type or data.get("edit_type") or ""),
+    }

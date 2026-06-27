@@ -328,10 +328,36 @@ def _checkpoint_is_flux_kontext(model: dict | None, model_family: str) -> bool:
     return checkpoint_is_flux_kontext(model, model_family)
 
 
+# Flux Fill must regenerate the masked region from full noise. With denoise < 1.0
+# the masked latent retains a fraction of the ORIGINAL pixels; when the masked area
+# is plain/low-detail (e.g. empty background) that residual dominates and the model
+# denoises straight back to the original - the edit appears to do nothing. The
+# unmasked region is preserved structurally by InpaintModelConditioning, NOT by a
+# reduced denoise, so Fill is always run at 1.0 (matches ComfyUI/Fooocus Fill).
+_FLUX_FILL_INPAINT_MIN_DENOISE = 1.0
+
+
 def _checkpoint_is_flux_fill(model: dict | None, model_family: str) -> bool:
     from dreamforge_workflow_routing import checkpoint_is_flux_fill
 
     return checkpoint_is_flux_fill(model, model_family)
+
+
+def clamp_flux_fill_inpaint_denoise(
+    edit_strength: float,
+    *,
+    is_inpaint_job: bool,
+    model: dict | None,
+    model_family: str,
+) -> float:
+    """Raise denoise to 1.0 for Flux Fill inpaint (see _FLUX_FILL_INPAINT_MIN_DENOISE)."""
+    if (
+        is_inpaint_job
+        and _checkpoint_is_flux_fill(model, model_family)
+        and edit_strength < _FLUX_FILL_INPAINT_MIN_DENOISE
+    ):
+        return _FLUX_FILL_INPAINT_MIN_DENOISE
+    return edit_strength
 
 
 def _coerce_reference_image_paths(job) -> list[str]:
@@ -813,12 +839,15 @@ def _build_comfy_prompt_graph(
                     "reference_stitch": reference_stitch_filename or input_filename,
                     "prompt": prompt,
                     "negative": negative,
+                    "width": settings["width"],
+                    "height": settings["height"],
                     "steps": settings["steps"],
                     "guidance": settings["cfg"],
                     "sampler_name": settings["sampler_name"],
                     "scheduler": settings["scheduler"],
                     "seed": seed,
                     "denoise": edit_strength,
+                    "identity_generate": route.reference_role == "image_prompt",
                     "filename_prefix": "DreamForge",
                 }
             )
@@ -1357,6 +1386,7 @@ def run_generation(
 
         from dreamforge_prompt import prepare_generation_prompts
 
+        user_instruction = str(prompt or "")
         prepared = prepare_generation_prompts(job, model, prompt, negative, settings)
         prompt = prepared["prompt"]
         from dreamforge_inpaint_intent import merge_inpaint_additional_prompt
@@ -1474,6 +1504,17 @@ def run_generation(
                     job_id=job_id,
                 )
 
+        edit_task_defaults: dict = {}
+        if getattr(job, "edit_task", None):
+            from dreamforge_edit_tasks import apply_edit_task_defaults_to_job
+
+            edit_task_defaults = apply_edit_task_defaults_to_job(
+                job,
+                mode="edit"
+                if str(getattr(job, "edit_task", "") or "").lower() == "global_edit"
+                else "inpaint",
+            )
+
         from dreamforge_workflow_routing import resolve_comfy_workflow_mode, resolve_input_routing
 
         route = resolve_input_routing(
@@ -1490,6 +1531,13 @@ def run_generation(
         workflow_mode = route.workflow_mode
         inpaint_mask_path = getattr(job, "inpaint_mask_path", None)
         is_inpaint_job = route.is_inpaint_job
+        if is_inpaint_job and not edit_task_defaults:
+            from dreamforge_edit_tasks import apply_edit_task_defaults_to_job
+
+            edit_task_defaults = apply_edit_task_defaults_to_job(
+                job,
+                mode="inpaint" if is_inpaint_job else "edit",
+            )
         inpaint_intent_params: dict = {}
         if is_inpaint_job:
             from dreamforge_inpaint_intent import (
@@ -1517,16 +1565,16 @@ def run_generation(
                         model_family = str(model.get("family") or "").lower()
                     except Exception:
                         pass
-            if requires_fill and not _checkpoint_is_flux_fill(model, model_family) and (
-                model_family or ""
-            ).lower() != "ideogram4":
+            from dreamforge_inpaint_routing import model_supports_inpaint
+
+            if not model_supports_inpaint(model, model_family):
                 from dreamforge_errors import invalid_request
 
                 model_label = model.get("name") or model.get("engine_name") or model_family
                 err = invalid_request(
-                    "Inpaint requires a Flux Fill checkpoint "
-                    f"(flux1-fill-dev-fp8.safetensors); got {model_label}. "
-                    "Use Inpaint mode or download Flux Fill from Settings.",
+                    "Inpaint requires a checkpoint with inpaint support "
+                    f"(Flux Fill, SDXL inpaint, etc.); got {model_label}. "
+                    "Pick an inpaint-capable model in the inspector.",
                     job_id=job_id,
                 )
                 emit_event(stream_sink, err)
@@ -1646,11 +1694,19 @@ def run_generation(
             default_edit_strength = float(
                 inpaint_intent_params.get("edit_strength", default_edit_strength)
             )
+        if is_inpaint_job and edit_task_defaults.get("edit_strength") is not None:
+            default_edit_strength = float(edit_task_defaults["edit_strength"])
         edit_strength = _clamp_float(
             getattr(job, "edit_strength", None),
             default_edit_strength,
             0.0,
             1.0,
+        )
+        edit_strength = clamp_flux_fill_inpaint_denoise(
+            edit_strength,
+            is_inpaint_job=is_inpaint_job,
+            model=model,
+            model_family=model_family,
         )
         try:
             from dreamforge_krita_resources import resolve_upscaler
@@ -1927,11 +1983,14 @@ def run_generation(
                 if raw_mask.size != main_size:
                     raw_mask = raw_mask.resize(main_size, Image.Resampling.LANCZOS)
                 from dreamforge_krita_resources import (
+                    inpaint_mask_has_selection,
                     pil_png_bytes,
                     plan_inpaint_crop_stitch,
                     prepare_inpaint_mask_bytes,
                     prepare_inpaint_mask_image,
                 )
+                if not inpaint_mask_has_selection(raw_mask):
+                    raise ValueError("Inpaint mask is empty; paint a non-empty mask before running Inpaint.")
 
                 crop_plan = plan_inpaint_crop_stitch(
                     main_img,
@@ -1993,7 +2052,7 @@ def run_generation(
                     overwrite=True,
                 )
                 mask_filename = str(mask_upload.get("name") or mask_name)
-            except OSError as exc:
+            except (OSError, ValueError) as exc:
                 err = invalid_input_image(
                     f"inpaint mask: {exc}",
                     path=str(mask_path),
@@ -2465,7 +2524,6 @@ def run_generation(
             and input_path
             and inpaint_mask_img is not None
             and saved_paths
-            and not _checkpoint_is_flux_fill(model, model_family)
         ):
             try:
                 from dreamforge_paths import resolve_image_path_or_raise
@@ -2579,6 +2637,33 @@ def run_generation(
             if not Path(manifest_path).is_absolute():
                 manifest_path = str(PROJECT_ROOT / manifest_path)
             from dreamforge_edit_lineage import build_edit_lineage
+            from dreamforge_edit_tasks import resolve_edit_task_defaults
+            from dreamforge_mode_contract import build_final_edit_request
+            from dreamforge_workflow_routing import plan_mode_for_job
+
+            plan_mode = plan_mode_for_job(job)
+            task_defaults = resolve_edit_task_defaults(
+                getattr(job, "edit_task", None),
+                mode=plan_mode,
+                settings=job_data if isinstance(job_data, dict) else vars(job),
+            )
+            final_request = build_final_edit_request(
+                plan_mode,
+                user_instruction=user_instruction,
+                model_instruction=prompt,
+                negative_prompt=settings["negative"],
+                settings={
+                    **(job_data if isinstance(job_data, dict) else vars(job)),
+                    **settings,
+                    **task_defaults,
+                },
+                model_family=model_family,
+                edit_type=edit_type,
+            )
+            if task_defaults.get("edit_task"):
+                final_request["task"] = task_defaults["edit_task"]
+                if task_defaults.get("hint"):
+                    final_request["task_hint"] = task_defaults["hint"]
 
             routing = {
                 "input_image": str(input_path) if input_path else None,
@@ -2601,6 +2686,7 @@ def run_generation(
                 "model": model,
                 "settings": settings,
                 "routing": routing,
+                "final_edit_request": final_request,
                 "lineage": build_edit_lineage(
                     job=job,
                     data=job_data,

@@ -7,12 +7,16 @@ import {
 } from "../lib/inpaintMaskOverlay";
 import { readImagePreviewQueued } from "../lib/preview-queue";
 import { generateInpaintSelectionMask, type InpaintSelectionKind } from "../lib/studioBridge";
+import { isTypingTarget } from "../lib/keyboard";
 import { useMaskPublisher } from "../lib/useMaskPublisher";
 import { CanvasToolRail, type CanvasMaskTool } from "./CanvasToolRail";
+import { InpaintContextOverlay } from "./InpaintContextOverlay";
+import type { InpaintContextPlan } from "../lib/studioBridge";
 
 type Props = {
   imagePath: string;
   initialMaskPath?: string;
+  inpaintContext?: InpaintContextPlan;
   onMaskChange?: (path: string) => void;
   onMaskSyncingChange?: (syncing: boolean) => void;
   disabled?: boolean;
@@ -24,6 +28,7 @@ type Props = {
 export function CanvasMaskEditor({
   imagePath,
   initialMaskPath,
+  inpaintContext,
   onMaskChange,
   onMaskSyncingChange,
   disabled = false,
@@ -272,6 +277,32 @@ export function CanvasMaskEditor({
     void publishMask({ immediate: true });
   }, [publishMask, redrawView]);
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (disabled || busy || !ready) return;
+      if (isTypingTarget(event.target)) return;
+      const key = event.key.toLowerCase();
+      if (key === "b" || key === "p") {
+        event.preventDefault();
+        setTool("paint");
+      } else if (key === "e") {
+        event.preventDefault();
+        setTool("erase");
+      } else if (key === "[") {
+        event.preventDefault();
+        setBrush((value) => Math.max(4, value - 8));
+      } else if (key === "]") {
+        event.preventDefault();
+        setBrush((value) => Math.min(96, value + 8));
+      } else if (key === "escape") {
+        event.preventDefault();
+        clearMask();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [busy, clearMask, disabled, ready]);
+
   const cursorClass =
     tool === "subject" || tool === "background" ? "cursor-pointer" : "cursor-crosshair";
 
@@ -299,6 +330,7 @@ export function CanvasMaskEditor({
           onPointerUp={endStroke}
           onPointerCancel={endStroke}
         />
+        {inpaintContext ? <InpaintContextOverlay context={inpaintContext} /> : null}
         {!ready && (
           <div className="absolute inset-0 flex items-center justify-center bg-dfui-bg/80 text-[11px] text-dfui-muted">
             Loading image…
@@ -324,6 +356,9 @@ export function CanvasMaskEditor({
           More mask tools (full-screen)…
         </button>
       ) : null}
+      <p className="text-[9px] leading-snug text-dfui-tertiary" aria-live="polite">
+        Shortcuts: B paint · E erase · [ ] brush size · Esc clear
+      </p>
     </div>
   );
 }

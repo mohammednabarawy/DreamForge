@@ -68,7 +68,10 @@ git_repos = [
 ]
 
 
-TORCH_MIN_VERSION = "2.4.0"
+# 2.8.0 is the minimum that unlocks ComfyUI Dynamic VRAM (comfy-aimdo) on NVIDIA.
+# torchruntime picks the hardware-correct wheel (cuXXX/rocm/cpu); this floor just
+# ensures stale environments get bumped past the Dynamic VRAM cutoff.
+TORCH_MIN_VERSION = "2.8.0"
 
 
 def _darwin_x86_python() -> bool:
@@ -99,11 +102,21 @@ def ensure_torch_minimum_version(min_version=TORCH_MIN_VERSION):
             f"Upgrading torch {torch.__version__} -> >={min_version} "
             "(required by DreamForge dependencies)"
         )
+        cuda_suffix = (
+            torch.__version__.split("+", 1)[1] if "+" in torch.__version__ else None
+        )
     except Exception:
         print(f"Installing torch >={min_version} for DreamForge dependencies")
+        cuda_suffix = None
+
+    # Preserve the accelerator wheel index (e.g. cu128/rocm) so a CUDA/ROCm box
+    # doesn't silently downgrade to CPU-only torch during the version bump.
+    index = ""
+    if cuda_suffix and (cuda_suffix.startswith("cu") or cuda_suffix.startswith("rocm")):
+        index = f" --index-url https://download.pytorch.org/whl/{cuda_suffix}"
 
     run_pip(
-        f'install --upgrade "torch>={min_version}" torchvision torchaudio',
+        f'install --upgrade "torch>={min_version}" torchvision torchaudio{index}',
         "torch stack upgrade",
     )
 

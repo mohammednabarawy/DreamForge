@@ -11,7 +11,11 @@ if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
 from dreamforge_comfy_workflow_import import coerce_reference_image_paths, comfy_workflow_mode
-from dreamforge_generation import _checkpoint_is_flux_fill, _checkpoint_is_flux_kontext
+from dreamforge_generation import (
+    _checkpoint_is_flux_fill,
+    _checkpoint_is_flux_kontext,
+    clamp_flux_fill_inpaint_denoise,
+)
 
 
 def _is_kontext(model, model_family: str) -> bool:
@@ -154,3 +158,25 @@ def test_comfy_workflow_mode_qwen_edit():
         checkpoint_is_flux_kontext=_checkpoint_is_flux_kontext,
     )
     assert mode == "qwen_edit"
+
+
+def test_clamp_flux_fill_inpaint_denoise_floors_low_strength():
+    model = {"name": "flux1-fill-dev-fp8.safetensors"}
+    assert clamp_flux_fill_inpaint_denoise(
+        0.52,
+        is_inpaint_job=True,
+        model=model,
+        model_family="flux_fill",
+    ) == 1.0
+    assert clamp_flux_fill_inpaint_denoise(
+        1.0,
+        is_inpaint_job=True,
+        model=model,
+        model_family="flux_fill",
+    ) == 1.0
+    assert clamp_flux_fill_inpaint_denoise(
+        0.52,
+        is_inpaint_job=True,
+        model={"name": "sdxl.safetensors"},
+        model_family="sdxl",
+    ) == 0.52

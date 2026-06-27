@@ -70,17 +70,36 @@ def test_comfy_launch_extra_args_recommended_on_16gb(monkeypatch):
     from dreamforge_vram_profiles import comfy_launch_extra_args
 
     monkeypatch.setenv("DREAMFORGE_VRAM_PROFILE", "16gb")
+    monkeypatch.setenv("DREAMFORGE_COMFY_FAST", "off")
+    monkeypatch.setenv("DREAMFORGE_COMFY_ATTENTION", "off")
     monkeypatch.setattr("dreamforge_comfy_launch.mps_available", lambda: False)
+    monkeypatch.setattr("dreamforge_comfy_launch.supports_dynamic_vram", lambda: False)
     monkeypatch.setattr("dreamforge_comfy_launch.platform.system", lambda: "Windows")
     monkeypatch.setattr("dreamforge_comfy_launch.cuda_total_vram_gb", lambda: 16.0)
-    assert comfy_launch_extra_args() == ("--lowvram", "--reserve-vram", "2")
+    assert comfy_launch_extra_args() == ("--lowvram", "--reserve-vram", "3")
+
+
+def test_comfy_launch_extra_args_dynamic_vram_drops_lowvram_on_16gb(monkeypatch):
+    from dreamforge_vram_profiles import comfy_launch_extra_args
+
+    monkeypatch.setenv("DREAMFORGE_VRAM_PROFILE", "16gb")
+    monkeypatch.setenv("DREAMFORGE_COMFY_FAST", "off")
+    monkeypatch.setenv("DREAMFORGE_COMFY_ATTENTION", "off")
+    monkeypatch.setattr("dreamforge_comfy_launch.mps_available", lambda: False)
+    monkeypatch.setattr("dreamforge_comfy_launch.supports_dynamic_vram", lambda: True)
+    monkeypatch.setattr("dreamforge_comfy_launch.platform.system", lambda: "Windows")
+    monkeypatch.setattr("dreamforge_comfy_launch.cuda_total_vram_gb", lambda: 16.0)
+    assert comfy_launch_extra_args() == ("--reserve-vram", "1.5")
 
 
 def test_comfy_launch_extra_args_lowvram_reserves_vram_on_8gb(monkeypatch):
     from dreamforge_vram_profiles import comfy_launch_extra_args
 
     monkeypatch.setenv("DREAMFORGE_VRAM_PROFILE", "8gb")
+    monkeypatch.setenv("DREAMFORGE_COMFY_FAST", "off")
+    monkeypatch.setenv("DREAMFORGE_COMFY_ATTENTION", "off")
     monkeypatch.setattr("dreamforge_comfy_launch.mps_available", lambda: False)
+    monkeypatch.setattr("dreamforge_comfy_launch.supports_dynamic_vram", lambda: False)
     monkeypatch.setattr("dreamforge_comfy_launch.platform.system", lambda: "Windows")
     monkeypatch.setattr("dreamforge_comfy_launch.cuda_total_vram_gb", lambda: 8.0)
     assert comfy_launch_extra_args() == ("--lowvram", "--reserve-vram", "1")

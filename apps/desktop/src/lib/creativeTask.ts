@@ -9,7 +9,7 @@ import {
 import {
   buildEditRoutingPatch,
   DEFAULT_FLUX_KONTEXT_EDIT_MODEL,
-  isFluxKontextEditModel,
+  isEditCapableModel,
   isQwenEditModel,
   selectFluxKontextEditModel,
 } from "./editModel";
@@ -18,7 +18,8 @@ import { qwenEdit2511LightningPatch } from "./qwenEditDefaults";
 import {
   DEFAULT_FLUX_FILL_MODEL,
   enforceInpaintJobSettings,
-  isFluxFillModel,
+  isInpaintCapableModel,
+  selectCuratedInpaintModel,
 } from "./inpaintModel";
 import { resolveVramProfile, type VramProfile } from "./vramProfiles";
 import { applyCreativeTemplateDefaults } from "./creativeTemplates";
@@ -86,15 +87,23 @@ export function enforceEditJobSettings(
   settings: GenerationSettings,
   studioMode: StudioMode,
   gallery: ModelGalleryItem[],
-  _advancedMode?: boolean,
+  advancedMode?: boolean,
 ): GenerationSettings {
   if (studioMode !== "edit") return settings;
   const current = gallery.find((item) => item.engine_name === settings.model);
   const defaultModel =
     selectFluxKontextEditModel(gallery) || DEFAULT_FLUX_KONTEXT_EDIT_MODEL;
-  const effectiveModel = settings.model?.trim() || defaultModel;
+  const userModel = settings.model?.trim();
+  const userPickedCapable =
+    Boolean(userModel) &&
+    Boolean(current) &&
+    isEditCapableModel(current!);
+  const effectiveModel =
+    userPickedCapable || (advancedMode && userModel)
+      ? userModel!
+      : userModel || defaultModel;
   const effectiveItem =
-    current ?? gallery.find((item) => item.engine_name === effectiveModel);
+    gallery.find((item) => item.engine_name === effectiveModel) ?? current;
   return {
     ...settings,
     model: effectiveModel,
@@ -261,8 +270,8 @@ function studioModeDefaultStatus(
   const routedLabel = modelBasename(routedModel);
   if (mode === "inpaint") {
     return routedModel
-      ? `Inpaint mode - default Flux Fill selected (${routedLabel}). Override only if the checkpoint supports inpaint.`
-      : "Inpaint mode - Flux Fill is missing; review the asset download prompt";
+      ? `Inpaint mode - ${routedLabel} selected. Pick any Flux Fill or SDXL inpaint checkpoint in the inspector.`
+      : "Inpaint mode - install Flux Fill or an SDXL inpaint checkpoint";
   }
   if (mode === "upscale") {
     return advancedMode
@@ -335,7 +344,10 @@ export function planStudioModeSwitch(
       patch.lora = [];
     }
     const currentItem = findGalleryModel(gallery, settings.model ?? "");
-    const manualEdit = userPickedModel && Boolean(currentItem);
+    const manualEdit =
+      userPickedModel &&
+      Boolean(currentItem) &&
+      isEditCapableModel(currentItem!);
     const editModelItem = manualEdit
       ? currentItem
       : (routedModelItem ?? findGalleryModel(gallery, effectiveModel));
@@ -387,10 +399,14 @@ export function planStudioModeSwitch(
       patch.lora = [];
     }
     const currentItem = findGalleryModel(gallery, settings.model ?? "");
-    const manualFlux =
-      userPickedModel && Boolean(currentItem) && isFluxFillModel(currentItem!);
-    patch.model = manualFlux ? settings.model : effectiveModel;
-    if (!manualFlux) {
+    const manualInpaint =
+      userPickedModel &&
+      Boolean(currentItem) &&
+      isInpaintCapableModel(currentItem!);
+    patch.model = manualInpaint
+      ? settings.model
+      : effectiveModel || selectCuratedInpaintModel(gallery);
+    if (!manualInpaint) {
       refUpdates.userPickedModel = false;
     }
   }
@@ -479,9 +495,9 @@ export function isManualCreativeModel(
   studioMode: StudioMode,
 ): boolean {
   if (!item) return false;
-  if (studioMode === "inpaint") return isFluxFillModel(item);
+  if (studioMode === "inpaint") return isInpaintCapableModel(item);
   if (studioMode === "edit") {
-    return isFluxKontextEditModel(item) || isQwenEditModel(item);
+    return isEditCapableModel(item);
   }
   return true;
 }

@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DreamForge edit/inpaint benchmark manifest",
+  "type": "object",
+  "required": ["schema_version", "id", "mode", "source_image", "prompt"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "id": { "type": "string", "minLength": 1 },
+    "title": { "type": "string" },
+    "mode": { "enum": ["edit", "inpaint", "outpaint"] },
+    "task": {
+      "type": "string",
+      "enum": [
+        "remove",
+        "replace",
+        "add",
+        "repair",
+        "refine",
+        "recolor",
+        "relight",
+        "restyle",
+        "extend",
+        "global_edit"
+      ]
+    },
+    "source_image": { "type": "string", "minLength": 1 },
+    "mask_image": { "type": "string" },
+    "prompt": { "type": "string", "minLength": 1 },
+    "negative_prompt": { "type": "string" },
+    "model": { "type": "string" },
+    "settings": { "type": "object" },
+    "expectations": {
+      "type": "object",
+      "properties": {
+        "outside_mask_leakage_ok": { "type": "boolean" },
+        "max_outside_mask_leakage_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "min_mask_coverage": { "type": "number", "minimum": 0, "maximum": 1 },
+        "notes": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": true
+}

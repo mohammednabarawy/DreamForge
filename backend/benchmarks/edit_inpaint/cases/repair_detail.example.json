@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "id": "repair_detail_portrait",
+  "title": "Repair masked facial detail",
+  "mode": "inpaint",
+  "task": "repair",
+  "source_image": "assets/source/portrait_1024.svg",
+  "mask_image": "assets/masks/portrait_face_soft.svg",
+  "prompt": "sharper natural eyes and skin texture, preserve identity",
+  "negative_prompt": "blur, plastic skin, extra eyes",
+  "model": "flux-fill-dev.safetensors",
+  "settings": {
+    "edit_strength": 0.52,
+    "inpaint_intent": "improve_detail",
+    "inpaint_grow": 2,
+    "inpaint_feather": 4,
+    "inpaint_mask_grow_by": 6
+  },
+  "expectations": {
+    "outside_mask_leakage_ok": true,
+    "max_outside_mask_leakage_ratio": 0.001,
+    "notes": "Outside-mask pixels should match source except feather tolerance."
+  },
+  "tags": ["inpaint", "repair", "portrait"]
+}

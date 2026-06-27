@@ -112,6 +112,58 @@ export type ModeContract = {
   summary?: string;
 };
 
+export type InpaintContextPlan = {
+  schema_version?: string;
+  status?: string;
+  message?: string;
+  image_size?: number[];
+  mask_empty?: boolean;
+  mask_bbox?: number[];
+  mask_coverage?: number;
+  mask_selected_pixels?: number;
+  crop?: {
+    enabled?: boolean;
+    box?: number[];
+    size?: number[];
+  };
+  requires_mask?: boolean;
+  outpaint?: {
+    direction?: string;
+    amount?: number;
+    feathering?: number;
+  };
+};
+
+export type FinalEditRequestPlan = {
+  schema_version?: string;
+  mode?: string;
+  task?: string;
+  task_hint?: string;
+  scope?: string;
+  user_instruction?: string;
+  model_instruction?: string;
+  negative_prompt?: string;
+};
+
+export type EditTaskDefaultsPlan = {
+  edit_task?: string;
+  label?: string;
+  hint?: string;
+  scope?: string;
+  requires_mask?: boolean;
+  inpaint_intent?: string;
+  edit_strength?: number;
+};
+
+export type ModelCapabilitiesPlan = {
+  schema_version?: string;
+  family?: string;
+  required?: string[];
+  supported?: string[];
+  missing?: string[];
+  compatible?: boolean;
+};
+
 export type AgentPlanSnapshot = {
   source?: string;
   provider?: string;
@@ -126,6 +178,10 @@ export type AgentPlanSnapshot = {
   operations?: string[];
   dynamic_preset?: DynamicPresetMeta;
   mode_contract?: ModeContract;
+  inpaint_context?: InpaintContextPlan;
+  final_edit_request?: FinalEditRequestPlan;
+  edit_task_defaults?: EditTaskDefaultsPlan;
+  model_capabilities?: ModelCapabilitiesPlan;
   workflow_plan?: Array<{
     id?: string;
     operation?: string;

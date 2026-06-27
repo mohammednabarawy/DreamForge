@@ -185,6 +185,22 @@ export function buildPlanSnapshotFromDryRun(args: {
       typeof args.planPayload.mode_contract === "object" && args.planPayload.mode_contract
         ? (args.planPayload.mode_contract as AgentPlanSnapshot["mode_contract"])
         : undefined,
+    inpaint_context:
+      typeof args.planPayload.inpaint_context === "object" && args.planPayload.inpaint_context
+        ? (args.planPayload.inpaint_context as AgentPlanSnapshot["inpaint_context"])
+        : undefined,
+    final_edit_request:
+      typeof args.planPayload.final_edit_request === "object" && args.planPayload.final_edit_request
+        ? (args.planPayload.final_edit_request as AgentPlanSnapshot["final_edit_request"])
+        : undefined,
+    edit_task_defaults:
+      typeof args.planPayload.edit_task_defaults === "object" && args.planPayload.edit_task_defaults
+        ? (args.planPayload.edit_task_defaults as AgentPlanSnapshot["edit_task_defaults"])
+        : undefined,
+    model_capabilities:
+      typeof args.planPayload.model_capabilities === "object" && args.planPayload.model_capabilities
+        ? (args.planPayload.model_capabilities as AgentPlanSnapshot["model_capabilities"])
+        : undefined,
     workflow_blueprint: args.workflowBlueprint,
     workflow_plan: Array.isArray(args.planPayload.workflow_plan)
       ? (args.planPayload.workflow_plan as AgentPlanSnapshot["workflow_plan"])
@@ -231,6 +247,7 @@ export function planHasHardBlockers(
 /** Show the canvas plan card only when review or asset setup is actually needed. */
 export function shouldSurfaceWorkflowPlan(plan: AgentPlanSnapshot | null): boolean {
   if (!plan) return false;
+  if (plan.inpaint_context || plan.final_edit_request || plan.model_capabilities) return true;
   const readiness = plan.readiness;
   if (!readiness) return false;
   if (planHasHardBlockers(readiness)) return true;

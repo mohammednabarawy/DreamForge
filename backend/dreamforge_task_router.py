@@ -67,32 +67,28 @@ def edit_routing_patch(
     *,
     preferred_edit_type: str | None = None,
 ) -> dict[str, Any]:
+    from dreamforge_edit_routing import edit_routing_for_model
+
     item = find_gallery_item(gallery, engine_name) or {}
     family = str(item.get("family") or "").lower()
-    engine_hay = str(engine_name or "").lower()
-    qwen_patch = {
-        "edit_type": "qwen_edit",
-        "edit_strength": 1.0,
-        "cn_selection": "None",
-        "cn_type": "None",
-    }
-    kontext_patch = {
-        "edit_type": "kontext",
-        "edit_strength": 1.0,
-        "cn_selection": "None",
-        "cn_type": "None",
-        "steps": 20,
-    }
-    if family == "qwen_image_edit" or _is_qwen_edit_item(item):
-        return dict(qwen_patch)
-    if family == "flux_kontext" or _is_kontext_item(item):
-        return dict(kontext_patch)
-    if "qwen" in engine_hay and "edit" in engine_hay:
-        return dict(qwen_patch)
+    patch = edit_routing_for_model(item, family)
     pref = str(preferred_edit_type or "").lower()
     if pref == "qwen_edit":
-        return dict(qwen_patch)
-    return dict(kontext_patch)
+        return {
+            "edit_type": "qwen_edit",
+            "edit_strength": 1.0,
+            "cn_selection": "None",
+            "cn_type": "None",
+        }
+    if pref == "kontext" and patch.get("edit_type") != "qwen_edit":
+        return {
+            "edit_type": "kontext",
+            "edit_strength": 1.0,
+            "cn_selection": "None",
+            "cn_type": "None",
+            "steps": 20,
+        }
+    return patch
 
 
 @dataclass
@@ -121,14 +117,22 @@ def apply_task_routing(
     reason = "unchanged"
 
     if mode == "edit":
+        from dreamforge_edit_routing import model_supports_edit
+
         current = str(out.get("model") or "").strip()
         family = gallery_family(gallery_list, current)
-        manual = bool(advanced_mode and user_picked_model and current)
+        current_item = find_gallery_item(gallery_list, current) if current else None
+        manual = bool(
+            user_picked_model
+            and current
+            and current_item
+            and model_supports_edit(current_item, family)
+        )
 
         if manual:
             if family in EDIT_FORBIDDEN_SIMPLE_FAMILIES:
                 warnings.append(
-                    "Ideogram 4 is a generation model — Flux Kontext or Qwen Edit are recommended for photo edits."
+                    "Ideogram 4 is optimized for generation — Flux Kontext or Qwen Edit usually give better photo edits."
                 )
             out.update(
                 edit_routing_patch(
@@ -137,17 +141,13 @@ def apply_task_routing(
                     preferred_edit_type=str(out.get("edit_type") or ""),
                 )
             )
-            reason = "pro_user_override"
+            reason = "user_edit_override"
         else:
             item = find_gallery_item(gallery_list, current) or {}
             valid = bool(
                 current
+                and model_supports_edit(item, family)
                 and family not in EDIT_FORBIDDEN_SIMPLE_FAMILIES
-                and (
-                    family in EDIT_ALLOWED_FAMILIES
-                    or _is_kontext_item(item)
-                    or _is_qwen_edit_item(item)
-                )
             )
             if valid:
                 out.update(
@@ -186,12 +186,18 @@ def apply_task_routing(
         )
 
     if mode == "inpaint":
-        from dreamforge_app_config import _pick_model_for_mode
+        from dreamforge_inpaint_routing import model_supports_inpaint, pick_best_inpaint_model
         from dreamforge_krita_resources import STUDIO_MODE_DEFAULTS
 
         current = str(out.get("model") or "").strip()
-        manual = bool(advanced_mode and user_picked_model and current)
-        fill = _pick_model_for_mode("inpaint", gallery_list, edit_type="inpaint")
+        current_item = find_gallery_item(gallery_list, current) if current else None
+        manual = bool(
+            user_picked_model
+            and current
+            and current_item
+            and model_supports_inpaint(current_item, gallery_family(gallery_list, current))
+        )
+        fill = pick_best_inpaint_model(gallery_list)
         defaults = STUDIO_MODE_DEFAULTS.get("inpaint", {})
 
         if not manual:
@@ -201,7 +207,12 @@ def apply_task_routing(
                 out["model"] = defaults["model_name"]
             reason = "easy_inpaint_default"
         else:
-            reason = "pro_user_override"
+            if not model_supports_inpaint(current_item, gallery_family(gallery_list, current)):
+                warnings.append(
+                    f"Selected model {current} may not support inpaint; Flux Fill or an "
+                    "SDXL inpaint checkpoint is recommended."
+                )
+            reason = "user_inpaint_override"
 
         out["edit_type"] = "inpaint"
         out["cn_selection"] = "Custom..."

@@ -25,6 +25,9 @@ import { pathToAssetUrl } from "../lib/preview-display";
 import { AgentTranscriptPanel } from "./AgentTranscriptPanel";
 import { WorkflowPlanPanel } from "./WorkflowPlanPanel";
 import { CanvasMaskEditor } from "./CanvasMaskEditor";
+import { InpaintContextOverlay } from "./InpaintContextOverlay";
+import { OutpaintPreviewOverlay } from "./OutpaintPreviewOverlay";
+import { ResultTray } from "./ResultTray";
 
 type Mention = { kind: "model" | "style"; label: string; value: string };
 type CompareMode = "before" | "after" | "split";
@@ -36,6 +39,8 @@ type CanvasLayout = {
   frameH: number;
   imgW: number;
   imgH: number;
+  naturalW: number;
+  naturalH: number;
 };
 
 function canvasPanLimits(layout: CanvasLayout, zoom: number) {
@@ -113,6 +118,11 @@ type Props = {
   experience?: UiExperience;
   onVaryImage?: (amount: "subtle" | "strong") => void;
   onAutoEnhance?: (target: "face" | "hands" | "eyes") => void;
+  resultCandidates?: string[];
+  activeCandidatePath?: string | null;
+  onSelectResultCandidate?: (path: string) => void;
+  onRetryGeneration?: () => void;
+  onUseCandidateAsSource?: (path: string) => void;
 };
 
 export function CanvasPanel({
@@ -178,6 +188,11 @@ export function CanvasPanel({
   experience = "pro",
   onVaryImage,
   onAutoEnhance,
+  resultCandidates = [],
+  activeCandidatePath,
+  onSelectResultCandidate,
+  onRetryGeneration,
+  onUseCandidateAsSource,
 }: Props) {
   const simpleExperience = isSimpleExperience(experience);
   const [compareMode, setCompareMode] = useState<CompareMode>("after");
@@ -194,6 +209,8 @@ export function CanvasPanel({
     frameH: 0,
     imgW: 0,
     imgH: 0,
+    naturalW: 0,
+    naturalH: 0,
   });
   const compareModeRef = useRef<CompareMode>(compareMode);
   compareModeRef.current = compareMode;
@@ -218,16 +235,33 @@ export function CanvasPanel({
     Boolean(previewUrl) &&
     Boolean(compareSourcePath) &&
     (studioMode === "edit" || studioMode === "inpaint" || studioMode === "upscale");
+  const inpaintContext = agentPlan?.inpaint_context;
   const showInlineMask =
     studioMode === "inpaint" &&
     Boolean(inputImagePath) &&
     !generating &&
     Boolean(inpaintCanvasFocus);
+  const showContextOverlay =
+    studioMode === "inpaint" &&
+    Boolean(inpaintContext?.crop?.enabled || inpaintContext?.mask_bbox) &&
+    !generating &&
+    (showInlineMask || compareMode === "before" || !previewUrl);
   const canvasPreviewUrl =
     canCompare && compareMode === "before" && sourceAssetUrl ? sourceAssetUrl : previewUrl;
   const showCompareSplit =
     canCompare && compareMode === "split" && Boolean(sourceAssetUrl) && Boolean(previewUrl);
   const showCompareCanvas = showCompareSplit || Boolean(canvasPreviewUrl);
+  const showOutpaintPreview =
+    !generating &&
+    Boolean(compareSourcePath) &&
+    (settings.edit_task === "extend" || settings.edit_type === "outpaint");
+  const outpaintDirection = settings.outpaint_direction || "right";
+  const outpaintDisplayAmount =
+    outpaintDirection === "left" || outpaintDirection === "right"
+      ? ((settings.outpaint_amount ?? 256) * canvasLayout.imgW) /
+        Math.max(1, canvasLayout.naturalW)
+      : ((settings.outpaint_amount ?? 256) * canvasLayout.imgH) /
+        Math.max(1, canvasLayout.naturalH);
 
   useEffect(() => {
     if (previewUrl && compareSourcePath) {
@@ -239,7 +273,7 @@ export function CanvasPanel({
     setCanvasZoom(1);
     setCanvasPan({ x: 0, y: 0 });
     setIsCanvasPanning(false);
-    setCanvasLayout({ frameW: 0, frameH: 0, imgW: 0, imgH: 0 });
+    setCanvasLayout({ frameW: 0, frameH: 0, imgW: 0, imgH: 0, naturalW: 0, naturalH: 0 });
   }, [previewUrl, compareSourcePath]);
 
   const measureCanvasLayout = useCallback(() => {
@@ -251,6 +285,8 @@ export function CanvasPanel({
       frameH: frame.clientHeight,
       imgW: img.clientWidth,
       imgH: img.clientHeight,
+      naturalW: img.naturalWidth,
+      naturalH: img.naturalHeight,
     });
   }, []);
 
@@ -423,6 +459,7 @@ export function CanvasPanel({
           <CanvasMaskEditor
             imagePath={inputImagePath}
             initialMaskPath={inpaintMaskPath}
+            inpaintContext={showContextOverlay ? inpaintContext : undefined}
             onMaskChange={onInpaintMaskChange}
             onMaskSyncingChange={onInpaintMaskSyncingChange}
             disabled={generating}
@@ -463,6 +500,45 @@ export function CanvasPanel({
                 ? handleComparePointerEnd
                 : handleCanvasPanEnd
             }
+            role="region"
+            aria-label="Image canvas preview. Use plus and minus to zoom, zero to reset, and arrow keys to pan when zoomed."
+            tabIndex={0}
+            onKeyDown={(event) => {
+              if (event.key === "+" || event.key === "=") {
+                event.preventDefault();
+                setZoomKeepingPan(canvasZoom * CANVAS_ZOOM_STEP);
+              } else if (event.key === "-" || event.key === "_") {
+                event.preventDefault();
+                setZoomKeepingPan(canvasZoom / CANVAS_ZOOM_STEP);
+              } else if (event.key === "0") {
+                event.preventDefault();
+                resetCanvasView();
+              } else if (canvasZoom > 1 && event.key.startsWith("Arrow")) {
+                event.preventDefault();
+                const step = event.shiftKey ? 40 : 16;
+                setCanvasPan((pan) =>
+                  clampCanvasPan(
+                    {
+                      x:
+                        pan.x +
+                        (event.key === "ArrowLeft"
+                          ? step
+                          : event.key === "ArrowRight"
+                            ? -step
+                            : 0),
+                      y:
+                        pan.y +
+                        (event.key === "ArrowUp"
+                          ? step
+                          : event.key === "ArrowDown"
+                            ? -step
+                            : 0),
+                    },
+                    canvasZoom,
+                  ),
+                );
+              }
+            }}
             title="Mouse wheel to zoom. Drag to pan when the image overflows the canvas."
           >
             {showCompareSplit ? (
@@ -531,7 +607,7 @@ export function CanvasPanel({
               </div>
             ) : (
               <div
-                className="inline-flex items-center justify-center"
+                className="relative inline-flex items-center justify-center"
                 style={canvasTransformStyle}
               >
                 <img
@@ -544,6 +620,15 @@ export function CanvasPanel({
                   className={compareImageClass}
                   onLoad={measureCanvasLayout}
                 />
+                {showContextOverlay ? (
+                  <InpaintContextOverlay context={inpaintContext} />
+                ) : null}
+                {showOutpaintPreview ? (
+                  <OutpaintPreviewOverlay
+                    direction={outpaintDirection}
+                    amountDisplayPx={outpaintDisplayAmount}
+                  />
+                ) : null}
               </div>
             )}
           </motion.div>
@@ -668,6 +753,17 @@ export function CanvasPanel({
             </button>
           </div>
         )}
+        {resultCandidates.length > 1 && !generating && onSelectResultCandidate ? (
+          <ResultTray
+            images={resultCandidates}
+            activePath={activeCandidatePath ?? undefined}
+            sourcePath={compareSourcePath || undefined}
+            onSelect={onSelectResultCandidate}
+            onRetry={onRetryGeneration}
+            onUseAsSource={onUseCandidateAsSource}
+            retryBusy={generating}
+          />
+        ) : null}
         {previewUrl && !generating && onVaryImage && (
           <div className="absolute bottom-4 left-4 z-10 flex items-center gap-1 rounded-lg border border-dfui-border/60 bg-dfui-panel/90 p-1 text-[10px] font-medium text-dfui-fg shadow-glass backdrop-blur-md">
             <span className="px-1.5 text-dfui-muted">Vary</span>
@@ -803,6 +899,7 @@ export function CanvasPanel({
         onRemoveExtraReferenceImage={onRemoveExtraReferenceImage}
         onClearReferenceImage={onClearReferenceImage}
         onOpenInpaintMask={onOpenInpaintMask}
+        onInpaintCanvasFocusChange={onInpaintCanvasFocusChange}
         workerReady={workerReady}
         canGenerate={canGenerate}
         companionBlockedOnly={companionBlockedOnly}

@@ -210,6 +210,11 @@ function DreamForgeStudio() {
             referenceModelFamily={mc.referenceModelFamily}
             onVaryImage={(amount) => void mc.runVaryImage(amount)}
             onAutoEnhance={(target) => void mc.runAutoEnhance(target)}
+            resultCandidates={mc.resultCandidates}
+            activeCandidatePath={mc.activeCandidatePath}
+            onSelectResultCandidate={(path) => void mc.selectResultCandidate(path)}
+            onRetryGeneration={() => void mc.runGenerate()}
+            onUseCandidateAsSource={(path) => void mc.useCandidateAsSource(path)}
           />
           </div>
         </Panel>

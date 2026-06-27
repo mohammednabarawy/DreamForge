@@ -6,6 +6,7 @@ import {
 } from "./inpaintModel";
 
 export type InpaintIntent = "default" | "improve_detail" | "modify_content";
+export type EditTask = NonNullable<GenerationSettings["edit_task"]>;
 
 export const INPAINT_INTENTS: Array<{
   id: InpaintIntent;
@@ -84,6 +85,102 @@ export function patchForInpaintIntent(intent: InpaintIntent): Partial<Generation
     inpaint_feather: preset.inpaint_feather,
     inpaint_mask_grow_by: preset.inpaint_mask_grow_by,
   };
+}
+
+export const EDIT_TASKS: Array<{
+  id: EditTask;
+  label: string;
+  short: string;
+  hint: string;
+  inpaintIntent?: InpaintIntent;
+  inpaintOnly?: boolean;
+}> = [
+  {
+    id: "remove",
+    label: "Remove",
+    short: "Remove",
+    hint: "Remove masked content and continue the background naturally.",
+    inpaintIntent: "modify_content",
+    inpaintOnly: true,
+  },
+  {
+    id: "replace",
+    label: "Replace",
+    short: "Replace",
+    hint: "Replace the masked area with the prompt description.",
+    inpaintIntent: "modify_content",
+    inpaintOnly: true,
+  },
+  {
+    id: "repair",
+    label: "Repair",
+    short: "Repair",
+    hint: "Fix masked details while preserving identity and surroundings.",
+    inpaintIntent: "improve_detail",
+    inpaintOnly: true,
+  },
+  {
+    id: "refine",
+    label: "Refine",
+    short: "Refine",
+    hint: "Polish masked details with a lighter detail-preserving pass.",
+    inpaintIntent: "improve_detail",
+    inpaintOnly: true,
+  },
+  {
+    id: "extend",
+    label: "Extend",
+    short: "Extend",
+    hint: "Prepare a canvas-extension task; full outpaint controls are coming in a later phase.",
+    inpaintIntent: "default",
+    inpaintOnly: true,
+  },
+  {
+    id: "global_edit",
+    label: "Global edit",
+    short: "Global",
+    hint: "Apply a global instruction edit to the source image.",
+  },
+];
+
+export function normalizeEditTask(value: string | undefined | null): EditTask | undefined {
+  const task = (value ?? "").trim().toLowerCase();
+  return EDIT_TASKS.some((item) => item.id === task) ? (task as EditTask) : undefined;
+}
+
+export function patchForEditTask(task: EditTask): Partial<GenerationSettings> {
+  if (!EDIT_TASKS.some((entry) => entry.id === task)) return {};
+  const patch: Partial<GenerationSettings> = {
+    edit_task: task,
+    inpaint_intent: undefined,
+    edit_strength: undefined,
+    inpaint_grow: undefined,
+    inpaint_feather: undefined,
+    inpaint_mask_grow_by: undefined,
+  };
+  if (task === "extend") {
+    patch.edit_type = "outpaint";
+    patch.cn_type = "outpaint";
+    patch.cn_selection = "Custom...";
+    patch.outpaint_direction = patch.outpaint_direction ?? "right";
+    patch.outpaint_amount = patch.outpaint_amount ?? 256;
+    patch.outpaint_feathering = patch.outpaint_feathering ?? 40;
+  } else if (task !== "global_edit") {
+    patch.edit_type = "inpaint";
+    patch.cn_type = "inpaint";
+    patch.cn_selection = "Custom...";
+    patch.outpaint_direction = undefined;
+    patch.outpaint_amount = undefined;
+    patch.outpaint_feathering = undefined;
+  } else {
+    patch.edit_type = undefined;
+    patch.cn_type = undefined;
+    patch.cn_selection = undefined;
+    patch.outpaint_direction = undefined;
+    patch.outpaint_amount = undefined;
+    patch.outpaint_feathering = undefined;
+  }
+  return patch;
 }
 
 /** Always route inpaint intents through Flux Fill. */

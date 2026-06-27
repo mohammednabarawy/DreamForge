@@ -255,6 +255,37 @@ def test_resolve_comfy_workflow_mode_img2img():
     assert mode == "img2img"
 
 
+def test_resolve_input_routing_extend_uses_outpaint_not_inpaint():
+    job = SimpleNamespace(
+        reference_role="inpaint",
+        input_image="/tmp/src.png",
+        inpaint_mask_path=None,
+        cn_selection="Custom...",
+        cn_type="outpaint",
+        edit_type="outpaint",
+        edit_task="extend",
+        outpaint_direction="right",
+    )
+    route = resolve_input_routing(
+        job,
+        model={"engine_name": "flux-fill-dev.safetensors"},
+        model_family="flux_fill",
+        studio_mode="inpaint",
+    )
+    assert route.plan_mode == "inpaint"
+    assert route.is_inpaint_job is False
+    assert route.cn_selection == "Custom..."
+    assert route.cn_type == "outpaint"
+    assert route.edit_type == "outpaint"
+    mode = resolve_comfy_workflow_mode(
+        route,
+        model={"engine_name": "flux-fill-dev.safetensors"},
+        model_family="flux_fill",
+        input_filename=route.input_path,
+    )
+    assert mode == "outpaint"
+
+
 def test_checkpoint_is_flux_kontext():
     assert checkpoint_is_flux_kontext(
         {"engine_name": "flux1-dev-kontext_fp8_scaled.safetensors"},

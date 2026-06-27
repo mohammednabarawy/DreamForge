@@ -1474,6 +1474,296 @@ def test_inpaint_dry_run_carries_mask_controls(monkeypatch):
     )
 
     assert plan["mode"] == "inpaint"
-    assert plan["settings"]["edit_strength"] == 0.85
+    assert plan["settings"]["edit_strength"] == 1.0
     contract = plan["mode_contract"]
     assert "inpaint_mask_path" in contract["preserved_fields"]
+
+
+def test_inpaint_dry_run_blocks_empty_mask(tmp_path, monkeypatch):
+    import dreamforge_cli_direct as cli
+    from PIL import Image
+
+    image_path = tmp_path / "source.png"
+    mask_path = tmp_path / "mask.png"
+    Image.new("RGB", (512, 512), color=(10, 20, 30)).save(image_path)
+    Image.new("L", (512, 512), color=0).save(mask_path)
+
+    selected = {
+        "name": "flux-fill-dev.safetensors",
+        "stem": "flux-fill-dev",
+        "relative_path": "flux-fill-dev.safetensors",
+        "path": "/models/flux-fill-dev.safetensors",
+        "size_mb": 11000,
+        "category": "diffusion_models",
+        "engine_name": "flux-fill-dev.safetensors",
+        "family": "flux_fill",
+    }
+    monkeypatch.setattr(cli, "resolve_generation_model", lambda _name: selected)
+
+    plan = cli.build_plan(
+        SimpleNamespace(
+            dry_run=True,
+            json=True,
+            model="flux-fill-dev.safetensors",
+            prompt="replace this area",
+            negative_prompt="",
+            aspect_ratio=None,
+            width=None,
+            height=None,
+            seed=1,
+            image_number=1,
+            output=None,
+            performance="Speed",
+            steps=None,
+            cfg_scale=None,
+            sampler=None,
+            scheduler=None,
+            styles=None,
+            lora=[],
+            input_image=str(image_path),
+            inpaint_mask_path=str(mask_path),
+            upscale_image=None,
+            upscale_method="RealESRGAN_x2",
+            edit_type="inpaint",
+            edit_strength=0.8,
+            vram_profile="16gb",
+            style="image_edit",
+            brand_kit=None,
+            subject=None,
+            composition=None,
+            lighting=None,
+            camera=None,
+            brand_colors=None,
+            materials=None,
+            visual_style=None,
+            validate_output=False,
+            no_manifest=False,
+        )
+    )
+
+    assert plan["ready"] is False
+    assert "mask" in plan["workflow_blueprint"]["readiness"]["missing_inputs"]
+    assert plan["inpaint_context"]["mask_empty"] is True
+    assert any("empty" in warning.lower() for warning in plan["setup_warnings"])
+
+
+def test_inpaint_dry_run_exposes_model_instruction_and_task_defaults(tmp_path, monkeypatch):
+    import dreamforge_cli_direct as cli
+    from PIL import Image
+
+    image_path = tmp_path / "source.png"
+    mask_path = tmp_path / "mask.png"
+    image = Image.new("RGB", (512, 512), color=(10, 20, 30))
+    image.save(image_path)
+    mask = Image.new("L", image.size, color=0)
+    mask.putpixel((200, 200), 255)
+    mask.save(mask_path)
+
+    selected = {
+        "name": "flux-fill-dev.safetensors",
+        "stem": "flux-fill-dev",
+        "relative_path": "flux-fill-dev.safetensors",
+        "path": "/models/flux-fill-dev.safetensors",
+        "size_mb": 11000,
+        "category": "diffusion_models",
+        "engine_name": "flux-fill-dev.safetensors",
+        "family": "flux_fill",
+    }
+    monkeypatch.setattr(cli, "resolve_generation_model", lambda _name: selected)
+
+    def fake_prepare(_job, _model, prompt, negative, _settings):
+        return {"prompt": f"prepared::{prompt}", "negative": f"neg::{negative}"}
+
+    monkeypatch.setattr("dreamforge_prompt.prepare_generation_prompts", fake_prepare)
+
+    plan = cli.build_plan(
+        SimpleNamespace(
+            dry_run=True,
+            json=True,
+            model="flux-fill-dev.safetensors",
+            prompt="replace the sky",
+            negative_prompt="blur",
+            aspect_ratio=None,
+            width=None,
+            height=None,
+            seed=1,
+            image_number=1,
+            output=None,
+            performance="Speed",
+            steps=None,
+            cfg_scale=None,
+            sampler=None,
+            scheduler=None,
+            styles=None,
+            lora=[],
+            input_image=str(image_path),
+            inpaint_mask_path=str(mask_path),
+            edit_task="repair",
+            upscale_image=None,
+            upscale_method="RealESRGAN_x2",
+            edit_type="inpaint",
+            edit_strength=0.8,
+            vram_profile="16gb",
+            style="image_edit",
+            brand_kit=None,
+            subject=None,
+            composition=None,
+            lighting=None,
+            camera=None,
+            brand_colors=None,
+            materials=None,
+            visual_style=None,
+            validate_output=False,
+            no_manifest=False,
+        )
+    )
+
+    final = plan["final_edit_request"]
+    assert final["user_instruction"] == "replace the sky"
+    assert final["model_instruction"] == "prepared::replace the sky"
+    assert final["task"] == "repair"
+    assert plan["edit_task_defaults"]["edit_task"] == "repair"
+    assert plan["inpaint_context"]["mask_empty"] is False
+
+
+def test_extend_dry_run_does_not_require_mask(tmp_path, monkeypatch):
+    import dreamforge_cli_direct as cli
+    from PIL import Image
+
+    image_path = tmp_path / "source.png"
+    Image.new("RGB", (512, 512), color=(10, 20, 30)).save(image_path)
+
+    selected = {
+        "name": "flux-fill-dev.safetensors",
+        "stem": "flux-fill-dev",
+        "relative_path": "flux-fill-dev.safetensors",
+        "path": "/models/flux-fill-dev.safetensors",
+        "size_mb": 11000,
+        "category": "diffusion_models",
+        "engine_name": "flux-fill-dev.safetensors",
+        "family": "flux_fill",
+    }
+    monkeypatch.setattr(cli, "resolve_generation_model", lambda _name: selected)
+
+    plan = cli.build_plan(
+        SimpleNamespace(
+            dry_run=True,
+            json=True,
+            model="flux-fill-dev.safetensors",
+            prompt="extend the scene to the right",
+            negative_prompt="",
+            aspect_ratio=None,
+            width=None,
+            height=None,
+            seed=1,
+            image_number=1,
+            output=None,
+            performance="Speed",
+            steps=None,
+            cfg_scale=None,
+            sampler=None,
+            scheduler=None,
+            styles=None,
+            lora=[],
+            input_image=str(image_path),
+            inpaint_mask_path=None,
+            edit_task="extend",
+            upscale_image=None,
+            upscale_method="RealESRGAN_x2",
+            edit_type="outpaint",
+            cn_type="outpaint",
+            cn_selection="Custom...",
+            outpaint_direction="right",
+            outpaint_amount=256,
+            outpaint_feathering=40,
+            edit_strength=0.85,
+            vram_profile="16gb",
+            style="image_edit",
+            brand_kit=None,
+            subject=None,
+            composition=None,
+            lighting=None,
+            camera=None,
+            brand_colors=None,
+            materials=None,
+            visual_style=None,
+            validate_output=False,
+            no_manifest=False,
+        )
+    )
+
+    assert plan["mode"] == "inpaint"
+    assert plan["ready"] is True
+    assert "mask" not in plan["workflow_blueprint"]["readiness"]["missing_inputs"]
+    assert plan["inpaint_context"]["status"] == "outpaint"
+    assert plan["inpaint_context"]["requires_mask"] is False
+    assert plan["edit_task_defaults"]["edit_task"] == "extend"
+
+
+def test_global_edit_dry_run_ignores_stale_outpaint_route(tmp_path, monkeypatch):
+    import dreamforge_cli_direct as cli
+    from PIL import Image
+
+    image_path = tmp_path / "source.png"
+    Image.new("RGB", (512, 512), color=(10, 20, 30)).save(image_path)
+
+    selected = {
+        "name": "flux1-dev-kontext_fp8_scaled.safetensors",
+        "stem": "flux1-dev-kontext_fp8_scaled",
+        "relative_path": "flux1-dev-kontext_fp8_scaled.safetensors",
+        "path": "/models/flux1-dev-kontext_fp8_scaled.safetensors",
+        "size_mb": 11000,
+        "category": "diffusion_models",
+        "engine_name": "flux1-dev-kontext_fp8_scaled.safetensors",
+        "family": "flux_kontext",
+    }
+    monkeypatch.setattr(cli, "resolve_generation_model", lambda _name: selected)
+
+    plan = cli.build_plan(
+        SimpleNamespace(
+            dry_run=True,
+            json=True,
+            model="flux1-dev-kontext_fp8_scaled.safetensors",
+            prompt="make the scene warmer",
+            negative_prompt="",
+            aspect_ratio=None,
+            width=None,
+            height=None,
+            seed=1,
+            image_number=1,
+            output=None,
+            performance="Speed",
+            steps=None,
+            cfg_scale=None,
+            sampler=None,
+            scheduler=None,
+            styles=None,
+            lora=[],
+            input_image=str(image_path),
+            inpaint_mask_path=None,
+            edit_task="global_edit",
+            upscale_image=None,
+            upscale_method="RealESRGAN_x2",
+            edit_type="outpaint",
+            cn_type="outpaint",
+            cn_selection="Custom...",
+            edit_strength=None,
+            vram_profile="16gb",
+            style="image_edit",
+            brand_kit=None,
+            subject=None,
+            composition=None,
+            lighting=None,
+            camera=None,
+            brand_colors=None,
+            materials=None,
+            visual_style=None,
+            validate_output=False,
+            no_manifest=False,
+        )
+    )
+
+    assert plan["mode"] == "edit"
+    assert plan["edit_task_defaults"]["edit_task"] == "global_edit"
+    assert plan["edit_task_defaults"]["edit_type"] == "kontext"
+    assert plan["final_edit_request"]["task"] == "global_edit"

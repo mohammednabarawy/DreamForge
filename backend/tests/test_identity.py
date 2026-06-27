@@ -7,6 +7,7 @@ import pytest
 from dreamforge_identity import (
     apply_identity_to_job,
     faceid_assets_available,
+    identity_intent_from_prompt,
     is_identity_preservation_job,
     normalize_identity_mode,
     resolve_identity_route,
@@ -24,7 +25,13 @@ def test_is_identity_preservation_job():
     assert is_identity_preservation_job(SimpleNamespace(preserve_character=True)) is True
     assert is_identity_preservation_job(SimpleNamespace(face_preservation=True)) is True
     assert is_identity_preservation_job(SimpleNamespace(identity_mode="faceid")) is True
+    assert is_identity_preservation_job(SimpleNamespace(prompt="same person in a forest")) is True
     assert is_identity_preservation_job(SimpleNamespace()) is False
+
+
+def test_identity_intent_from_prompt():
+    assert identity_intent_from_prompt("Use the reference face in a game card") is True
+    assert identity_intent_from_prompt("A dramatic city skyline") is False
 
 
 def test_resolve_identity_requires_reference():
@@ -95,6 +102,7 @@ def test_apply_identity_kontext_patch(monkeypatch):
     )
     job = SimpleNamespace(preserve_character=True, input_image="/tmp/face.png")
     apply_identity_to_job(job)
+    assert job.reference_role == "image_prompt"
     assert job.edit_type == "kontext"
     assert job.identity_mode == "preserve_face"
     assert job.face_preservation is True

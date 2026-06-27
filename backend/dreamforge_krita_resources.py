@@ -715,6 +715,61 @@ def plan_inpaint_crop_stitch(
     }
 
 
+def inpaint_mask_has_selection(mask_img, *, threshold: int = 8) -> bool:
+    """Return whether an inpaint mask contains any selected pixels."""
+    return mask_bounding_box(mask_img, threshold=threshold) is not None
+
+
+def describe_inpaint_context(
+    image,
+    mask_img,
+    *,
+    grow: int = 0,
+    feather: int = 0,
+    hard: bool = False,
+    threshold: int = 8,
+) -> dict[str, Any]:
+    """Summarize inpaint mask/crop state for dry-run and diagnostics."""
+    width, height = image.size
+    mask = mask_img.convert("L")
+    if mask.size != image.size:
+        from PIL import Image
+
+        mask = mask.resize(image.size, Image.Resampling.LANCZOS)
+
+    mask_data = getattr(mask, "get_flattened_data", mask.getdata)()
+    selected_pixels = sum(1 for pixel in mask_data if int(pixel) > int(threshold))
+    bbox = mask_bounding_box(mask, threshold=threshold)
+    crop_plan = plan_inpaint_crop_stitch(
+        image,
+        mask,
+        grow=int(grow),
+        feather=0 if hard else int(feather),
+    )
+    crop = {"enabled": False}
+    if crop_plan:
+        x0, y0, x1, y1 = crop_plan["box"]
+        crop = {
+            "enabled": True,
+            "box": [x0, y0, x1, y1],
+            "size": [x1 - x0, y1 - y0],
+        }
+    return {
+        "schema_version": "1.0",
+        "image_size": [width, height],
+        "mask_size": [mask.width, mask.height],
+        "mask_empty": bbox is None,
+        "mask_bbox": list(bbox) if bbox else None,
+        "mask_selected_pixels": selected_pixels,
+        "mask_coverage": selected_pixels / max(1, width * height),
+        "mask_threshold": int(threshold),
+        "mask_grow": int(grow),
+        "mask_feather": 0 if hard else int(feather),
+        "hard_mask": bool(hard),
+        "crop": crop,
+    }
+
+
 def stitch_inpaint_crop(full_image, crop_image, box: tuple[int, int, int, int]):
     """Paste an inpainted crop back into the full-resolution source image."""
     from PIL import Image
@@ -812,6 +867,71 @@ def composite_inpaint_result(original, generated, mask_img):
     if mask.size != base.size:
         mask = mask.resize(base.size, Image.Resampling.LANCZOS)
     return Image.composite(over, base, mask).convert("RGB")
+
+
+def measure_inpaint_outside_mask_leakage(
+    original,
+    generated,
+    mask_img,
+    *,
+    binary_threshold: int = 128,
+    tolerance: int = 3,
+    edge_band: int = 2,
+) -> dict[str, Any]:
+    """Measure how much generated output changed pixels outside the edit mask.
+
+    Pixels within ``edge_band`` of the binary mask edge are excluded so feathered
+    compositing boundaries do not count as leakage.
+    """
+    from PIL import Image, ImageFilter
+
+    base = original.convert("RGB")
+    over = generated.convert("RGB")
+    if over.size != base.size:
+        over = over.resize(base.size, Image.Resampling.LANCZOS)
+    mask = mask_img.convert("L")
+    if mask.size != base.size:
+        mask = mask.resize(base.size, Image.Resampling.LANCZOS)
+
+    binary = mask.point(lambda p: 255 if int(p) > binary_threshold else 0)
+    if edge_band > 0:
+        k = max(3, edge_band * 2 + 1)
+        edge = binary.filter(ImageFilter.MaxFilter(k))
+        outside = binary.point(lambda p: 0 if int(p) > 0 else 255)
+        outside = Image.composite(
+            Image.new("L", binary.size, 0),
+            outside,
+            edge.point(lambda p: 0 if int(p) > 0 else 255),
+        )
+    else:
+        outside = binary.point(lambda p: 255 if int(p) == 0 else 0)
+
+    base_px = list(getattr(base, "get_flattened_data", base.getdata)())
+    over_px = list(getattr(over, "get_flattened_data", over.getdata)())
+    outside_px = list(getattr(outside, "get_flattened_data", outside.getdata)())
+    outside_count = 0
+    changed_count = 0
+    max_delta = 0
+    for idx, keep in enumerate(outside_px):
+        if int(keep) < 128:
+            continue
+        outside_count += 1
+        br, bg, bb = base_px[idx]
+        or_, og, ob = over_px[idx]
+        delta = max(abs(br - or_), abs(bg - og), abs(bb - ob))
+        max_delta = max(max_delta, delta)
+        if delta > tolerance:
+            changed_count += 1
+    leakage_ratio = changed_count / max(1, outside_count)
+    return {
+        "outside_pixels": outside_count,
+        "changed_pixels": changed_count,
+        "max_channel_delta": max_delta,
+        "leakage_ratio": leakage_ratio,
+        "tolerance": tolerance,
+        "edge_band": edge_band,
+        "ok": changed_count == 0,
+    }
 
 
 def stitch_kontext_reference_images(images: list[Any]):

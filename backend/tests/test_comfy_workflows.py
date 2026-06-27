@@ -62,6 +62,25 @@ def test_kontext_workflow_uses_separate_reference_stitch():
     assert graph["8"]["inputs"]["latent"] == ["15", 0]
 
 
+def test_kontext_identity_generate_starts_from_empty_latent():
+    graph = comfy_flux_kontext_edit(
+        {
+            "ckpt_name": "flux1-kontext-dev.safetensors",
+            "image": "face.png",
+            "prompt": "same person as a character card",
+            "negative": "",
+            "width": 832,
+            "height": 1216,
+            "identity_generate": True,
+        }
+    )
+    assert graph["16"]["class_type"] == "EmptySD3LatentImage"
+    assert graph["16"]["inputs"]["width"] == 832
+    assert graph["16"]["inputs"]["height"] == 1216
+    assert graph["10"]["inputs"]["latent_image"] == ["16", 0]
+    assert graph["8"]["inputs"]["latent"] == ["15", 0]
+
+
 def test_qwen_edit_split_loaders_and_text_encode():
     graph = comfy_qwen_image_edit(
         {
@@ -317,7 +336,9 @@ def test_flux_fill_inpaint_uses_inpaint_model_conditioning():
         }
     )
     assert any(node.get("class_type") == "InpaintModelConditioning" for node in graph.values())
-    assert any(node.get("class_type") == "DifferentialDiffusion" for node in graph.values())
+    # DifferentialDiffusion is intentionally omitted: it suppresses denoising of the
+    # masked latent on Flux Fill and makes inpaint return the original image unchanged.
+    assert not any(node.get("class_type") == "DifferentialDiffusion" for node in graph.values())
     assert not any(node.get("class_type") == "VAEEncodeForInpaint" for node in graph.values())
     assert not any(node.get("class_type") == "ETN_DefineRegion" for node in graph.values())
     guidance = next(node for node in graph.values() if node.get("class_type") == "FluxGuidance")

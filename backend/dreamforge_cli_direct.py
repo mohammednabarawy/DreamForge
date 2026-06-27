@@ -7,6 +7,7 @@ import sys
 import traceback
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 from PIL import Image
 
@@ -430,7 +431,10 @@ def _job_namespace(base_args, data):
 
 
 def _resolve_model(model_name, profile, job_dict):
-    from dreamforge_model_registry import required_capabilities_for_request
+    from dreamforge_model_registry import (
+        explain_model_capability_match,
+        required_capabilities_for_request,
+    )
     from dreamforge_cli_inventory import route_best_model, get_fallback_model, check_model_dependencies
     
     capabilities = required_capabilities_for_request(job_dict)
@@ -615,6 +619,15 @@ def _apply_generation_recipe_settings(settings: dict, model: dict, job) -> dict:
 
 def build_plan(base_args, data=None):
     job, model, prompt, negative, width, height, brand_kit = _compile_job(base_args, data)
+    if getattr(job, "edit_task", None):
+        from dreamforge_edit_tasks import apply_edit_task_defaults_to_job
+
+        apply_edit_task_defaults_to_job(
+            job,
+            mode="edit"
+            if str(getattr(job, "edit_task", "") or "").lower() == "global_edit"
+            else "inpaint",
+        )
     job_settings = vars(job).copy()
     settings = _apply_generation_recipe_settings(
         _apply_edit_recipe_settings(
@@ -635,7 +648,10 @@ def build_plan(base_args, data=None):
     )
     input_path = getattr(job, "input_image", None) or getattr(job, "upscale_image", None)
     from dreamforge_cli_inventory import check_model_dependencies, model_fallback_actions, model_setup_warnings
-    from dreamforge_model_registry import required_capabilities_for_request
+    from dreamforge_model_registry import (
+        explain_model_capability_match,
+        required_capabilities_for_request,
+    )
 
     missing_deps = check_model_dependencies(
         model,
@@ -645,7 +661,13 @@ def build_plan(base_args, data=None):
         model,
         performance=getattr(job, "performance", None),
     )
-    capabilities = required_capabilities_for_request(vars(job))
+    job_vars = vars(job)
+    capabilities = required_capabilities_for_request(job_vars)
+    model_capabilities = explain_model_capability_match(
+        job_vars,
+        model,
+        str(model.get("family") or ""),
+    )
     route_actions = model_fallback_actions(
         model,
         capabilities,
@@ -762,17 +784,66 @@ def build_plan(base_args, data=None):
         for key, value in proposed_patch.items()
         if value != "" and (value is not None or key in clear_fields)
     }
+    task_defaults: dict[str, Any] = {}
     try:
-        from dreamforge_mode_contract import build_mode_contract
+        from dreamforge_mode_contract import build_final_edit_request, build_mode_contract
 
+        model_instruction, model_negative = _resolve_plan_model_instruction(
+            job, mode, prompt, settings["negative"], model, settings
+        )
         mode_contract = build_mode_contract(
             mode,
             proposed_patch,
             vars(job),
             source="dry-run",
         )
+        task_defaults = _resolve_plan_task_defaults(mode, job)
+        final_edit_request = build_final_edit_request(
+            mode,
+            user_instruction=prompt,
+            model_instruction=model_instruction,
+            negative_prompt=model_negative,
+            settings={**vars(job), **settings, **task_defaults},
+            model_family=model.get("family"),
+            edit_type=getattr(job, "edit_type", None),
+        )
+        if task_defaults.get("edit_task"):
+            final_edit_request["task"] = task_defaults["edit_task"]
+            if task_defaults.get("hint"):
+                final_edit_request["task_hint"] = task_defaults["hint"]
     except Exception:
         mode_contract = None
+        final_edit_request = None
+        task_defaults = {}
+    inpaint_context = _build_inpaint_context_for_plan(job, mode)
+    inpaint_missing, inpaint_warnings = _inpaint_plan_readiness(inpaint_context)
+    if inpaint_warnings:
+        setup_warnings = list(setup_warnings) + inpaint_warnings
+    blueprint_readiness = dict((workflow_blueprint or {}).get("readiness") or {})
+    missing_inputs = list(blueprint_readiness.get("missing_inputs") or [])
+    for item in inpaint_missing:
+        if item not in missing_inputs:
+            missing_inputs.append(item)
+    if missing_inputs:
+        blueprint_readiness["missing_inputs"] = missing_inputs
+        blueprint_readiness["ready"] = False
+        if workflow_blueprint is not None:
+            workflow_blueprint = {**workflow_blueprint, "readiness": blueprint_readiness}
+    ready = (
+        len(missing_deps) == 0
+        and bool(blueprint_readiness.get("ready", (workflow_blueprint or {}).get("readiness", {}).get("ready", True)))
+        and not inpaint_missing
+    )
+    plan_edit_strength = getattr(job, "edit_strength", None)
+    if plan_edit_strength is not None and mode == "inpaint":
+        from dreamforge_generation import clamp_flux_fill_inpaint_denoise
+
+        plan_edit_strength = clamp_flux_fill_inpaint_denoise(
+            float(plan_edit_strength),
+            is_inpaint_job=True,
+            model=model,
+            model_family=str(model.get("family") or ""),
+        )
     return {
         "schema_version": "1.1",
         "status": "planned",
@@ -781,6 +852,7 @@ def build_plan(base_args, data=None):
         "prompt": prompt,
         "negative_prompt": settings["negative"],
         "model": model,
+        "model_capabilities": model_capabilities,
         "settings": {
             "width": settings["width"],
             "height": settings["height"],
@@ -791,7 +863,7 @@ def build_plan(base_args, data=None):
             "styles": settings["styles"],
             "performance_selection": settings.get("performance_selection", "Custom..."),
             "vram_profile": getattr(job, "vram_profile", "auto"),
-            "edit_strength": getattr(job, "edit_strength", None),
+            "edit_strength": plan_edit_strength,
         },
         "input_image": input_path,
         "reference_images": getattr(job, "reference_images", None),
@@ -805,9 +877,127 @@ def build_plan(base_args, data=None):
         "workflow_blueprint": workflow_blueprint,
         "operations": operations,
         "mode_contract": mode_contract,
+        "final_edit_request": final_edit_request,
+        "inpaint_context": inpaint_context,
+        "edit_task_defaults": task_defaults if task_defaults.get("edit_task") else None,
         "proposed_patch": proposed_patch,
-        "ready": len(missing_deps) == 0 and bool((workflow_blueprint or {}).get("readiness", {}).get("ready", True)),
+        "ready": ready,
     }
+
+
+def _resolve_plan_task_defaults(mode: str, job) -> dict[str, Any]:
+    from dreamforge_edit_tasks import resolve_edit_task_defaults
+
+    return resolve_edit_task_defaults(
+        getattr(job, "edit_task", None),
+        mode=mode,
+        settings=vars(job),
+    )
+
+
+def _resolve_plan_model_instruction(
+    job,
+    mode: str,
+    prompt: str,
+    negative: str,
+    model: dict[str, Any],
+    settings: dict[str, Any],
+) -> tuple[str, str]:
+    from dreamforge_inpaint_intent import merge_inpaint_additional_prompt
+
+    try:
+        from dreamforge_prompt import prepare_generation_prompts
+
+        prepared = prepare_generation_prompts(job, model, prompt, negative, settings)
+        model_prompt = merge_inpaint_additional_prompt(str(prepared.get("prompt") or prompt), job)
+        return model_prompt, str(prepared.get("negative") or negative or "")
+    except Exception:
+        return merge_inpaint_additional_prompt(str(prompt or ""), job), str(negative or "")
+
+
+def _inpaint_plan_readiness(
+    inpaint_context: dict[str, Any] | None,
+) -> tuple[list[str], list[str]]:
+    if not inpaint_context:
+        return [], []
+    missing: list[str] = []
+    warnings: list[str] = []
+    status = str(inpaint_context.get("status") or "")
+    if status == "outpaint":
+        if not inpaint_context.get("input_image"):
+            missing.append("input_image")
+    elif status == "missing_input":
+        if not inpaint_context.get("input_image"):
+            missing.append("input_image")
+        if not inpaint_context.get("inpaint_mask_path"):
+            missing.append("mask")
+    elif status == "ok" and inpaint_context.get("mask_empty"):
+        missing.append("mask")
+        warnings.append("Inpaint mask is empty; paint a non-empty mask before generating.")
+    elif status == "error":
+        warnings.append(str(inpaint_context.get("message") or "Inpaint context unavailable"))
+    return missing, warnings
+
+
+def _build_inpaint_context_for_plan(job, mode: str) -> dict[str, Any] | None:
+    if mode != "inpaint":
+        return None
+    input_path = getattr(job, "input_image", None) or getattr(job, "upscale_image", None)
+    mask_path = getattr(job, "inpaint_mask_path", None)
+    edit_type = str(getattr(job, "edit_type", "") or "").strip().lower()
+    cn_type = str(getattr(job, "cn_type", "") or "").strip().lower()
+    edit_task = str(getattr(job, "edit_task", "") or "").strip().lower()
+    if edit_type == "outpaint" or cn_type == "outpaint" or edit_task == "extend":
+        return {
+            "schema_version": "1.0",
+            "status": "outpaint",
+            "input_image": bool(input_path),
+            "requires_mask": False,
+            "outpaint": {
+                "direction": getattr(job, "outpaint_direction", None) or "right",
+                "amount": int(getattr(job, "outpaint_amount", 256) or 256),
+                "feathering": int(getattr(job, "outpaint_feathering", 40) or 40),
+            },
+        }
+    if not input_path or not mask_path:
+        return {
+            "schema_version": "1.0",
+            "status": "missing_input",
+            "input_image": bool(input_path),
+            "inpaint_mask_path": bool(mask_path),
+        }
+    try:
+        from dreamforge_krita_resources import describe_inpaint_context, inpaint_mask_recipe_values
+        from dreamforge_paths import resolve_image_path_or_raise
+
+        image_path = resolve_image_path_or_raise(str(input_path))
+        mask_resolved = resolve_image_path_or_raise(str(mask_path))
+        image = Image.open(image_path).convert("RGB")
+        mask = Image.open(mask_resolved).convert("L")
+        if mask.size != image.size:
+            mask = mask.resize(image.size, Image.Resampling.LANCZOS)
+        recipe = inpaint_mask_recipe_values("inpaint")
+        grow = getattr(job, "inpaint_grow", None)
+        feather = getattr(job, "inpaint_feather", None)
+        context = describe_inpaint_context(
+            image,
+            mask,
+            grow=int(recipe["inpaint_grow"] if grow is None else grow),
+            feather=int(recipe["inpaint_feather"] if feather is None else feather),
+            hard=bool(getattr(job, "inpaint_hard_mask", False)),
+        )
+        context["status"] = "ok"
+        context["input_image"] = str(image_path)
+        context["inpaint_mask_path"] = str(mask_resolved)
+        return context
+    except Exception as exc:
+        return {
+            "schema_version": "1.0",
+            "status": "error",
+            "message": str(exc),
+            "input_image": str(input_path),
+            "inpaint_mask_path": str(mask_path),
+        }
 
 
 def _plan_mode_for_job(job) -> str:
@@ -874,16 +1064,14 @@ def _dreamforge_argv_for_job(job):
     from dreamforge_vram_profiles import profile_tier
 
     tier = profile_tier(profile)
+    # ComfyUI has no "--normalvram" flag; normal VRAM is the default (no mode flag).
     if profile.startswith("mps") or _is_mps():
-        extra.append("--lowvram" if tier == "5gb" else "--normalvram")
+        if tier == "5gb":
+            extra.append("--lowvram")
     elif profile in ("5gb", "8gb") or tier in ("5gb", "8gb"):
         extra.append("--lowvram")
-    elif family in ("flux", "flux2", "z_image"):
-        extra.append("--normalvram")
     elif family in ("hidream", "hidream_o1", "qwen_image", "qwen_image_edit"):
         extra.append("--lowvram")
-    elif profile == "16gb":
-        extra.append("--normalvram")
     return extra
 
 

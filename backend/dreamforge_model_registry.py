@@ -91,6 +91,86 @@ def get_families_for_capability(capability: str) -> List[str]:
     """Return all families that support the requested capability."""
     return [fam for fam, caps in FAMILY_CAPABILITIES.items() if capability in caps]
 
+
+def _model_hint_blob(model: dict | None) -> str:
+    if not isinstance(model, dict):
+        return ""
+    parts = (
+        model.get("family"),
+        model.get("engine_name"),
+        model.get("name"),
+        model.get("relative_path"),
+        model.get("caption"),
+    )
+    return " ".join(str(part) for part in parts if part).lower()
+
+
+def model_capabilities_for_model(
+    model: dict | None,
+    family: str | None = None,
+) -> Set[str]:
+    """Return registry capabilities, including current filename-based edit hints."""
+    fam = (family or (model or {}).get("family") or "").lower()
+    caps = get_family_capabilities(fam)
+    blob = _model_hint_blob(model)
+
+    if any(
+        hint in blob
+        for hint in (
+            "flux-kontext",
+            "flux_kontext",
+            "flux1-kontext",
+            "flux1-dev-kontext",
+            "flux.1-kontext",
+            "kontext-dev",
+            "flux.1 kontext",
+        )
+    ):
+        caps.update({ModelCapabilities.KONTEXT_EDIT, ModelCapabilities.IMAGE_TO_IMAGE})
+    if any(
+        hint in blob
+        for hint in (
+            "flux1-fill",
+            "flux-fill",
+            "flux.1-fill",
+            "flux fill",
+        )
+    ):
+        caps.update(
+            {
+                ModelCapabilities.INPAINT,
+                ModelCapabilities.FLUX_FILL_INPAINT,
+                ModelCapabilities.IMAGE_TO_IMAGE,
+            }
+        )
+    if "qwen" in blob and "edit" in blob:
+        caps.update(
+            {
+                ModelCapabilities.QWEN_SEMANTIC_EDIT,
+                ModelCapabilities.IMAGE_TO_IMAGE,
+            }
+        )
+    return caps
+
+
+def explain_model_capability_match(
+    params: dict,
+    model: dict | None,
+    family: str | None = None,
+) -> dict[str, Any]:
+    """Explain whether the selected model satisfies the route capability request."""
+    required = required_capabilities_for_request(params)
+    supported = model_capabilities_for_model(model, family)
+    missing = sorted(required - supported)
+    return {
+        "schema_version": "1.0",
+        "required": sorted(required),
+        "supported": sorted(supported),
+        "missing": missing,
+        "compatible": not missing,
+        "family": family or (model or {}).get("family"),
+    }
+
 def required_capabilities_for_request(params: dict) -> Set[str]:
     """Analyze the request parameters to determine required model capabilities."""
     caps = set()
@@ -102,7 +182,8 @@ def required_capabilities_for_request(params: dict) -> Set[str]:
     if mode in ("upscale",) or has_upscale:
         caps.add(ModelCapabilities.UPSCALE)
     elif mode in ("inpaint",) or edit_type == "inpaint" or params.get("inpaint_mask_path"):
-        caps.add(ModelCapabilities.FLUX_FILL_INPAINT)
+        # Native SDXL/SD1.5 inpaint and Flux Fill both satisfy masked-region edits.
+        caps.add(ModelCapabilities.INPAINT)
     elif mode in ("edit", "face_detail") or has_input:
         if edit_type == "kontext":
             caps.add(ModelCapabilities.KONTEXT_EDIT)

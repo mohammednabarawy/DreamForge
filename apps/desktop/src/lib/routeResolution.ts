@@ -135,6 +135,22 @@ export function sanitizeSettingsForStudioMode(
   next.upscale_image = undefined;
   next.upscale_method = undefined;
   next.inpaint_mask_path = undefined;
+  // Edit/inpaint task presets and outpaint controls must not leak into text-to-image.
+  next.edit_task = undefined;
+  next.inpaint_intent = undefined;
+  next.inpaint_additional_prompt = undefined;
+  next.inpaint_hard_mask = undefined;
+  next.outpaint_direction = undefined;
+  next.outpaint_amount = undefined;
+  next.outpaint_feathering = undefined;
+  const editType = (next.edit_type ?? "").toLowerCase();
+  if (editType === "outpaint" || editType === "inpaint") {
+    next.edit_type = "auto";
+  }
+  if ((next.cn_type ?? "").toLowerCase() === "outpaint") {
+    next.cn_type = "None";
+    next.cn_selection = "None";
+  }
 
   const hasRef = Boolean(
     next.input_image?.trim() ||

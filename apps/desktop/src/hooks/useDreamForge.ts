@@ -29,6 +29,7 @@ import {
   modelBasename,
   modelMatches,
   resolveActiveModel,
+  selectCuratedModelForMode,
   selectIdeogram4GalleryModel,
   type StudioMode,
   type StyleRecipe,
@@ -37,7 +38,7 @@ import { isAdvancedMode, isSimpleExperience, type UiExperience } from "../lib/ex
 import { ideogram4SettingsDefaults, looksLikeIdeogramJson } from "../lib/ideogram4Ui";
 import { resolveAspectPresets } from "../lib/aspectPresets";
 import { enhancePrefsFromAppConfig, shouldAutoEnhanceOnGenerate } from "../lib/promptEnhance";
-import { inpaintModelWarning } from "../lib/inpaintModel";
+import { effectiveInpaintEditStrength, inpaintModelWarning } from "../lib/inpaintModel";
 import { upscaleModelWarning } from "../lib/upscaleModel";
 import { enforceCreativeTaskSettings, enforceCreativeTaskSettingsRemote, planStudioModeSwitch } from "../lib/creativeTask";
 import { defaultTemplateIdForMode } from "../lib/creativeTemplates";
@@ -82,6 +83,7 @@ import {
   getUiDefaults,
   refreshModelLibraryCache,
   invokeGeneration,
+  invokeAutomation,
   deleteOutput,
   deleteOutputImage,
   deleteSession,
@@ -156,7 +158,6 @@ import {
   enhanceStudioPrompt,
   listAgentProviders,
   planAgentInstruction,
-  runAutomation,
   saveAppConfig,
   saveStudioSettings,
   saveUserStyleProfile,
@@ -336,6 +337,90 @@ function dryRunReadinessSnapshot(
   return hasDetails ? readiness : undefined;
 }
 
+function imagePathsFromGenerationResult(result: unknown): string[] {
+  if (!result || typeof result !== "object") return [];
+  const record = result as Record<string, unknown>;
+  const fromImages = (images: unknown): string[] => {
+    if (!Array.isArray(images)) return [];
+    return images
+      .map((img) =>
+        typeof img === "string" ? img : ((img as { path?: string }).path ?? ""),
+      )
+      .filter((path): path is string => Boolean(path));
+  };
+  const direct = fromImages(record.images);
+  if (direct.length > 0) return direct;
+  const batch = Array.isArray(record.results) ? record.results : [];
+  return batch.flatMap((entry) =>
+    entry && typeof entry === "object"
+      ? fromImages((entry as { images?: unknown }).images)
+      : [],
+  );
+}
+
+/** Latest finished payload per job_id; bridges event path and log polling. */
+const finishedJobResults = new Map<string, { success: boolean; result?: unknown }>();
+
+async function waitForJobCompletion(
+  jobId: string,
+  readLog: (id: string) => Promise<{ tail: string }>,
+  timeoutMs = 600_000,
+): Promise<{ success: boolean; result?: unknown }> {
+  const cached = finishedJobResults.get(jobId);
+  if (cached) {
+    finishedJobResults.delete(jobId);
+    return cached;
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (outcome: { success: boolean; result?: unknown }) => {
+      if (settled) return;
+      settled = true;
+      finishedJobResults.delete(jobId);
+      window.clearInterval(pollTimer);
+      window.clearTimeout(timeoutTimer);
+      resolve(outcome);
+    };
+
+    const pollTimer = window.setInterval(() => {
+      void (async () => {
+        const cachedNow = finishedJobResults.get(jobId);
+        if (cachedNow) {
+          finish(cachedNow);
+          return;
+        }
+        try {
+          const { tail } = await readLog(jobId);
+          const finishedLine = tail
+            .split("\n")
+            .reverse()
+            .find((line) => line.startsWith("finished:"));
+          if (!finishedLine) return;
+          const payload = JSON.parse(finishedLine.slice("finished:".length)) as {
+            success?: boolean;
+            result?: unknown;
+          };
+          const result = payload.result;
+          const success =
+            payload.success === true ||
+            (result &&
+              typeof result === "object" &&
+              (result as { status?: string }).status === "success");
+          finish({ success: Boolean(success), result });
+        } catch {
+          /* log not ready yet */
+        }
+      })();
+    }, 2000);
+
+    const timeoutTimer = window.setTimeout(
+      () => finish({ success: false }),
+      timeoutMs,
+    );
+  });
+}
+
 export function useDreamForge() {
   const [outputs, setOutputs] = useState<OutputItem[]>([]);
   const [outputsTotal, setOutputsTotal] = useState(0);
@@ -357,6 +442,9 @@ export function useDreamForge() {
   const [lastJobId, setLastJobId] = useState<string | null>(null);
   const [generationLog, setGenerationLog] = useState<string>("");
   const [agentPlan, setAgentPlan] = useState<AgentPlanSnapshot | null>(null);
+  const [resultCandidates, setResultCandidates] = useState<string[]>([]);
+  const [activeCandidatePath, setActiveCandidatePath] = useState<string | null>(null);
+  const generationSourcePathRef = useRef<string | null>(null);
   const [agentTranscript, setAgentTranscript] = useState<AgentTranscriptMessage[]>([]);
   const [planRunBusy, setPlanRunBusy] = useState(false);
   const [enhancePromptBusy, setEnhancePromptBusy] = useState(false);
@@ -379,6 +467,10 @@ export function useDreamForge() {
   );
   const studioCatalogLoadedRef = useRef(false);
   const userPickedModelRef = useRef(false);
+  // Monotonic token so a slower, older applyModelProfile() call can't clobber a
+  // newer model selection (e.g. generate-mode's fire-and-forget Ideogram4 profile
+  // resolving after the user explicitly picked another checkpoint).
+  const modelProfileTokenRef = useRef(0);
   const userPickedLorasRef = useRef(false);
   const userPickedStyleRef = useRef(false);
   const [styleRecipes, setStyleRecipes] = useState<StyleRecipe[]>([]);
@@ -772,6 +864,7 @@ export function useDreamForge() {
 
   const applyModelProfile = useCallback(
     async (item: ModelGalleryItem, performanceOverride?: string) => {
+      const token = ++modelProfileTokenRef.current;
       try {
         const res = await resolveModelProfile({
           caption: item.caption,
@@ -780,6 +873,10 @@ export function useDreamForge() {
           performance: performanceOverride ?? settings.performance,
           lock_family_defaults: true,
         });
+        // A newer model selection started while we awaited; drop this stale profile.
+        if (modelProfileTokenRef.current !== token) {
+          return res.profile;
+        }
         const profile = res.profile;
         const hints = (profile.hints ?? []).map(cleanHtmlText).filter(Boolean);
         setProfileHints(hints);
@@ -1151,6 +1248,11 @@ export function useDreamForge() {
       setEngineState("generating");
       setJobId(p.job_id ?? null);
       if (p.job_id) setLastJobId(p.job_id);
+      generationSourcePathRef.current =
+        (settingsRef.current.input_image ?? settingsRef.current.upscale_image ?? "").trim() ||
+        null;
+      setResultCandidates([]);
+      setActiveCandidatePath(null);
       setGenerationLog("Sampling…\n");
       applyLiveProgress({
         progress: 0,
@@ -1171,6 +1273,12 @@ export function useDreamForge() {
     }).then((u) => unsubs.push(() => u()));
     void onGenerationFinished(async (p) => {
       const logJob = (p.job_id ?? jobId ?? lastJobId ?? "").trim();
+      if (logJob) {
+        finishedJobResults.set(logJob, {
+          success: Boolean(p.success),
+          result: (p as { result?: unknown }).result,
+        });
+      }
       if (!p.success && logJob) {
         try {
           const { tail } = await readJobLog(logJob);
@@ -1200,6 +1308,13 @@ export function useDreamForge() {
           result: (p as { result?: { images?: Array<{ path: string }> } })
             .result,
         });
+        const finishedPaths = imagePathsFromGenerationResult(
+          (p as { result?: unknown }).result,
+        );
+        if (finishedPaths.length > 0) {
+          setResultCandidates(finishedPaths);
+          setActiveCandidatePath(finishedPaths[0] ?? null);
+        }
         // Leave the inpaint mask editor so the canvas shows the finished
         // result with before/after compare instead of the original + mask.
         setInpaintCanvasFocus(false);
@@ -1561,6 +1676,13 @@ export function useDreamForge() {
       const path = item.images?.[0];
       const selectionKey = item.manifest_path ?? path ?? "";
       lastSelectedKeyRef.current = selectionKey;
+      if (item.images.length > 1) {
+        setResultCandidates(item.images);
+        setActiveCandidatePath(path ?? null);
+      } else {
+        setResultCandidates([]);
+        setActiveCandidatePath(null);
+      }
       if (path) {
         void setCanvasPreviewFromPath(path, { force: true });
       } else if (!canvasPreviewPathRef.current) {
@@ -1569,7 +1691,6 @@ export function useDreamForge() {
     },
     [setCanvasPreview, setCanvasPreviewFromPath],
   );
-
   const reuseOutputPrompt = useCallback(
     async (item: OutputItem) => {
       try {
@@ -1754,8 +1875,17 @@ export function useDreamForge() {
         return;
       }
       userPickedModelRef.current = true;
-      const routingPatch =
-        mode === "edit" ? buildEditRoutingPatch(item) : {};
+      const routingPatch: Partial<GenerationSettings> =
+        mode === "edit"
+          ? buildEditRoutingPatch(item)
+          : mode === "inpaint"
+            ? {
+                edit_type: "inpaint",
+                cn_selection: "Custom...",
+                cn_type: "inpaint",
+                edit_strength: effectiveInpaintEditStrength(settingsRef.current, item),
+              }
+            : {};
       const qwenPatch =
         mode === "edit" && isQwenEditModel(item)
           ? qwenEdit2511LightningPatch()
@@ -2363,9 +2493,11 @@ export function useDreamForge() {
   );
 
   const planApplyAndRun = useCallback(
-    async ({ run }: { run: boolean }) => {
+    async ({ run, silent = false }: { run: boolean; silent?: boolean }) => {
       const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
-      setStatus(run ? "Planning and starting…" : "Planning route…");
+      if (!silent) {
+        setStatus(run ? "Planning and starting…" : "Planning route…");
+      }
       setPlanRunBusy(true);
       try {
         const sanitized = sanitizeEditFamilySettings(settingsRef.current, studioMode);
@@ -2409,11 +2541,13 @@ export function useDreamForge() {
           } else {
             setAgentPlan(null);
           }
-          setStatus(
-            blocked.ok
-              ? "Plan ready for review"
-              : blocked.reason ?? "Plan needs setup before it can run",
-          );
+          if (!silent) {
+            setStatus(
+              blocked.ok
+                ? "Plan ready for review"
+                : blocked.reason ?? "Plan needs setup before it can run",
+            );
+          }
           return;
         }
         if (!blocked.ok) {
@@ -2482,7 +2616,9 @@ export function useDreamForge() {
           studioMode: targetMode,
         });
       } catch (e) {
-        setStatus(`Planning failed: ${String(e)}`);
+        if (!silent) {
+          setStatus(`Planning failed: ${String(e)}`);
+        }
       } finally {
         setPlanRunBusy(false);
       }
@@ -2497,13 +2633,39 @@ export function useDreamForge() {
     ],
   );
 
-  const runDryRun = useCallback(async () => {
-    if ((appConfig?.ui.studio_mode ?? "generate") === "agent") {
-      await runAgentInstruction(false);
-      return;
-    }
-    await planApplyAndRun({ run: false });
-  }, [appConfig?.ui.studio_mode, planApplyAndRun, runAgentInstruction]);
+  const runDryRun = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if ((appConfig?.ui.studio_mode ?? "generate") === "agent") {
+        await runAgentInstruction(false);
+        return;
+      }
+      await planApplyAndRun({ run: false, silent: opts?.silent });
+    },
+    [appConfig?.ui.studio_mode, planApplyAndRun, runAgentInstruction],
+  );
+
+  useEffect(() => {
+    const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+    if (studioMode !== "inpaint" || generatingRef.current) return;
+    const current = settingsRef.current;
+    if (!current.input_image?.trim() || !current.inpaint_mask_path?.trim()) return;
+    const timer = window.setTimeout(() => {
+      void runDryRun({ silent: true });
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [
+    appConfig?.ui.studio_mode,
+    settings.input_image,
+    settings.inpaint_mask_path,
+    settings.prompt,
+    settings.inpaint_grow,
+    settings.inpaint_feather,
+    settings.inpaint_mask_grow_by,
+    settings.inpaint_intent,
+    settings.edit_task,
+    settings.inpaint_hard_mask,
+    runDryRun,
+  ]);
 
   const runEnhancePrompt = useCallback(async () => {
     const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
@@ -2724,26 +2886,46 @@ export function useDreamForge() {
         patchSettings(prepared.settings);
       }
 
+      const sid = activeSessionIdRef.current || DEFAULT_SESSION_ID;
+      const route = resolveEffectiveRoute(studioMode, enforced);
+      const batchBase = {
+        ...enforced,
+        output: outputPathForSession(sid, route.outputKind),
+        use_comfy_server: true,
+        validate_output: true,
+        workflow_mode: "generate" as const,
+      };
+
       setStatus(`Generating ${n} variant(s)…`);
       await runAutomationBatch(async () => {
-        const result = await runAutomation({
+        const started = await invokeAutomation({
           type: "seed_batch",
           count: n,
           studio_mode: studioMode,
           template_id:
-            enforced.template_id ?? defaultTemplateIdForMode(studioMode),
-          base_settings: enforced,
+            batchBase.template_id ?? defaultTemplateIdForMode(studioMode),
+          base_settings: batchBase,
         });
-        if (result.status === "success") {
-          setStatus(`Generated ${result.completed ?? n} variant(s)`);
+        if (started.status !== "started" || !started.job_id) {
+          setStatus("Variant batch failed to start");
+          return { ok: false };
+        }
+        setJobId(started.job_id);
+        setLastJobId(started.job_id);
+        startLogPoll(started.job_id);
+        const outcome = await waitForJobCompletion(started.job_id, readJobLog);
+        stopLogPoll();
+        if (outcome.success) {
+          const batchPaths = imagePathsFromGenerationResult(outcome.result);
+          if (batchPaths.length > 1) {
+            setResultCandidates(batchPaths);
+            setActiveCandidatePath(batchPaths[0] ?? null);
+          }
+          setStatus(`Generated ${batchPaths.length || n} variant(s)`);
           void refreshOutputs({ selectNewest: true });
           return { ok: true };
         }
-        setStatus(
-          `Variant batch failed${
-            result.failed_at != null ? ` at job ${result.failed_at}` : ""
-          }`,
-        );
+        setStatus("Variant batch failed");
         return { ok: false };
       });
     },
@@ -2757,6 +2939,8 @@ export function useDreamForge() {
       refreshOutputs,
       runAutomationBatch,
       selected,
+      startLogPoll,
+      stopLogPoll,
       vramGb,
     ],
   );
@@ -2777,6 +2961,14 @@ export function useDreamForge() {
       current.workflow_plan.length > 0;
     if (studioMode !== "generate" || usesWorkflowPlan) {
       await planApplyAndRun({ run: true });
+      return;
+    }
+    // Workflows render one image per job (batch_size is fixed at 1), so honoring
+    // "Image number > 1" on the primary Generate action means running a seed
+    // batch of that many jobs and showing them all in the result tray.
+    const requestedImages = Math.round(Number(current.image_number ?? 1));
+    if (requestedImages > 1) {
+      await runGenerateVariants(requestedImages);
       return;
     }
     const sanitized = sanitizeEditFamilySettings(current, studioMode);
@@ -2803,6 +2995,7 @@ export function useDreamForge() {
     patchSettings,
     planApplyAndRun,
     runAgentInstruction,
+    runGenerateVariants,
     selected,
     startGeneration,
   ]);
@@ -3234,7 +3427,10 @@ export function useDreamForge() {
           settingsRef.current.upscale_image?.trim() ||
             settingsRef.current.inpaint_mask_path?.trim() ||
             settingsRef.current.edit_type === "inpaint" ||
+            settingsRef.current.edit_type === "outpaint" ||
             settingsRef.current.upscale_method?.trim() ||
+            settingsRef.current.edit_task ||
+            settingsRef.current.outpaint_direction ||
             (settingsRef.current.edit_type &&
               settingsRef.current.edit_type !== "auto" &&
               !hasIntentionalReference),
@@ -3249,7 +3445,15 @@ export function useDreamForge() {
         } else if (hasIntentionalReference) {
           patchSettings(sanitized);
         } else if (hasStaleCarryover) {
-          patchSettings(resetPatch);
+          const curated = selectCuratedModelForMode("generate", modelGalleryAll, "");
+          patchSettings({
+            ...resetPatch,
+            ...(curated ? { model: curated } : {}),
+          });
+          if (curated) {
+            const item = findGalleryModel(modelGalleryAll, curated);
+            if (item) void applyModelProfile(item);
+          }
         }
         setStatus("Generation mode - model library selection is unlocked");
         return;
@@ -3430,6 +3634,25 @@ export function useDreamForge() {
       await attachImageForCreativeMode(mode);
     },
     [attachImageForCreativeMode],
+  );
+
+  const selectResultCandidate = useCallback(
+    async (path: string) => {
+      setActiveCandidatePath(path);
+      await setCanvasPreviewFromPath(path, { force: true });
+    },
+    [setCanvasPreviewFromPath],
+  );
+
+  const useCandidateAsSource = useCallback(
+    async (path: string) => {
+      const mode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+      if (mode === "edit" || mode === "inpaint" || mode === "upscale") {
+        await attachImageForCreativeMode(mode, path);
+        setStatus("Using selected candidate as source image");
+      }
+    },
+    [appConfig?.ui.studio_mode, attachImageForCreativeMode],
   );
 
   const historyEditThis = useCallback(
@@ -4115,6 +4338,10 @@ export function useDreamForge() {
     styleRecipes,
     aspectPresets: resolveAspectPresets(uiDefaults?.aspect_ratios),
     mentionTargets,
+    resultCandidates,
+    activeCandidatePath,
+    selectResultCandidate,
+    useCandidateAsSource,
     runDryRun,
     runEnhancePrompt,
     enhancePromptBusy,

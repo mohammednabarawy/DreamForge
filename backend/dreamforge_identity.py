@@ -50,7 +50,30 @@ def is_identity_preservation_job(job) -> bool:
         getattr(job, "preserve_character", False)
         or getattr(job, "face_preservation", False)
         or normalize_identity_mode(getattr(job, "identity_mode", None))
+        or identity_intent_from_prompt(getattr(job, "prompt", None))
     )
+
+
+def identity_intent_from_prompt(prompt: Any) -> bool:
+    text = str(prompt or "").lower()
+    if not text.strip():
+        return False
+    identity_terms = (
+        "same person",
+        "same face",
+        "reference face",
+        "use the face",
+        "use reference face",
+        "maintain facial",
+        "facial consistency",
+        "face consistency",
+        "preserve face",
+        "preserve facial",
+        "preserve identity",
+        "maintain identity",
+        "likeness",
+    )
+    return any(term in text for term in identity_terms)
 
 
 def faceid_assets_available() -> dict[str, Any]:
@@ -210,7 +233,7 @@ def _edit_studio_identity_patch(
 
 def _kontext_patch(ref: str, model: str | None = None) -> dict[str, Any]:
     patch: dict[str, Any] = {
-        "reference_role": "restyle",
+        "reference_role": "image_prompt",
         "workflow_mode": "generate",
         "input_image": ref,
         "reference_image": ref,
@@ -230,7 +253,7 @@ def _kontext_patch(ref: str, model: str | None = None) -> dict[str, Any]:
 
 def _qwen_edit_patch(ref: str, model: str | None = None) -> dict[str, Any]:
     patch: dict[str, Any] = {
-        "reference_role": "restyle",
+        "reference_role": "image_prompt",
         "workflow_mode": "generate",
         "input_image": ref,
         "reference_image": ref,

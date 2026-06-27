@@ -42,8 +42,29 @@ export function isIdentityPreservationActive(settings: GenerationSettings): bool
   return Boolean(
     settings.preserve_character ||
       settings.face_preservation ||
-      normalizeIdentityMode(settings.identity_mode),
+      normalizeIdentityMode(settings.identity_mode) ||
+      identityIntentFromPrompt(settings.prompt),
   );
+}
+
+export function identityIntentFromPrompt(prompt: string | undefined | null): boolean {
+  const text = (prompt ?? "").toLowerCase();
+  if (!text.trim()) return false;
+  return [
+    "same person",
+    "same face",
+    "reference face",
+    "use the face",
+    "use reference face",
+    "maintain facial",
+    "facial consistency",
+    "face consistency",
+    "preserve face",
+    "preserve facial",
+    "preserve identity",
+    "maintain identity",
+    "likeness",
+  ].some((term) => text.includes(term));
 }
 
 export function faceIdAssetsReady(
@@ -91,7 +112,7 @@ function patchForKontextIdentity(
   model?: string,
 ): Partial<GenerationSettings> {
   return {
-    reference_role: "restyle",
+    reference_role: "image_prompt",
     workflow_mode: "generate",
     input_image: ref,
     reference_image: ref,
@@ -112,7 +133,7 @@ function patchForQwenIdentity(
   model?: string,
 ): Partial<GenerationSettings> {
   return {
-    reference_role: "restyle",
+    reference_role: "image_prompt",
     workflow_mode: "generate",
     input_image: ref,
     reference_image: ref,

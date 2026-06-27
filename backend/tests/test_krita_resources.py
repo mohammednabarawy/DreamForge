@@ -13,6 +13,10 @@ from dreamforge_krita_recipes import edit_recipe
 from dreamforge_krita_resources import resolve_upscaler
 
 
+def _pixels(image):
+    return list(getattr(image, "get_flattened_data", image.getdata)())
+
+
 def test_resolve_upscaler_fast_2x():
     info = resolve_upscaler("fast_2x")
     assert info["filename"] == "OmniSR_X2_DIV2K.safetensors"
@@ -115,6 +119,7 @@ def test_stitch_and_composite_helpers():
     mask.putpixel((0, 0), 255)
     merged = composite_inpaint_result(original, generated, mask)
     assert merged.getpixel((3, 3)) == (0, 0, 255)
+    assert merged.getpixel((0, 0)) == (255, 0, 0)
 
 
 def test_check_studio_upscale_requires_only_selected_upscaler(monkeypatch):
@@ -218,8 +223,8 @@ def test_plan_inpaint_crop_stitch_for_large_image_with_small_mask():
     hard_bytes, hard = prepare_inpaint_mask_image(mask.crop(box), grow=4, feather=8, hard=True)
     plain_bytes, plain = prepare_inpaint_mask_image(mask.crop(box), grow=4, feather=0, hard=False)
     assert len(soft_bytes) > 0 and len(hard_bytes) > 0
-    assert list(hard.getdata()) == list(plain.getdata())
-    assert list(soft.getdata()) != list(hard.getdata())
+    assert _pixels(hard) == _pixels(plain)
+    assert _pixels(soft) != _pixels(hard)
 
 
 def test_plan_inpaint_crop_stitch_skips_small_images():
@@ -231,3 +236,50 @@ def test_plan_inpaint_crop_stitch_skips_small_images():
     mask = Image.new("L", (1024, 1024), color=0)
     mask.putpixel((512, 512), 255)
     assert plan_inpaint_crop_stitch(image, mask) is None
+
+
+def test_inpaint_mask_context_reports_empty_and_crop_state():
+    pytest = __import__("pytest")
+    Image = pytest.importorskip("PIL.Image")
+    from dreamforge_krita_resources import describe_inpaint_context, inpaint_mask_has_selection
+
+    image = Image.new("RGB", (2400, 1800), color=(0, 0, 0))
+    empty = Image.new("L", image.size, color=0)
+    empty_context = describe_inpaint_context(image, empty)
+    assert inpaint_mask_has_selection(empty) is False
+    assert empty_context["mask_empty"] is True
+    assert empty_context["mask_bbox"] is None
+    assert empty_context["crop"]["enabled"] is False
+
+    mask = Image.new("L", image.size, color=0)
+    for x in range(900, 940):
+        for y in range(700, 740):
+            mask.putpixel((x, y), 255)
+    context = describe_inpaint_context(image, mask, grow=8, feather=4)
+    assert inpaint_mask_has_selection(mask) is True
+    assert context["mask_empty"] is False
+    assert context["mask_bbox"] == [900, 700, 940, 740]
+    assert context["crop"]["enabled"] is True
+    assert context["crop"]["size"][0] < image.width
+
+
+def test_measure_inpaint_outside_mask_leakage_detects_and_composite_fixes():
+    pytest = __import__("pytest")
+    Image = pytest.importorskip("PIL.Image")
+    from dreamforge_krita_resources import composite_inpaint_result, measure_inpaint_outside_mask_leakage
+
+    original = Image.new("RGB", (128, 128), color=(40, 80, 120))
+    mask = Image.new("L", (128, 128), color=0)
+    for x in range(48, 80):
+        for y in range(48, 80):
+            mask.putpixel((x, y), 255)
+
+    leaked = Image.new("RGB", (128, 128), color=(200, 10, 10))
+    leaked_report = measure_inpaint_outside_mask_leakage(original, leaked, mask)
+    assert leaked_report["ok"] is False
+    assert leaked_report["changed_pixels"] > 0
+
+    composited = composite_inpaint_result(original, leaked, mask)
+    fixed_report = measure_inpaint_outside_mask_leakage(original, composited, mask)
+    assert fixed_report["ok"] is True
+    assert fixed_report["changed_pixels"] == 0

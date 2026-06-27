@@ -38,6 +38,7 @@ function ToolButton({
     <button
       type="button"
       title={title}
+      aria-label={title}
       disabled={disabled}
       onClick={onClick}
       className={`inline-flex h-8 w-8 items-center justify-center rounded-md border transition ${

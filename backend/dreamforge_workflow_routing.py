@@ -126,6 +126,9 @@ def plan_mode_for_job(job, studio_mode: str | None = None) -> str:
         return "generate"
     if role in {"restyle", "image_prompt"}:
         return "generate"
+    if edit_type == "outpaint" or _norm(getattr(job, "edit_task", None)) == "extend":
+        if workflow_mode != "generate":
+            return "inpaint"
     if role == "source_edit":
         return "edit"
 
@@ -175,13 +178,19 @@ def resolve_input_routing(
     )
     inpaint_mask_path = getattr(job, "inpaint_mask_path", None)
     wm = _norm(workflow_mode)
+    is_outpaint_job = (
+        _norm(edit_type) == "outpaint"
+        or _norm(cn_type) == "outpaint"
+        or wm == "outpaint"
+        or _norm(getattr(job, "edit_task", None)) == "extend"
+    )
 
     from dreamforge_auto_enhance import is_auto_enhance_job
 
     is_upscale_job = is_upscale_reference_role(job, studio_mode=studio_mode) and not is_auto_enhance_job(
         job
     )
-    is_inpaint_job = reference_role == "inpaint" or (
+    is_inpaint_job = (not is_outpaint_job) and (reference_role == "inpaint" or (
         reference_role not in {"restyle", "image_prompt", "upscale", "structure"}
         and (
             _norm(edit_type) == "inpaint"
@@ -189,9 +198,16 @@ def resolve_input_routing(
             or bool(inpaint_mask_path)
         )
         and wm != "generate"
-    )
+    ))
 
-    if is_inpaint_job:
+    if is_outpaint_job:
+        edit_type = "outpaint"
+        cn_selection = "Custom..."
+        cn_type = "outpaint"
+        if not workflow_mode:
+            workflow_mode = "outpaint"
+            wm = "outpaint"
+    elif is_inpaint_job:
         edit_type = "inpaint"
         cn_selection = "Custom..."
         cn_type = "inpaint"
@@ -225,7 +241,7 @@ def resolve_input_routing(
         if cn_selection == "Custom...":
             cn_selection = "None"
             cn_type = "None"
-        if edit_type in ("kontext", "inpaint", "img2img", "qwen_edit"):
+        if edit_type in ("kontext", "inpaint", "img2img", "qwen_edit", "outpaint"):
             edit_type = "auto"
     elif cn_selection == "None" and is_upscale_job:
         cn_selection = "Custom..."

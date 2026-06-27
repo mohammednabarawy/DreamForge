@@ -1,7 +1,22 @@
-"""Hardware-aware ComfyUI server launch flags for DreamForge."""
+"""Hardware-aware ComfyUI server launch flags for DreamForge.
+
+The flag set adapts to the *installed* hardware and PyTorch build:
+
+* PyTorch >= 2.8 on NVIDIA (non-WSL) unlocks ComfyUI's Dynamic VRAM (comfy-aimdo).
+  In that mode we must NOT pass ``--lowvram`` (it is a no-op there) and must NOT
+  pass ``--disable-dynamic-vram`` (that would force the slow legacy ModelPatcher).
+  Dynamic VRAM uses ``--reserve-vram`` as its headroom target, so we still tune
+  reserve per VRAM tier.
+* Older PyTorch (< 2.8) or non-NVIDIA falls back to the legacy memory modes
+  (``--lowvram`` streaming on tight Windows tiers, ``--highvram`` on big cards).
+
+Optional speed flags (``--fast`` and Sage/Flash attention) are added whenever the
+hardware/libraries support them, regardless of the memory mode.
+"""
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import platform
 from typing import Final
@@ -14,9 +29,13 @@ from dreamforge_vram_profiles import (
 )
 
 # ComfyUI reserve-vram is in GB. Windows WDDM benefits from extra headroom.
+# 16 GB needs a generous reserve: large fp8 models (Flux ~11 GB UNet + ~4.7 GB
+# text encoder) would otherwise full-load to ~15.7 GB and leave no room, so the
+# next back-to-back generation OOM-crashes. A 3 GB reserve forces ComfyUI to
+# offload the text encoder to CPU instead of pinning everything resident.
 _WINDOWS_RESERVE: Final[dict[str, float]] = {
     "24gb": 1.5,
-    "16gb": 2.0,
+    "16gb": 3.0,
     "12gb": 1.25,
     "8gb": 1.0,
     "5gb": 0.75,
@@ -29,6 +48,22 @@ _DEFAULT_RESERVE: Final[dict[str, float]] = {
     "5gb": 0.5,
 }
 
+# Dynamic VRAM headroom (acts as a *floor* of free VRAM aimdo keeps). It can be
+# tighter than the legacy reserve because aimdo offloads adaptively instead of
+# over-estimating, which is the whole point of the upgrade.
+_DYNAMIC_RESERVE: Final[dict[str, float]] = {
+    "24gb": 1.0,
+    "16gb": 1.5,
+    "12gb": 1.0,
+    "8gb": 0.8,
+    "5gb": 0.6,
+}
+
+# Default --fast optimizations. fp16_accumulation is a stable, well-tested speed
+# win on modern NVIDIA (Ada/Blackwell). Override with DREAMFORGE_COMFY_FAST
+# (comma list, "all", or "off"/"none"/"0").
+_DEFAULT_FAST_FEATURES: Final[tuple[str, ...]] = ("fp16_accumulation",)
+
 
 def cuda_total_vram_gb() -> float | None:
     try:
@@ -39,6 +74,108 @@ def cuda_total_vram_gb() -> float | None:
     except Exception:
         return None
     return None
+
+
+def torch_version_tuple() -> tuple[int, int] | None:
+    """(major, minor) of the installed torch, or None if torch is unavailable."""
+    try:
+        import torch
+
+        parts = torch.__version__.split("+", 1)[0].split(".")
+        return (int(parts[0]), int(parts[1]))
+    except Exception:
+        return None
+
+
+def _is_wsl() -> bool:
+    if platform.system() != "Linux":
+        return False
+    try:
+        return "microsoft" in platform.uname().release.lower()
+    except Exception:
+        return False
+
+
+def cuda_is_nvidia() -> bool:
+    try:
+        import torch
+
+        return bool(torch.cuda.is_available() and torch.version.cuda is not None)
+    except Exception:
+        return False
+
+
+def supports_dynamic_vram() -> bool:
+    """Mirror ComfyUI's gate: Dynamic VRAM needs torch >= 2.8 on NVIDIA (non-WSL).
+
+    See engines/comfyui/main.py and comfy/cli_args.py::enables_dynamic_vram.
+    """
+    if os.environ.get("DREAMFORGE_DISABLE_DYNAMIC_VRAM"):
+        return False
+    ver = torch_version_tuple()
+    if ver is None or ver < (2, 8):
+        return False
+    return cuda_is_nvidia() and not _is_wsl()
+
+
+def _module_available(name: str) -> bool:
+    try:
+        return importlib.util.find_spec(name) is not None
+    except Exception:
+        return False
+
+
+def attention_flag() -> str | None:
+    """Pick an installed accelerated attention backend (Sage preferred, then Flash).
+
+    ComfyUI's attention options are mutually exclusive, so we return at most one.
+    Respects DREAMFORGE_COMFY_ATTENTION (sage|flash|auto|off).
+    """
+    pref = (os.environ.get("DREAMFORGE_COMFY_ATTENTION") or "auto").strip().lower()
+    if pref in {"off", "none", "0", "false"}:
+        return None
+    if pref in {"sage", "sageattention"} and _module_available("sageattention"):
+        return "--use-sage-attention"
+    if pref in {"flash", "flashattention", "flash_attn"} and _module_available("flash_attn"):
+        return "--use-flash-attention"
+    if pref in {"", "auto"}:
+        if _module_available("sageattention"):
+            return "--use-sage-attention"
+        if _module_available("flash_attn"):
+            return "--use-flash-attention"
+    return None
+
+
+def fast_features() -> tuple[str, ...]:
+    """--fast optimizations to enable, or empty if disabled."""
+    raw = os.environ.get("DREAMFORGE_COMFY_FAST")
+    if raw is None:
+        return _DEFAULT_FAST_FEATURES
+    value = raw.strip().lower()
+    if value in {"off", "none", "0", "false", ""}:
+        return ()
+    if value in {"all", "1", "true"}:
+        return ()  # sentinel handled by caller -> bare "--fast" enables everything
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
+
+
+def fast_args() -> list[str]:
+    raw = os.environ.get("DREAMFORGE_COMFY_FAST")
+    if raw is not None and raw.strip().lower() in {"all", "1", "true"}:
+        return ["--fast"]
+    features = fast_features()
+    if not features:
+        return []
+    return ["--fast", *features]
+
+
+def _speed_args() -> list[str]:
+    """--fast + accelerated attention, independent of the VRAM mode."""
+    args = fast_args()
+    attn = attention_flag()
+    if attn:
+        args.append(attn)
+    return args
 
 
 def comfy_memory_tier(profile: str | None = None) -> str:
@@ -62,21 +199,41 @@ def _format_reserve_gb(value: float) -> str:
     return text or "0"
 
 
-def reserve_vram_gb(*, tier: str, is_windows: bool) -> float:
+def reserve_vram_gb(*, tier: str, is_windows: bool, dynamic: bool = False) -> float:
+    if dynamic:
+        return _DYNAMIC_RESERVE.get(tier, _DYNAMIC_RESERVE["16gb"])
     table = _WINDOWS_RESERVE if is_windows else _DEFAULT_RESERVE
     return table.get(tier, table["16gb"])
 
 
 def tier_uses_lowvram(tier: str, *, is_windows: bool = False) -> bool:
-    # 12 GB cards run Ultimate SD Upscale more reliably with lowvram on Windows.
+    """Whether Comfy should stream weights (slow but safe on tight VRAM)."""
+    return comfy_launch_memory_mode(tier, is_windows=is_windows) == "lowvram"
+
+
+def comfy_launch_memory_mode(tier: str, *, is_windows: bool = False) -> str:
+    """Legacy (pre-Dynamic-VRAM) memory mode for a VRAM tier.
+
+    On Windows, ComfyUI's "usable VRAM" estimate is inflated by WDDM shared
+    memory, so on 16 GB it may full-load a large text encoder (e.g. Ideogram4's
+    ~10 GB Qwen3VL TE) and then OOM-crash during the DiT/VAE stages. Stream
+    weights (lowvram) on 16 GB Windows to stay stable with the large modern
+    model families; keep the faster default elsewhere where the estimate holds.
+
+    This path is only used when Dynamic VRAM is NOT available (torch < 2.8 or
+    non-NVIDIA). With Dynamic VRAM, aimdo manages offload adaptively instead.
+    """
+    if tier == "24gb":
+        return "highvram"
+    if tier == "16gb":
+        return "lowvram" if is_windows else "normalvram"
     if tier in {"5gb", "8gb", "12gb"}:
-        return True
-    # 16 GB WDDM cards need offload headroom for dual-UNet stacks (Ideogram 4).
-    return tier == "16gb" and is_windows
+        return "lowvram"
+    return "normalvram"
 
 
 def comfy_launch_extra_args() -> tuple[str, ...]:
-    """Map detected hardware → ComfyUI CLI memory flags."""
+    """Map detected hardware + PyTorch build → ComfyUI CLI flags."""
     profile = normalize_vram_profile(os.environ.get("DREAMFORGE_VRAM_PROFILE") or "auto")
     if profile == "no_gpu":
         return ("--cpu",)
@@ -89,11 +246,29 @@ def comfy_launch_extra_args() -> tuple[str, ...]:
 
     tier = comfy_memory_tier(profile)
     is_windows = platform.system() == "Windows"
-    args: list[str] = []
-    if tier_uses_lowvram(tier, is_windows=is_windows):
+
+    if supports_dynamic_vram():
+        # Dynamic VRAM (comfy-aimdo) path: let aimdo manage offload. Do NOT pass
+        # --lowvram (no-op here) or --highvram/--disable-dynamic-vram (would turn
+        # Dynamic VRAM off). --reserve-vram feeds aimdo's headroom target.
+        reserve = reserve_vram_gb(tier=tier, is_windows=is_windows, dynamic=True)
+        args = ["--reserve-vram", _format_reserve_gb(reserve)]
+        args.extend(_speed_args())
+        return tuple(args)
+
+    # Legacy path (torch < 2.8 or non-NVIDIA): estimate-based model loading.
+    mode = comfy_launch_memory_mode(tier, is_windows=is_windows)
+    if mode == "normalvram":
+        # Emit no memory flags so ComfyUI uses its default smart memory mgmt.
+        return tuple(_speed_args())
+    args = []
+    if mode == "highvram":
+        args.append("--highvram")
+    elif mode == "lowvram":
         args.append("--lowvram")
     reserve = reserve_vram_gb(tier=tier, is_windows=is_windows)
     args.extend(("--reserve-vram", _format_reserve_gb(reserve)))
+    args.extend(_speed_args())
     return tuple(args)
 
 
@@ -102,6 +277,7 @@ def comfy_launch_summary() -> str:
     tier = comfy_memory_tier()
     vram = cuda_total_vram_gb()
     vram_note = f"{vram:.1f} GB VRAM" if vram is not None else f"{tier} tier"
+    dyn = "Dynamic VRAM" if supports_dynamic_vram() else "legacy VRAM"
     if not args:
-        return f"ComfyUI memory mode: default ({vram_note})"
-    return f"ComfyUI memory mode: {', '.join(args)} ({vram_note})"
+        return f"ComfyUI memory mode: default ({dyn}, {vram_note})"
+    return f"ComfyUI memory mode: {', '.join(args)} ({dyn}, {vram_note})"

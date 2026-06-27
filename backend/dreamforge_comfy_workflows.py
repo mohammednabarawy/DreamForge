@@ -14,6 +14,7 @@ We generate that API format here.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -1004,6 +1005,9 @@ def comfy_flux_kontext_edit(args: dict[str, Any]) -> dict[str, Any]:
     scheduler = str(args.get("scheduler", "simple"))
     seed = int(args.get("seed", 0))
     denoise = float(args.get("denoise", args.get("edit_strength", 1.0)))
+    identity_generate = bool(args.get("identity_generate"))
+    width = int(args.get("width", 1024) or 1024)
+    height = int(args.get("height", 1024) or 1024)
 
     g: dict[str, Any] = {}
     model_out, clip_out, vae_out, _next = _add_model_loader(g, {**args, "ckpt_name": ckpt})
@@ -1022,13 +1026,20 @@ def comfy_flux_kontext_edit(args: dict[str, Any]) -> dict[str, Any]:
     g["7"] = _node("FluxGuidance", {"conditioning": ["5", 0], "guidance": guidance})
     g["8"] = _node("ReferenceLatent", {"conditioning": ["7", 0], "latent": ["15", 0]})
     g["9"] = _node("ReferenceLatent", {"conditioning": ["6", 0], "latent": ["15", 0]})
+    sampler_latent = ["4", 0]
+    if identity_generate:
+        g["16"] = _node(
+            "EmptySD3LatentImage",
+            {"width": width, "height": height, "batch_size": 1},
+        )
+        sampler_latent = ["16", 0]
     g["10"] = _node(
         "KSampler",
         {
             "model": model_out,
             "positive": ["8", 0],
             "negative": ["9", 0],
-            "latent_image": ["4", 0],
+            "latent_image": sampler_latent,
             "seed": seed,
             "steps": steps,
             "cfg": 1.0,
@@ -1706,11 +1717,22 @@ def comfy_flux_fill_inpaint(args: dict[str, Any]) -> dict[str, Any]:
             "noise_mask": True,
         },
     )
-    g["10"] = _node("DifferentialDiffusion", {"model": model_out})
+    # DifferentialDiffusion is NOT part of the canonical ComfyUI Flux Fill graph.
+    # It overrides the model's denoise-mask function with a per-timestep threshold
+    # schedule that, combined with InpaintModelConditioning(noise_mask=True), can
+    # suppress denoising of the masked latent entirely — Flux Fill then just
+    # reconstructs the original pixels and the edit appears to do nothing. Keep it
+    # off by default; it can be re-enabled for experimentation via env var.
+    use_diff_diff = os.environ.get("DREAMFORGE_FLUX_FILL_DIFFDIFF", "0") == "1"
+    if use_diff_diff:
+        g["10"] = _node("DifferentialDiffusion", {"model": model_out})
+        sampler_model: list[str | int] = ["10", 0]
+    else:
+        sampler_model = model_out
     g["11"] = _node(
         "KSampler",
         {
-            "model": ["10", 0],
+            "model": sampler_model,
             "positive": ["9", 0],
             "negative": ["9", 1],
             "latent_image": ["9", 2],

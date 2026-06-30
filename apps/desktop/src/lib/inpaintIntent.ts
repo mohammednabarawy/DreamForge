@@ -1,9 +1,15 @@
 import type { GenerationSettings, ModelGalleryItem } from "./tauri-api";
 import {
+  PHOTO_RESTORE_SAMPLING,
+  selectPhotoRestoreModel,
+} from "./photoRestore";
+import {
   DEFAULT_FLUX_FILL_MODEL,
   isFluxFillModel,
   selectFluxFillModel,
 } from "./inpaintModel";
+import { DEFAULT_QWEN_EDIT_MODEL, selectQwenEditModel } from "./editModel";
+import { qwenEdit2511LightningPatch } from "./qwenEditDefaults";
 
 export type InpaintIntent = "default" | "improve_detail" | "modify_content";
 export type EditTask = NonNullable<GenerationSettings["edit_task"]>;
@@ -141,6 +147,19 @@ export const EDIT_TASKS: Array<{
     short: "Global",
     hint: "Apply a global instruction edit to the source image.",
   },
+  {
+    id: "photo_restore",
+    label: "Restore photo",
+    short: "Restore",
+    hint: "Restore old, damaged, or low-quality photos with structure-preserving ControlNet.",
+  },
+  {
+    id: "outfit_transfer",
+    label: "Outfit transfer",
+    short: "Outfit",
+    hint: "Use the source person plus an outfit reference; add a mask for Flux Fill fallback.",
+    inpaintIntent: "modify_content",
+  },
 ];
 
 export function normalizeEditTask(value: string | undefined | null): EditTask | undefined {
@@ -148,7 +167,11 @@ export function normalizeEditTask(value: string | undefined | null): EditTask | 
   return EDIT_TASKS.some((item) => item.id === task) ? (task as EditTask) : undefined;
 }
 
-export function patchForEditTask(task: EditTask): Partial<GenerationSettings> {
+export function patchForEditTask(
+  task: EditTask,
+  gallery: ModelGalleryItem[] = [],
+  options: { isInpaint?: boolean; hasMask?: boolean } = {},
+): Partial<GenerationSettings> {
   if (!EDIT_TASKS.some((entry) => entry.id === task)) return {};
   const patch: Partial<GenerationSettings> = {
     edit_task: task,
@@ -165,6 +188,47 @@ export function patchForEditTask(task: EditTask): Partial<GenerationSettings> {
     patch.outpaint_direction = patch.outpaint_direction ?? "right";
     patch.outpaint_amount = patch.outpaint_amount ?? 256;
     patch.outpaint_feathering = patch.outpaint_feathering ?? 40;
+  } else if (task === "photo_restore") {
+    const restoreModel = selectPhotoRestoreModel(gallery);
+    patch.edit_type = undefined;
+    patch.cn_type = undefined;
+    patch.cn_selection = undefined;
+    patch.outpaint_direction = undefined;
+    patch.outpaint_amount = undefined;
+    patch.outpaint_feathering = undefined;
+    patch.inpaint_mask_path = undefined;
+    patch.model = restoreModel || undefined;
+    patch.steps = PHOTO_RESTORE_SAMPLING.steps;
+    patch.cfg_scale = PHOTO_RESTORE_SAMPLING.cfg_scale;
+    patch.sampler = PHOTO_RESTORE_SAMPLING.sampler;
+    patch.scheduler = PHOTO_RESTORE_SAMPLING.scheduler;
+    patch.edit_strength = PHOTO_RESTORE_SAMPLING.edit_strength;
+    patch.depth_strength = PHOTO_RESTORE_SAMPLING.depth_strength;
+    patch.lineart_strength = PHOTO_RESTORE_SAMPLING.lineart_strength;
+    patch.face_preservation = true;
+  } else if (task === "outfit_transfer") {
+    patch.outpaint_direction = undefined;
+    patch.outpaint_amount = undefined;
+    patch.outpaint_feathering = undefined;
+    if (options.isInpaint || options.hasMask) {
+      const intent = "modify_content";
+      const preset = PRESETS[intent];
+      patch.inpaint_intent = intent;
+      patch.model = selectInpaintModelForIntent(gallery, intent);
+      patch.edit_type = "inpaint";
+      patch.cn_selection = "Custom...";
+      patch.cn_type = "inpaint";
+      patch.edit_strength = preset.edit_strength;
+      patch.inpaint_grow = preset.inpaint_grow;
+      patch.inpaint_feather = preset.inpaint_feather;
+      patch.inpaint_mask_grow_by = preset.inpaint_mask_grow_by;
+    } else {
+      Object.assign(patch, qwenEdit2511LightningPatch());
+      patch.model = selectQwenEditModel(gallery) || DEFAULT_QWEN_EDIT_MODEL;
+      patch.qwen_edit_mode = "plus";
+      patch.reference_role = "source_edit";
+      patch.inpaint_mask_path = undefined;
+    }
   } else if (task !== "global_edit") {
     patch.edit_type = "inpaint";
     patch.cn_type = "inpaint";

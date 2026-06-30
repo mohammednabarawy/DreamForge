@@ -349,6 +349,7 @@ def ensure_creative_task_ready(
     studio_mode: str | None = None,
     upscale_method: str | None = None,
     performance: str | None = None,
+    edit_task: str | None = None,
     auto_download_tier_a: bool = True,
     auto_download_tier_b: bool = False,
     auto_install_nodes: bool = False,
@@ -374,6 +375,7 @@ def ensure_creative_task_ready(
     pack_ids = required_custom_node_pack_ids(
         studio_mode=studio_mode,
         upscale_method=upscale_method,
+        edit_task=edit_task,
     )
     object_info_cache: dict | None = None
 

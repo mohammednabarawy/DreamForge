@@ -104,6 +104,34 @@ ROUTE_MATRIX = [
         "expected": "kontext",
     },
     {
+        "id": "edit_photo_restore",
+        "studio_mode": "edit",
+        "job": {
+            "edit_task": "photo_restore",
+            "input_image": "/tmp/old.png",
+            "edit_type": "auto",
+        },
+        "model": {"name": "epicrealismXL.safetensors"},
+        "family": "sdxl",
+        "input": "/tmp/old.png",
+        "expected": "photo_restore",
+    },
+    {
+        "id": "edit_outfit_transfer",
+        "studio_mode": "edit",
+        "job": {
+            "edit_task": "outfit_transfer",
+            "input_image": "/tmp/person.png",
+            "reference_images": ["/tmp/outfit.png"],
+            "reference_role": "source_edit",
+            "edit_type": "qwen_edit",
+        },
+        "model": {"name": "qwen-image-edit-2511-Q4_K_M.gguf"},
+        "family": "qwen_image_edit",
+        "input": "/tmp/person.png",
+        "expected": "qwen_edit",
+    },
+    {
         "id": "inpaint_fill",
         "studio_mode": "inpaint",
         "job": {

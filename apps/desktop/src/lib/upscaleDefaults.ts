@@ -76,7 +76,8 @@ export function applyUpscaleFallbacks(
     upscale_tiled_decode: settings.upscale_tiled_decode ?? UPSCALE_TILED_DECODE_DEFAULT,
     cn_upscale: settings.cn_upscale ?? UPSCALE_MODEL_DEFAULT,
     batch_size: settings.batch_size ?? UPSCALE_BATCH_SIZE_DEFAULT,
-    steps: settings.steps ?? UPSCALE_STEPS_DEFAULT,    cfg_scale: settings.cfg_scale ?? UPSCALE_CFG_DEFAULT,
+    steps: settings.steps ?? UPSCALE_STEPS_DEFAULT,
+    cfg_scale: settings.cfg_scale ?? UPSCALE_CFG_DEFAULT,
     sampler: settings.sampler ?? UPSCALE_SAMPLER_DEFAULT,
     scheduler: settings.scheduler ?? UPSCALE_SCHEDULER_DEFAULT,
   };

@@ -15,7 +15,7 @@ UI_REFERENCE_ROLES = frozenset(
 )
 UI_INPAINT_INTENTS = frozenset({"default", "improve_detail", "modify_content"})
 UI_VARY_AMOUNTS = frozenset({"subtle", "strong"})
-UI_UPSCALE_PRESETS = frozenset({"1.5x", "2x", "fast_2x"})
+UI_UPSCALE_PRESETS = frozenset({"1.5x", "2x", "faithful_2x", "fast_2x", "fast_4x", "detail_2x"})
 UI_IDENTITY_MODES = frozenset(
     {"preserve_face", "kontext", "qwen_edit", "ipadapter_faceid", "auto"}
 )
@@ -34,6 +34,7 @@ BACKEND_COMFY_MODES = frozenset(
         "ipadapter_controlnet",
         "controlnet",
         "face_detail",
+        "photo_restore",
         "outpaint",
         "hires",
         "area_composition",
@@ -53,7 +54,7 @@ UI_SURFACE_TO_COMFY_MODES: dict[str, frozenset[str]] = {
     "reference_role:inpaint": frozenset({"inpaint"}),
     "reference_role:upscale": frozenset({"upscale"}),
     "studio_mode:generate": frozenset({"txt2img", "img2img", "ipadapter", "ipadapter_controlnet", "ipadapter_faceid"}),
-    "studio_mode:edit": frozenset({"kontext", "qwen_edit", "img2img"}),
+    "studio_mode:edit": frozenset({"kontext", "qwen_edit", "img2img", "photo_restore"}),
     "studio_mode:inpaint": frozenset({"inpaint"}),
     "studio_mode:upscale": frozenset({"upscale"}),
     "inpaint_intent:default": frozenset({"inpaint"}),
@@ -63,12 +64,17 @@ UI_SURFACE_TO_COMFY_MODES: dict[str, frozenset[str]] = {
     "vary_amount:strong": frozenset({"img2img"}),
     "upscale_preset:1.5x": frozenset({"upscale"}),
     "upscale_preset:2x": frozenset({"upscale"}),
+    "upscale_preset:faithful_2x": frozenset({"upscale"}),
     "upscale_preset:fast_2x": frozenset({"upscale"}),
+    "upscale_preset:fast_4x": frozenset({"upscale"}),
+    "upscale_preset:detail_2x": frozenset({"upscale"}),
     "enhance_target:face": frozenset({"face_detail"}),
     "enhance_target:hands": frozenset({"face_detail"}),
     "enhance_target:eyes": frozenset({"inpaint"}),
     "identity_mode:preserve_face": frozenset({"kontext", "qwen_edit", "img2img"}),
     "identity_mode:ipadapter_faceid": frozenset({"ipadapter_faceid", "kontext", "qwen_edit"}),
+    "edit_task:photo_restore": frozenset({"photo_restore"}),
+    "edit_task:outfit_transfer": frozenset({"qwen_edit", "inpaint"}),
 }
 
 COMFY_MODE_GRAPH_BUILDERS: dict[str, str] = {
@@ -79,6 +85,7 @@ COMFY_MODE_GRAPH_BUILDERS: dict[str, str] = {
     "ipadapter_controlnet": "comfy_ipadapter_controlnet_hybrid",
     "face_detail": "comfy_face_detail_basic",
     "controlnet": "comfy_controlnet_basic",
+    "photo_restore": "comfy_photo_restore",
     "outpaint": "comfy_outpaint_basic",
     "upscale": "comfy_ultimate_sd_upscale",
     "inpaint": "comfy_inpaint_basic",

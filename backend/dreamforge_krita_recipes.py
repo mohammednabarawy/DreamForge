@@ -137,7 +137,7 @@ COMFY_INSTALL_RECIPE: dict[str, Any] = {
             "id": "comfyui_controlnet_aux",
             "url": "https://github.com/Fannovel16/comfyui_controlnet_aux",
             "version": "83463c2e4b04e729268e57f638b4212e0da4badc",
-            "nodes": ["InpaintPreprocessor", "DepthAnythingV2Preprocessor"],
+            "nodes": ["InpaintPreprocessor", "DepthAnythingV2Preprocessor", "LineartStandardPreprocessor"],
         },
         {
             "id": "ComfyUI_IPAdapter_plus",
@@ -186,11 +186,13 @@ COMFY_INSTALL_RECIPE: dict[str, Any] = {
             "id": "ComfyUI-Impact-Pack",
             "url": "https://github.com/ltdrdata/ComfyUI-Impact-Pack",
             "reason": "FaceDetailer and SAMLoader for optional face/hand detail repair.",
+            "nodes": ["FaceDetailer", "SAMLoader"],
         },
         {
             "id": "ComfyUI-Impact-Subpack",
             "url": "https://github.com/ltdrdata/ComfyUI-Impact-Subpack",
             "reason": "UltralyticsDetectorProvider bbox/segm models for FaceDetailer.",
+            "nodes": ["UltralyticsDetectorProvider"],
         },
     ],
 }

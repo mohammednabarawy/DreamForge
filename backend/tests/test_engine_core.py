@@ -13,6 +13,15 @@ def test_engine_namespace_preserves_workflow_specific_args():
             "hires": True,
             "cn_type": "depth",
             "outpaint_direction": "right",
+            "edit_task": "photo_restore",
+            "depth_strength": 0.15,
+            "lineart_strength": 0.35,
+            "face_preservation": True,
+            "upscale_preset": "fast_4x",
+            "upscale_by": 4,
+            "upscale_denoise": 0.2,
+            "upscale_tile_width": 1024,
+            "upscale_tile_padding": 64,
         }
     )
 
@@ -23,6 +32,15 @@ def test_engine_namespace_preserves_workflow_specific_args():
     assert ns.hires is True
     assert ns.cn_type == "depth"
     assert ns.outpaint_direction == "right"
+    assert ns.edit_task == "photo_restore"
+    assert ns.depth_strength == 0.15
+    assert ns.lineart_strength == 0.35
+    assert ns.face_preservation is True
+    assert ns.upscale_preset == "fast_4x"
+    assert ns.upscale_by == 4
+    assert ns.upscale_denoise == 0.2
+    assert ns.upscale_tile_width == 1024
+    assert ns.upscale_tile_padding == 64
 
 
 def test_model_registry_routes_edit_capability_before_default_generate():

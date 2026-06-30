@@ -542,6 +542,7 @@ def _build_comfy_prompt_graph(
         comfy_z_image_txt2img,
         comfy_kandinsky5_img2img,
         comfy_kandinsky5_txt2img,
+        comfy_photo_restore,
     )
 
     explicit = getattr(job, "comfy_workflow_api", None) or getattr(
@@ -792,6 +793,30 @@ def _build_comfy_prompt_graph(
                 "cn_start": getattr(job, "cn_start", getattr(job, "controlnet_start", 0.0)),
                 "cn_stop": getattr(job, "cn_stop", getattr(job, "controlnet_end", 1.0)),
                 "denoise": edit_strength if input_filename and not use_structure else 1.0,
+            }
+        )
+    elif mode == "photo_restore":
+        control_image = (
+            getattr(job, "control_image", None)
+            or getattr(job, "reference_image", None)
+            or input_filename
+        )
+        graph = comfy_photo_restore(
+            {
+                **common,
+                "image": input_filename,
+                "control_image": control_image,
+                "controlnet_model": getattr(job, "controlnet_model", None)
+                or _first_inventory_model("controlnet", ("union",)),
+                "depth_strength": float(getattr(job, "depth_strength", 0.15)),
+                "lineart_strength": float(getattr(job, "lineart_strength", 0.35)),
+                "face_preservation": bool(getattr(job, "face_preservation", False)),
+                "bbox_model": getattr(job, "bbox_model", None)
+                or getattr(job, "bbox_detector_model", None),
+                "sam_model": getattr(job, "sam_model", None)
+                or getattr(job, "sam_model_name", None),
+                "detail_denoise": getattr(job, "detail_denoise", edit_strength),
+                "denoise": edit_strength,
             }
         )
     elif mode == "outpaint" and input_filename:
@@ -1470,6 +1495,9 @@ def run_generation(
         from dreamforge_inpaint_intent import merge_inpaint_additional_prompt
 
         prompt = merge_inpaint_additional_prompt(prompt, job)
+        from dreamforge_edit_tasks import merge_outfit_transfer_prompt
+
+        prompt = merge_outfit_transfer_prompt(prompt, job)
         negative = prepared["negative"]
         settings = dict(settings)
         settings["negative"] = negative
@@ -1586,12 +1614,32 @@ def run_generation(
         if getattr(job, "edit_task", None):
             from dreamforge_edit_tasks import apply_edit_task_defaults_to_job
 
+            task_name = str(getattr(job, "edit_task", "") or "").strip().lower()
             edit_task_defaults = apply_edit_task_defaults_to_job(
                 job,
                 mode="edit"
-                if str(getattr(job, "edit_task", "") or "").lower() == "global_edit"
+                if task_name in {"global_edit", "photo_restore", "outfit_transfer"}
                 else "inpaint",
             )
+            if task_name == "photo_restore":
+                from dreamforge_edit_tasks import merge_photo_restore_task_settings
+
+                settings = merge_photo_restore_task_settings(settings, job, edit_task_defaults)
+            elif task_name == "outfit_transfer":
+                from dreamforge_edit_tasks import outfit_transfer_has_reference
+
+                if not outfit_transfer_has_reference(job):
+                    from dreamforge_errors import invalid_request
+
+                    err = invalid_request(
+                        "Outfit Transfer requires an outfit reference image.",
+                        job_id=job_id,
+                    )
+                    err["suggestions"] = [
+                        "Attach the outfit photo as a reference image before generating."
+                    ]
+                    emit_event(stream_sink, err)
+                    return {"status": "error", **err}
 
         from dreamforge_workflow_routing import resolve_comfy_workflow_mode, resolve_input_routing
 
@@ -1719,12 +1767,49 @@ def run_generation(
                     route_msg
                     or "Ultimate SD Upscale requires an SDXL checkpoint (EpicRealism XL, Juggernaut XL, etc.).",
                     job_id=job_id,
-                    suggestions=[
-                        "Install an SDXL realism checkpoint under models/checkpoints",
-                        "Switch to Enhance mode and let DreamForge auto-select SDXL",
-                        "Flux, Z-Image, and Ideogram checkpoints are not compatible with Ultimate SD Upscale",
-                    ],
                 )
+                err["suggestions"] = [
+                    "Install an SDXL realism checkpoint under models/checkpoints",
+                    "Switch to Enhance mode and let DreamForge auto-select SDXL",
+                    "Flux, Z-Image, and Ideogram checkpoints are not compatible with Ultimate SD Upscale",
+                ]
+                emit_event(stream_sink, err)
+                return {"status": "error", **err}
+
+        if str(getattr(job, "edit_task", "") or "").strip().lower() == "photo_restore":
+            from dreamforge_model_library_cache import get_cached_model_gallery
+            from dreamforge_upscale_routing import (
+                is_upscale_compatible_checkpoint,
+                resolve_upscale_checkpoint_model,
+            )
+
+            gallery, _restore_gallery_hit = get_cached_model_gallery()
+            model, route_msg = resolve_upscale_checkpoint_model(model, gallery)
+            model_family = str(model.get("family") or "sdxl").lower()
+            if route_msg and stream_sink is not None:
+                emit_event(
+                    stream_sink,
+                    {
+                        "type": "progress",
+                        "job_id": job_id,
+                        "phase": "preflight",
+                        "progress": 1,
+                        "message": route_msg,
+                    },
+                )
+            if not is_upscale_compatible_checkpoint(model):
+                from dreamforge_errors import invalid_request
+
+                err = invalid_request(
+                    route_msg
+                    or "Photo Restore requires an SDXL checkpoint and ControlNet Union assets.",
+                    job_id=job_id,
+                )
+                err["suggestions"] = [
+                    "Install an SDXL realism checkpoint (EpicRealism XL, Juggernaut XL, etc.)",
+                    "Install ControlNet Union SDXL under models/controlnet",
+                    "Install ComfyUI ControlNet auxiliary nodes for depth/lineart preprocessors",
+                ]
                 emit_event(stream_sink, err)
                 return {"status": "error", **err}
 

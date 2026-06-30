@@ -406,3 +406,36 @@ def test_inpaint_plan_mode_drops_optional_text_and_style_ops(monkeypatch):
     assert "arabic_text_composite" not in blueprint["template_ids"]
     assert "text" not in blueprint["readiness"]["missing_inputs"]
     assert blueprint["readiness"]["ready"] is True
+
+
+def test_upscale_large_tiles_low_vram_warning():
+    blueprint = build_live_workflow_blueprint(
+        "upscale image",
+        operations=["upscale"],
+        has_image=True,
+        current_settings={
+            "upscale_by": 4.0,
+            "upscale_tile_width": 1024,
+            "upscale_tile_height": 1024,
+            "vram_profile": "8gb",
+        },
+    )
+    warnings = blueprint.get("warnings") or []
+    assert any("low VRAM" in w for w in warnings)
+
+
+def test_upscale_normal_no_warning():
+    blueprint = build_live_workflow_blueprint(
+        "upscale image",
+        operations=["upscale"],
+        has_image=True,
+        current_settings={
+            "upscale_by": 2.0,
+            "upscale_tile_width": 512,
+            "upscale_tile_height": 512,
+            "vram_profile": "16gb",
+        },
+    )
+    warnings = blueprint.get("warnings") or []
+    assert not any("low VRAM" in w for w in warnings)
+

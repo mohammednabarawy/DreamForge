@@ -26,6 +26,17 @@ def test_required_custom_node_pack_ids_for_upscale_mode():
     ]
 
 
+def test_required_custom_node_pack_ids_for_photo_restore():
+    assert required_custom_node_pack_ids(
+        studio_mode="edit",
+        edit_task="photo_restore",
+    ) == [
+        "comfyui_controlnet_aux",
+        "ComfyUI-Impact-Pack",
+        "ComfyUI-Impact-Subpack",
+    ]
+
+
 def test_missing_custom_node_pack_entries_when_directory_missing(monkeypatch):
     monkeypatch.setattr(
         "dreamforge_workflow_planner._custom_node_directory_present",

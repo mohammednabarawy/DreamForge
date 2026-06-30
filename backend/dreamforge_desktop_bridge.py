@@ -885,6 +885,7 @@ def cmd_ensure_creative_task_ready(params: dict) -> dict:
         studio_mode=str(studio_mode) if studio_mode else None,
         upscale_method=params.get("upscale_method"),
         performance=params.get("performance"),
+        edit_task=params.get("edit_task"),
         auto_download_tier_a=bool(params.get("auto_download_tier_a", True)),
         auto_download_tier_b=bool(params.get("auto_download_tier_b", False)),
         auto_install_nodes=bool(params.get("auto_install_nodes", False)),
@@ -1263,6 +1264,16 @@ def cmd_build_cli_argv(params: dict) -> dict:
     add("--use-comfy-server", params.get("use_comfy_server"))
     add("--upscale-image", params.get("upscale_image"))
     add("--upscale-method", params.get("upscale_method"))
+    add("--upscale-preset", params.get("upscale_preset"))
+    add("--upscale-by", params.get("upscale_by"))
+    add("--upscale-denoise", params.get("upscale_denoise"))
+    add("--upscale-tile-width", params.get("upscale_tile_width"))
+    add("--upscale-tile-height", params.get("upscale_tile_height"))
+    add("--upscale-tile-padding", params.get("upscale_tile_padding"))
+    add("--upscale-mask-blur", params.get("upscale_mask_blur"))
+    add("--upscale-seam-fix-mode", params.get("upscale_seam_fix_mode"))
+    add("--upscale-force-uniform-tiles", params.get("upscale_force_uniform_tiles"))
+    add("--upscale-tiled-decode", params.get("upscale_tiled_decode"))
     add("--edit-type", params.get("edit_type"))
     add("--edit-strength", params.get("edit_strength"))
     add("--qwen-edit-mode", params.get("qwen_edit_mode"))

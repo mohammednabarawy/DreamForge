@@ -565,6 +565,7 @@ export async function ensureCreativeTaskReady(args: {
   studio_mode?: string;
   upscale_method?: string | null;
   performance?: string | null;
+  edit_task?: string | null;
   auto_download_tier_a?: boolean;
   auto_download_tier_b?: boolean;
   auto_install_nodes?: boolean;
@@ -575,6 +576,7 @@ export async function ensureCreativeTaskReady(args: {
     studio_mode: args.studio_mode ?? null,
     upscale_method: args.upscale_method ?? null,
     performance: args.performance ?? null,
+    edit_task: args.edit_task ?? null,
     auto_download_tier_a: args.auto_download_tier_a ?? true,
     auto_download_tier_b: args.auto_download_tier_b ?? false,
     auto_install_nodes: args.auto_install_nodes ?? false,

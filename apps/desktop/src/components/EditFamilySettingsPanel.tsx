@@ -74,7 +74,7 @@ export function EditFamilySettingsPanel({
   const activeIntent = INPAINT_INTENTS.find((item) => item.id === inpaintIntent);
   const activeTask = normalizeEditTask(settings.edit_task);
   const visibleEditTasks = EDIT_TASKS.filter((item) =>
-    isInpaint ? item.id !== "global_edit" : item.id === "global_edit",
+    isInpaint ? item.id !== "global_edit" && item.id !== "photo_restore" : !item.inpaintOnly,
   );
 
   const applyInpaintIntent = (intent: typeof inpaintIntent) => {
@@ -87,9 +87,21 @@ export function EditFamilySettingsPanel({
 
   const applyEditTask = (task: EditTask) => {
     const item = EDIT_TASKS.find((entry) => entry.id === task);
-    const patch = patchForEditTask(task);
+    const patch = patchForEditTask(task, modelGallery, {
+      isInpaint,
+      hasMask: Boolean(settings.inpaint_mask_path),
+    });
     onChange({
       ...patch,
+      ...(task === "photo_restore" && !(settings.prompt ?? "").trim()
+        ? { prompt: "restore this old photo, high quality, detailed, photorealistic, sharp focus" }
+        : {}),
+      ...(task === "outfit_transfer" && !(settings.prompt ?? "").trim()
+        ? {
+            prompt:
+              "transfer the outfit from image 2 onto the person in image 1, preserve the face, pose, body shape, background, and lighting",
+          }
+        : {}),
       ...(isInpaint && item?.inpaintIntent
         ? {
             model: selectInpaintModelForIntent(
@@ -108,6 +120,15 @@ export function EditFamilySettingsPanel({
     settings.edit_strength == null
       ? "auto"
       : `${Math.round(settings.edit_strength * 100)}%`;
+  const outfitRegions = settings.outfit_transfer_regions ?? [];
+  const toggleOutfitRegion = (
+    region: NonNullable<GenerationSettings["outfit_transfer_regions"]>[number],
+  ) => {
+    const next = outfitRegions.includes(region)
+      ? outfitRegions.filter((item) => item !== region)
+      : [...outfitRegions, region];
+    onChange({ outfit_transfer_regions: next.length ? next : undefined });
+  };
 
   return (
     <div className="overflow-hidden rounded-md border border-[#4a4a4a] bg-[#353535] font-mono shadow-[0_2px_8px_rgba(0,0,0,0.35)]">
@@ -180,7 +201,103 @@ export function EditFamilySettingsPanel({
           </div>
         )}
 
-        {!isInpaint && (
+        {activeTask === "outfit_transfer" && (
+          <div className="space-y-1.5 rounded-md border border-[#4a4a4a]/70 bg-[#2a2a2a]/50 p-2">
+            <p className="text-[10px] font-medium text-[#aaaaaa]">Outfit transfer</p>
+            <p className="text-[9px] leading-snug text-[#777777]">
+              Add the outfit photo as a reference image. Edit mode uses Qwen multi-image
+              compose; Fix region with a mask uses Flux Fill for constrained clothing edits.
+            </p>
+            <div className="grid grid-cols-2 gap-1 text-[9px] text-[#999999]">
+              {(
+                [
+                  ["upper_body", "Upper body"],
+                  ["lower_body", "Lower body"],
+                  ["full_outfit", "Full outfit"],
+                  ["shoes_accessories", "Shoes/accessories"],
+                ] as const
+              ).map(([id, label]) => (
+                <label
+                  key={id}
+                  className="inline-flex items-center gap-1 rounded border border-[#4a4a4a]/60 px-1.5 py-1"
+                >
+                  <input
+                    type="checkbox"
+                    checked={outfitRegions.includes(id)}
+                    onChange={() => toggleOutfitRegion(id)}
+                    className="h-3 w-3 accent-[#6a9955]"
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {!isInpaint && activeTask === "photo_restore" && (
+          <div className="space-y-2 rounded-md border border-[#4a4a4a]/70 bg-[#2a2a2a]/50 p-2">
+            <p className="text-[10px] font-medium text-[#aaaaaa]">Photo restore</p>
+            <label className="block">
+              <FieldLabel hint="Depth structure guidance (keep low for faithful restore).">
+                Depth strength — {(settings.depth_strength ?? 0.15).toFixed(2)}
+              </FieldLabel>
+              <input
+                type="range"
+                min={0.05}
+                max={0.5}
+                step={0.01}
+                value={settings.depth_strength ?? 0.15}
+                onChange={(e) => onChange({ depth_strength: Number(e.target.value) })}
+                className="mt-1 w-full accent-[#6a9955]"
+              />
+            </label>
+            <label className="block">
+              <FieldLabel hint="Lineart edge guidance for scratches and detail.">
+                Lineart strength — {(settings.lineart_strength ?? 0.35).toFixed(2)}
+              </FieldLabel>
+              <input
+                type="range"
+                min={0.1}
+                max={0.8}
+                step={0.01}
+                value={settings.lineart_strength ?? 0.35}
+                onChange={(e) => onChange({ lineart_strength: Number(e.target.value) })}
+                className="mt-1 w-full accent-[#6a9955]"
+              />
+            </label>
+            <label className="inline-flex items-center gap-1.5 text-[10px] text-[#aaaaaa]">
+              <input
+                type="checkbox"
+                checked={Boolean(settings.face_preservation ?? true)}
+                onChange={(e) => onChange({ face_preservation: e.target.checked })}
+                className="h-3.5 w-3.5 accent-[#6a9955]"
+              />
+              Face detail pass (Impact Pack)
+            </label>
+            <label className="inline-flex items-center gap-1.5 text-[10px] text-[#aaaaaa]">
+              <input
+                type="checkbox"
+                checked={Boolean(settings.post_upscale_enabled)}
+                onChange={(e) =>
+                  onChange({
+                    post_upscale_enabled: e.target.checked,
+                    post_upscale: e.target.checked
+                      ? settings.post_upscale ?? "ultimate_sd_upscale"
+                      : undefined,
+                  })
+                }
+                className="h-3.5 w-3.5 accent-[#6a9955]"
+              />
+              Upscale after restore
+            </label>
+            <p className="text-[9px] leading-snug text-[#777777]">
+              Routes through SDXL + ControlNet Union (depth + lineart). Install depth/lineart
+              preprocessors and an SDXL checkpoint for best results.
+            </p>
+          </div>
+        )}
+
+        {!isInpaint && activeTask !== "photo_restore" && (
           <>
             <label className="inline-flex items-center gap-1.5 text-[11px] text-[#cccccc]">
               <input

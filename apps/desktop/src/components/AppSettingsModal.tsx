@@ -53,8 +53,18 @@ export function AppSettingsModal({
 }: Props) {
   if (!open) return null;
 
-  const activeProvider = agentProviders.find((p) => p.id === appConfig?.agent.provider);
-  const profileLabel = userStyleProfile?.enabled ? "Local profile" : "Local profile (memory off)";
+  const [civitaiKey, setCivitaiKey] = useState("");
+  const [agentProvider, setAgentProvider] = useState("ollama");
+  const [baseUrl, setBaseUrl] = useState("http://localhost:11434");
+  const [model, setModel] = useState("gemma3:4b");
+  const [customInstructions, setCustomInstructions] = useState("");
+  const [approvalRequired, setApprovalRequired] = useState(true);
+  const [autoEnhance, setAutoEnhance] = useState(false);
+  const [enhanceStrength, setEnhanceStrength] = useState<"balanced" | "minimal" | "rich">("balanced");
+  const [useFlufferizer, setUseFlufferizer] = useState(true);
+
+  const [pathCheckpoints, setPathCheckpoints] = useState("");
+  const [pathLoras, setPathLoras] = useState("");
 
   const [backendStatus, setBackendStatus] = useState<ComfyBackendStatus | null>(null);
   const [installingBackend, setInstallingBackend] = useState(false);
@@ -65,6 +75,10 @@ export function AppSettingsModal({
   const [repairBusy, setRepairBusy] = useState(false);
   const [repairMessage, setRepairMessage] = useState<string | null>(null);
   const [repairLog, setRepairLog] = useState<string | null>(null);
+  const [saveBusy, setSaveBusy] = useState(false);
+
+  const activeProvider = agentProviders.find((p) => p.id === agentProvider);
+  const profileLabel = userStyleProfile?.enabled ? "Local profile" : "Local profile (memory off)";
 
   useEffect(() => {
     if (open) {
@@ -77,6 +91,27 @@ export function AppSettingsModal({
         .catch(console.error);
     }
   }, [open]);
+
+  useEffect(() => {
+    if (open && appConfig) {
+      setAgentProvider(appConfig.agent.provider ?? "ollama");
+      setBaseUrl(appConfig.agent.base_url ?? "");
+      setModel(appConfig.agent.model ?? "");
+      setCustomInstructions(appConfig.agent.custom_instructions ?? "");
+      setApprovalRequired(appConfig.agent.approval_required !== false);
+      setAutoEnhance(Boolean(appConfig.ui.auto_enhance_on_generate));
+      setEnhanceStrength(appConfig.ui.enhance_strength ?? "balanced");
+      setUseFlufferizer(appConfig.ui.use_flufferizer !== false);
+      setCivitaiKey("");
+    }
+  }, [open, appConfig]);
+
+  useEffect(() => {
+    if (open && studioSettings) {
+      setPathCheckpoints(studioSettings.path_checkpoints ?? "");
+      setPathLoras(studioSettings.path_loras ?? "");
+    }
+  }, [open, studioSettings]);
 
   const handleSaveModelsFolder = async () => {
     setModelsPathBusy(true);
@@ -138,6 +173,57 @@ export function AppSettingsModal({
     }
   };
 
+  const handleTestConnection = async () => {
+    if (onTestAgentProvider) {
+      await onTestAgentProvider({
+        agent: {
+          provider: agentProvider,
+          base_url: baseUrl,
+          model: model,
+        }
+      });
+    }
+  };
+
+  const handleSaveAll = async () => {
+    setSaveBusy(true);
+    try {
+      const appPatch: DreamForgeAppConfigPatch = {
+        agent: {
+          provider: agentProvider,
+          base_url: baseUrl,
+          model: model,
+          custom_instructions: customInstructions,
+          approval_required: approvalRequired,
+        },
+        ui: {
+          auto_enhance_on_generate: autoEnhance,
+          enhance_strength: enhanceStrength,
+          use_flufferizer: useFlufferizer,
+        }
+      };
+      if (civitaiKey.trim()) {
+        appPatch.ui = {
+          ...appPatch.ui,
+          civitai_api_key: civitaiKey.trim(),
+        };
+      }
+      await onSaveAppConfig(appPatch);
+
+      if (onSaveStudioSettings) {
+        await onSaveStudioSettings({
+          path_checkpoints: pathCheckpoints,
+          path_loras: pathLoras,
+        });
+      }
+      onClose();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSaveBusy(false);
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
@@ -148,8 +234,8 @@ export function AppSettingsModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="flex max-h-[88vh] w-full max-w-lg flex-col rounded-xl border border-dfui-border bg-dfui-panel shadow-2xl">
-        <div className="flex shrink-0 items-center justify-between border-b border-dfui-border/50 px-4 py-3">
+      <div className="flex max-h-[88vh] w-full max-w-lg flex-col rounded-xl border border-dfui-border bg-dfui-panel shadow-2xl overflow-hidden">
+        <div className="flex shrink-0 items-center justify-between border-b border-dfui-border/50 px-4 py-3 bg-dfui-surface/20">
           <div>
             <h2 id="app-settings-title" className="text-sm font-semibold text-dfui-fg">
               App settings
@@ -165,32 +251,21 @@ export function AppSettingsModal({
             <X size={18} />
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 bg-dfui-panel/40">
           <div className="space-y-4">
             {appConfig && (
-              <section className="space-y-2">
-                <p className="text-[10px] font-medium uppercase tracking-wide text-dfui-muted">
+              <section className="space-y-2 rounded-lg border border-dfui-border/30 bg-dfui-bg/10 p-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-dfui-muted">
                   Discover & downloads
                 </p>
                 <label className="block">
-                  <span className="text-[10px] text-dfui-tertiary">Civitai API key</span>
-                  <div className="mt-0.5 flex items-center gap-2 rounded-md border border-dfui-border/50 bg-dfui-bg/30 px-2 py-1.5">
+                  <span className="text-[10px] text-dfui-tertiary font-medium">Civitai API key</span>
+                  <div className="mt-1 flex items-center gap-2 rounded-md border border-dfui-border/50 bg-dfui-bg/30 px-2.5 py-2">
                     <KeyRound size={12} className="text-dfui-muted" />
                     <input
-                      key={
-                        appConfig.ui.civitai_api_key_configured
-                          ? `civitai-configured-${appConfig.ui.civitai_api_key_tail ?? ""}`
-                          : "civitai-empty"
-                      }
                       type="password"
-                      defaultValue=""
-                      onBlur={(e) => {
-                        const next = e.target.value.trim();
-                        if (!next && appConfig.ui.civitai_api_key_configured) return;
-                        void onSaveAppConfig({
-                          ui: { civitai_api_key: next },
-                        });
-                      }}
+                      value={civitaiKey}
+                      onChange={(e) => setCivitaiKey(e.target.value)}
                       className="min-w-0 flex-1 bg-transparent font-mono text-[10px] text-dfui-fg outline-none placeholder:text-dfui-tertiary"
                       placeholder={
                         appConfig.ui.civitai_api_key_configured
@@ -203,43 +278,45 @@ export function AppSettingsModal({
               </section>
             )}
 
-            <section className="space-y-2 rounded-lg border border-dfui-border/50 bg-dfui-bg/20 p-2.5">
-              <p className="text-[10px] font-medium uppercase tracking-wide text-dfui-muted">
+            <section className="space-y-3 rounded-lg border border-dfui-border/50 bg-dfui-bg/20 p-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-dfui-muted">
                 Models storage
               </p>
-              <p className="text-[10px] text-dfui-tertiary">
+              <p className="text-[10px] text-dfui-tertiary leading-relaxed">
                 ComfyUI-compatible folder for checkpoints, LoRAs, VAE, and diffusion models.
               </p>
-              <label className="flex items-center gap-2 text-[11px] text-dfui-secondary">
-                <input
-                  type="radio"
-                  checked={modelsSource === "managed"}
-                  onChange={() => setModelsSource("managed")}
-                  className="accent-dfui-accent"
-                />
-                Managed folder (inside DreamForge data)
-              </label>
-              <label className="flex items-center gap-2 text-[11px] text-dfui-secondary">
-                <input
-                  type="radio"
-                  checked={modelsSource === "external"}
-                  onChange={() => setModelsSource("external")}
-                  className="accent-dfui-accent"
-                />
-                Existing ComfyUI models folder
-              </label>
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-[11px] text-dfui-secondary cursor-pointer">
+                  <input
+                    type="radio"
+                    checked={modelsSource === "managed"}
+                    onChange={() => setModelsSource("managed")}
+                    className="accent-dfui-accent"
+                  />
+                  <span>Managed folder (inside DreamForge data)</span>
+                </label>
+                <label className="flex items-center gap-2 text-[11px] text-dfui-secondary cursor-pointer">
+                  <input
+                    type="radio"
+                    checked={modelsSource === "external"}
+                    onChange={() => setModelsSource("external")}
+                    className="accent-dfui-accent"
+                  />
+                  <span>Existing ComfyUI models folder</span>
+                </label>
+              </div>
               {modelsSource === "external" && (
-                <div className="flex gap-2">
+                <div className="flex gap-2 mt-1">
                   <input
                     type="text"
                     value={modelsRoot}
                     onChange={(e) => setModelsRoot(e.target.value)}
-                    className="df-input min-w-0 flex-1 text-[10px]"
+                    className="df-input min-w-0 flex-1 text-[10px] bg-black/25"
                     placeholder="Path to models folder"
                   />
                   <button
                     type="button"
-                    className="df-btn df-btn-secondary shrink-0 px-2"
+                    className="df-btn df-btn-secondary shrink-0 px-3"
                     onClick={() => void pickFolder().then((p) => p && setModelsRoot(p))}
                   >
                     <FolderOpen className="h-3.5 w-3.5" />
@@ -247,29 +324,29 @@ export function AppSettingsModal({
                 </div>
               )}
               {modelsSource === "managed" && modelsRoot && (
-                <p className="truncate font-mono text-[10px] text-dfui-muted">{modelsRoot}</p>
+                <p className="truncate font-mono text-[10px] text-dfui-muted bg-black/10 px-2 py-1.5 rounded">{modelsRoot}</p>
               )}
               <button
                 type="button"
-                className="df-btn df-btn-secondary w-full text-[11px]"
+                className="df-btn df-btn-secondary w-full text-[11px] py-2 mt-1 font-medium"
                 disabled={modelsPathBusy}
                 onClick={() => void handleSaveModelsFolder()}
               >
                 {modelsPathBusy ? "Saving…" : "Apply models folder"}
               </button>
               {modelsPathMessage && (
-                <p className="text-[10px] text-dfui-secondary">{modelsPathMessage}</p>
+                <p className="text-[10px] text-dfui-secondary bg-dfui-surface/40 px-2.5 py-1.5 rounded border border-dfui-border/30">{modelsPathMessage}</p>
               )}
             </section>
 
             {appConfig && (
-              <section className="space-y-2 rounded-lg border border-dfui-accent/25 bg-dfui-accent/5 p-2.5">
+              <section className="space-y-3 rounded-lg border border-dfui-accent/20 bg-dfui-accent/5 p-3.5">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <Bot size={14} className="text-dfui-accent" />
+                    <Bot size={15} className="text-dfui-accent" />
                     <div>
-                      <p className="text-[10px] font-medium uppercase tracking-wide text-dfui-muted">
-                        Agent runtime
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-dfui-muted">
+                        Agent brain (LLM)
                       </p>
                       <p className="text-[10px] text-dfui-tertiary">
                         Optional local planner; review changes before running
@@ -278,7 +355,7 @@ export function AppSettingsModal({
                   </div>
                   {agentProviderTest && (
                     <span
-                      className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-1 text-[9px] ${
+                      className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[9px] font-medium ${
                         agentProviderTest.ok
                           ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"
                           : "border-amber-400/30 bg-amber-400/10 text-amber-200"
@@ -294,20 +371,19 @@ export function AppSettingsModal({
                   )}
                 </div>
                 <label className="block">
-                  <span className="text-[10px] text-dfui-tertiary">Runtime</span>
+                  <span className="text-[10px] text-dfui-tertiary font-medium">Provider</span>
                   <select
-                    value={appConfig.agent.provider}
+                    value={agentProvider}
                     onChange={(e) => {
-                      const preset = agentProviders.find((p) => p.id === e.target.value);
-                      void onSaveAppConfig({
-                        agent: {
-                          provider: e.target.value,
-                          base_url: preset?.base_url ?? appConfig.agent.base_url,
-                          model: preset?.default_model ?? appConfig.agent.model,
-                        },
-                      });
+                      const val = e.target.value;
+                      setAgentProvider(val);
+                      const preset = agentProviders.find((p) => p.id === val);
+                      if (preset) {
+                        setBaseUrl(preset.base_url ?? "");
+                        setModel(preset.default_model ?? "");
+                      }
                     }}
-                    className="df-select mt-0.5 w-full px-2.5 py-2 text-xs"
+                    className="df-select mt-1 w-full px-2.5 py-2 text-xs bg-dfui-bg/40"
                   >
                     {agentProviders.map((provider) => (
                       <option key={provider.id} value={provider.id}>
@@ -318,72 +394,54 @@ export function AppSettingsModal({
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   <label className="block">
-                    <span className="text-[10px] text-dfui-tertiary">Base URL</span>
+                    <span className="text-[10px] text-dfui-tertiary font-medium">Base URL</span>
                     <input
-                      defaultValue={appConfig.agent.base_url}
-                      onBlur={(e) =>
-                        void onSaveAppConfig({
-                          agent: { base_url: e.target.value },
-                        })
-                      }
-                      className="df-input mt-0.5 w-full px-2 py-1.5 font-mono text-[10px]"
+                      value={baseUrl}
+                      onChange={(e) => setBaseUrl(e.target.value)}
+                      className="df-input mt-1 w-full px-2 py-1.5 font-mono text-[10px]"
                     />
                   </label>
                   <label className="block">
-                    <span className="text-[10px] text-dfui-tertiary">Model</span>
+                    <span className="text-[10px] text-dfui-tertiary font-medium">Model</span>
                     <input
-                      defaultValue={appConfig.agent.model}
-                      onBlur={(e) =>
-                        void onSaveAppConfig({
-                          agent: { model: e.target.value },
-                        })
-                      }
-                      className="df-input mt-0.5 w-full px-2 py-1.5 font-mono text-[10px]"
+                      value={model}
+                      onChange={(e) => setModel(e.target.value)}
+                      className="df-input mt-1 w-full px-2 py-1.5 font-mono text-[10px]"
                     />
                   </label>
                 </div>
                 <label className="block">
-                  <span className="text-[10px] text-dfui-tertiary">Agent instructions</span>
+                  <span className="text-[10px] text-dfui-tertiary font-medium">Agent instructions</span>
                   <textarea
                     rows={2}
-                    defaultValue={appConfig.agent.custom_instructions}
-                    onBlur={(e) =>
-                      void onSaveAppConfig({
-                        agent: { custom_instructions: e.target.value },
-                      })
-                    }
-                    className="df-input mt-0.5 w-full resize-none px-2 py-1.5 text-[10px]"
+                    value={customInstructions}
+                    onChange={(e) => setCustomInstructions(e.target.value)}
+                    className="df-input mt-1 w-full resize-none px-2 py-1.5 text-[10px]"
                     placeholder="Prefer Arabic typography workflows, ask before expensive runs…"
                   />
                 </label>
-                <label className="flex items-start gap-2 text-[10px] text-dfui-muted">
-                  <input
-                    type="checkbox"
-                    checked={appConfig.agent.approval_required}
-                    onChange={(e) =>
-                      void onSaveAppConfig({
-                        agent: { approval_required: e.target.checked },
-                      })
-                    }
-                    className="mt-0.5 accent-dfui-accent"
-                  />
-                  Approve agent workflow changes
-                </label>
-                <label className="flex items-start gap-2 text-[10px] text-dfui-muted">
-                  <input
-                    type="checkbox"
-                    checked={Boolean(appConfig.ui.auto_enhance_on_generate)}
-                    onChange={(e) =>
-                      void onSaveAppConfig({
-                        ui: { auto_enhance_on_generate: e.target.checked },
-                      })
-                    }
-                    className="mt-0.5 accent-dfui-accent"
-                  />
-                  Auto-enhance prompts on Generate (Flux, SD3, Qwen, HiDream — uses local brain)
-                </label>
-                <div className="space-y-1 border-t border-dfui-border/30 pt-2">
-                  <span className="text-[10px] text-dfui-tertiary">Enhance strength (wand + auto-enhance)</span>
+                <div className="space-y-2 pt-1">
+                  <label className="flex items-start gap-2 text-[10px] text-dfui-secondary cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={approvalRequired}
+                      onChange={(e) => setApprovalRequired(e.target.checked)}
+                      className="mt-0.5 accent-dfui-accent"
+                    />
+                    <span>Approve agent workflow changes before execution</span>
+                  </label>
+                  <label className="flex items-start gap-2 text-[10px] text-dfui-secondary cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={autoEnhance}
+                      onChange={(e) => setAutoEnhance(e.target.checked)}
+                      className="mt-0.5 accent-dfui-accent"
+                    />
+                    <span>Auto-enhance prompts on Generate (uses LLM)</span>
+                  </label>
+                </div>
+                <div className="space-y-1.5 border-t border-dfui-border/30 pt-2.5">
+                  <span className="text-[10px] text-dfui-tertiary font-medium">Enhance strength (wand + auto-enhance)</span>
                   <div className="flex flex-wrap gap-1">
                     {(
                       [
@@ -395,11 +453,9 @@ export function AppSettingsModal({
                       <button
                         key={id}
                         type="button"
-                        onClick={() =>
-                          void onSaveAppConfig({ ui: { enhance_strength: id } })
-                        }
-                        className={`rounded-md border px-2 py-1 text-[10px] transition-colors ${
-                          (appConfig.ui.enhance_strength ?? "balanced") === id
+                        onClick={() => setEnhanceStrength(id)}
+                        className={`rounded-md border px-3 py-1 text-[10px] transition-colors ${
+                          enhanceStrength === id
                             ? "border-dfui-accent/50 bg-dfui-accent/15 text-dfui-accent"
                             : "border-dfui-border/50 text-dfui-muted hover:border-dfui-accent/30"
                         }`}
@@ -409,22 +465,18 @@ export function AppSettingsModal({
                     ))}
                   </div>
                 </div>
-                <label className="flex items-start gap-2 text-[10px] text-dfui-muted">
+                <label className="flex items-start gap-2 text-[10px] text-dfui-secondary cursor-pointer border-t border-dfui-border/30 pt-2.5">
                   <input
                     type="checkbox"
-                    checked={appConfig.ui.use_flufferizer !== false}
-                    onChange={(e) =>
-                      void onSaveAppConfig({
-                        ui: { use_flufferizer: e.target.checked },
-                      })
-                    }
+                    checked={useFlufferizer}
+                    onChange={(e) => setUseFlufferizer(e.target.checked)}
                     className="mt-0.5 accent-dfui-accent"
                   />
-                  Use Flufferizer for SDXL / legacy models (Fooocus-style tag expansion)
+                  <span>Use Flufferizer for SDXL / legacy models (Fooocus-style tags)</span>
                 </label>
-                <div className="flex items-center justify-between gap-2 border-t border-dfui-border/30 pt-2">
-                  <span className="inline-flex items-center gap-1 text-[10px] text-dfui-tertiary">
-                    <ShieldCheck size={12} />
+                <div className="flex items-center justify-between gap-2 border-t border-dfui-border/30 pt-2.5">
+                  <span className="inline-flex items-center gap-1 text-[10px] text-dfui-tertiary font-medium">
+                    <ShieldCheck size={12} className="text-dfui-accent/60" />
                     {activeProvider?.id === "embedded"
                       ? "Embedded local model"
                       : "Local server runtime"}
@@ -432,14 +484,14 @@ export function AppSettingsModal({
                   <button
                     type="button"
                     disabled={agentProviderBusy}
-                    onClick={() => void onTestAgentProvider?.()}
-                    className="rounded-md border border-dfui-accent/40 bg-dfui-accent/10 px-2 py-1 text-[10px] font-medium text-dfui-accent hover:bg-dfui-accent/20 disabled:opacity-50"
+                    onClick={() => void handleTestConnection()}
+                    className="rounded-md border border-dfui-accent/40 bg-dfui-accent/10 px-2.5 py-1 text-[10px] font-semibold text-dfui-accent hover:bg-dfui-accent/20 disabled:opacity-50 transition-colors"
                   >
                     {agentProviderBusy ? "Testing…" : "Test connection"}
                   </button>
                 </div>
                 {agentProviderTest?.detail && (
-                  <p className="break-words font-mono text-[9px] leading-snug text-dfui-tertiary">
+                  <p className="break-words font-mono text-[9px] leading-snug text-dfui-tertiary bg-black/20 p-2 rounded border border-dfui-border/25">
                     {agentProviderTest.detail}
                   </p>
                 )}
@@ -447,12 +499,12 @@ export function AppSettingsModal({
             )}
 
             {appConfig && backendStatus && (
-              <section className="space-y-2 rounded-lg border border-dfui-border/40 bg-dfui-surface/50 p-2.5">
+              <section className="space-y-3 rounded-lg border border-dfui-border/40 bg-dfui-surface/50 p-3">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <DownloadCloud size={14} className="text-dfui-muted" />
+                    <DownloadCloud size={15} className="text-dfui-muted" />
                     <div>
-                      <p className="text-[10px] font-medium uppercase tracking-wide text-dfui-fg">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-dfui-fg">
                         ComfyUI Backend
                       </p>
                       <p className="text-[10px] text-dfui-tertiary">
@@ -461,7 +513,7 @@ export function AppSettingsModal({
                     </div>
                   </div>
                   <span
-                    className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-1 text-[9px] ${
+                    className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[9px] font-medium ${
                       backendStatus.installed && !backendStatus.needs_update
                         ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"
                         : "border-amber-400/30 bg-amber-400/10 text-amber-200"
@@ -489,7 +541,7 @@ export function AppSettingsModal({
                       type="button"
                       disabled={installingBackend || repairBusy}
                       onClick={handleInstallBackend}
-                      className="inline-flex items-center gap-1 rounded-md bg-dfui-accent px-3 py-1.5 text-[11px] font-medium text-white transition hover:bg-dfui-accent/80 disabled:opacity-50"
+                      className="inline-flex items-center gap-1.5 rounded-md bg-dfui-accent px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-dfui-accent/80 disabled:opacity-50 shadow"
                     >
                       {installingBackend ? (
                         <>
@@ -505,7 +557,7 @@ export function AppSettingsModal({
                     type="button"
                     disabled={repairBusy || installingBackend}
                     onClick={() => void handleRepairInstallation(false)}
-                    className="inline-flex items-center gap-1 rounded-md border border-dfui-border/60 bg-dfui-bg/40 px-3 py-1.5 text-[11px] text-dfui-secondary transition hover:border-dfui-accent/40 disabled:opacity-50"
+                    className="inline-flex items-center gap-1 rounded-md border border-dfui-border/60 bg-dfui-bg/40 px-3 py-1.5 text-[11px] font-medium text-dfui-secondary transition hover:border-dfui-accent/40 disabled:opacity-50"
                   >
                     {repairBusy ? (
                       <>
@@ -520,14 +572,14 @@ export function AppSettingsModal({
                     type="button"
                     disabled={repairBusy || installingBackend}
                     onClick={() => void handleRepairInstallation(true)}
-                    className="inline-flex items-center gap-1 rounded-md border border-amber-400/30 bg-amber-400/10 px-3 py-1.5 text-[11px] text-amber-100/90 transition hover:bg-amber-400/20 disabled:opacity-50"
+                    className="inline-flex items-center gap-1 rounded-md border border-amber-400/30 bg-amber-400/10 px-3 py-1.5 text-[11px] font-medium text-amber-100/90 transition hover:bg-amber-400/20 disabled:opacity-50"
                     title="Clears pip skip markers and re-runs all setup steps"
                   >
                     Full repair
                   </button>
                 </div>
                 {repairMessage && (
-                  <p className="text-[10px] text-dfui-tertiary">{repairMessage}</p>
+                  <p className="text-[10px] text-dfui-secondary bg-dfui-surface/40 p-2 rounded border border-dfui-border/30">{repairMessage}</p>
                 )}
                 {repairLog && (
                   <pre className="max-h-28 overflow-auto rounded-md border border-dfui-border/30 bg-black/20 p-2 font-mono text-[9px] text-dfui-muted whitespace-pre-wrap">
@@ -538,17 +590,17 @@ export function AppSettingsModal({
             )}
 
             {userStyleProfile && onUserStyleMemoryEnabledChange && (
-              <section className="space-y-2 rounded-lg border border-dfui-border/50 bg-dfui-bg/30 p-2.5">
+              <section className="space-y-3 rounded-lg border border-dfui-border/50 bg-dfui-bg/30 p-3">
                 <div className="flex items-center justify-between gap-2">
                   <div>
-                    <p className="text-[10px] font-medium uppercase tracking-wide text-dfui-muted">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-dfui-muted">
                       Local style memory
                     </p>
                     <p className="text-[10px] text-dfui-tertiary">
                       Opt-in preferences stored on this machine only
                     </p>
                   </div>
-                  <label className="inline-flex items-center gap-1.5 text-[10px] text-dfui-secondary">
+                  <label className="inline-flex items-center gap-1.5 text-[10px] text-dfui-secondary cursor-pointer">
                     <input
                       type="checkbox"
                       checked={userStyleProfile.enabled}
@@ -557,7 +609,7 @@ export function AppSettingsModal({
                       }
                       className="accent-dfui-accent"
                     />
-                    Enabled
+                    <span>Enabled</span>
                   </label>
                 </div>
                 <p className="text-[10px] text-dfui-tertiary">
@@ -568,7 +620,7 @@ export function AppSettingsModal({
                     : ""}
                 </p>
                 {userStyleProfilePath && (
-                  <p className="truncate font-mono text-[9px] text-dfui-muted">
+                  <p className="truncate font-mono text-[9px] text-dfui-muted bg-black/10 px-2 py-1 rounded">
                     {userStyleProfilePath}
                   </p>
                 )}
@@ -577,7 +629,7 @@ export function AppSettingsModal({
                     <button
                       type="button"
                       onClick={() => void onExportUserStyleMemory()}
-                      className="rounded-md border border-dfui-border/60 px-2 py-1 text-[10px] text-dfui-secondary hover:border-dfui-accent/40"
+                      className="rounded-md border border-dfui-border/60 px-2.5 py-1 text-[10px] text-dfui-secondary hover:border-dfui-accent/40 font-medium transition-colors"
                     >
                       Export JSON
                     </button>
@@ -586,7 +638,7 @@ export function AppSettingsModal({
                     <button
                       type="button"
                       onClick={() => void onClearUserStyleMemory()}
-                      className="rounded-md border border-amber-400/30 px-2 py-1 text-[10px] text-amber-200 hover:border-amber-300/50"
+                      className="rounded-md border border-amber-400/30 px-2.5 py-1 text-[10px] text-amber-200 hover:border-amber-300/50 font-medium transition-colors"
                     >
                       Clear memory
                     </button>
@@ -595,38 +647,56 @@ export function AppSettingsModal({
               </section>
             )}
 
-            {onSaveStudioSettings && studioSettings && (
-              <section className="space-y-2 rounded-lg border border-dfui-border/40 p-2.5">
-                <p className="text-[10px] font-medium uppercase tracking-wide text-dfui-muted">
+            {studioSettings && (
+              <section className="space-y-3 rounded-lg border border-dfui-border/40 p-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-dfui-muted">
                   Model paths (saved to config)
                 </p>
                 <label className="block">
-                  <span className="text-[10px] text-dfui-tertiary">Checkpoints</span>
+                  <span className="text-[10px] text-dfui-tertiary font-medium">Checkpoints</span>
                   <textarea
                     rows={2}
-                    defaultValue={studioSettings.path_checkpoints ?? ""}
-                    onBlur={(e) =>
-                      void onSaveStudioSettings({
-                        path_checkpoints: e.target.value,
-                      })
-                    }
-                    className="df-input mt-0.5 w-full font-mono text-[10px]"
+                    value={pathCheckpoints}
+                    onChange={(e) => setPathCheckpoints(e.target.value)}
+                    className="df-input mt-1 w-full font-mono text-[10px]"
                   />
                 </label>
                 <label className="block">
-                  <span className="text-[10px] text-dfui-tertiary">LoRAs</span>
+                  <span className="text-[10px] text-dfui-tertiary font-medium">LoRAs</span>
                   <textarea
                     rows={2}
-                    defaultValue={studioSettings.path_loras ?? ""}
-                    onBlur={(e) =>
-                      void onSaveStudioSettings({ path_loras: e.target.value })
-                    }
-                    className="df-input mt-0.5 w-full font-mono text-[10px]"
+                    value={pathLoras}
+                    onChange={(e) => setPathLoras(e.target.value)}
+                    className="df-input mt-1 w-full font-mono text-[10px]"
                   />
                 </label>
               </section>
             )}
           </div>
+        </div>
+        <div className="flex shrink-0 items-center justify-end gap-2 border-t border-dfui-border/50 px-4 py-3 bg-dfui-surface/30">
+          <button
+            type="button"
+            onClick={onClose}
+            className="df-btn df-btn-secondary px-4 py-2 text-xs"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={saveBusy}
+            onClick={handleSaveAll}
+            className="inline-flex items-center gap-1.5 rounded-md bg-dfui-accent hover:bg-dfui-accent/80 px-4 py-2 text-xs font-semibold text-white shadow transition-colors disabled:opacity-50"
+          >
+            {saveBusy ? (
+              <>
+                <Loader2 size={12} className="animate-spin" />
+                Saving...
+              </>
+            ) : (
+              "Save changes"
+            )}
+          </button>
         </div>
       </div>
     </div>

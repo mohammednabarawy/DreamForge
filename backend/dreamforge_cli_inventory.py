@@ -189,6 +189,8 @@ def resolve_model_name(category, model_name, inventory=None):
     """Resolve a model filename/stem/relative path inside an inventory category."""
     if not model_name:
         return None
+    if not isinstance(model_name, str):
+        model_name = str(model_name)
     if inventory is None:
         inventory = list_model_inventory()
     models = inventory["categories"].get(category, [])

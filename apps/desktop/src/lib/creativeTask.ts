@@ -9,10 +9,13 @@ import {
 import {
   buildEditRoutingPatch,
   DEFAULT_FLUX_KONTEXT_EDIT_MODEL,
+  DEFAULT_QWEN_EDIT_MODEL,
   isEditCapableModel,
   isQwenEditModel,
   selectFluxKontextEditModel,
+  selectQwenEditModel,
 } from "./editModel";
+import { isPhotoRestoreTask, patchForPhotoRestoreTask } from "./photoRestore";
 import { ideogram4SettingsDefaults } from "./ideogram4Ui";
 import { qwenEdit2511LightningPatch } from "./qwenEditDefaults";
 import {
@@ -90,6 +93,50 @@ export function enforceEditJobSettings(
   advancedMode?: boolean,
 ): GenerationSettings {
   if (studioMode !== "edit") return settings;
+  if (isPhotoRestoreTask(settings)) {
+    const restorePatch = patchForPhotoRestoreTask(settings, gallery);
+    return {
+      ...settings,
+      ...restorePatch,
+      upscale_image: undefined,
+      upscale_method: undefined,
+      inpaint_mask_path: undefined,
+    };
+  }
+  if ((settings.edit_task ?? "").toLowerCase() === "outfit_transfer") {
+    const hasMask = Boolean(settings.inpaint_mask_path?.trim());
+    if (hasMask) {
+      return {
+        ...settings,
+        model:
+          selectCuratedInpaintModel(gallery) ||
+          settings.model ||
+          DEFAULT_FLUX_FILL_MODEL,
+        style: "image_edit",
+        edit_type: "inpaint",
+        cn_selection: "Custom...",
+        cn_type: "inpaint",
+        inpaint_intent: "modify_content",
+        edit_strength: settings.edit_strength ?? 1,
+        upscale_image: undefined,
+        upscale_method: undefined,
+      };
+    }
+    const qwenPatch = qwenEdit2511LightningPatch();
+    const requestedQwenMode = (settings.qwen_edit_mode ?? "").trim().toLowerCase();
+    return {
+      ...settings,
+      ...qwenPatch,
+      model: selectQwenEditModel(gallery) || DEFAULT_QWEN_EDIT_MODEL,
+      qwen_edit_mode:
+        requestedQwenMode && requestedQwenMode !== "auto"
+          ? settings.qwen_edit_mode
+          : "plus",
+      upscale_image: undefined,
+      upscale_method: undefined,
+      inpaint_mask_path: undefined,
+    };
+  }
   const current = gallery.find((item) => item.engine_name === settings.model);
   const defaultModel =
     selectFluxKontextEditModel(gallery) || DEFAULT_FLUX_KONTEXT_EDIT_MODEL;

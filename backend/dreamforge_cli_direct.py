@@ -115,6 +115,16 @@ def build_parser():
     )
     parser.add_argument("--upscale-image", default=None, help="Image path to upscale")
     parser.add_argument("--upscale-method", default="2x", help="Upscale method passed to DreamForge")
+    parser.add_argument("--upscale-preset", default=None, help="Named Enhance preset")
+    parser.add_argument("--upscale-by", type=float, default=None, help="Ultimate SD Upscale scale factor")
+    parser.add_argument("--upscale-denoise", type=float, default=None, help="Ultimate SD Upscale denoise")
+    parser.add_argument("--upscale-tile-width", type=int, default=None, help="Ultimate SD Upscale tile width")
+    parser.add_argument("--upscale-tile-height", type=int, default=None, help="Ultimate SD Upscale tile height")
+    parser.add_argument("--upscale-tile-padding", type=int, default=None, help="Ultimate SD Upscale tile padding")
+    parser.add_argument("--upscale-mask-blur", type=int, default=None, help="Ultimate SD Upscale mask blur")
+    parser.add_argument("--upscale-seam-fix-mode", default=None, help="Ultimate SD Upscale seam fix mode")
+    parser.add_argument("--upscale-force-uniform-tiles", action="store_true", help="Force uniform Ultimate SD Upscale tiles")
+    parser.add_argument("--upscale-tiled-decode", action="store_true", help="Use tiled VAE decode for upscale")
     parser.add_argument("--edit-type", default="auto", choices=["auto", "kontext", "inpaint", "img2img", "qwen_edit", "outpaint"], help="Type of image edit to perform")
     parser.add_argument("--edit-strength", type=float, default=None, help="Image edit denoise/strength, 0.0 preserves more and 1.0 changes more")
     parser.add_argument(
@@ -630,13 +640,18 @@ def _apply_generation_recipe_settings(settings: dict, model: dict, job) -> dict:
 
 def build_plan(base_args, data=None):
     job, model, prompt, negative, width, height, brand_kit = _compile_job(base_args, data)
+    from dreamforge_upscale_presets import apply_upscale_preset_to_job
+
+    for _preset_key, _preset_val in apply_upscale_preset_to_job(job).items():
+        setattr(job, _preset_key, _preset_val)
     if getattr(job, "edit_task", None):
         from dreamforge_edit_tasks import apply_edit_task_defaults_to_job
 
+        task_name = str(getattr(job, "edit_task", "") or "").strip().lower()
         apply_edit_task_defaults_to_job(
             job,
             mode="edit"
-            if str(getattr(job, "edit_task", "") or "").lower() == "global_edit"
+            if task_name in {"global_edit", "photo_restore", "outfit_transfer"}
             else "inpaint",
         )
     job_settings = vars(job).copy()
@@ -718,7 +733,11 @@ def build_plan(base_args, data=None):
             current_settings.setdefault("model", model.get("engine_name") or model.get("name"))
         has_image = bool(getattr(job, "input_image", None) or getattr(job, "upscale_image", None))
         has_mask = bool(getattr(job, "inpaint_mask_path", None))
-        has_refs = bool(getattr(job, "reference_images", None) or getattr(job, "control_images", None))
+        has_refs = bool(
+            getattr(job, "reference_images", None)
+            or getattr(job, "control_images", None)
+            or getattr(job, "references", None)
+        )
         operations = resolve_operations_from_intent(
             prompt,
             has_image=has_image,
@@ -787,6 +806,12 @@ def build_plan(base_args, data=None):
         "face_preservation": getattr(job, "face_preservation", None),
         "upscale_image": getattr(job, "upscale_image", None),
         "upscale_method": getattr(job, "upscale_method", None),
+        "upscale_preset": getattr(job, "upscale_preset", None),
+        "upscale_by": getattr(job, "upscale_by", None),
+        "upscale_denoise": getattr(job, "upscale_denoise", None),
+        "upscale_tile_width": getattr(job, "upscale_tile_width", None),
+        "upscale_tile_height": getattr(job, "upscale_tile_height", None),
+        "upscale_tile_padding": getattr(job, "upscale_tile_padding", None),
         "cn_selection": getattr(job, "cn_selection", None),
         "cn_type": getattr(job, "cn_type", None),
         "workflow_mode": getattr(job, "workflow_mode", None),
@@ -832,11 +857,12 @@ def build_plan(base_args, data=None):
         task_defaults = {}
     inpaint_context = _build_inpaint_context_for_plan(job, mode)
     inpaint_missing, inpaint_warnings = _inpaint_plan_readiness(inpaint_context)
-    if inpaint_warnings:
-        setup_warnings = list(setup_warnings) + inpaint_warnings
+    task_missing, task_warnings = _task_plan_readiness(job)
+    if inpaint_warnings or task_warnings:
+        setup_warnings = list(setup_warnings) + inpaint_warnings + task_warnings
     blueprint_readiness = dict((workflow_blueprint or {}).get("readiness") or {})
     missing_inputs = list(blueprint_readiness.get("missing_inputs") or [])
-    for item in inpaint_missing:
+    for item in inpaint_missing + task_missing:
         if item not in missing_inputs:
             missing_inputs.append(item)
     if missing_inputs:
@@ -848,6 +874,7 @@ def build_plan(base_args, data=None):
         len(missing_deps) == 0
         and bool(blueprint_readiness.get("ready", (workflow_blueprint or {}).get("readiness", {}).get("ready", True)))
         and not inpaint_missing
+        and not task_missing
     )
     plan_edit_strength = getattr(job, "edit_strength", None)
     if plan_edit_strength is not None and mode == "inpaint":
@@ -952,6 +979,16 @@ def _inpaint_plan_readiness(
     elif status == "error":
         warnings.append(str(inpaint_context.get("message") or "Inpaint context unavailable"))
     return missing, warnings
+
+
+def _task_plan_readiness(job) -> tuple[list[str], list[str]]:
+    if str(getattr(job, "edit_task", "") or "").strip().lower() != "outfit_transfer":
+        return [], []
+    from dreamforge_edit_tasks import outfit_transfer_has_reference
+
+    if outfit_transfer_has_reference(job):
+        return [], []
+    return ["reference_images"], ["Outfit Transfer needs an outfit reference image."]
 
 
 def _build_inpaint_context_for_plan(job, mode: str) -> dict[str, Any] | None:

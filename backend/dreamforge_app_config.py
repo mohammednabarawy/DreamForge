@@ -326,6 +326,18 @@ def _merge_allowed(base: dict[str, Any], incoming: dict[str, Any]) -> dict[str, 
     merged = copy.deepcopy(base)
     if not isinstance(incoming, dict):
         return merged
+
+    # Detect provider change and reset base_url and model to defaults if changing
+    base_agent = base.get("agent", {})
+    incoming_agent = incoming.get("agent", {})
+    if isinstance(base_agent, dict) and isinstance(incoming_agent, dict):
+        base_provider = base_agent.get("provider")
+        incoming_provider = incoming_agent.get("provider")
+        if incoming_provider and base_provider and incoming_provider != base_provider:
+            merged.setdefault("agent", {})
+            merged["agent"].pop("base_url", None)
+            merged["agent"].pop("model", None)
+
     for root in _ALLOWED_ROOTS:
         if not isinstance(incoming.get(root), dict):
             continue

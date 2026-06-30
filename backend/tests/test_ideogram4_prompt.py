@@ -2,6 +2,8 @@ import json
 import os
 import sys
 
+import pytest
+
 BACKEND_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BACKEND_ROOT not in sys.path:
     sys.path.insert(0, BACKEND_ROOT)
@@ -56,9 +58,27 @@ def test_build_magic_prompt_messages_uses_aspect_ratio_placeholder():
     assert "{{width}}" not in user
 
 
-def test_brain_system_prompt_uses_slim_for_embedded():
+def test_brain_system_prompt_always_uses_full_v1_template():
     full, user = build_magic_prompt_messages("cat", 1024, 1024)
-    assert _brain_system_prompt("embedded", full, user) == _IDEOGRAM4_SLIM_SYSTEM
+    assert _brain_system_prompt("embedded", full, user) == full.strip()
+    assert _brain_system_prompt("ollama", full, user) == full.strip()
+    long_user = user + ("\n" + "detail line " * 200)
+    assert _brain_system_prompt("embedded", full, long_user) == full.strip()
+
+
+def test_is_long_magic_prompt_brief():
+    from dreamforge_prompt.ideogram4 import _is_long_magic_prompt_brief
+
+    assert not _is_long_magic_prompt_brief("short idea")
+    assert _is_long_magic_prompt_brief("x" * 400)
+    assert _is_long_magic_prompt_brief("\n".join(f"line {i}" for i in range(10)))
+
+
+def test_loads_ideogram_json_skips_user_prompt_fallback_when_disabled():
+    from dreamforge_prompt.ideogram4 import _loads_ideogram_json_object
+
+    with pytest.raises(ValueError, match="invalid JSON"):
+        _loads_ideogram_json_object("{not json", user_prompt="fallback idea", allow_user_prompt_fallback=False)
 
 
 def test_resolve_ideogram4_mode_defaults():
@@ -533,3 +553,69 @@ def test_normalize_applies_guardrails_to_pasted_json():
     parsed = json.loads(normalized)
     assert parsed["compositional_deconstruction"]["background"] != "transparent background"
     assert "bbox" not in parsed["compositional_deconstruction"]["elements"][0]
+
+
+def test_strict_required_keys_validation():
+    from dreamforge_prompt.ideogram4_layout import caption_from_layout
+    import pytest
+    
+    with pytest.raises(ValueError, match="aspect_ratio"):
+        caption_from_layout(
+            aspect_ratio="",
+            high_level_description="cat",
+            background="sky",
+            elements=[],
+        )
+
+    with pytest.raises(ValueError, match="high_level_description"):
+        caption_from_layout(
+            aspect_ratio="1:1",
+            high_level_description="",
+            background="sky",
+            elements=[],
+        )
+
+
+def test_strict_hex_color_validation():
+    from dreamforge_prompt.ideogram4_layout import caption_from_layout
+    import pytest
+    
+    with pytest.raises(ValueError, match="Invalid hex color"):
+        caption_from_layout(
+            aspect_ratio="1:1",
+            high_level_description="cat",
+            background="sky",
+            elements=[],
+            style_description={"color_palette": ["#GGGGGG"]},
+        )
+
+
+def test_strict_bbox_bounds_validation():
+    from dreamforge_prompt.ideogram4_layout import caption_from_layout
+    import pytest
+    
+    with pytest.raises(ValueError, match="bbox must be an array of 4"):
+        caption_from_layout(
+            aspect_ratio="1:1",
+            high_level_description="cat",
+            background="sky",
+            elements=[{"type": "obj", "bbox": [100, 200], "desc": "box"}],
+        )
+
+    with pytest.raises(ValueError, match="y1.*must be less than y2"):
+        caption_from_layout(
+            aspect_ratio="1:1",
+            high_level_description="cat",
+            background="sky",
+            elements=[{"type": "obj", "bbox": [500, 100, 200, 800], "desc": "box"}],
+        )
+
+    with pytest.raises(ValueError, match="x1.*must be less than x2"):
+        caption_from_layout(
+            aspect_ratio="1:1",
+            high_level_description="cat",
+            background="sky",
+            elements=[{"type": "obj", "bbox": [100, 600, 300, 200], "desc": "box"}],
+        )
+
+

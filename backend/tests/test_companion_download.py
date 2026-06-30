@@ -393,12 +393,44 @@ def test_ensure_creative_task_ready_can_install_nodes(monkeypatch):
     assert any("installed ComfyUI_UltimateSDUpscale" in msg for msg in result["node_setup"])
 
 
+def test_ensure_creative_task_ready_photo_restore_reports_missing_node_packs(monkeypatch):
+    monkeypatch.setattr(
+        "dreamforge_companion_download._collect_task_missing",
+        lambda **kwargs: (None, []),
+    )
+    monkeypatch.setattr(
+        "dreamforge_workflow_planner._custom_node_directory_present",
+        lambda _pack: False,
+    )
+    monkeypatch.setattr(
+        "dreamforge_comfy_server.fetch_comfy_object_info",
+        lambda **kwargs: {},
+    )
+
+    result = ensure_creative_task_ready(
+        studio_mode="edit",
+        edit_task="photo_restore",
+    )
+
+    assert result["ready"] is False
+    packs = {item["pack_id"] for item in result["missing_node_packs"]}
+    assert packs == {
+        "comfyui_controlnet_aux",
+        "ComfyUI-Impact-Pack",
+        "ComfyUI-Impact-Subpack",
+    }
+    aux = next(item for item in result["missing_node_packs"] if item["pack_id"] == "comfyui_controlnet_aux")
+    assert "DepthAnythingV2Preprocessor" in aux["required_nodes"]
+    assert "LineartStandardPreprocessor" in aux["required_nodes"]
+
+
 def test_cmd_ensure_creative_task_ready_bridge(monkeypatch):
     from dreamforge_desktop_bridge import cmd_ensure_creative_task_ready
 
     def fake_ensure(**kwargs):
         assert kwargs["auto_download_tier_b"] is True
         assert kwargs["auto_install_nodes"] is True
+        assert kwargs["edit_task"] == "photo_restore"
         return {
             "ready": True,
             "missing": [],
@@ -415,8 +447,8 @@ def test_cmd_ensure_creative_task_ready_bridge(monkeypatch):
 
     payload = cmd_ensure_creative_task_ready(
         {
-            "studio_mode": "upscale",
-            "upscale_method": "pid_flux1_4k",
+            "studio_mode": "edit",
+            "edit_task": "photo_restore",
             "auto_download_tier_b": True,
             "auto_install_nodes": True,
         }
@@ -424,4 +456,27 @@ def test_cmd_ensure_creative_task_ready_bridge(monkeypatch):
     assert payload["ok"] is True
     assert payload["ready"] is True
     assert payload["downloaded_tier_a"] == 1
+
+
+def test_cmd_build_cli_argv_includes_upscale_preset_fields():
+    from dreamforge_desktop_bridge import cmd_build_cli_argv
+
+    payload = cmd_build_cli_argv(
+        {
+            "upscale_image": "D:/tmp/source.png",
+            "upscale_method": "ultimate_sd_upscale",
+            "upscale_preset": "fast_4x",
+            "upscale_by": 4,
+            "upscale_denoise": 0.2,
+            "upscale_tile_width": 1024,
+            "upscale_tile_padding": 64,
+            "upscale_force_uniform_tiles": True,
+        }
+    )
+    argv = payload["argv"]
+    assert "--upscale-preset" in argv
+    assert argv[argv.index("--upscale-preset") + 1] == "fast_4x"
+    assert "--upscale-by" in argv
+    assert argv[argv.index("--upscale-by") + 1] == "4"
+    assert "--upscale-force-uniform-tiles" in argv
 

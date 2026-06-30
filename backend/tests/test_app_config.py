@@ -413,3 +413,35 @@ def test_qwen_lightning_defaults_apply_for_speed_modes():
     assert patch["performance"] == "Lightning"
     assert patch["steps"] == 8
     assert patch["cfg_scale"] == 1.0
+
+
+def test_agent_provider_change_resets_defaults(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv(app_config.CONFIG_ENV, str(tmp_path / "app-config.json"))
+    
+    # 1. Start with Ollama configuration
+    saved1 = app_config.save_app_config(
+        {
+            "agent": {
+                "provider": "ollama",
+                "base_url": "http://localhost:11434",
+                "model": "gemma3:4b",
+            }
+        }
+    )
+    assert saved1["agent"]["provider"] == "ollama"
+    assert saved1["agent"]["base_url"] == "http://localhost:11434"
+    assert saved1["agent"]["model"] == "gemma3:4b"
+    
+    # 2. Change provider to lmstudio (without specifying base_url/model)
+    saved2 = app_config.save_app_config(
+        {
+            "agent": {
+                "provider": "lmstudio",
+            }
+        }
+    )
+    assert saved2["agent"]["provider"] == "lmstudio"
+    # Should reset base_url and model to lmstudio preset defaults:
+    assert saved2["agent"]["base_url"] == "http://localhost:1234/v1"
+    assert saved2["agent"]["model"] == "local-model"
+

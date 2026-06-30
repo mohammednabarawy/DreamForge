@@ -456,7 +456,7 @@ def _apply_easy_cache(g: dict[str, Any], model_out: list[str | int], args: dict[
     # Some Nunchaku loaders natively handle caching internally
     if "nunchaku" in str(args.get("unet_name", "")).lower() or "svdq" in str(args.get("unet_name", "")).lower():
         return model_out, i
-    
+
     if str(args.get("teacache", "false")).lower() == "true":
         family = str(args.get("family") or "").lower()
         threshold = 0.2 if family.startswith("sdxl") else 0.12
@@ -3053,5 +3053,225 @@ def comfy_area_composition(args: dict[str, Any]) -> dict[str, Any]:
     g[str(n + 1)] = _node(
         "SaveImage",
         {"images": [dec, 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+    )
+    return g
+
+
+def comfy_photo_restore(args: dict[str, Any]) -> dict[str, Any]:
+    """Structure-preserving photo restoration using DepthAnythingV2 and LineartStandard preprocessors and ControlNet Union/basic."""
+    ckpt = str(args["ckpt_name"])
+    prompt = str(args.get("prompt", ""))
+    negative = str(args.get("negative", ""))
+    image_filename = args.get("image") or args.get("input_image") or ""
+    if not image_filename:
+        raise ValueError("image is required for photo_restore workflow")
+    controlnet_model = str(args.get("controlnet_model") or args.get("cn_model") or "")
+    if not controlnet_model:
+        raise ValueError("controlnet_model is required for photo_restore workflow")
+
+    width = int(args.get("width", 1024))
+    height = int(args.get("height", 1024))
+    steps = int(args.get("steps", 30))
+    cfg = float(args.get("cfg", 7.0))
+    sampler = str(args.get("sampler_name", "euler"))
+    scheduler = str(args.get("scheduler", "normal"))
+    seed = int(args.get("seed", 0))
+    denoise = float(args.get("denoise", args.get("edit_strength", 0.40)))
+
+    depth_strength = float(args.get("depth_strength", 0.15))
+    lineart_strength = float(args.get("lineart_strength", 0.35))
+    restore_megapixels = float(args.get("photo_restore_megapixels", 2.0))
+
+    g: dict[str, Any] = {}
+    g["1"] = _node("LoadImage", {"image": str(image_filename), "upload": "image"})
+
+    # Scale image to megapixels
+    g["2"] = _node(
+        "ImageScaleToTotalPixels",
+        {
+            "image": ["1", 0],
+            "upscale_method": str(args.get("photo_restore_scale_method", "nearest-exact")),
+            "megapixels": restore_megapixels,
+            "resolution_steps": int(args.get("photo_restore_resolution_steps", 1)),
+        },
+    )
+    scaled_image = ["2", 0]
+
+    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+
+    g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
+    pos = [str(n), 0]
+    n += 1
+
+    g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
+    neg = [str(n), 0]
+    n += 1
+
+    # 1. Depth Preprocessor
+    g[str(n)] = _node("DepthAnythingV2Preprocessor", {
+        "image": scaled_image,
+        "ckpt_name": "depth_anything_v2_vitl.pth",
+        "resolution": 1024,
+    })
+    depth_preprocessed = [str(n), 0]
+    n += 1
+
+    # 2. Lineart Preprocessor
+    g[str(n)] = _node("LineartStandardPreprocessor", {
+        "image": scaled_image,
+        "resolution": 512,
+        "guassian_sigma": 6.0,
+        "intensity_threshold": 8,
+    })
+    lineart_preprocessed = [str(n), 0]
+    n += 1
+
+    # 3. Load ControlNet
+    g[str(n)] = _node("ControlNetLoader", {"control_net_name": controlnet_model})
+    cn_model_node = str(n)
+    n += 1
+
+    # 4. Set types & apply ControlNet
+    # Apply Depth
+    g[str(n)] = _node("SetUnionControlNetType", {
+        "control_net": [cn_model_node, 0],
+        "type": "depth",
+    })
+    depth_cn = [str(n), 0]
+    n += 1
+
+    g[str(n)] = _node("ControlNetApplyAdvanced", {
+        "positive": pos,
+        "negative": neg,
+        "control_net": depth_cn,
+        "image": depth_preprocessed,
+        "strength": depth_strength,
+        "start_percent": 0.0,
+        "end_percent": 0.8,
+    })
+    pos_depth, neg_depth = [str(n), 0], [str(n), 1]
+    n += 1
+
+    # Apply Lineart
+    g[str(n)] = _node("SetUnionControlNetType", {
+        "control_net": [cn_model_node, 0],
+        "type": "lineart",
+    })
+    lineart_cn = [str(n), 0]
+    n += 1
+
+    g[str(n)] = _node("ControlNetApplyAdvanced", {
+        "positive": pos_depth,
+        "negative": neg_depth,
+        "control_net": lineart_cn,
+        "image": lineart_preprocessed,
+        "strength": lineart_strength,
+        "start_percent": 0.0,
+        "end_percent": 0.8,
+    })
+    pos_final, neg_final = [str(n), 0], [str(n), 1]
+    n += 1
+
+    # VAE Encode input image
+    g[str(n)] = _node("VAEEncode", {"pixels": scaled_image, "vae": vae_out})
+    latent = [str(n), 0]
+    n += 1
+
+    # KSampler
+    g[str(n)] = _node(
+        "KSampler",
+        _sampler_inputs(
+            model_out=model_out,
+            positive=pos_final,
+            negative=neg_final,
+            latent=latent,
+            seed=seed,
+            steps=steps,
+            cfg=cfg,
+            sampler=sampler,
+            scheduler=scheduler,
+            denoise=denoise,
+        ),
+    )
+    samp = str(n)
+    n += 1
+
+    g[str(n)] = _vae_decode_node(args, [samp, 0], vae_out)
+    decoded_image = [str(n), 0]
+    n += 1
+
+    # Optional face pass
+    face_pass = bool(args.get("face_preservation") or args.get("face_pass") or False)
+    if face_pass:
+        detail_target = str(args.get("detail_target") or "face").lower()
+        bbox_model = str(args.get("bbox_model") or args.get("bbox_detector_model") or "")
+        if not bbox_model:
+            bbox_model = "bbox/hand_yolov8s.pt" if detail_target == "hand" else "bbox/face_yolov8m.pt"
+        detail_prompt = str(
+            args.get("detail_prompt")
+            or args.get("prompt")
+            or ("detailed hands, natural fingers" if detail_target == "hand" else "detailed face, sharp eyes, natural skin")
+        )
+        detail_negative = str(args.get("detail_negative") or args.get("negative") or "blurry, deformed, low quality, bad anatomy")
+        detail_denoise = float(args.get("detail_denoise", 0.5))
+        sam_model = str(args.get("sam_model") or args.get("sam_model_name") or "").strip()
+
+        g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": detail_prompt})
+        pos_det = [str(n), 0]
+        n += 1
+
+        g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": detail_negative})
+        neg_det = [str(n), 0]
+        n += 1
+
+        g[str(n)] = _node("UltralyticsDetectorProvider", {"model_name": bbox_model})
+        bbox_det = [str(n), 0]
+        n += 1
+
+        face_inputs = {
+            "image": decoded_image,
+            "model": model_out,
+            "clip": clip_out,
+            "vae": vae_out,
+            "guide_size": float(args.get("guide_size", 512)),
+            "guide_size_for": True,
+            "max_size": float(args.get("max_size", 1024)),
+            "seed": seed,
+            "steps": steps,
+            "cfg": cfg,
+            "sampler_name": sampler,
+            "scheduler": scheduler,
+            "positive": pos_det,
+            "negative": neg_det,
+            "denoise": detail_denoise,
+            "feather": int(args.get("feather", 5)),
+            "noise_mask": True,
+            "force_inpaint": True,
+            "bbox_threshold": float(args.get("bbox_threshold", 0.5)),
+            "bbox_dilation": int(args.get("bbox_dilation", 10)),
+            "bbox_crop_factor": float(args.get("bbox_crop_factor", 3.0)),
+            "sam_detection_hint": str(args.get("sam_detection_hint", "center-1")),
+            "sam_dilation": int(args.get("sam_dilation", 0)),
+            "sam_threshold": float(args.get("sam_threshold", 0.93)),
+            "sam_bbox_expansion": int(args.get("sam_bbox_expansion", 0)),
+            "sam_mask_hint_threshold": float(args.get("sam_mask_hint_threshold", 0.7)),
+            "sam_mask_hint_use_negative": str(args.get("sam_mask_hint_use_negative", "False")),
+            "drop_size": int(args.get("drop_size", 10)),
+            "bbox_detector": bbox_det,
+            "wildcard": str(args.get("wildcard", "")),
+            "cycle": int(args.get("cycle", 1)),
+        }
+        if sam_model:
+            g[str(n)] = _node("SAMLoader", {"model_name": sam_model, "device_mode": "AUTO"})
+            face_inputs["sam_model_opt"] = [str(n), 0]
+            n += 1
+
+        g[str(n)] = _node("FaceDetailer", face_inputs)
+        decoded_image = [str(n), 0]
+        n += 1
+
+    g[str(n)] = _node(
+        "SaveImage",
+        {"images": decoded_image, "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
     )
     return g

@@ -1857,6 +1857,327 @@ def test_global_edit_dry_run_ignores_stale_outpaint_route(tmp_path, monkeypatch)
     assert plan["final_edit_request"]["task"] == "global_edit"
 
 
+def test_photo_restore_dry_run_exposes_task_defaults_and_instruction(tmp_path, monkeypatch):
+    import dreamforge_cli_direct as cli
+    from PIL import Image
+
+    image_path = tmp_path / "old_photo.png"
+    Image.new("RGB", (512, 512), color=(30, 25, 20)).save(image_path)
+
+    selected = {
+        "name": "epicrealismXL.safetensors",
+        "stem": "epicrealismXL",
+        "relative_path": "epicrealismXL.safetensors",
+        "path": "/models/epicrealismXL.safetensors",
+        "size_mb": 7000,
+        "category": "checkpoints",
+        "engine_name": "epicrealismXL.safetensors",
+        "family": "sdxl",
+    }
+    monkeypatch.setattr(cli, "resolve_generation_model", lambda _name: selected)
+
+    plan = cli.build_plan(
+        SimpleNamespace(
+            dry_run=True,
+            json=True,
+            model="epicrealismXL.safetensors",
+            prompt="restore this old photo",
+            negative_prompt="",
+            aspect_ratio=None,
+            width=None,
+            height=None,
+            seed=1,
+            image_number=1,
+            output=None,
+            performance="Speed",
+            steps=None,
+            cfg_scale=None,
+            sampler=None,
+            scheduler=None,
+            styles=None,
+            lora=[],
+            input_image=str(image_path),
+            inpaint_mask_path=None,
+            edit_task="photo_restore",
+            upscale_image=None,
+            upscale_method="RealESRGAN_x2",
+            edit_type="auto",
+            edit_strength=None,
+            vram_profile="16gb",
+            style="image_edit",
+            brand_kit=None,
+            subject=None,
+            composition=None,
+            lighting=None,
+            camera=None,
+            brand_colors=None,
+            materials=None,
+            visual_style=None,
+            validate_output=False,
+            no_manifest=False,
+        )
+    )
+
+    assert plan["mode"] == "edit"
+    assert plan["ready"] is True
+    assert plan["edit_task_defaults"]["edit_task"] == "photo_restore"
+    assert plan["edit_task_defaults"]["steps"] == 6
+    assert plan["edit_task_defaults"]["depth_strength"] == 0.15
+    assert plan["edit_task_defaults"]["lineart_strength"] == 0.35
+    assert plan["final_edit_request"]["task"] == "photo_restore"
+    assert plan["final_edit_request"]["task_hint"]
+    assert plan["proposed_patch"]["sampler"] == "dpmpp_2s_ancestral_cfg_pp"
+
+
+def _outfit_transfer_args(source_path: Path, *, reference_images=None):
+    return SimpleNamespace(
+        dry_run=True,
+        json=True,
+        model="Qwen_Image_Edit-Q3_K_M.gguf",
+        prompt="put the person in the outfit from the reference photo",
+        negative_prompt="",
+        aspect_ratio=None,
+        width=None,
+        height=None,
+        seed=1,
+        image_number=1,
+        output=None,
+        performance="Speed",
+        steps=None,
+        cfg_scale=None,
+        sampler=None,
+        scheduler=None,
+        styles=None,
+        lora=[],
+        input_image=str(source_path),
+        reference_image=None,
+        reference_images=reference_images or [],
+        references=None,
+        control_images=[],
+        inpaint_mask_path=None,
+        edit_task="outfit_transfer",
+        upscale_image=None,
+        upscale_method="RealESRGAN_x2",
+        edit_type="auto",
+        edit_strength=None,
+        vram_profile="16gb",
+        style="image_edit",
+        brand_kit=None,
+        subject=None,
+        composition=None,
+        lighting=None,
+        camera=None,
+        brand_colors=None,
+        materials=None,
+        visual_style=None,
+        validate_output=False,
+        no_manifest=False,
+    )
+
+
+def test_outfit_transfer_dry_run_requires_reference_image(tmp_path, monkeypatch):
+    import dreamforge_cli_direct as cli
+    import dreamforge_cli_inventory as inventory
+    from PIL import Image
+
+    source_path = tmp_path / "person.png"
+    Image.new("RGB", (512, 512), color=(30, 25, 20)).save(source_path)
+
+    selected = {
+        "name": "Qwen_Image_Edit-Q3_K_M.gguf",
+        "stem": "Qwen_Image_Edit-Q3_K_M",
+        "relative_path": "Qwen_Image_Edit-Q3_K_M.gguf",
+        "path": "/models/Qwen_Image_Edit-Q3_K_M.gguf",
+        "size_mb": 9000,
+        "category": "diffusion_models",
+        "engine_name": "../diffusion_models/Qwen_Image_Edit-Q3_K_M.gguf",
+        "family": "qwen_image_edit",
+    }
+    monkeypatch.setattr(cli, "resolve_generation_model", lambda _name: selected)
+    monkeypatch.setattr(inventory, "check_model_dependencies", lambda *_args, **_kwargs: [])
+
+    plan = cli.build_plan(_outfit_transfer_args(source_path))
+
+    assert plan["mode"] == "edit"
+    assert plan["ready"] is False
+    assert plan["edit_task_defaults"]["edit_task"] == "outfit_transfer"
+    assert plan["proposed_patch"]["edit_type"] == "qwen_edit"
+    assert "reference_images" in plan["workflow_blueprint"]["readiness"]["missing_inputs"]
+    assert any("Outfit Transfer needs" in warning for warning in plan["setup_warnings"])
+
+
+def test_outfit_transfer_dry_run_ready_with_reference_image(tmp_path, monkeypatch):
+    import dreamforge_cli_direct as cli
+    import dreamforge_cli_inventory as inventory
+    from PIL import Image
+
+    source_path = tmp_path / "person.png"
+    outfit_path = tmp_path / "outfit.png"
+    Image.new("RGB", (512, 512), color=(30, 25, 20)).save(source_path)
+    Image.new("RGB", (512, 512), color=(80, 10, 40)).save(outfit_path)
+
+    selected = {
+        "name": "Qwen_Image_Edit-Q3_K_M.gguf",
+        "stem": "Qwen_Image_Edit-Q3_K_M",
+        "relative_path": "Qwen_Image_Edit-Q3_K_M.gguf",
+        "path": "/models/Qwen_Image_Edit-Q3_K_M.gguf",
+        "size_mb": 9000,
+        "category": "diffusion_models",
+        "engine_name": "../diffusion_models/Qwen_Image_Edit-Q3_K_M.gguf",
+        "family": "qwen_image_edit",
+    }
+    monkeypatch.setattr(cli, "resolve_generation_model", lambda _name: selected)
+    monkeypatch.setattr(inventory, "check_model_dependencies", lambda *_args, **_kwargs: [])
+
+    plan = cli.build_plan(
+        _outfit_transfer_args(source_path, reference_images=[str(outfit_path)])
+    )
+
+    assert plan["mode"] == "edit"
+    assert plan["ready"] is True
+    assert "reference_images" not in plan["workflow_blueprint"]["readiness"]["missing_inputs"]
+    assert plan["final_edit_request"]["task"] == "outfit_transfer"
+    assert plan["final_edit_request"]["task_hint"]
+
+
+def test_outfit_transfer_runtime_rejects_source_image_as_only_reference(tmp_path, monkeypatch):
+    import dreamforge_cli_direct as cli
+    import dreamforge_cli_inventory as inventory
+    import dreamforge_generation as generation
+    import dreamforge_prompt
+    import dreamforge_workflow_executor as workflow_executor
+    from PIL import Image
+
+    source_path = tmp_path / "person.png"
+    Image.new("RGB", (512, 512), color=(30, 25, 20)).save(source_path)
+    job = _outfit_transfer_args(source_path)
+    job.dry_run = False
+    job.reference_role = None
+    model = {
+        "name": "Qwen_Image_Edit-Q3_K_M.gguf",
+        "stem": "Qwen_Image_Edit-Q3_K_M",
+        "relative_path": "Qwen_Image_Edit-Q3_K_M.gguf",
+        "path": "/models/Qwen_Image_Edit-Q3_K_M.gguf",
+        "size_mb": 9000,
+        "category": "diffusion_models",
+        "engine_name": "../diffusion_models/Qwen_Image_Edit-Q3_K_M.gguf",
+        "family": "qwen_image_edit",
+    }
+
+    monkeypatch.setattr(
+        cli,
+        "_compile_job",
+        lambda *_args, **_kwargs: (
+            job,
+            model,
+            job.prompt,
+            job.negative_prompt,
+            512,
+            512,
+            None,
+        ),
+    )
+    monkeypatch.setattr(inventory, "check_model_dependencies", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        generation,
+        "run_preflight",
+        lambda *_args, **_kwargs: SimpleNamespace(warnings=[], errors=[], has_errors=False),
+    )
+    monkeypatch.setattr(workflow_executor, "should_execute_workflow_plan", lambda *_args: False)
+    monkeypatch.setattr(
+        dreamforge_prompt,
+        "prepare_generation_prompts",
+        lambda _job, _model, prompt, negative, _settings: {
+            "prompt": prompt,
+            "negative": negative,
+        },
+    )
+
+    events = []
+    result = generation.run_generation(
+        SimpleNamespace(),
+        {},
+        stream_sink=events.append,
+        job_id="job-outfit-missing-ref",
+    )
+
+    assert result["status"] == "error"
+    assert result["code"] == "invalid_request"
+    assert "Outfit Transfer requires" in result["message"]
+    assert any(event.get("code") == "invalid_request" for event in events)
+
+
+def test_upscale_fast_4x_dry_run_applies_preset_fields(tmp_path, monkeypatch):
+    import dreamforge_cli_direct as cli
+    from PIL import Image
+
+    image_path = tmp_path / "source.png"
+    Image.new("RGB", (512, 512), color=(30, 25, 20)).save(image_path)
+
+    selected = {
+        "name": "sdxl.safetensors",
+        "stem": "sdxl",
+        "relative_path": "sdxl.safetensors",
+        "path": "/models/sdxl.safetensors",
+        "size_mb": 7000,
+        "category": "checkpoints",
+        "engine_name": "sdxl.safetensors",
+        "family": "sdxl",
+    }
+    monkeypatch.setattr(cli, "resolve_generation_model", lambda _name: selected)
+
+    plan = cli.build_plan(
+        SimpleNamespace(
+            dry_run=True,
+            json=True,
+            model="sdxl.safetensors",
+            prompt="",
+            negative_prompt="",
+            aspect_ratio=None,
+            width=None,
+            height=None,
+            seed=1,
+            image_number=1,
+            output=None,
+            performance="Speed",
+            steps=None,
+            cfg_scale=None,
+            sampler=None,
+            scheduler=None,
+            styles=None,
+            lora=[],
+            input_image=None,
+            inpaint_mask_path=None,
+            edit_task=None,
+            upscale_image=str(image_path),
+            upscale_method="ultimate_sd_upscale",
+            upscale_preset="fast_4x",
+            edit_type="auto",
+            edit_strength=None,
+            vram_profile="16gb",
+            style="image_edit",
+            brand_kit=None,
+            subject=None,
+            composition=None,
+            lighting=None,
+            camera=None,
+            brand_colors=None,
+            materials=None,
+            visual_style=None,
+            validate_output=False,
+            no_manifest=False,
+        )
+    )
+
+    assert plan["mode"] == "upscale"
+    assert plan["settings"]["steps"] == 4
+    assert plan["settings"]["cfg"] == 8.0
+    assert plan["settings"]["sampler"] == "euler"
+    assert plan["proposed_patch"]["upscale_preset"] == "fast_4x"
+    assert plan["proposed_patch"]["upscale_by"] == 4.0
+    assert plan["proposed_patch"]["upscale_tile_width"] == 1024
+
+
 def test_preserve_text_auto_enables_qwen_preserve_resolution(monkeypatch):
     monkeypatch.chdir(_BACKEND)
     from dreamforge_generation import _apply_qwen_family_settings

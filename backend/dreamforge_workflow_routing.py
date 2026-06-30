@@ -94,6 +94,7 @@ class WorkflowRoute:
     route_label: str
     warnings: list[str] = field(default_factory=list)
     comfy_mode: str | None = None
+    edit_task: str | None = None
 
 
 def _reference_role(job, studio_mode: str | None = None) -> str:
@@ -297,6 +298,10 @@ def resolve_input_routing(
 
     plan_mode = plan_mode_for_job(job, studio_mode=studio_mode)
     label = route_label(reference_role, model_family) or route_label(plan_mode, model_family)
+    if _norm(getattr(job, "edit_task", None)) == "photo_restore":
+        label = "Restoring photo"
+    elif _norm(getattr(job, "edit_task", None)) == "outfit_transfer":
+        label = "Transferring outfit"
 
     return WorkflowRoute(
         plan_mode=plan_mode,
@@ -310,6 +315,7 @@ def resolve_input_routing(
         workflow_mode=workflow_mode,
         route_label=label,
         warnings=warnings,
+        edit_task=_norm(getattr(job, "edit_task", None)) or None,
     )
 
 
@@ -359,6 +365,7 @@ def coerce_image_prompt_to_restyle_route(
         workflow_mode="generate",
         route_label=route_label("restyle", ""),
         warnings=warnings,
+        edit_task=route.edit_task,
     )
 
 
@@ -369,6 +376,9 @@ def resolve_comfy_workflow_mode(
     model_family: str,
     input_filename: str | None,
 ) -> str:
+    if getattr(route, "edit_task", None) == "photo_restore":
+        return "photo_restore"
+
     from dreamforge_comfy_workflow_import import comfy_workflow_mode
 
     return comfy_workflow_mode(

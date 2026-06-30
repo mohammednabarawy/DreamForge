@@ -453,7 +453,8 @@ export function useDreamForge() {
   const generationSourcePathRef = useRef<string | null>(null);
   const [agentTranscript, setAgentTranscript] = useState<AgentTranscriptMessage[]>([]);
   const [planRunBusy, setPlanRunBusy] = useState(false);
-  const [enhancePromptBusy, setEnhancePromptBusy] = useState(false);
+  const [enhanceModalOpen, setEnhanceModalOpen] = useState(false);
+  const [enhanceModalOriginalPrompt, setEnhanceModalOriginalPrompt] = useState("");
   const [describeImageBusy, setDescribeImageBusy] = useState(false);
   const agentPlanRef = useRef(agentPlan);
   agentPlanRef.current = agentPlan;
@@ -505,6 +506,7 @@ export function useDreamForge() {
   );
   const [imageNumberMax, setImageNumberMax] = useState(8);
   const [inpaintMaskOpen, setInpaintMaskOpen] = useState(false);
+  const enhancePromptBusy = enhanceModalOpen;
   const [inpaintMaskSyncing, setInpaintMaskSyncing] = useState(false);
   const [inpaintCanvasFocus, setInpaintCanvasFocus] = useState(false);
   const [activeSessionId, setActiveSessionId] = useState(() =>
@@ -2693,27 +2695,37 @@ export function useDreamForge() {
       setStatus("Enter a prompt to enhance");
       return;
     }
-    setEnhancePromptBusy(true);
-    setStatus("Enhancing prompt for current model…");
-    try {
-      const sanitized = sanitizeEditFamilySettings(current, studioMode);
-      const res = await enhanceStudioPrompt({
-        ...sanitized,
-        studio_mode: studioMode,
-        ...enhancePrefsFromAppConfig(appConfig),
-      });
-      const patch: Partial<GenerationSettings> = { prompt: res.prompt };
-      if (res.negative_prompt?.trim()) {
-        patch.negative_prompt = res.negative_prompt;
-      }
-      patchSettings(patch);
-      setStatus(res.hint ?? "Prompt enhanced");
-    } catch (e) {
-      setStatus(`Enhance failed: ${String(e)}`);
-    } finally {
-      setEnhancePromptBusy(false);
+    setEnhanceModalOriginalPrompt(prompt);
+    setEnhanceModalOpen(true);
+  }, [appConfig]);
+
+  const handleEnhancePromptCall = useCallback(async () => {
+    const current = settingsRef.current;
+    const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+    const sanitized = sanitizeEditFamilySettings(current, studioMode);
+    const res = await enhanceStudioPrompt({
+      ...sanitized,
+      studio_mode: studioMode,
+      ...enhancePrefsFromAppConfig(appConfig),
+    });
+    if (!res.ok) {
+      throw new Error(res.error || "Failed to expand prompt.");
     }
-  }, [appConfig, patchSettings]);
+    return {
+      prompt: res.prompt ?? "",
+      negative_prompt: res.negative_prompt ?? "",
+    };
+  }, [appConfig]);
+
+  const handleApplyEnhancedPrompt = useCallback((prompt: string, negativePrompt?: string) => {
+    const patch: Partial<GenerationSettings> = { prompt };
+    if (negativePrompt?.trim()) {
+      patch.negative_prompt = negativePrompt;
+    }
+    patchSettings(patch);
+    setEnhanceModalOpen(false);
+    setStatus("Prompt enhanced");
+  }, [patchSettings]);
 
   const runDescribeImage = useCallback(
     async (imagePath?: string) => {
@@ -4407,6 +4419,11 @@ export function useDreamForge() {
     imageNumberMax,
     inpaintMaskOpen,
     setInpaintMaskOpen,
+    enhanceModalOpen,
+    setEnhanceModalOpen,
+    enhanceModalOriginalPrompt,
+    onEnhancePromptCall: handleEnhancePromptCall,
+    onApplyEnhancedPrompt: handleApplyEnhancedPrompt,
     inpaintMaskSyncing,
     setInpaintMaskSyncing,
     inpaintCanvasFocus,

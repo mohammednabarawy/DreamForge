@@ -200,7 +200,7 @@ class OllamaProvider(BrainProvider):
             headers={"Content-Type": "application/json"}
         )
         try:
-            with urllib.request.urlopen(req, timeout=30) as response:
+            with urllib.request.urlopen(req, timeout=180) as response:
                 data = json.loads(response.read().decode("utf-8"))
                 return data.get("message", {}).get("content", "").strip()
         except Exception as e:
@@ -236,7 +236,7 @@ class OpenAICompatibleProvider(BrainProvider):
             headers=headers
         )
         try:
-            with urllib.request.urlopen(req, timeout=30) as response:
+            with urllib.request.urlopen(req, timeout=180) as response:
                 data = json.loads(response.read().decode("utf-8"))
                 choices = data.get("choices", [])
                 if choices:

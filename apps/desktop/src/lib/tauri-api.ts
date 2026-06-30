@@ -61,8 +61,8 @@ export type GenerationSettings = {
   cn_type?: string;
   upscale_image?: string;
   upscale_method?: string;
-  /** Named enhance preset: 1.5x / 2x / fast_2x. */
-  upscale_preset?: "1.5x" | "2x" | "fast_2x";
+  /** Named enhance preset. */
+  upscale_preset?: "1.5x" | "2x" | "faithful_2x" | "fast_2x" | "fast_4x" | "detail_2x";
   upscale_by?: number;
   upscale_denoise?: number;
   upscale_tile_width?: number;
@@ -165,7 +165,16 @@ export type GenerationSettings = {
     | "relight"
     | "restyle"
     | "extend"
-    | "global_edit";
+    | "global_edit"
+    | "photo_restore"
+    | "outfit_transfer";
+  outfit_transfer_regions?: Array<
+    "upper_body" | "lower_body" | "full_outfit" | "shoes_accessories"
+  >;
+  /** Photo restore: depth ControlNet strength (0.1–0.2 typical). */
+  depth_strength?: number;
+  /** Photo restore: lineart ControlNet strength (0.2–0.5 typical). */
+  lineart_strength?: number;
   /** Extra prompt for improve_detail / modify_content passes. */
   inpaint_additional_prompt?: string;
   /** Planner hints for edit-family preservation (UI toggles). */

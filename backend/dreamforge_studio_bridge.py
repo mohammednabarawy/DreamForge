@@ -301,7 +301,10 @@ def _evolve_words(prompt: str, strength: float) -> str:
 def cmd_enhance_studio_prompt(params: dict) -> dict:
     from dreamforge_prompt.studio_enhance import enhance_studio_prompt
 
-    return enhance_studio_prompt(params)
+    try:
+        return enhance_studio_prompt(params)
+    except Exception as exc:
+        return {"ok": False, "error": f"Prompt enhancement failed: {exc}"}
 
 
 def cmd_validate_ideogram4_caption(params: dict) -> dict:

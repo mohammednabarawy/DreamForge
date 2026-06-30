@@ -255,6 +255,75 @@ def test_resolve_comfy_workflow_mode_img2img():
     assert mode == "img2img"
 
 
+def test_resolve_comfy_workflow_mode_photo_restore():
+    job = SimpleNamespace(
+        edit_task="photo_restore",
+        input_image="/tmp/old.png",
+        edit_type="auto",
+    )
+    route = resolve_input_routing(
+        job,
+        model={"engine_name": "epicrealismXL.safetensors"},
+        model_family="sdxl",
+        studio_mode="edit",
+    )
+    assert route.route_label == "Restoring photo"
+    mode = resolve_comfy_workflow_mode(
+        route,
+        model={"engine_name": "epicrealismXL.safetensors"},
+        model_family="sdxl",
+        input_filename="old.png",
+    )
+    assert mode == "photo_restore"
+
+
+def test_resolve_input_routing_outfit_transfer_qwen():
+    job = SimpleNamespace(
+        edit_task="outfit_transfer",
+        input_image="/tmp/person.png",
+        reference_images=["/tmp/outfit.png"],
+        reference_role="source_edit",
+        edit_type="qwen_edit",
+        cn_selection="Custom...",
+        cn_type="qwen_edit",
+    )
+    route = resolve_input_routing(
+        job,
+        model={"engine_name": "qwen-image-edit-2511-Q4_K_M.gguf"},
+        model_family="qwen_image_edit",
+        studio_mode="edit",
+    )
+    assert route.route_label == "Transferring outfit"
+    assert route.cn_type == "qwen_edit"
+    mode = resolve_comfy_workflow_mode(
+        route,
+        model={"engine_name": "qwen-image-edit-2511-Q4_K_M.gguf"},
+        model_family="qwen_image_edit",
+        input_filename="person.png",
+    )
+    assert mode == "qwen_edit"
+
+
+def test_resolve_input_routing_outfit_transfer_mask_fallback():
+    job = SimpleNamespace(
+        edit_task="outfit_transfer",
+        input_image="/tmp/person.png",
+        inpaint_mask_path="/tmp/mask.png",
+        edit_type="inpaint",
+        cn_selection="Custom...",
+        cn_type="inpaint",
+    )
+    route = resolve_input_routing(
+        job,
+        model={"engine_name": "flux-fill-dev.safetensors"},
+        model_family="flux_fill",
+        studio_mode="edit",
+    )
+    assert route.route_label == "Transferring outfit"
+    assert route.is_inpaint_job is True
+    assert route.cn_type == "inpaint"
+
+
 def test_resolve_input_routing_extend_uses_outpaint_not_inpaint():
     job = SimpleNamespace(
         reference_role="inpaint",

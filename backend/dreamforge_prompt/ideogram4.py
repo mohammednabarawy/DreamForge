@@ -11,7 +11,7 @@ IDEOGRAM4_PROMPT_MODES = frozenset({"natural", "structured", "auto"})
 
 _TEMPLATE_PATH = Path(__file__).with_name("ideogram4_magic_prompt_template.txt")
 _MAGIC_PROMPT_VERSION = "v18-schema+oss-v1"
-# Full template system is ~27k chars — exceeds embedded brain n_ctx=4096. Use slim for local LLMs.
+# Legacy slim prompt — only used when the full template file cannot be loaded.
 _IDEOGRAM4_SLIM_SYSTEM = """You convert a natural-language user idea into a structured JSON caption for Ideogram 4 (merged oss v1 + style_description).
 
 Emit exactly ONE minified JSON object. Top-level keys in this order when present:
@@ -89,6 +89,17 @@ _IDEOGRAM4_POLISH_STEPS: dict[str, int] = {"turbo": 1, "default": 2, "quality": 
 _HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 _STYLE_KEYS_PHOTO = ("aesthetics", "lighting", "photo", "medium", "color_palette")
 _STYLE_KEYS_ART = ("aesthetics", "lighting", "medium", "art_style", "color_palette")
+
+# Briefs at or above this size need full structured JSON — no text-only degraded fallback.
+_LONG_MAGIC_PROMPT_CHARS = 400
+_LONG_MAGIC_PROMPT_LINES = 10
+
+
+def _is_long_magic_prompt_brief(user_prompt: str) -> bool:
+    text = str(user_prompt or "").strip()
+    if not text:
+        return False
+    return len(text) >= _LONG_MAGIC_PROMPT_CHARS or len(text.splitlines()) >= _LONG_MAGIC_PROMPT_LINES
 
 
 def _snap_dim(value: int) -> int:
@@ -279,13 +290,11 @@ def build_magic_prompt_messages(user_prompt: str, width: int, height: int) -> tu
 
 
 def _brain_system_prompt(provider_id: str, full_system: str, user_msg: str) -> str:
-    """Local embedded brains cannot fit the full Comfy template in context."""
-    pid = (provider_id or "").lower()
-    if pid in ("embedded", "llamacpp", "llama.cpp"):
-        return _IDEOGRAM4_SLIM_SYSTEM
-    if len(full_system) + len(user_msg) > 12000:
-        return _IDEOGRAM4_SLIM_SYSTEM
-    return full_system or _IDEOGRAM4_SLIM_SYSTEM
+    """Always prefer the full ideogram-oss v1 system prompt for magic prompt expansion."""
+    _ = provider_id, user_msg  # provider/context size no longer downgrades the system prompt
+    if full_system.strip():
+        return full_system.strip()
+    return _IDEOGRAM4_SLIM_SYSTEM
 
 
 def build_magic_prompt_instruction(user_prompt: str, width: int, height: int) -> str:
@@ -357,7 +366,12 @@ def _fallback_caption_from_broken_json(raw: str, user_prompt: str = "") -> dict[
     return out
 
 
-def _loads_ideogram_json_object(text: str, *, user_prompt: str = "") -> dict[str, Any]:
+def _loads_ideogram_json_object(
+    text: str,
+    *,
+    user_prompt: str = "",
+    allow_user_prompt_fallback: bool = True,
+) -> dict[str, Any]:
     """Parse LLM JSON with light repair and regex fallback for magic prompt."""
     extracted = _extract_json_object(text)
     candidates: list[str] = []
@@ -383,7 +397,8 @@ def _loads_ideogram_json_object(text: str, *, user_prompt: str = "") -> dict[str
         except json.JSONDecodeError as exc:
             last_exc = exc
 
-    fallback = _fallback_caption_from_broken_json(extracted, user_prompt)
+    fallback_prompt = user_prompt if allow_user_prompt_fallback else ""
+    fallback = _fallback_caption_from_broken_json(extracted, fallback_prompt)
     if fallback:
         return fallback
 
@@ -406,14 +421,11 @@ def _normalize_palette(values: Any, *, max_items: int) -> list[str]:
     if values is None:
         return []
     if not isinstance(values, list):
-        return []
+        raise ValueError("color_palette must be an array of strings")
     out: list[str] = []
     seen: set[str] = set()
     for item in values[:max_items]:
-        try:
-            hex_val = _normalize_hex(str(item))
-        except ValueError:
-            continue
+        hex_val = _normalize_hex(str(item))
         if hex_val not in seen:
             seen.add(hex_val)
             out.append(hex_val)
@@ -458,7 +470,43 @@ def _repair_bbox_coords(raw: Any) -> list[int] | None:
 
 
 def _normalize_bbox(raw: Any) -> list[int] | None:
-    return _repair_bbox_coords(raw)
+    if raw is None:
+        return None
+    if not isinstance(raw, list) or len(raw) != 4:
+        raise ValueError("bbox must be an array of exactly 4 integers: [y1, x1, y2, x2]")
+    try:
+        coords = [float(v) for v in raw]
+    except (TypeError, ValueError):
+        raise ValueError("bbox coordinates must be numbers")
+    if not all(v == v and abs(v) != float("inf") for v in coords):
+        raise ValueError("bbox coordinates must be finite numbers")
+    
+    # Auto-scale normalized coordinates [0, 1] or [0, 100] to [0, 1000]
+    if max(coords) <= 1.0 and min(coords) >= 0:
+        coords = [v * 1000.0 for v in coords]
+    elif max(coords) <= 100.0 and min(coords) >= 0:
+        coords = [v * 10.0 for v in coords]
+    elif max(coords) > 1000:
+        scale = 1000.0 / max(coords)
+        coords = [v * scale for v in coords]
+        
+    y1, x1, y2, x2 = [int(round(v)) for v in coords]
+    if y1 > y2:
+        y1, y2 = y2, y1
+    if x1 > x2:
+        x1, x2 = x2, x1
+        
+    y1 = max(0, min(1000, y1))
+    x1 = max(0, min(1000, x1))
+    y2 = max(0, min(1000, y2))
+    x2 = max(0, min(1000, x2))
+    
+    if y2 <= y1:
+        y2 = min(1000, y1 + 1)
+    if x2 <= x1:
+        x2 = min(1000, x1 + 1)
+        
+    return [y1, x1, y2, x2]
 
 
 def _normalize_style_description(raw: Any) -> dict[str, Any] | None:
@@ -636,8 +684,11 @@ def canonicalize_ideogram_caption_obj(obj: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Ideogram caption must be a JSON object")
 
     out: dict[str, Any] = {}
+    
     aspect = str(obj.get("aspect_ratio") or "").strip()
     if aspect:
+        if not re.fullmatch(r"\d+:\d+", aspect):
+            raise ValueError(f"aspect_ratio must be in W:H format (e.g. '1:1', '16:9'), got: {aspect!r}")
         out["aspect_ratio"] = aspect
 
     hld = str(obj.get("high_level_description") or "").strip()
@@ -652,12 +703,14 @@ def canonicalize_ideogram_caption_obj(obj: dict[str, Any]) -> dict[str, Any]:
     if comp_raw is not None:
         if not isinstance(comp_raw, dict):
             raise ValueError("compositional_deconstruction must be an object")
+        
         comp: dict[str, Any] = {}
         bg = str(comp_raw.get("background") or "").strip()
         if not bg and hld:
             bg = hld
         if bg:
             comp["background"] = bg
+            
         elements_raw = comp_raw.get("elements")
         if elements_raw is not None:
             if not isinstance(elements_raw, list):
@@ -667,11 +720,10 @@ def canonicalize_ideogram_caption_obj(obj: dict[str, Any]) -> dict[str, Any]:
             ]
             if normalized_elements:
                 comp["elements"] = normalized_elements
+                
         if comp:
             out["compositional_deconstruction"] = comp
 
-    if not out:
-        raise ValueError("Ideogram caption is empty")
     return out
 
 
@@ -945,13 +997,15 @@ def run_ideogram4_magic_prompt(
 
     full_system, user_msg = build_magic_prompt_messages(user_prompt, width, height)
     required_text = extract_required_image_text(user_prompt)
+    long_brief = _is_long_magic_prompt_brief(user_prompt)
     brain = AiBrain()
     _configure_brain_from_app_config(brain, params)
     system = _brain_system_prompt(getattr(brain, "provider_id", ""), full_system, user_msg)
     meta = {
         "magic_prompt_instruction": user_msg,
-        "magic_prompt_system": "slim" if system == _IDEOGRAM4_SLIM_SYSTEM else "full",
+        "magic_prompt_system": "full" if system != _IDEOGRAM4_SLIM_SYSTEM else "slim",
         "magic_prompt_version": _MAGIC_PROMPT_VERSION,
+        "magic_prompt_long_brief": long_brief,
     }
     try:
         raw = brain.think(user_msg, system, max_tokens=8192)
@@ -975,7 +1029,11 @@ def run_ideogram4_magic_prompt(
         }
 
     try:
-        obj = _loads_ideogram_json_object(raw, user_prompt=user_prompt)
+        obj = _loads_ideogram_json_object(
+            raw,
+            user_prompt=user_prompt,
+            allow_user_prompt_fallback=not long_brief,
+        )
         obj = _ensure_required_text_elements(obj, required_text)
         obj = apply_ideogram_composition_guardrails(obj, user_prompt=user_prompt)
         obj["aspect_ratio"] = _normalize_aspect_ratio_value(
@@ -986,6 +1044,8 @@ def run_ideogram4_magic_prompt(
         try:
             caption = normalize_ideogram_caption_obj(obj, user_prompt=user_prompt)
         except ValueError:
+            if long_brief:
+                raise
             stripped = dict(obj)
             comp_raw = stripped.get("compositional_deconstruction")
             if isinstance(comp_raw, dict):
@@ -994,6 +1054,16 @@ def run_ideogram4_magic_prompt(
                 stripped["compositional_deconstruction"] = comp
             caption = normalize_ideogram_caption_obj(stripped, user_prompt=user_prompt)
     except ValueError as exc:
+        if long_brief:
+            return {
+                "ok": False,
+                "error": (
+                    f"Ideogram magic prompt returned invalid or incomplete JSON for a detailed brief: {exc}. "
+                    "Retry with a capable local model or hand-edit structured JSON."
+                ),
+                "magic_prompt_raw": raw,
+                **meta,
+            }
         fallback = _fallback_caption_from_broken_json(_extract_json_object(raw), user_prompt)
         if fallback:
             try:

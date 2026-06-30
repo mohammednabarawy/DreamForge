@@ -11,7 +11,7 @@ import {
   uiRectToBbox,
   type IdeogramLayoutElement,
 } from "../lib/ideogram4Ui";
-import { buildIdeogram4CaptionFromLayout } from "../lib/studioBridge";
+import { buildIdeogram4CaptionFromLayout, enhanceStudioPrompt } from "../lib/studioBridge";
 
 type Props = {
   open: boolean;
@@ -78,6 +78,47 @@ export function IdeogramLayoutModal({ open, settings, onClose, onApply, presenta
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [naturalPrompt, setNaturalPrompt] = useState("");
+  const [generatingLayout, setGeneratingLayout] = useState(false);
+
+  const generateLayoutFromPrompt = async () => {
+    if (!naturalPrompt.trim()) return;
+    setGeneratingLayout(true);
+    setError(null);
+    try {
+      const res = await enhanceStudioPrompt({
+        prompt: naturalPrompt.trim(),
+        studio_mode: "generate",
+        model: settings.model,
+        width: settings.width || 1024,
+        height: settings.height || 1024,
+      });
+      if (!res.ok || !res.prompt) {
+        setError(res.error || "Failed to generate layout");
+        return;
+      }
+      const caption = parseIdeogramCaption(res.prompt);
+      if (!caption) {
+        setError("Failed to parse generated layout JSON structure.");
+        return;
+      }
+      setHighLevel(caption.high_level_description ?? "");
+      setBackground(caption.compositional_deconstruction?.background ?? "");
+      setStyleDescription(
+        caption.style_description && typeof caption.style_description === "object"
+          ? (caption.style_description as Record<string, unknown>)
+          : null,
+      );
+      const loaded = layoutElementsFromCaption(caption);
+      setElements(loaded.length ? loaded : [newElement(0)]);
+      setSelectedId(loaded[0]?.id ?? null);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setGeneratingLayout(false);
+    }
+  };
 
   const aspectRatio = useMemo(() => ideogramAspectLabel(settings), [settings]);
 
@@ -308,6 +349,27 @@ export function IdeogramLayoutModal({ open, settings, onClose, onApply, presenta
           </div>
 
           <div className="min-h-0 space-y-2 overflow-auto pr-1 text-xs">
+            <div className="rounded-lg border border-dfui-border/45 bg-dfui-bg/25 p-2 space-y-1.5">
+              <span className="text-[10px] font-medium uppercase tracking-wide text-dfui-muted">
+                Generate from Natural Prompt
+              </span>
+              <textarea
+                value={naturalPrompt}
+                onChange={(e) => setNaturalPrompt(e.target.value)}
+                rows={2}
+                className="df-input w-full px-2 py-1.5 text-[11px]"
+                placeholder="e.g. A retro poster for a coffee shop, with a warm palette and 'COFFEE TIME' text."
+              />
+              <button
+                type="button"
+                disabled={generatingLayout || !naturalPrompt.trim()}
+                onClick={generateLayoutFromPrompt}
+                className="w-full flex items-center justify-center gap-1.5 rounded border border-dfui-accent/50 bg-dfui-accent/10 px-2 py-1 text-[10px] font-medium text-dfui-accent hover:bg-dfui-accent/20 disabled:opacity-50"
+              >
+                {generatingLayout ? "Generating structure..." : "Generate structure"}
+              </button>
+            </div>
+
             <label className="block">
               <span className="text-[10px] uppercase tracking-wide text-dfui-muted">Scene</span>
               <textarea

@@ -10,6 +10,7 @@ import { CompanionDownloadModal } from "./components/CompanionDownloadModal";
 import { InpaintMaskModal } from "./components/InpaintMaskModal";
 import { FullLogModal } from "./components/FullLogModal";
 import { AppSettingsModal } from "./components/AppSettingsModal";
+import { PromptEnhanceModal } from "./components/PromptEnhanceModal";
 import { SetupWizard } from "./components/SetupWizard";
 import { ReliabilityBanner } from "./components/ReliabilityBanner";
 import { useDreamForge } from "./hooks/useDreamForge";
@@ -314,6 +315,13 @@ function DreamForgeStudio() {
         onCopyLinks={mc.companionDownload.copyLinks}
         onCopyManualList={mc.companionDownload.copyManualList}
         onRetry={mc.companionDownload.retry}
+      />
+      <PromptEnhanceModal
+        open={mc.enhanceModalOpen}
+        onClose={() => mc.setEnhanceModalOpen(false)}
+        originalPrompt={mc.enhanceModalOriginalPrompt}
+        onApply={mc.onApplyEnhancedPrompt}
+        onEnhance={mc.onEnhancePromptCall}
       />
       </div>
     </>

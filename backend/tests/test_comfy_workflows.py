@@ -33,6 +33,7 @@ from dreamforge_comfy_workflows import (
     comfy_inpaint_basic,
     comfy_outpaint_basic,
     comfy_pid_flux_upscale,
+    comfy_photo_restore,
     comfy_kandinsky5_img2img,
     comfy_flux_img2img,
     comfy_qwen_image_edit,
@@ -80,6 +81,35 @@ def test_kontext_identity_generate_starts_from_empty_latent():
     assert graph["16"]["inputs"]["height"] == 1216
     assert graph["10"]["inputs"]["latent_image"] == ["16", 0]
     assert graph["8"]["inputs"]["latent"] == ["15", 0]
+
+
+def test_photo_restore_builds_depth_lineart_controlnet_nodes():
+    graph = comfy_photo_restore(
+        {
+            "ckpt_name": "epicrealismXL.safetensors",
+            "image": "old_photo.png",
+            "controlnet_model": "controlnet-union-sdxl.safetensors",
+            "prompt": "restore this old photo",
+            "negative": "blurry",
+            "depth_strength": 0.18,
+            "lineart_strength": 0.42,
+            "face_preservation": True,
+        }
+    )
+    class_types = {node["class_type"] for node in graph.values()}
+    assert "DepthAnythingV2Preprocessor" in class_types
+    assert "LineartStandardPreprocessor" in class_types
+    assert "SetUnionControlNetType" in class_types
+    assert "ControlNetApplyAdvanced" in class_types
+    assert "ImageScaleToTotalPixels" in class_types
+    depth_nodes = [
+        n for n in graph.values() if n.get("class_type") == "ControlNetApplyAdvanced"
+    ]
+    assert len(depth_nodes) == 2
+    strengths = sorted(n["inputs"]["strength"] for n in depth_nodes)
+    assert strengths == [0.18, 0.42]
+    face_nodes = [n for n in graph.values() if n.get("class_type") == "FaceDetailer"]
+    assert len(face_nodes) == 1
 
 
 def test_qwen_edit_split_loaders_and_text_encode():

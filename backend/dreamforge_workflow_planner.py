@@ -268,6 +268,21 @@ TEMPLATE_REGISTRY: dict[str, WorkflowTemplateSpec] = {
         required_models=["checkpoint_or_unet", "clip_l", "t5", "vae"],
         research_basis=["chroma official workflows"],
     ),
+    "photo_restore": WorkflowTemplateSpec(
+        id="photo_restore",
+        label="Restore Photo",
+        operation="edit_image",
+        mode="edit",
+        summary="Load image, preprocess with DepthAnythingV2 and LineartStandard, load ControlNet Union, apply, sample with low denoise, decode, optional FaceDetailer.",
+        builder="comfy_photo_restore",
+        node_pattern=["LoadImage", "DepthAnythingV2Preprocessor", "LineartStandardPreprocessor", "SetUnionControlNetType", "ControlNetApplyAdvanced", "KSampler", "VAEDecode", "SaveImage"],
+        required_inputs=["input_image"],
+        optional_inputs=["prompt", "face_preservation", "depth_strength", "lineart_strength"],
+        required_models=["checkpoint_or_unet", "clip", "vae", "controlnet_model"],
+        required_node_packs=["comfyui_controlnet_aux"],
+        optional_nodes=["FaceDetailer", "UltralyticsDetectorProvider", "SAMLoader"],
+        research_basis=["official_controlnet", "comfyui_controlnet_aux", "workflow_research:photo_restore"],
+    ),
 }
 
 
@@ -405,7 +420,10 @@ def template_ids_for_operations(
     has_mask: bool = False,
     strict_inpaint: bool = False,
     qwen_edit: bool = False,
+    photo_restore: bool = False,
 ) -> list[str]:
+    if photo_restore:
+        return ["photo_restore"]
     ids: list[str] = []
     for op in operations:
         if op == "generate_image":
@@ -445,6 +463,7 @@ def build_live_workflow_blueprint(
     settings = current_settings or {}
     strict_inpaint = _strict_inpaint_requested(settings)
     qwen_edit = _qwen_edit_requested(settings)
+    photo_restore = str(settings.get("edit_task") or "").lower() == "photo_restore"
     ops = operations or resolve_operations_from_intent(
         intent,
         has_image=has_image,
@@ -457,6 +476,7 @@ def build_live_workflow_blueprint(
         has_mask=has_mask,
         strict_inpaint=strict_inpaint,
         qwen_edit=qwen_edit,
+        photo_restore=photo_restore,
     )
     templates = [TEMPLATE_REGISTRY[item].to_dict() for item in template_ids if item in TEMPLATE_REGISTRY]
     required_inputs = _dedupe([value for spec in templates for value in spec.get("required_inputs", [])])
@@ -481,6 +501,28 @@ def build_live_workflow_blueprint(
         warnings.append("Some stages require approved custom node packs before they can run.")
     if optional_nodes:
         warnings.append("Some advanced stages require optional custom nodes and must be approved before installation/use.")
+    
+    vram = str(settings.get("vram_profile") or "auto").lower()
+    try:
+        upscale_by = float(settings.get("upscale_by") or 1.0)
+    except (TypeError, ValueError):
+        upscale_by = 1.0
+    try:
+        tile_w = int(settings.get("upscale_tile_width") or 0)
+        tile_h = int(settings.get("upscale_tile_height") or 0)
+    except (TypeError, ValueError):
+        tile_w = 0
+        tile_h = 0
+    upscale_preset = str(settings.get("upscale_preset") or "").lower()
+    if upscale_preset == "fast_4x":
+        upscale_by = max(upscale_by, 4.0)
+        tile_w = max(tile_w, 1024)
+        tile_h = max(tile_h, 1024)
+    if upscale_by >= 4.0 and (tile_w >= 1024 or tile_h >= 1024) and vram in {"8gb", "5gb", "no_gpu"}:
+        warnings.append(
+            "Upscaling by 4x or more with 1024px tiles on low VRAM may cause Out of Memory errors; consider using 512px or 768px tiles."
+        )
+
     warnings.extend(readiness["warnings"])
     return {
         "schema_version": "1.0",
@@ -940,13 +982,23 @@ def required_custom_node_pack_ids(
     studio_mode: str | None = None,
     upscale_method: str | None = None,
     post_upscale: str | None = None,
+    edit_task: str | None = None,
 ) -> list[str]:
     """Return pinned custom-node pack ids required for a studio task."""
     pack_ids: list[str] = []
     mode = str(studio_mode or "").lower()
     method = str(upscale_method or post_upscale or "").strip()
+    task = str(edit_task or "").strip().lower()
     if mode == "upscale" or method:
         pack_ids.append("ComfyUI_UltimateSDUpscale")
+    if mode == "edit" and task == "photo_restore":
+        pack_ids.extend(
+            [
+                "comfyui_controlnet_aux",
+                "ComfyUI-Impact-Pack",
+                "ComfyUI-Impact-Subpack",
+            ]
+        )
     return list(dict.fromkeys(pack_ids))
 
 

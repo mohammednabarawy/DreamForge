@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 VALID_EDIT_TASKS = frozenset(
@@ -16,6 +17,8 @@ VALID_EDIT_TASKS = frozenset(
         "restyle",
         "extend",
         "global_edit",
+        "photo_restore",
+        "outfit_transfer",
     }
 )
 
@@ -30,6 +33,8 @@ EDIT_TASK_LABELS: dict[str, str] = {
     "restyle": "Restyle",
     "extend": "Extend",
     "global_edit": "Global edit",
+    "photo_restore": "Restore photo",
+    "outfit_transfer": "Outfit transfer",
 }
 
 # Maps high-level tasks onto existing inpaint intent presets where applicable.
@@ -42,6 +47,7 @@ EDIT_TASK_INPAINT_INTENT: dict[str, str] = {
     "recolor": "default",
     "relight": "default",
     "restyle": "default",
+    "outfit_transfer": "modify_content",
 }
 
 EDIT_TASK_PRESETS: dict[str, dict[str, Any]] = {
@@ -115,7 +121,120 @@ EDIT_TASK_PRESETS: dict[str, dict[str, Any]] = {
         "scope": "source_image",
         "hint": "Apply a global instruction edit to the source image.",
     },
+    "photo_restore": {
+        "edit_strength": 0.40,
+        "requires_mask": False,
+        "scope": "source_image",
+        "hint": "Restore and enhance old, damaged, or low-quality photos.",
+        "steps": 6,
+        "cfg": 1.5,
+        "sampler_name": "dpmpp_2s_ancestral_cfg_pp",
+        "scheduler": "karras",
+        "depth_strength": 0.15,
+        "lineart_strength": 0.35,
+        "face_preservation": True,
+    },
+    "outfit_transfer": {
+        "inpaint_intent": "modify_content",
+        "edit_type": "qwen_edit",
+        "edit_strength": 1.0,
+        "requires_mask": False,
+        "scope": "source_image",
+        "hint": "Transfer clothing from a reference image while preserving the person, pose, and scene.",
+    },
 }
+
+OUTFIT_TRANSFER_REGION_LABELS = {
+    "upper_body": "upper body clothing",
+    "lower_body": "lower body clothing",
+    "full_outfit": "full outfit",
+    "shoes_accessories": "shoes and accessories",
+}
+
+
+def outfit_transfer_has_reference(job: Any) -> bool:
+    source_paths = {
+        _normalize_reference_path(getattr(job, "input_image", None)),
+        _normalize_reference_path(getattr(job, "upscale_image", None)),
+    }
+    source_paths.discard("")
+
+    def is_outfit_path(value: Any) -> bool:
+        path = str(value or "").strip()
+        if not path:
+            return False
+        normalized = _normalize_reference_path(path)
+        return bool(normalized) and normalized not in source_paths
+
+    for key in ("reference_images", "control_images"):
+        value = getattr(job, key, None)
+        if isinstance(value, str) and is_outfit_path(value):
+            return True
+        if isinstance(value, (list, tuple)) and any(is_outfit_path(item) for item in value):
+            return True
+    value = getattr(job, "reference_image", None)
+    if is_outfit_path(value):
+        return True
+    raw_refs = getattr(job, "references", None)
+    if isinstance(raw_refs, dict):
+        return is_outfit_path(raw_refs.get("path"))
+    if isinstance(raw_refs, (list, tuple)):
+        return any(
+            is_outfit_path(item.get("path") if isinstance(item, dict) else item)
+            for item in raw_refs
+        )
+    return False
+
+
+def _normalize_reference_path(value: Any) -> str:
+    path = str(value or "").strip()
+    if not path:
+        return ""
+    return os.path.normcase(os.path.normpath(path))
+
+
+def merge_outfit_transfer_prompt(prompt: str, job: Any) -> str:
+    """Add garment-region guidance for the outfit-transfer task."""
+    if normalize_edit_task(getattr(job, "edit_task", None)) != "outfit_transfer":
+        return prompt
+    regions = getattr(job, "outfit_transfer_regions", None) or []
+    if isinstance(regions, str):
+        regions = [part.strip() for part in regions.split(",")]
+    labels = [
+        OUTFIT_TRANSFER_REGION_LABELS[key]
+        for key in regions
+        if key in OUTFIT_TRANSFER_REGION_LABELS
+    ]
+    guidance = "Preserve the face, pose, body shape, background, and lighting; only change clothing."
+    if labels:
+        guidance = f"Target garments: {', '.join(labels)}. {guidance}"
+    return f"{prompt.strip()} {guidance}".strip()
+
+
+def merge_photo_restore_task_settings(
+    settings: dict[str, Any],
+    job: Any,
+    defaults: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply photo-restore sampling defaults without clobbering explicit user values."""
+    if defaults.get("edit_task") != "photo_restore":
+        return settings
+    out = dict(settings)
+    mapping = (
+        ("steps", "steps"),
+        ("cfg", "cfg"),
+        ("sampler_name", "sampler_name"),
+        ("scheduler", "scheduler"),
+    )
+    for preset_key, settings_key in mapping:
+        if preset_key not in defaults:
+            continue
+        job_attr = "cfg_scale" if preset_key == "cfg" else preset_key
+        if getattr(job, job_attr, None) is not None:
+            continue
+        if out.get(settings_key) is None:
+            out[settings_key] = defaults[preset_key]
+    return out
 
 
 def normalize_edit_task(value: Any) -> str | None:
@@ -194,6 +313,50 @@ def apply_edit_task_defaults_to_job(
         if str(getattr(job, "edit_type", "") or "").lower() in {"", "auto", "inpaint", "outpaint"}:
             setattr(job, "edit_type", EDIT_TASK_PRESETS["global_edit"]["edit_type"])
         if str(getattr(job, "cn_type", "") or "").lower() in {"inpaint", "outpaint"}:
+            setattr(job, "cn_type", None)
+            setattr(job, "cn_selection", None)
+    elif defaults.get("edit_task") == "photo_restore":
+        if str(getattr(job, "edit_type", "") or "").lower() in {
+            "",
+            "auto",
+            "kontext",
+            "qwen_edit",
+            "inpaint",
+            "outpaint",
+        }:
+            setattr(job, "edit_type", "auto")
+        if str(getattr(job, "cn_type", "") or "").lower() in {
+            "inpaint",
+            "outpaint",
+            "kontext",
+            "qwen_edit",
+        }:
+            setattr(job, "cn_type", None)
+            setattr(job, "cn_selection", None)
+        for key in (
+            "steps",
+            "cfg_scale",
+            "sampler",
+            "scheduler",
+            "depth_strength",
+            "lineart_strength",
+            "face_preservation",
+        ):
+            if key == "cfg_scale":
+                preset_key = "cfg"
+            elif key == "sampler":
+                preset_key = "sampler_name"
+            else:
+                preset_key = key
+            if preset_key in defaults and getattr(job, key, None) is None:
+                setattr(job, key, defaults[preset_key])
+    elif defaults.get("edit_task") == "outfit_transfer":
+        if getattr(job, "inpaint_mask_path", None):
+            setattr(job, "edit_type", "inpaint")
+            setattr(job, "cn_type", "inpaint")
+            setattr(job, "cn_selection", "Custom...")
+        elif str(getattr(job, "edit_type", "") or "").lower() in {"", "auto", "kontext", "img2img"}:
+            setattr(job, "edit_type", "qwen_edit")
             setattr(job, "cn_type", None)
             setattr(job, "cn_selection", None)
     return defaults

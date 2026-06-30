@@ -651,6 +651,9 @@ export function GenerationSettingsPanel({
               <option value="preserve_resolution">
                 Preserve resolution (alias of Raw Plus)
               </option>
+              <option value="lightning_4step">
+                Lightning 4-step (Fast edit)
+              </option>
             </select>
           </label>
           <label className="mt-2 flex items-center gap-2 text-xs text-dfui-muted">

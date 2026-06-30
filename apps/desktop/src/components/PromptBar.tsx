@@ -240,6 +240,18 @@ export function PromptBar({
     }
   };
 
+  const promptPlaceholder = useMemo(() => {
+    if (isAgentMode) {
+      return "Tell the agent what you want. Example: edit this poster, preserve Arabic text, make it cinematic";
+    }
+    const isQwenEdit = referenceModelFamily === "qwen_image_edit";
+    const hasRefs = (settings.reference_images ?? []).some((path) => path.trim());
+    if (isQwenEdit || hasRefs) {
+      return "Describe the edit… Use 'image 1', 'image 2' to refer to your attached reference images.";
+    }
+    return "Describe the shot… Type @ to pick a model or style";
+  }, [isAgentMode, referenceModelFamily, settings.reference_images]);
+
   return (
     <div
       className={`df-command-deck relative shrink-0 border-t border-dfui-border/60 bg-dfui-panel/90 px-3 py-2 backdrop-blur-glass transition-colors ${
@@ -417,11 +429,7 @@ export function PromptBar({
               onChange={(e) => onPromptChange(e.target.value)}
               onFocus={() => onInpaintCanvasFocusChange?.(false)}
               rows={2}
-              placeholder={
-                isAgentMode
-                  ? "Tell the agent what you want. Example: edit this poster, preserve Arabic text, make it cinematic"
-                  : "Describe the shot… Type @ to pick a model or style"
-              }
+              placeholder={promptPlaceholder}
               className="df-textarea-glowing min-h-[48px] flex-1 py-1.5 text-xs leading-snug"
               data-df-prompt-input
             />

@@ -108,13 +108,19 @@ export function ReferenceSlotsEditor({
       <div className="space-y-2">
         {extraSlots.map((slot, offset) => {
           const index = offset + 1;
+          const prompt = (settings.prompt ?? "").toLowerCase();
+          const isMentioned = prompt.includes(`image ${index + 1}`);
           return (
             <div
               key={`${slot.path}-${index}`}
               className="rounded-md border border-dfui-border/50 bg-dfui-bg/40 p-1.5"
             >
               <div className="flex gap-2">
-                <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded border border-dfui-border/50 bg-dfui-bg">
+                <div className={`relative h-10 w-10 shrink-0 overflow-hidden rounded border transition-all bg-dfui-bg ${
+                  isMentioned
+                    ? "border-df-blue ring-1 ring-df-blue"
+                    : "border-dfui-border/50"
+                }`}>
                   <SlotPreview path={slot.path} />
                   <span className="absolute left-0 top-0 rounded-br bg-df-blue/80 px-1 text-[8px] font-bold text-white">
                     {index + 1}

@@ -92,7 +92,8 @@ export type GenerationSettings = {
     | "raw_plus"
     | "preserve"
     | "preserve_resolution"
-    | "exact";
+    | "exact"
+    | "lightning_4step";
   /** ModelSamplingAuraFlow shift (Qwen Image / Edit). */
   qwen_image_shift?: number;
   /** Scale edit canvas to this megapixel budget before encode (VRAM). */

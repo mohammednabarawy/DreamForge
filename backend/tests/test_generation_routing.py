@@ -1891,3 +1891,99 @@ def test_job_namespace_merges_references_from_payload():
     job = _job_namespace(base, data)
     assert len(job.references) == 2
     assert job.references[0]["path"] == "/a.png"
+
+
+def test_qwen_lightning_4step_routing_and_overrides(monkeypatch):
+    import dreamforge_comfy_workflows
+    monkeypatch.setattr(
+        dreamforge_comfy_workflows,
+        "_resolve_qwen_lightning_lora_name",
+        lambda _args: "dummy_lora.safetensors",
+    )
+
+    from dreamforge_generation import _build_comfy_prompt_graph
+
+    graph, _template = _build_comfy_prompt_graph(
+        job=SimpleNamespace(qwen_edit_mode="lightning_4step"),
+        mode="qwen_edit",
+        model={"name": "qwen-image-edit-2511-Q4_K_M.gguf", "category": "diffusion_models"},
+        model_family="qwen_image_edit",
+        settings={
+            "steps": 20,
+            "cfg": 2.5,
+            "sampler_name": "euler",
+            "scheduler": "beta",
+            "width": 1024,
+            "height": 1024,
+            "comfy_loras": [],
+        },
+        prompt="change outfit",
+        negative="",
+        seed=123,
+        edit_strength=1.0,
+        cn_upscale="",
+        input_filename="main.png",
+        mask_filename=None,
+        reference_stitch_filename=None,
+        grow_mask_by=0,
+        model_loader_args={
+            "ckpt_name": "qwen-image-edit-2511-Q4_K_M.gguf",
+            "relative_path": "qwen-image-edit-2511-Q4_K_M.gguf",
+            "category": "diffusion_models",
+            "family": "qwen_image_edit",
+        },
+        qwen_reference_filenames=["ref1.png"],
+    )
+
+    sampler = next(n for n in graph.values() if n.get("class_type") == "KSampler")
+    assert sampler["inputs"]["steps"] == 4
+    assert sampler["inputs"]["cfg"] == 1.0
+    assert sampler["inputs"]["sampler_name"] == "euler"
+    assert sampler["inputs"]["scheduler"] == "simple"
+
+    lora_node = next((n for n in graph.values() if n.get("class_type") == "LoraLoaderModelOnly"), None)
+    assert lora_node is not None
+    assert lora_node["inputs"]["strength_model"] == 1.0
+
+
+def test_qwen_lightning_4step_respects_preserve_resolution():
+    from dreamforge_generation import _build_comfy_prompt_graph
+
+    graph, _template = _build_comfy_prompt_graph(
+        job=SimpleNamespace(qwen_edit_mode="lightning_4step"),
+        mode="qwen_edit",
+        model={"name": "qwen-image-edit-2511-Q4_K_M.gguf", "category": "diffusion_models"},
+        model_family="qwen_image_edit",
+        settings={
+            "steps": 20,
+            "cfg": 2.5,
+            "sampler_name": "euler",
+            "scheduler": "beta",
+            "width": 1024,
+            "height": 1024,
+            "comfy_loras": [],
+            "qwen_preserve_resolution": True,
+        },
+        prompt="change outfit",
+        negative="",
+        seed=123,
+        edit_strength=1.0,
+        cn_upscale="",
+        input_filename="main.png",
+        mask_filename=None,
+        reference_stitch_filename=None,
+        grow_mask_by=0,
+        model_loader_args={
+            "ckpt_name": "qwen-image-edit-2511-Q4_K_M.gguf",
+            "relative_path": "qwen-image-edit-2511-Q4_K_M.gguf",
+            "category": "diffusion_models",
+            "family": "qwen_image_edit",
+        },
+        qwen_reference_filenames=["ref1.png", "ref2.png"],
+    )
+
+    # When qwen_preserve_resolution is on, it must route to raw_plus (using ReferenceLatents)
+    plus_nodes = [node for node in graph.values() if node.get("class_type") == "TextEncodeQwenImageEditPlus"]
+    assert len(plus_nodes) == 2
+    assert not any("image1" in node["inputs"] for node in plus_nodes)
+    assert sum(1 for node in graph.values() if node.get("class_type") == "ReferenceLatent") == 6

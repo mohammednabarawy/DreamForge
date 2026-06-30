@@ -213,7 +213,11 @@ import {
 } from "../lib/varyImage";
 import { applyHiDreamPerformanceAtSubmit } from "../lib/hidreamPerformance";
 import { applyQwenPreserveAtSubmit } from "../lib/qwenPreserveAtSubmit";
-import { applyMultiImageComposeAtSubmit } from "../lib/multiImageCompose";
+import {
+  applyMultiImageComposeAtSubmit,
+  maxReferenceImagesForFamily,
+  resolveReferenceModelFamily,
+} from "../lib/multiImageCompose";
 import {
   buildPlanSnapshotFromDryRun,
   canRunApprovedPlan,
@@ -3322,6 +3326,15 @@ export function useDreamForge() {
         (studioMode === "generate" || studioMode === "edit" || studioMode === "agent") &&
         !isSimpleExperience(uiExperience);
       if (useReferenceSlots) {
+        const baseFamily =
+          findGalleryModel(modelGalleryAll, settingsRef.current.model ?? "")?.family ?? "";
+        const resolvedFamily = resolveReferenceModelFamily(
+          settingsRef.current,
+          studioMode,
+          modelGalleryAll,
+          baseFamily,
+        );
+        const maxSlots = maxReferenceImagesForFamily(resolvedFamily);
         const patch = appendReferenceSlot(
           settingsRef.current,
           {
@@ -3331,9 +3344,14 @@ export function useDreamForge() {
             stop_at: settingsRef.current.cn_stop ?? 1,
           },
           studioMode,
+          maxSlots,
         );
         if (!patch) {
-          setStatus("Could not add reference slot (limit reached or invalid mix)");
+          setStatus(
+            resolvedFamily === "qwen_image_edit"
+              ? `Qwen Edit supports up to ${maxSlots} images`
+              : "Could not add reference slot (limit reached or invalid mix)",
+          );
           return;
         }
         patchSettings(
@@ -3352,7 +3370,7 @@ export function useDreamForge() {
       const count = (patch.reference_images ?? []).length;
       setStatus(`Added control reference (${count} total)`);
     },
-    [appConfig?.ui.studio_mode, patchSettings, uiExperience],
+    [appConfig?.ui.studio_mode, modelGalleryAll, patchSettings, uiExperience],
   );
 
   const removeExtraReferenceImage = useCallback(
@@ -4219,8 +4237,10 @@ export function useDreamForge() {
 
   const referenceModelFamily = useMemo(() => {
     const item = findGalleryModel(modelGalleryAll, settings.model ?? "");
-    return item?.family ?? "";
-  }, [modelGalleryAll, settings.model]);
+    const baseFamily = item?.family ?? "";
+    const mode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+    return resolveReferenceModelFamily(settings, mode, modelGalleryAll, baseFamily);
+  }, [modelGalleryAll, settings, appConfig?.ui.studio_mode]);
 
   const mentionTargets = useMemo(() => {
     const models = modelGalleryAll.map((m) => ({

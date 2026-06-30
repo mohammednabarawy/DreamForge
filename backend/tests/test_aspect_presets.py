@@ -21,8 +21,8 @@ def test_list_aspect_ratio_presets_includes_resolutions_and_hidream(monkeypatch)
     mock_modules = ModuleType("modules")
     mock_resolutions = ModuleType("modules.resolutions")
     mock_resolutions.ResolutionSettings = MockResolutionSettings
-    sys.modules["modules"] = mock_modules
-    sys.modules["modules.resolutions"] = mock_resolutions
+    monkeypatch.setitem(sys.modules, "modules", mock_modules)
+    monkeypatch.setitem(sys.modules, "modules.resolutions", mock_resolutions)
 
     presets = list_aspect_ratio_presets()
     assert "1024x1024" in presets

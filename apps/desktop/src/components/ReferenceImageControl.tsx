@@ -29,11 +29,11 @@ import {
   appendReferenceSlot,
   coerceReferenceSlots,
   DEFAULT_SLOT_STOP_AT,
-  MAX_REFERENCE_SLOTS,
   removeReferenceSlotAt,
   syncLegacyFromPrimarySlot,
   updateReferenceSlotAt,
 } from "../lib/referenceSlots";
+import { maxReferenceImagesForFamily } from "../lib/multiImageCompose";
 import {
   isIdentityPreservationActive,
   patchForKeepFace,
@@ -74,6 +74,8 @@ export function ReferenceImageControl({
   const [dragOver, setDragOver] = useState(false);
   const [showRoles, setShowRoles] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const prompt = (settings.prompt ?? "").toLowerCase();
+  const isImage1Mentioned = prompt.includes("image 1");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const extraInputRef = useRef<HTMLInputElement>(null);
 
@@ -105,9 +107,11 @@ export function ReferenceImageControl({
     supportsMultiReferences &&
     Boolean(onPatchSettings) &&
     Boolean(attachedPath);
-  const maxSlots = modelFamily === "qwen_image_edit" ? 3 : MAX_REFERENCE_SLOTS;
+  const maxSlots = maxReferenceImagesForFamily(modelFamily ?? "");
 
   const referenceSlots = coerceReferenceSlots(settings, studioMode, maxSlots);
+  const atReferenceCap =
+    (attachedPath ? 1 : 0) + extraReferences.length >= maxSlots;
 
   const showExtraRefs =
     simpleExperience &&
@@ -353,7 +357,11 @@ export function ReferenceImageControl({
       <div className={compact ? "px-2 pb-1" : "p-2.5"}>
         {attachedPath ? (
           <div className="flex gap-2">
-            <div className={`${compact ? "h-11 w-11" : "h-16 w-16"} relative shrink-0 overflow-hidden rounded-md border border-dfui-border/60 bg-dfui-bg`}>
+            <div className={`${compact ? "h-11 w-11" : "h-16 w-16"} relative shrink-0 overflow-hidden rounded-md border bg-dfui-bg transition-all ${
+              isImage1Mentioned
+                ? "border-df-blue ring-2 ring-df-blue"
+                : "border-dfui-border/60"
+            }`}>
               {previewUrl ? (
                 <img src={previewUrl} alt="" className="h-full w-full object-cover" />
               ) : (
@@ -557,15 +565,28 @@ export function ReferenceImageControl({
               )}
             </span>
           ))}
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => void onChooseExtraFile()}
-            className="rounded border border-dashed border-dfui-border/70 px-1.5 py-0.5 text-[9px] text-dfui-accent hover:border-dfui-accent/50 disabled:opacity-50"
-            title="Add another reference image"
-          >
-            + reference
-          </button>
+          {atReferenceCap ? (
+            <span
+              className="rounded border border-dfui-border/50 px-1.5 py-0.5 text-[9px] text-dfui-muted"
+              title={
+                modelFamily === "qwen_image_edit"
+                  ? `Qwen Edit supports up to ${maxSlots} images`
+                  : `Up to ${maxSlots} reference images`
+              }
+            >
+              Max {maxSlots} images
+            </span>
+          ) : (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => void onChooseExtraFile()}
+              className="rounded border border-dashed border-dfui-border/70 px-1.5 py-0.5 text-[9px] text-dfui-accent hover:border-dfui-accent/50 disabled:opacity-50"
+              title="Add another reference image"
+            >
+              + reference
+            </button>
+          )}
         </div>
       )}
     </motion.div>

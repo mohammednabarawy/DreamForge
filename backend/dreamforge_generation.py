@@ -913,6 +913,8 @@ def _build_comfy_prompt_graph(
                     settings["scheduler"] = qwen_recipe.get("scheduler", settings.get("scheduler", "normal"))
                     if "qwen_lightning_strength" in qwen_recipe:
                         settings["qwen_lightning_strength"] = qwen_recipe["qwen_lightning_strength"]
+                    if "qwen_image_shift" in qwen_recipe:
+                        settings["qwen_image_shift"] = qwen_recipe["qwen_image_shift"]
                     settings["use_qwen_lightning_lora"] = True
 
             qwen_common = {

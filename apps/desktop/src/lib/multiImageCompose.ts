@@ -1,8 +1,11 @@
 import type { StudioMode } from "./model-selection";
 import { selectIdentityGenerateModel } from "./model-selection";
-import { coerceReferenceSlots } from "./referenceSlots";
+import { coerceReferenceSlots, MAX_REFERENCE_SLOTS } from "./referenceSlots";
 import { isIdentityPreservationActive } from "./identityPreserve";
 import type { GenerationSettings, ModelGalleryItem } from "./tauri-api";
+
+/** Qwen Edit Plus (TextEncodeQwenImageEditPlus) accepts at most 3 images. */
+export const QWEN_EDIT_MAX_REFERENCES = 3;
 
 /**
  * Roles that count as "an image the prompt can talk about" (image 1/2/3).
@@ -73,4 +76,37 @@ export function applyMultiImageComposeAtSubmit(
         ? "ipadapter_faceid"
         : "preserve_face",
   };
+}
+
+/**
+ * Resolve the family the reference images will actually run through.
+ *
+ * A Generate job can be authored against a Flux/SDXL model yet auto-route to a
+ * Qwen edit model at submit (identity preserve or 2+ compose images). Callers
+ * that gate reference counts or labels need that resolved family, not just the
+ * model the user happened to pick.
+ */
+export function resolveReferenceModelFamily(
+  settings: GenerationSettings,
+  studioMode: StudioMode,
+  gallery: ModelGalleryItem[],
+  selectedFamily: string,
+): string {
+  if (selectedFamily === "qwen_image_edit") return "qwen_image_edit";
+  const routed = selectIdentityGenerateModel(gallery);
+  if (routed?.family === "qwen_image_edit") {
+    const isKeepFace = isIdentityPreservationActive(settings);
+    const composeCount = composeReferenceCount(settings, studioMode);
+    if (isKeepFace || composeCount >= 2) {
+      return "qwen_image_edit";
+    }
+  }
+  return selectedFamily;
+}
+
+/** Max reference images a resolved family supports (Qwen Edit Plus caps at 3). */
+export function maxReferenceImagesForFamily(family: string): number {
+  return family === "qwen_image_edit"
+    ? QWEN_EDIT_MAX_REFERENCES
+    : MAX_REFERENCE_SLOTS;
 }

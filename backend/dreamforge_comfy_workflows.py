@@ -1554,31 +1554,29 @@ def comfy_qwen_image_edit_plus(args: dict[str, Any]) -> dict[str, Any]:
 
     if preserve_resolution:
         latent_links: list[list[str | int]] = []
-        # For raw_plus, we still use the VAE to encode the high-res image1 for the latent
-        # But we MUST still pass the images to TextEncodeQwenImageEditPlus!
-        if "image1" in image_links:
-            preserved, n = _qwen_preserve_source_pixels(g, image_links["image1"], n, args)
+        for key in ("image1", "image2", "image3"):
+            if key not in image_links:
+                continue
+            preserved, n = _qwen_preserve_source_pixels(g, image_links[key], n, args)
             g[str(n)] = _node("VAEEncode", {"pixels": preserved, "vae": vae_out})
             latent_links.append([str(n), 0])
             n += 1
 
-        def _encode_plus(text: str) -> list[str | int]:
+        def _encode_prompt_only(text: str) -> list[str | int]:
             nonlocal n
-            inputs: dict[str, Any] = {
-                "clip": clip_out,
-                "prompt": text,
-            }
-            for key in ("image1", "image2", "image3"):
-                if key in image_links:
-                    inputs[key] = image_links[key]
-            g[str(n)] = _node("TextEncodeQwenImageEditPlus", inputs)
+            g[str(n)] = _node(
+                "TextEncodeQwenImageEditPlus",
+                {"clip": clip_out, "prompt": text},
+            )
             out = [str(n), 0]
             n += 1
             return out
 
-        pos = _encode_plus(prompt)
-        neg = _encode_plus(negative)
-        latent = latent_links[0] if latent_links else [str(n-1), 0] # fallback if somehow missing
+        pos = _encode_prompt_only(prompt)
+        neg = _encode_prompt_only(negative)
+        pos, n = _apply_reference_latents(g, pos, latent_links, n)
+        neg, n = _apply_reference_latents(g, neg, latent_links, n)
+        latent = latent_links[0]
         _qwen_edit_sampler_nodes(
             g,
             start_id=n,

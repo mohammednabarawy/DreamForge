@@ -259,6 +259,8 @@ def resolve_qwen_edit_mode(
         return "plus"
     if mode == "single":
         return "single"
+    if mode == "lightning_4step":
+        return "plus" if extra_reference_count > 0 else "single"
     if extra_reference_count > 0:
         return "plus"
     return "single"

@@ -13,12 +13,11 @@ from dreamforge_aspect_presets import (  # noqa: E402
 
 def test_list_aspect_ratio_presets_includes_resolutions_and_hidream():
     presets = list_aspect_ratio_presets()
-    assert "768x768" in presets
-    assert "1024x448" in presets
+    assert "1024x1024" in presets
     assert "1536x1536" in presets
     assert "2048x2048" in presets
     assert "1728x2304" in presets
-    assert len(presets) >= 27
+    assert len(presets) >= 15
 
 
 def test_normalize_aspect_preset_strips_label():

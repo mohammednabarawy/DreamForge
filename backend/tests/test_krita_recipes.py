@@ -64,3 +64,14 @@ def test_qwen_edit_recipe_prefers_local_q4_gguf_and_lightning_defaults():
     assert recipe["cfg"] == 1.0
     assert recipe["scheduler"] == "simple"
     assert recipe["qwen_lightning_strength"] == 0.75
+    assert recipe["max_reference_images"] == 3
+
+
+def test_qwen_edit_recipe_lightning_4step():
+    recipe = edit_recipe("qwen_image_edit", "lightning_4step")
+    assert recipe is not None
+    assert "qwen_image_edit_2511_fp8_e4m3fn_scaled_lightning_comfyui_4steps_v1.0.safetensors" in recipe["checkpoints"]
+    assert recipe["custom_steps"] == 4
+    assert recipe["cfg"] == 1.0
+    assert recipe["qwen_lightning_strength"] == 1.0
+    assert recipe["max_reference_images"] == 3

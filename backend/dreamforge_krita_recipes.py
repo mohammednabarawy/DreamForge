@@ -81,8 +81,28 @@ EDIT_RECIPES: dict[str, dict[str, Any]] = {
         "qwen_image_shift": 3.1,
         "qwen_scale_megapixels": 1.25,
         "qwen_lightning_strength": 0.75,
-        "max_reference_images": 2,
+        "max_reference_images": 3,
         "live_steps": 10,
+        "live_cfg": 1.0,
+    },
+    "qwen_lightning_4step": {
+        "name": "Qwen Lightning",
+        "checkpoints": [
+            "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+            "qwen_image_edit_2511_fp8_e4m3fn_scaled_lightning_comfyui_4steps_v1.0.safetensors",
+            "qwen_image_edit_2511_fp8_e4m3fn_scaled_lightning_4steps_v1.0.safetensors",
+        ],
+        "custom_steps": 4,
+        "cfg": 1.0,
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "clip_skip": 1,
+        "edit_strength": 1.0,
+        "qwen_image_shift": 3.0,
+        "qwen_scale_megapixels": 1.25,
+        "qwen_lightning_strength": 1.0,
+        "max_reference_images": 3,
+        "live_steps": 4,
         "live_cfg": 1.0,
     },
 }
@@ -209,6 +229,8 @@ def edit_recipe(model_family: str, edit_type: str = "auto") -> dict[str, Any] | 
     if family == "flux_kontext":
         return deepcopy(EDIT_RECIPES["flux_kontext"])
     if family == "qwen_image_edit" or kind == "qwen_edit":
+        if kind == "lightning_4step":
+            return deepcopy(EDIT_RECIPES.get("qwen_lightning_4step", EDIT_RECIPES["qwen_image_edit"]))
         return deepcopy(EDIT_RECIPES["qwen_image_edit"])
     return None
 

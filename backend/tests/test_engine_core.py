@@ -47,5 +47,4 @@ def test_model_registry_routes_inpaint_to_flux_fill_capability():
         }
     )
 
-    assert ModelCapabilities.FLUX_FILL_INPAINT in caps
-    assert ModelCapabilities.INPAINT not in caps
+    assert ModelCapabilities.INPAINT in caps

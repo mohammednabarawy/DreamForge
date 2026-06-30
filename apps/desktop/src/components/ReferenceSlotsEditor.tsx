@@ -21,8 +21,8 @@ type Props = {
   settings: GenerationSettings;
   studioMode?: StudioMode;
   disabled?: boolean;
-  /** Show per-image role chips + weight/stop controls (advanced). */
   showRoles?: boolean;
+  maxSlots?: number;
   onAddSlot: (slot: ReferenceSlot) => void;
   onUpdateSlot: (index: number, patch: Partial<ReferenceSlot>) => void;
   onRemoveSlot: (index: number) => void;
@@ -58,13 +58,14 @@ export function ReferenceSlotsEditor({
   studioMode = "generate",
   disabled = false,
   showRoles = false,
+  maxSlots = MAX_REFERENCE_SLOTS,
   onAddSlot,
   onUpdateSlot,
   onRemoveSlot,
 }: Props) {
-  const slots = coerceReferenceSlots(settings, studioMode);
+  const slots = coerceReferenceSlots(settings, studioMode, maxSlots);
   const extraSlots = slots.slice(1);
-  const canAdd = slots.length < MAX_REFERENCE_SLOTS;
+  const canAdd = slots.length < maxSlots;
 
   const chooseExtraSlot = async (role: ReferenceRole = "image_prompt") => {
     try {
@@ -88,7 +89,7 @@ export function ReferenceSlotsEditor({
     <div className="border-t border-dfui-border/40 px-2.5 py-2">
       <div className="mb-1.5 flex items-center justify-between gap-2">
         <p className="text-[9px] font-semibold uppercase tracking-wide text-dfui-muted">
-          Reference images ({slots.length}/{MAX_REFERENCE_SLOTS})
+          Reference images ({slots.length}/{maxSlots})
         </p>
         {canAdd ? (
           <button
@@ -217,7 +218,7 @@ export function ReferenceSlotsEditor({
       {slots.length === 1 && canAdd ? (
         <p className="mt-1 text-[8px] leading-snug text-dfui-tertiary">
           Add more images to compose them together — the prompt decides how
-          (keep a face, swap an outfit, merge a scene). Up to {MAX_REFERENCE_SLOTS}.
+          (keep a face, swap an outfit, merge a scene). Up to {maxSlots}.
         </p>
       ) : null}
     </div>

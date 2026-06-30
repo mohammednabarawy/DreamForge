@@ -1,0 +1,26 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\DreamForge\backend
+configfile: pytest.ini
+plugins: anyio-4.10.0
+collected 5 items
+
+backend\tests\test_krita_recipes.py ...F.                                [100%]
+
+================================== FAILURES ===================================
+_____ test_qwen_edit_recipe_prefers_local_q4_gguf_and_lightning_defaults ______
+
+    def test_qwen_edit_recipe_prefers_local_q4_gguf_and_lightning_defaults():
+        recipe = edit_recipe("qwen_image_edit", "qwen_edit")
+        assert recipe is not None
+        assert recipe["checkpoints"][0] == "qwen-image-edit-2511-Q4_K_M.gguf"
+        assert recipe["custom_steps"] == 8
+        assert recipe["cfg"] == 1.0
+        assert recipe["scheduler"] == "simple"
+>       assert recipe["qwen_lightning_strength"] == 1.0
+E       assert 0.75 == 1.0
+
+backend\tests\test_krita_recipes.py:66: AssertionError
+=========================== short test summary info ===========================
+FAILED backend\tests\test_krita_recipes.py::test_qwen_edit_recipe_prefers_local_q4_gguf_and_lightning_defaults
+========================= 1 failed, 4 passed in 0.14s =========================

@@ -29,6 +29,7 @@ import {
   appendReferenceSlot,
   coerceReferenceSlots,
   DEFAULT_SLOT_STOP_AT,
+  MAX_REFERENCE_SLOTS,
   removeReferenceSlotAt,
   syncLegacyFromPrimarySlot,
   updateReferenceSlotAt,
@@ -104,7 +105,9 @@ export function ReferenceImageControl({
     supportsMultiReferences &&
     Boolean(onPatchSettings) &&
     Boolean(attachedPath);
-  const referenceSlots = coerceReferenceSlots(settings, studioMode);
+  const maxSlots = modelFamily === "qwen_image_edit" ? 3 : MAX_REFERENCE_SLOTS;
+
+  const referenceSlots = coerceReferenceSlots(settings, studioMode, maxSlots);
 
   const showExtraRefs =
     simpleExperience &&
@@ -520,15 +523,16 @@ export function ReferenceImageControl({
           studioMode={studioMode}
           disabled={disabled}
           showRoles={showRoles}
+          maxSlots={maxSlots}
           onAddSlot={(slot) => {
-            const patch = appendReferenceSlot(settings, slot, studioMode);
+            const patch = appendReferenceSlot(settings, slot, studioMode, maxSlots);
             if (patch) onPatchSettings?.(patch);
           }}
           onUpdateSlot={(index, slotPatch) => {
-            const patch = updateReferenceSlotAt(settings, index, slotPatch, studioMode);
+            const patch = updateReferenceSlotAt(settings, index, slotPatch, studioMode, maxSlots);
             if (patch) onPatchSettings?.(patch);
           }}
-          onRemoveSlot={(index) => onPatchSettings?.(removeReferenceSlotAt(settings, index, studioMode))}
+          onRemoveSlot={(index) => onPatchSettings?.(removeReferenceSlotAt(settings, index, studioMode, maxSlots))}
         />
       )}
       {showExtraRefs && (

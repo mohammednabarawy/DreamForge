@@ -11,7 +11,19 @@ from dreamforge_aspect_presets import (  # noqa: E402
 )
 
 
-def test_list_aspect_ratio_presets_includes_resolutions_and_hidream():
+def test_list_aspect_ratio_presets_includes_resolutions_and_hidream(monkeypatch):
+    class MockResolutionSettings:
+        def __init__(self):
+            self.aspect_ratios = {"1:1": (1024, 1024)}
+
+    import sys
+    from types import ModuleType
+    mock_modules = ModuleType("modules")
+    mock_resolutions = ModuleType("modules.resolutions")
+    mock_resolutions.ResolutionSettings = MockResolutionSettings
+    sys.modules["modules"] = mock_modules
+    sys.modules["modules.resolutions"] = mock_resolutions
+
     presets = list_aspect_ratio_presets()
     assert "1024x1024" in presets
     assert "1536x1536" in presets

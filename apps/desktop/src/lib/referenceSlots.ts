@@ -64,12 +64,13 @@ export function legacySlotFromSettings(
 export function coerceReferenceSlots(
   settings: GenerationSettings,
   studioMode: StudioMode = "generate",
+  maxSlots: number = MAX_REFERENCE_SLOTS,
 ): ReferenceSlot[] {
   const raw = settings.references ?? [];
   const fromArray = raw
     .map((item) => normalizeReferenceSlot(item))
     .filter((item): item is ReferenceSlot => Boolean(item))
-    .slice(0, MAX_REFERENCE_SLOTS);
+    .slice(0, maxSlots);
   if (fromArray.length) return fromArray;
   const legacy = legacySlotFromSettings(settings, studioMode);
   return legacy ? [legacy] : [];
@@ -133,11 +134,12 @@ export function normalizeReferenceSettings(
 
 export function validateReferenceSlotMix(
   slots: ReferenceSlot[],
+  maxSlots: number = MAX_REFERENCE_SLOTS,
 ): ReferenceSlotMixIssue | null {
-  if (slots.length > MAX_REFERENCE_SLOTS) {
+  if (slots.length > maxSlots) {
     return {
       code: "too_many_slots",
-      message: `At most ${MAX_REFERENCE_SLOTS} reference slots are supported.`,
+      message: `At most ${maxSlots} reference slots are supported.`,
     };
   }
   const roles = slots.map((s) => s.role);
@@ -227,13 +229,14 @@ export function appendReferenceSlot(
   settings: GenerationSettings,
   slot: ReferenceSlot,
   studioMode: StudioMode = "generate",
+  maxSlots: number = MAX_REFERENCE_SLOTS,
 ): Partial<GenerationSettings> | null {
-  const slots = [...coerceReferenceSlots(settings, studioMode)];
-  if (slots.length >= MAX_REFERENCE_SLOTS) return null;
+  const slots = [...coerceReferenceSlots(settings, studioMode, maxSlots)];
+  if (slots.length >= maxSlots) return null;
   if (slots.some((item) => item.path === slot.path)) return null;
   slots.push(slot);
   const reconciled = reconcileSlotRoles(slots);
-  const issue = validateReferenceSlotMix(reconciled);
+  const issue = validateReferenceSlotMix(reconciled, maxSlots);
   if (issue) return null;
   return syncLegacyFromPrimarySlot(settings, reconciled);
 }
@@ -243,14 +246,15 @@ export function updateReferenceSlotAt(
   index: number,
   patch: Partial<ReferenceSlot>,
   studioMode: StudioMode = "generate",
+  maxSlots: number = MAX_REFERENCE_SLOTS,
 ): Partial<GenerationSettings> | null {
-  const slots = [...coerceReferenceSlots(settings, studioMode)];
+  const slots = [...coerceReferenceSlots(settings, studioMode, maxSlots)];
   if (index < 0 || index >= slots.length) return null;
   const merged = normalizeReferenceSlot({ ...slots[index], ...patch });
   if (!merged) return null;
   slots[index] = merged;
   const reconciled = reconcileSlotRoles(slots);
-  const issue = validateReferenceSlotMix(reconciled);
+  const issue = validateReferenceSlotMix(reconciled, maxSlots);
   if (issue) return null;
   return syncLegacyFromPrimarySlot(settings, reconciled);
 }
@@ -259,8 +263,9 @@ export function removeReferenceSlotAt(
   settings: GenerationSettings,
   index: number,
   studioMode: StudioMode = "generate",
+  maxSlots: number = MAX_REFERENCE_SLOTS,
 ): Partial<GenerationSettings> {
-  const slots = [...coerceReferenceSlots(settings, studioMode)];
+  const slots = [...coerceReferenceSlots(settings, studioMode, maxSlots)];
   slots.splice(index, 1);
   if (!slots.length) {
     return {

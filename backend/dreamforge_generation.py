@@ -901,7 +901,19 @@ def _build_comfy_prompt_graph(
         elif (model_family or "").startswith("qwen") and (
             model_family == "qwen_image_edit" or mode == "qwen_edit" or model_family == "qwen_image"
         ):
-            from dreamforge_krita_recipes import resolve_qwen_edit_mode
+            from dreamforge_krita_recipes import resolve_qwen_edit_mode, edit_recipe
+
+            requested_qwen_mode = str(getattr(job, "qwen_edit_mode", "") or "").strip().lower()
+            if requested_qwen_mode == "lightning_4step":
+                qwen_recipe = edit_recipe("qwen_image_edit", requested_qwen_mode)
+                if qwen_recipe:
+                    settings["steps"] = qwen_recipe.get("custom_steps", settings.get("steps", 4))
+                    settings["cfg"] = qwen_recipe.get("cfg", settings.get("cfg", 1.0))
+                    settings["sampler_name"] = qwen_recipe.get("sampler_name", settings.get("sampler_name", "euler"))
+                    settings["scheduler"] = qwen_recipe.get("scheduler", settings.get("scheduler", "normal"))
+                    if "qwen_lightning_strength" in qwen_recipe:
+                        settings["qwen_lightning_strength"] = qwen_recipe["qwen_lightning_strength"]
+                    settings["use_qwen_lightning_lora"] = True
 
             qwen_common = {
                 **loader_args,
@@ -928,10 +940,9 @@ def _build_comfy_prompt_graph(
                     qwen_common[key] = settings[key]
             edit_mode = resolve_qwen_edit_mode(
                 model_family="qwen_image_edit",
-                requested=getattr(job, "qwen_edit_mode", None),
+                requested=requested_qwen_mode,
                 extra_reference_count=len(qwen_reference_filenames or []),
             )
-            requested_qwen_mode = str(getattr(job, "qwen_edit_mode", "") or "").strip().lower()
             preserve_qwen_resolution = bool(settings.get("qwen_preserve_resolution")) or requested_qwen_mode in {
                 "raw",
                 "raw_plus",

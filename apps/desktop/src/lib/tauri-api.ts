@@ -84,11 +84,23 @@ export type GenerationSettings = {
   /** Fooocus-style img2img variation strength preset. */
   vary_amount?: "subtle" | "strong";
   /** Qwen edit graph: auto picks plus when reference_images are set. */
-  qwen_edit_mode?: "auto" | "single" | "plus";
+  qwen_edit_mode?:
+    | "auto"
+    | "single"
+    | "plus"
+    | "raw"
+    | "raw_plus"
+    | "preserve"
+    | "preserve_resolution"
+    | "exact";
   /** ModelSamplingAuraFlow shift (Qwen Image / Edit). */
   qwen_image_shift?: number;
   /** Scale edit canvas to this megapixel budget before encode (VRAM). */
   qwen_scale_megapixels?: number;
+  /** Qwen Edit Plus: VAE-encode refs at source resolution + ReferenceLatent (no 1MP rescale). */
+  qwen_preserve_resolution?: boolean;
+  /** Optional megapixel cap when preserve_resolution is on (VRAM safety). */
+  qwen_preserve_megapixels?: number;
   use_qwen_lightning_lora?: boolean;
   qwen_lightning_strength?: number;
   /** Ideogram 4 scheduler preset (Default / Quality / Turbo). */

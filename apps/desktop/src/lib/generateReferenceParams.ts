@@ -13,6 +13,12 @@ export type ReferenceRoleApplyResult = {
 export const IMAGE_PROMPT_FALLBACK_WARNING =
   "IP-Adapter assets missing — using restyle (img2img) instead";
 
+/** Models that use native reference conditioning instead of IP-Adapter (Generate). */
+export function modelUsesNativeImagePrompt(modelFamily: string): boolean {
+  const fam = modelFamily.toLowerCase();
+  return fam === "hidream_o1";
+}
+
 /** Apply explicit reference_role routing at submit time (Pro overrides win). */
 export function applyExplicitReferenceRoleParams(
   params: GenerationSettings,
@@ -47,7 +53,7 @@ export function applyExplicitReferenceRoleParams(
   }
 
   if (role === "image_prompt") {
-    if (!ipReady) {
+    if (!ipReady && !modelUsesNativeImagePrompt(modelFamily)) {
       return {
         params: buildRestyleSubmitParams(params, modelFamily, refPath),
         warning: IMAGE_PROMPT_FALLBACK_WARNING,

@@ -226,11 +226,13 @@ def resolve_qwen_edit_mode(
     requested: str | None,
     extra_reference_count: int,
 ) -> str:
-    """Return 'single' or 'plus' for Qwen edit graph selection."""
+    """Return 'single', 'plus', or 'raw_plus' for Qwen edit graph selection."""
     family = (model_family or "").lower()
     if family != "qwen_image_edit":
         return "single"
     mode = str(requested or "auto").lower()
+    if mode in {"raw", "raw_plus", "preserve", "preserve_resolution", "exact"}:
+        return "raw_plus"
     if mode == "plus":
         return "plus"
     if mode == "single":

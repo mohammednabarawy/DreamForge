@@ -805,6 +805,117 @@ def comfy_hidream_o1_dev_txt2img(args: dict[str, Any]) -> dict[str, Any]:
     return g
 
 
+def comfy_hidream_o1_reference_images(args: dict[str, Any]) -> dict[str, Any]:
+    """Native HiDream-O1 reference-image generation for 1-3 image prompts.
+
+    HiDream-O1 has its own reference conditioning node. Use it instead of
+    generic IP-Adapter when the selected checkpoint is an O1 all-in-one image
+    model, so multi-subject references can condition the native sampler chain.
+    """
+    prompt = str(args.get("prompt", ""))
+    negative = str(args.get("negative", ""))
+    images = [str(item) for item in (args.get("images") or []) if str(item or "").strip()]
+    if not images:
+        image = str(args.get("image") or args.get("reference_image") or "").strip()
+        if image:
+            images = [image]
+    images = images[:3]
+    if not images:
+        raise ValueError("HiDream-O1 reference generation requires at least one image")
+
+    width = int(args.get("width", 2048))
+    height = int(args.get("height", 2048))
+    steps = int(args.get("steps", 28))
+    cfg = float(args.get("cfg", 1.0))
+    scheduler = str(args.get("scheduler", "normal"))
+    seed = int(args.get("seed", 0))
+    noise_scale = float(args.get("hidream_noise_scale", 7.6))
+    s_noise = float(args.get("hidream_s_noise", 1.0))
+    s_noise_end = float(args.get("hidream_s_noise_end", 1.0))
+    noise_clip_std = float(args.get("hidream_noise_clip_std", 2.5))
+    denoise = float(args.get("denoise", 1.0))
+
+    g: dict[str, Any] = {}
+    model_out, clip_out, vae_out, n = _hidream_o1_checkpoint_loader(g, args)
+
+    image_outs: list[list[Any]] = []
+    for filename in images:
+        g[str(n)] = _node("LoadImage", {"image": filename, "upload": "image"})
+        image_outs.append([str(n), 0])
+        n += 1
+
+    g[str(n)] = _node("ModelNoiseScale", {"model": model_out, "noise_scale": noise_scale})
+    model_sampled: list[Any] = [str(n), 0]
+    n += 1
+    g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
+    positive = [str(n), 0]
+    n += 1
+    g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
+    negative_out = [str(n), 0]
+    n += 1
+
+    reference_inputs: dict[str, Any] = {
+        "positive": positive,
+        "negative": negative_out,
+        "images.image_1": image_outs[0],
+    }
+    if len(image_outs) > 1:
+        reference_inputs["images.image_2"] = image_outs[1]
+    if len(image_outs) > 2:
+        reference_inputs["images.image_3"] = image_outs[2]
+    g[str(n)] = _node("HiDreamO1ReferenceImages", reference_inputs)
+    positive_ref = [str(n), 0]
+    negative_ref = [str(n), 1]
+    n += 1
+
+    g[str(n)] = _node(
+        "EmptyHiDreamO1LatentImage",
+        {"width": width, "height": height, "batch_size": 1},
+    )
+    latent = [str(n), 0]
+    n += 1
+    g[str(n)] = _node(
+        "SamplerLCM",
+        {
+            "s_noise": s_noise,
+            "s_noise_end": s_noise_end,
+            "noise_clip_std": noise_clip_std,
+        },
+    )
+    sampler = [str(n), 0]
+    n += 1
+    g[str(n)] = _node(
+        "BasicScheduler",
+        {"model": model_sampled, "scheduler": scheduler, "steps": steps, "denoise": denoise},
+    )
+    sigmas = [str(n), 0]
+    n += 1
+    g[str(n)] = _node(
+        "SamplerCustom",
+        {
+            "model": model_sampled,
+            "positive": positive_ref,
+            "negative": negative_ref,
+            "sampler": sampler,
+            "sigmas": sigmas,
+            "latent_image": latent,
+            "noise_seed": seed,
+            "cfg": cfg,
+            "add_noise": True,
+        },
+    )
+    samples = [str(n), 0]
+    n += 1
+    g[str(n)] = _vae_decode_node(args, samples, vae_out)
+    decode = [str(n), 0]
+    n += 1
+    g[str(n)] = _node(
+        "SaveImage",
+        {"images": decode, "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+    )
+    return g
+
+
 def comfy_txt2img_basic(args: dict[str, Any]) -> dict[str, Any]:
     """Generic KSampler txt2img (SDXL-style checkpoints)."""
     ckpt = str(args["ckpt_name"])
@@ -1210,6 +1321,65 @@ def _maybe_scale_qwen_pixels(
     return [str(start_id), 0], start_id + 1
 
 
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "raw", "preserve_resolution", "exact"}
+
+
+def _qwen_preserve_target_megapixels(args: dict[str, Any]) -> float:
+    raw = args.get("qwen_preserve_megapixels")
+    if raw is None:
+        raw = args.get("qwen_raw_megapixels")
+    if raw is not None:
+        try:
+            return max(0.25, min(float(raw), 8.0))
+        except (TypeError, ValueError):
+            pass
+    return _img2img_target_megapixels(args)
+
+
+def _qwen_preserve_source_pixels(
+    g: dict[str, Any],
+    image_out: list[str | int],
+    start_id: int,
+    args: dict[str, Any],
+) -> tuple[list[str | int], int]:
+    """Resize only enough to keep Qwen raw latents patch-safe.
+
+    The standard Qwen Plus node internally normalizes images around 1MP. For
+    precision edits, use an explicit latent source near the requested output
+    size and snap dimensions to /64 before VAEEncode.
+    """
+    g[str(start_id)] = _node(
+        "ImageScaleToTotalPixels",
+        {
+            "image": image_out,
+            "upscale_method": str(args.get("qwen_preserve_scale_method", "lanczos")),
+            "megapixels": _qwen_preserve_target_megapixels(args),
+            "resolution_steps": int(args.get("qwen_resolution_steps", 64)),
+        },
+    )
+    return [str(start_id), 0], start_id + 1
+
+
+def _apply_reference_latents(
+    g: dict[str, Any],
+    conditioning: list[str | int],
+    latents: list[list[str | int]],
+    start_id: int,
+) -> tuple[list[str | int], int]:
+    out = conditioning
+    n = start_id
+    for latent in latents:
+        g[str(n)] = _node("ReferenceLatent", {"conditioning": out, "latent": latent})
+        out = [str(n), 0]
+        n += 1
+    return out, n
+
+
 def _img2img_target_megapixels(args: dict[str, Any]) -> float:
     """Megapixel budget for an img2img source resize.
 
@@ -1362,6 +1532,7 @@ def comfy_qwen_image_edit_plus(args: dict[str, Any]) -> dict[str, Any]:
     ckpt = str(args["ckpt_name"])
     prompt = str(args.get("prompt", ""))
     negative = str(args.get("negative", ""))
+    preserve_resolution = _truthy(args.get("qwen_preserve_resolution"))
     image_list = [str(x) for x in (args.get("images") or []) if x]
     if not image_list and args.get("image"):
         image_list = [str(args["image"])]
@@ -1380,6 +1551,42 @@ def comfy_qwen_image_edit_plus(args: dict[str, Any]) -> dict[str, Any]:
         g[node_id] = _node("LoadImage", {"image": filename, "upload": "image"})
         image_links[f"image{index}"] = [node_id, 0]
         n += 1
+
+    if preserve_resolution:
+        latent_links: list[list[str | int]] = []
+        for key in ("image1", "image2", "image3"):
+            if key not in image_links:
+                continue
+            preserved, n = _qwen_preserve_source_pixels(g, image_links[key], n, args)
+            g[str(n)] = _node("VAEEncode", {"pixels": preserved, "vae": vae_out})
+            latent_links.append([str(n), 0])
+            n += 1
+
+        def _encode_prompt_only(text: str) -> list[str | int]:
+            nonlocal n
+            g[str(n)] = _node(
+                "TextEncodeQwenImageEditPlus",
+                {"clip": clip_out, "prompt": text},
+            )
+            out = [str(n), 0]
+            n += 1
+            return out
+
+        pos = _encode_prompt_only(prompt)
+        neg = _encode_prompt_only(negative)
+        pos, n = _apply_reference_latents(g, pos, latent_links, n)
+        neg, n = _apply_reference_latents(g, neg, latent_links, n)
+        latent = latent_links[0]
+        _qwen_edit_sampler_nodes(
+            g,
+            start_id=n,
+            model_sampled=model_sampled,
+            pos=pos,
+            neg=neg,
+            latent=latent,
+            args={**args, "_vae_out": vae_out, "ckpt_name": ckpt},
+        )
+        return g
 
     main_key = "image1"
     if main_key in image_links:

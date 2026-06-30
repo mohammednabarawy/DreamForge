@@ -126,6 +126,18 @@ def test_comfy_workflow_mode_respects_explicit_workflow_mode():
     )
 
 
+def test_comfy_workflow_mode_hidream_o1_references_use_native_node():
+    mode = comfy_workflow_mode(
+        input_filename=None,
+        cn_type="None",
+        model={"name": "hidream_o1_image_dev_mxfp8.safetensors", "family": "hidream_o1"},
+        model_family="hidream_o1",
+        checkpoint_is_flux_kontext=_is_kontext,
+        workflow_mode="ipadapter",
+    )
+    assert mode == "hidream_reference"
+
+
 def test_checkpoint_is_flux_fill():
     assert _checkpoint_is_flux_fill(
         {"name": "flux1-fill-dev-fp8.safetensors", "engine_name": "flux1-fill-dev-fp8.safetensors"},

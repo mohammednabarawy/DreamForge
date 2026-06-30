@@ -522,6 +522,7 @@ def _build_comfy_prompt_graph(
         comfy_face_detail_basic,
         comfy_hires_two_pass,
         comfy_img2img_basic,
+        comfy_hidream_o1_reference_images,
         comfy_inpaint_basic,
         comfy_ipadapter_reference,
         comfy_ipadapter_faceid_reference,
@@ -671,6 +672,35 @@ def _build_comfy_prompt_graph(
                 or getattr(job, "composition_regions", None),
                 "region_prompt": getattr(job, "region_prompt", None),
                 "foreground_prompt": getattr(job, "foreground_prompt", None),
+            }
+        )
+    elif mode == "hidream_reference":
+        resolved_slots = list(getattr(job, "_resolved_reference_slots", None) or [])
+        images: list[str] = []
+        seen_images: set[str] = set()
+        for slot in resolved_slots:
+            role = str(slot.get("role") or "").strip().lower()
+            if role not in {"image_prompt", "restyle", "source_edit"}:
+                continue
+            image = str(slot.get("image") or slot.get("path") or "").strip()
+            if not image:
+                continue
+            key = image.lower()
+            if key in seen_images:
+                continue
+            seen_images.add(key)
+            images.append(image)
+        if input_filename and input_filename.lower() not in seen_images:
+            images.insert(0, input_filename)
+        graph = comfy_hidream_o1_reference_images(
+            {
+                **common,
+                "images": images[:3],
+                "denoise": float(settings.get("denoise", 1.0)),
+                "hidream_noise_scale": settings.get("hidream_noise_scale", 7.6),
+                "hidream_s_noise": settings.get("hidream_s_noise", 1.0),
+                "hidream_s_noise_end": settings.get("hidream_s_noise_end", 1.0),
+                "hidream_noise_clip_std": settings.get("hidream_noise_clip_std", 2.5),
             }
         )
     elif mode in ("ipadapter", "ipadapter_controlnet"):
@@ -888,6 +918,8 @@ def _build_comfy_prompt_graph(
             for key in (
                 "qwen_image_shift",
                 "qwen_scale_megapixels",
+                "qwen_preserve_resolution",
+                "qwen_preserve_megapixels",
                 "use_qwen_lightning_lora",
                 "qwen_lightning_lora",
                 "qwen_lightning_strength",
@@ -899,9 +931,25 @@ def _build_comfy_prompt_graph(
                 requested=getattr(job, "qwen_edit_mode", None),
                 extra_reference_count=len(qwen_reference_filenames or []),
             )
-            if edit_mode == "plus":
+            requested_qwen_mode = str(getattr(job, "qwen_edit_mode", "") or "").strip().lower()
+            preserve_qwen_resolution = bool(settings.get("qwen_preserve_resolution")) or requested_qwen_mode in {
+                "raw",
+                "raw_plus",
+                "preserve",
+                "preserve_resolution",
+                "exact",
+            }
+            if preserve_qwen_resolution:
+                edit_mode = "raw_plus"
+            if edit_mode in {"plus", "raw_plus"}:
                 images = [input_filename, *(qwen_reference_filenames or [])][:3]
-                graph = comfy_qwen_image_edit_plus({**qwen_common, "images": images})
+                graph = comfy_qwen_image_edit_plus(
+                    {
+                        **qwen_common,
+                        "images": images,
+                        "qwen_preserve_resolution": edit_mode == "raw_plus",
+                    }
+                )
             else:
                 # Qwen single-image edit only accepts one image input. Extra references
                 # are only valid through the Plus node; do not stitch uploaded Comfy
@@ -2898,6 +2946,24 @@ def _apply_qwen_family_settings(
         and family.startswith("qwen")
     ):
         out["qwen_scale_megapixels"] = float(params["qwen_scale_megapixels"])
+    qwen_mode = str(getattr(job, "qwen_edit_mode", "") or "").strip().lower()
+    if qwen_mode in {"raw", "raw_plus", "preserve", "preserve_resolution", "exact"}:
+        out["qwen_preserve_resolution"] = True
+    elif getattr(job, "qwen_preserve_resolution", None) is not None:
+        raw_preserve = getattr(job, "qwen_preserve_resolution")
+        out["qwen_preserve_resolution"] = (
+            raw_preserve
+            if isinstance(raw_preserve, bool)
+            else str(raw_preserve).strip().lower() in {"1", "true", "yes", "on"}
+        )
+    elif (
+        has_input
+        and family.startswith("qwen")
+        and bool(getattr(job, "preserve_text", False))
+    ):
+        out["qwen_preserve_resolution"] = True
+    if getattr(job, "qwen_preserve_megapixels", None) is not None:
+        out["qwen_preserve_megapixels"] = float(job.qwen_preserve_megapixels)
 
     perf = str(getattr(job, "performance", "") or "").strip().lower()
     model_name = " ".join(

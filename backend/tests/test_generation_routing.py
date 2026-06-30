@@ -233,6 +233,94 @@ def test_qwen_single_edit_with_extra_references_uses_main_uploaded_image_only():
     )
 
 
+def test_qwen_raw_edit_mode_uses_reference_latents():
+    graph, _template = _build_comfy_prompt_graph(
+        job=SimpleNamespace(qwen_edit_mode="raw"),
+        mode="qwen_edit",
+        model={"name": "qwen-image-edit-2511-Q4_K_M.gguf", "category": "diffusion_models"},
+        model_family="qwen_image_edit",
+        settings={
+            "steps": 8,
+            "cfg": 1.0,
+            "sampler_name": "euler",
+            "scheduler": "simple",
+            "width": 1536,
+            "height": 1024,
+            "comfy_loras": [],
+        },
+        prompt="preserve composition while changing the outfit",
+        negative="",
+        seed=123,
+        edit_strength=1.0,
+        cn_upscale="",
+        input_filename="main.png",
+        mask_filename=None,
+        reference_stitch_filename=None,
+        grow_mask_by=0,
+        model_loader_args={
+            "ckpt_name": "qwen-image-edit-2511-Q4_K_M.gguf",
+            "relative_path": "qwen-image-edit-2511-Q4_K_M.gguf",
+            "category": "diffusion_models",
+            "family": "qwen_image_edit",
+        },
+        qwen_reference_filenames=["pose.png", "style.png"],
+    )
+
+    plus_nodes = [node for node in graph.values() if node.get("class_type") == "TextEncodeQwenImageEditPlus"]
+    assert len(plus_nodes) == 2
+    assert not any("image1" in node["inputs"] for node in plus_nodes)
+    assert sum(1 for node in graph.values() if node.get("class_type") == "ReferenceLatent") == 6
+
+
+def test_hidream_o1_image_prompt_routes_to_native_reference_node():
+    graph, _template = _build_comfy_prompt_graph(
+        job=SimpleNamespace(
+            _resolved_reference_slots=[
+                {"path": "/a.png", "role": "image_prompt", "image": "a.png"},
+                {"path": "/b.png", "role": "image_prompt", "image": "b.png"},
+            ]
+        ),
+        mode="hidream_reference",
+        model={
+            "name": "hidream_o1_image_dev_mxfp8.safetensors",
+            "category": "checkpoints",
+        },
+        model_family="hidream_o1",
+        settings={
+            "steps": 28,
+            "cfg": 1.0,
+            "sampler_name": "lcm",
+            "scheduler": "normal",
+            "width": 2048,
+            "height": 2048,
+            "comfy_loras": [],
+        },
+        prompt="make them stand together",
+        negative="",
+        seed=123,
+        edit_strength=1.0,
+        cn_upscale="",
+        input_filename=None,
+        mask_filename=None,
+        reference_stitch_filename=None,
+        grow_mask_by=0,
+        model_loader_args={
+            "ckpt_name": "hidream_o1_image_dev_mxfp8.safetensors",
+            "relative_path": "hidream_o1_image_dev_mxfp8.safetensors",
+            "category": "checkpoints",
+            "family": "hidream_o1",
+        },
+    )
+
+    class_types = {node["class_type"] for node in graph.values() if isinstance(node, dict)}
+    assert "HiDreamO1ReferenceImages" in class_types
+    assert "IPAdapterAdvanced" not in class_types
+    assert [node["inputs"]["image"] for node in graph.values() if node.get("class_type") == "LoadImage"] == [
+        "a.png",
+        "b.png",
+    ]
+
+
 def test_inpaint_routes_to_inpaint_control_type():
     sel, typ, ed = _route_input(
         input_path="/tmp/a.png",
@@ -1767,3 +1855,39 @@ def test_global_edit_dry_run_ignores_stale_outpaint_route(tmp_path, monkeypatch)
     assert plan["edit_task_defaults"]["edit_task"] == "global_edit"
     assert plan["edit_task_defaults"]["edit_type"] == "kontext"
     assert plan["final_edit_request"]["task"] == "global_edit"
+
+
+def test_preserve_text_auto_enables_qwen_preserve_resolution(monkeypatch):
+    monkeypatch.chdir(_BACKEND)
+    from dreamforge_generation import _apply_qwen_family_settings
+
+    job = SimpleNamespace(
+        performance="Lightning",
+        edit_type="qwen_edit",
+        input_image="/tmp/source.png",
+        preserve_text=True,
+        qwen_edit_mode="auto",
+    )
+    out = _apply_qwen_family_settings(
+        {"steps": 8, "cfg": 1.0, "sampler_name": "euler", "scheduler": "simple"},
+        job,
+        "qwen_image_edit",
+    )
+    assert out.get("qwen_preserve_resolution") is True
+
+
+def test_job_namespace_merges_references_from_payload():
+    from types import SimpleNamespace
+
+    from dreamforge_cli_direct import _job_namespace
+
+    base = SimpleNamespace(reference_role="image_prompt", workflow_mode="ipadapter")
+    data = {
+        "references": [
+            {"path": "/a.png", "role": "image_prompt", "weight": 0.8},
+            {"path": "/b.png", "role": "image_prompt", "weight": 0.6},
+        ]
+    }
+    job = _job_namespace(base, data)
+    assert len(job.references) == 2
+    assert job.references[0]["path"] == "/a.png"

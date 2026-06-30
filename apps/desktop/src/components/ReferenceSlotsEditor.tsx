@@ -21,6 +21,8 @@ type Props = {
   settings: GenerationSettings;
   studioMode?: StudioMode;
   disabled?: boolean;
+  /** Show per-image role chips + weight/stop controls (advanced). */
+  showRoles?: boolean;
   onAddSlot: (slot: ReferenceSlot) => void;
   onUpdateSlot: (index: number, patch: Partial<ReferenceSlot>) => void;
   onRemoveSlot: (index: number) => void;
@@ -55,6 +57,7 @@ export function ReferenceSlotsEditor({
   settings,
   studioMode = "generate",
   disabled = false,
+  showRoles = false,
   onAddSlot,
   onUpdateSlot,
   onRemoveSlot,
@@ -85,7 +88,7 @@ export function ReferenceSlotsEditor({
     <div className="border-t border-dfui-border/40 px-2.5 py-2">
       <div className="mb-1.5 flex items-center justify-between gap-2">
         <p className="text-[9px] font-semibold uppercase tracking-wide text-dfui-muted">
-          Extra slots ({slots.length}/{MAX_REFERENCE_SLOTS})
+          Reference images ({slots.length}/{MAX_REFERENCE_SLOTS})
         </p>
         {canAdd ? (
           <button
@@ -95,10 +98,11 @@ export function ReferenceSlotsEditor({
             className="inline-flex items-center gap-1 rounded border border-dashed border-dfui-border/70 px-1.5 py-0.5 text-[9px] text-df-blue hover:border-df-blue/50 disabled:opacity-50"
           >
             <ImagePlus size={10} />
-            Add slot
+            Add image
           </button>
         ) : null}
       </div>
+
 
       <div className="space-y-2">
         {extraSlots.map((slot, offset) => {
@@ -109,53 +113,63 @@ export function ReferenceSlotsEditor({
               className="rounded-md border border-dfui-border/50 bg-dfui-bg/40 p-1.5"
             >
               <div className="flex gap-2">
-                <div className="h-10 w-10 shrink-0 overflow-hidden rounded border border-dfui-border/50 bg-dfui-bg">
+                <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded border border-dfui-border/50 bg-dfui-bg">
                   <SlotPreview path={slot.path} />
+                  <span className="absolute left-0 top-0 rounded-br bg-df-blue/80 px-1 text-[8px] font-bold text-white">
+                    {index + 1}
+                  </span>
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-1">
-                    <p className="truncate font-mono text-[9px] text-dfui-fg" title={slot.path}>
-                      {basename(slot.path)}
-                    </p>
+                    <div className="min-w-0">
+                      <p className="text-[9px] font-semibold text-df-blue/90">
+                        Image {index + 1}
+                      </p>
+                      <p className="truncate font-mono text-[9px] text-dfui-muted" title={slot.path}>
+                        {basename(slot.path)}
+                      </p>
+                    </div>
                     <button
                       type="button"
                       disabled={disabled}
                       onClick={() => onRemoveSlot(index)}
                       className="shrink-0 rounded p-0.5 text-dfui-muted hover:text-red-300 disabled:opacity-50"
-                      title="Remove slot"
+                      title="Remove image"
                     >
                       <X size={11} />
                     </button>
                   </div>
-                  <div className="mt-1 flex flex-wrap gap-0.5">
-                    {PRO_GENERATE_REFERENCE_ROLES.map((item) => {
-                      const active = slot.role === item.id;
-                      return (
-                        <button
-                          key={item.id}
-                          type="button"
-                          disabled={disabled}
-                          title={item.label}
-                          onClick={() =>
-                            onUpdateSlot(index, {
-                              role: item.id,
-                              structure_type: item.id === "structure" ? "canny" : undefined,
-                            })
-                          }
-                          className={`rounded px-1 py-0.5 text-[8px] font-medium ${
-                            active
-                              ? "bg-df-blue/20 text-df-blue"
-                              : "text-dfui-muted hover:bg-dfui-surface-hover"
-                          }`}
-                        >
-                          {item.short}
-                        </button>
-                      );
-                    })}
-                  </div>
+                  {showRoles ? (
+                    <div className="mt-1 flex flex-wrap gap-0.5">
+                      {PRO_GENERATE_REFERENCE_ROLES.map((item) => {
+                        const active = slot.role === item.id;
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            disabled={disabled}
+                            title={item.label}
+                            onClick={() =>
+                              onUpdateSlot(index, {
+                                role: item.id,
+                                structure_type: item.id === "structure" ? "canny" : undefined,
+                              })
+                            }
+                            className={`rounded px-1 py-0.5 text-[8px] font-medium ${
+                              active
+                                ? "bg-df-blue/20 text-df-blue"
+                                : "text-dfui-muted hover:bg-dfui-surface-hover"
+                            }`}
+                          >
+                            {item.short}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
                 </div>
               </div>
-              {slotSupportsWeightControls(slot.role) ? (
+              {showRoles && slotSupportsWeightControls(slot.role) ? (
                 <label className="mt-1.5 flex items-center gap-2 text-[8px] text-dfui-muted">
                   <span className="w-10">Weight</span>
                   <input
@@ -175,7 +189,7 @@ export function ReferenceSlotsEditor({
                   </span>
                 </label>
               ) : null}
-              {slotSupportsStopAt(slot.role) ? (
+              {showRoles && slotSupportsStopAt(slot.role) ? (
                 <label className="mt-1 flex items-center gap-2 text-[8px] text-dfui-muted">
                   <span className="w-10">Stop at</span>
                   <input
@@ -202,7 +216,8 @@ export function ReferenceSlotsEditor({
 
       {slots.length === 1 && canAdd ? (
         <p className="mt-1 text-[8px] leading-snug text-dfui-tertiary">
-          Add image-prompt or structure slots to combine style + composition (SDXL + IP-Adapter).
+          Add more images to compose them together — the prompt decides how
+          (keep a face, swap an outfit, merge a scene). Up to {MAX_REFERENCE_SLOTS}.
         </p>
       ) : null}
     </div>

@@ -1,0 +1,13 @@
+commit 0425a3de67f82d06a61f43a6b9a05f6ab68d175f
+Author: Mohamed <mohamednabarawy@gmail.com>
+Date:   Sat Jun 27 19:59:22 2026 +0300
+
+    Refresh README for v0.2.0-beta and drop Arabic pipeline references
+    
+    Update the README to reflect current project status: v0.2.0-beta
+    release, multi-reference and edit/inpaint routing features, accurate
+    launch commands, and contributor-ready issue pointers. Remove stale
+    Arabic poster pipeline references and non-existent root launchers.
+
+ README.md | 88 +++++++++++++++++++++++++++++++--------------------------------
+ 1 file changed, 43 insertions(+), 45 deletions(-)

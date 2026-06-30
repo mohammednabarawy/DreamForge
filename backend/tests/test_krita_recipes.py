@@ -41,6 +41,14 @@ def test_resolve_qwen_edit_mode_auto_plus_with_refs():
         )
         == "single"
     )
+    assert (
+        resolve_qwen_edit_mode(
+            model_family="qwen_image_edit",
+            requested="raw",
+            extra_reference_count=0,
+        )
+        == "raw_plus"
+    )
 
 
 def test_qwen_model_params_low_vram_scale():

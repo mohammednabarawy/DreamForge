@@ -212,6 +212,8 @@ import {
   type VaryAmount,
 } from "../lib/varyImage";
 import { applyHiDreamPerformanceAtSubmit } from "../lib/hidreamPerformance";
+import { applyQwenPreserveAtSubmit } from "../lib/qwenPreserveAtSubmit";
+import { applyMultiImageComposeAtSubmit } from "../lib/multiImageCompose";
 import {
   buildPlanSnapshotFromDryRun,
   canRunApprovedPlan,
@@ -2308,6 +2310,7 @@ export function useDreamForge() {
       };
       const activeModel = findGalleryModel(modelGalleryAll, params.model ?? "");
       const modelFamily = (activeModel?.family ?? "").toLowerCase();
+      params = applyMultiImageComposeAtSubmit(params, studioMode, modelGalleryAll);
       const routed = applyExplicitReferenceRoleParams(
         params,
         studioMode,
@@ -2330,6 +2333,9 @@ export function useDreamForge() {
         studioMissing: studioResources.missing,
         imagePromptMissing: imagePromptResources.missing,
       });
+      // After identity/compose routing resolves the Qwen edit model, decide the
+      // raw-latent (preserve resolution) path so layout/text fidelity holds.
+      params = applyQwenPreserveAtSubmit(params, studioMode, modelFamily);
       params = await enforceCreativeTaskSettingsRemote(params, {
         studioMode,
         gallery: modelGalleryAll,

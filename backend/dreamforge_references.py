@@ -202,7 +202,8 @@ def family_reference_mechanism(
     """How a model family ingests multiple reference images.
 
     Returns one of: ``kontext`` (ReferenceLatent stitch/chain), ``qwen_plus``
-    (multi-image edit node), ``ipadapter`` (chained IP-Adapter), or
+    (multi-image edit node), ``hidream_o1_reference`` (native O1 reference
+    conditioning), ``ipadapter`` (chained IP-Adapter), or
     ``img2img_init`` (stitch references into a single init image) for families
     without native reference conditioning.
     """
@@ -212,6 +213,8 @@ def family_reference_mechanism(
         return "kontext"
     if m == "qwen_edit" or family.startswith("qwen"):
         return "qwen_plus"
+    if family == "hidream_o1":
+        return "hidream_o1_reference"
     if m in {"ipadapter", "ipadapter_faceid", "ipadapter_controlnet", "controlnet"}:
         return "ipadapter"
     return "img2img_init"

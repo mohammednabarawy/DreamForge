@@ -645,7 +645,49 @@ export function GenerationSettingsPanel({
               <option value="auto">Auto (Plus when extra references)</option>
               <option value="single">Single (TextEncodeQwenImageEdit)</option>
               <option value="plus">Plus (TextEncodeQwenImageEditPlus)</option>
+              <option value="raw_plus">
+                Raw Plus (preserve resolution — ReferenceLatent)
+              </option>
+              <option value="preserve_resolution">
+                Preserve resolution (alias of Raw Plus)
+              </option>
             </select>
+          </label>
+          <label className="mt-2 flex items-center gap-2 text-xs text-dfui-muted">
+            <input
+              type="checkbox"
+              checked={Boolean(settings.qwen_preserve_resolution)}
+              onChange={(e) =>
+                onChange({
+                  qwen_preserve_resolution: e.target.checked,
+                  qwen_edit_mode: e.target.checked
+                    ? settings.qwen_edit_mode === "single"
+                      ? "raw_plus"
+                      : settings.qwen_edit_mode
+                    : settings.qwen_edit_mode,
+                })
+              }
+              className="accent-dfui-accent"
+            />
+            Preserve source pixel layout (raw latent path)
+          </label>
+          <label className="block">
+            <FieldLabel>Preserve megapixels (raw path)</FieldLabel>
+            <input
+              type="number"
+              min={0}
+              max={16}
+              step={0.1}
+              placeholder="auto (source size)"
+              value={settings.qwen_preserve_megapixels ?? ""}
+              onChange={(e) => {
+                const raw = e.target.value.trim();
+                onChange({
+                  qwen_preserve_megapixels: raw === "" ? undefined : Number(raw),
+                });
+              }}
+              className="df-input mt-1 w-full px-2.5 py-1.5 font-mono text-xs"
+            />
           </label>
           <label className="block">
             <FieldLabel>AuraFlow shift — {settings.qwen_image_shift ?? 3.1}</FieldLabel>

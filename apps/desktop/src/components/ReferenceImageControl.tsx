@@ -71,6 +71,7 @@ export function ReferenceImageControl({
   compact = false,
 }: Props) {
   const [dragOver, setDragOver] = useState(false);
+  const [showRoles, setShowRoles] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const extraInputRef = useRef<HTMLInputElement>(null);
@@ -89,11 +90,12 @@ export function ReferenceImageControl({
   const routeBadge = routeBadgeLabel(settings, studioMode, modelFamily);
   const activeReferenceRole = inferReferenceRole(settings, studioMode);
   const proReferenceRoles = proReferenceRolesForStudio(studioMode);
-  const showProReferenceRoles =
+  const canShowProReferenceRoles =
     !simpleExperience &&
-    attachedPath &&
-    onPatchSettings &&
+    Boolean(attachedPath) &&
+    Boolean(onPatchSettings) &&
     proReferenceRoles.length > 1;
+  const showProReferenceRoles = canShowProReferenceRoles && showRoles;
 
   const supportsMultiReferences =
     studioMode === "generate" || studioMode === "edit" || studioMode === "agent";
@@ -111,11 +113,14 @@ export function ReferenceImageControl({
     Boolean(onAttachExtra) &&
     !showMultiSlots;
 
+  // With 2+ images the app auto-composes (Qwen/Kontext multi-image), so the
+  // manual keep-face toggle is only useful for a single source image.
   const showKeepFace =
     !simpleExperience &&
     studioMode === "generate" &&
     Boolean(attachedPath) &&
-    Boolean(onPatchSettings);
+    Boolean(onPatchSettings) &&
+    referenceSlots.length <= 1;
   const keepFaceActive = isIdentityPreservationActive(settings);
 
   const applyReferenceRole = (role: ReferenceRole) => {
@@ -278,16 +283,34 @@ export function ReferenceImageControl({
             ) : null}
           </div>
           {attachedPath ? (
-            <button
-              type="button"
-              disabled={disabled}
-              onClick={() => void onChooseFile()}
-              className="inline-flex items-center gap-1 rounded-md border border-dfui-border/60 bg-dfui-panel px-2 py-1 text-[10px] font-medium text-dfui-secondary hover:border-df-blue/40 hover:text-dfui-fg disabled:opacity-50"
-              title="Replace attached image"
-            >
-              <ImagePlus size={12} className="text-df-blue" />
-              Replace
-            </button>
+            <div className="flex items-center gap-1">
+              {canShowProReferenceRoles ? (
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => setShowRoles((value) => !value)}
+                  className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-medium transition ${
+                    showRoles
+                      ? "border-df-blue/50 bg-df-blue/10 text-df-blue"
+                      : "border-dfui-border/60 bg-dfui-panel text-dfui-secondary hover:border-df-blue/40 hover:text-dfui-fg"
+                  } disabled:opacity-50`}
+                  title="Advanced: set a role per image (image prompt / restyle / structure) and weights"
+                >
+                  <SlidersHorizontal size={12} />
+                  Roles
+                </button>
+              ) : null}
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => void onChooseFile()}
+                className="inline-flex items-center gap-1 rounded-md border border-dfui-border/60 bg-dfui-panel px-2 py-1 text-[10px] font-medium text-dfui-secondary hover:border-df-blue/40 hover:text-dfui-fg disabled:opacity-50"
+                title="Replace attached image"
+              >
+                <ImagePlus size={12} className="text-df-blue" />
+                Replace
+              </button>
+            </div>
           ) : null}
         </div>
 
@@ -335,10 +358,18 @@ export function ReferenceImageControl({
                   IMG
                 </span>
               )}
+              {referenceSlots.length > 1 ? (
+                <span className="absolute left-0 top-0 rounded-br bg-df-blue/80 px-1 text-[8px] font-bold text-white">
+                  1
+                </span>
+              ) : null}
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 items-start justify-between gap-2">
                 <div className="min-w-0">
+                  {referenceSlots.length > 1 ? (
+                    <p className="text-[9px] font-semibold text-df-blue/90">Image 1</p>
+                  ) : null}
                   <p className="truncate font-mono text-[10px] text-dfui-fg" title={attachedPath}>
                     {basename(attachedPath)}
                   </p>
@@ -488,6 +519,7 @@ export function ReferenceImageControl({
           settings={settings}
           studioMode={studioMode}
           disabled={disabled}
+          showRoles={showRoles}
           onAddSlot={(slot) => {
             const patch = appendReferenceSlot(settings, slot, studioMode);
             if (patch) onPatchSettings?.(patch);

@@ -1268,6 +1268,8 @@ def cmd_build_cli_argv(params: dict) -> dict:
     add("--qwen-edit-mode", params.get("qwen_edit_mode"))
     add("--qwen-image-shift", params.get("qwen_image_shift"))
     add("--qwen-scale-megapixels", params.get("qwen_scale_megapixels"))
+    add("--qwen-preserve-resolution", params.get("qwen_preserve_resolution"))
+    add("--qwen-preserve-megapixels", params.get("qwen_preserve_megapixels"))
     add("--inpaint-mask-path", params.get("inpaint_mask_path"))
     add("--inpaint-grow", params.get("inpaint_grow"))
     add("--inpaint-feather", params.get("inpaint_feather"))

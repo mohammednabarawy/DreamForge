@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from dreamforge_references import (
     apply_reference_slots_to_job,
     coerce_reference_slots,
+    family_reference_mechanism,
     reconcile_slot_roles,
     resolve_reference_composition,
 )
@@ -82,6 +83,10 @@ def test_source_edit_plus_image_prompt_keeps_edit_workflow():
     )
     apply_reference_slots_to_job(job)
     assert job.workflow_mode != "ipadapter"
+
+
+def test_hidream_o1_family_uses_native_reference_mechanism():
+    assert family_reference_mechanism("hidream_o1") == "hidream_o1_reference"
 
 
 def test_reconcile_promotes_restyle_base_with_structure():

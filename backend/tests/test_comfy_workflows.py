@@ -26,6 +26,7 @@ from dreamforge_comfy_workflows import (
     comfy_flux_kontext_edit,
     comfy_flux_fill_inpaint,
     comfy_hires_two_pass,
+    comfy_hidream_o1_reference_images,
     comfy_ideogram4_img2img,
     comfy_ideogram4_inpaint,
     comfy_ideogram4_txt2img,
@@ -185,6 +186,36 @@ def test_qwen_edit_plus_multi_reference():
     assert len(load_nodes) == 3
     scale_nodes = [n for n in graph.values() if n.get("class_type") == "ImageScaleToTotalPixels"]
     assert len(scale_nodes) == 1
+
+
+def test_qwen_edit_plus_preserve_resolution_uses_reference_latents():
+    graph = comfy_qwen_image_edit_plus(
+        {
+            "ckpt_name": "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+            "relative_path": "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+            "category": "diffusion_models",
+            "family": "qwen_image_edit",
+            "images": ["main.png", "ref_a.png", "ref_b.png"],
+            "prompt": "combine styles",
+            "negative": "",
+            "width": 1536,
+            "height": 1024,
+            "qwen_preserve_resolution": True,
+        }
+    )
+    plus_nodes = [n for n in graph.values() if n.get("class_type") == "TextEncodeQwenImageEditPlus"]
+    assert len(plus_nodes) == 2
+    assert not any("image1" in node["inputs"] for node in plus_nodes)
+    assert sum(1 for n in graph.values() if n.get("class_type") == "ReferenceLatent") == 6
+    assert sum(1 for n in graph.values() if n.get("class_type") == "VAEEncode") == 3
+    scale_nodes = [n for n in graph.values() if n.get("class_type") == "ImageScaleToTotalPixels"]
+    assert len(scale_nodes) == 3
+    assert scale_nodes[0]["inputs"]["megapixels"] == 1.572864
+    sampler = next(n for n in graph.values() if n.get("class_type") == "KSampler")
+    first_vae = next(n for n in graph.values() if n.get("class_type") == "VAEEncode")
+    first_vae_id = next(key for key, node in graph.items() if node is first_vae)
+    assert sampler["inputs"]["latent_image"] == [first_vae_id, 0]
+    assert first_vae_id
 
 
 def test_qwen_txt2img_uses_empty_sd3_latent():
@@ -867,6 +898,37 @@ def test_hidream_o1_dev_txt2img_uses_native_sampler_chain():
     assert lcm["inputs"]["noise_clip_std"] == 2.5
     sample = next(n for n in graph.values() if n.get("class_type") == "SamplerCustom")
     assert sample["inputs"]["cfg"] == 1.0
+
+
+def test_hidream_o1_reference_images_uses_native_reference_node():
+    graph = comfy_hidream_o1_reference_images(
+        {
+            "ckpt_name": "hidream_o1_image_dev_mxfp8.safetensors",
+            "relative_path": "hidream_o1_image_dev_mxfp8.safetensors",
+            "category": "checkpoints",
+            "prompt": "make them stand together",
+            "negative": "",
+            "images": ["a.png", "b.png", "c.png"],
+            "width": 2048,
+            "height": 2048,
+            "steps": 28,
+            "cfg": 1.0,
+            "scheduler": "normal",
+            "seed": 42,
+        }
+    )
+    class_types = {node["class_type"] for node in graph.values() if isinstance(node, dict)}
+    assert "HiDreamO1ReferenceImages" in class_types
+    assert "SamplerCustom" in class_types
+    assert "KSampler" not in class_types
+    assert sum(1 for node in graph.values() if node.get("class_type") == "LoadImage") == 3
+
+    reference = next(
+        node for node in graph.values() if node.get("class_type") == "HiDreamO1ReferenceImages"
+    )
+    assert "images.image_1" in reference["inputs"]
+    assert "images.image_2" in reference["inputs"]
+    assert "images.image_3" in reference["inputs"]
 
 
 def test_hidream_o1_dev_txt2img_uses_prepared_prompt_directly():

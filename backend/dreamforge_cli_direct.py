@@ -120,8 +120,8 @@ def build_parser():
     parser.add_argument(
         "--qwen-edit-mode",
         default="auto",
-        choices=["auto", "single", "plus"],
-        help="Qwen Image Edit graph: auto (plus when extra reference_images), single, or plus",
+        choices=["auto", "single", "plus", "raw", "raw_plus", "preserve_resolution", "exact"],
+        help="Qwen Image Edit graph: auto, single, plus, or raw/preserve_resolution for exact latent edits",
     )
     parser.add_argument(
         "--qwen-image-shift",
@@ -134,6 +134,17 @@ def build_parser():
         type=float,
         default=None,
         help="Scale edit input to this megapixel budget before VAE encode (e.g. 0.75 for 8GB VRAM)",
+    )
+    parser.add_argument(
+        "--qwen-preserve-resolution",
+        action="store_true",
+        help="Use Qwen Edit Plus raw-latent reference conditioning to reduce pixel shifting",
+    )
+    parser.add_argument(
+        "--qwen-preserve-megapixels",
+        type=float,
+        default=None,
+        help="Megapixel budget for Qwen raw-latent preserve-resolution mode",
     )
     parser.add_argument("--inpaint-mask-path", default=None, help="Mask image path for inpaint edits")
     parser.add_argument("--inpaint-grow", type=int, default=None, help="Pixels to grow inpaint mask before feathering")
@@ -695,6 +706,8 @@ def build_plan(base_args, data=None):
                     "use_qwen_lightning_lora",
                     "qwen_lightning_strength",
                     "qwen_scale_megapixels",
+                    "qwen_preserve_resolution",
+                    "qwen_preserve_megapixels",
                     "qwen_image_shift",
                 }
             }
@@ -758,6 +771,8 @@ def build_plan(base_args, data=None):
         "use_qwen_lightning_lora": settings.get("use_qwen_lightning_lora"),
         "qwen_lightning_strength": settings.get("qwen_lightning_strength"),
         "qwen_scale_megapixels": settings.get("qwen_scale_megapixels"),
+        "qwen_preserve_resolution": settings.get("qwen_preserve_resolution"),
+        "qwen_preserve_megapixels": settings.get("qwen_preserve_megapixels"),
         "qwen_image_shift": settings.get("qwen_image_shift"),
         "edit_type": getattr(job, "edit_type", None),
         "edit_strength": getattr(job, "edit_strength", None),

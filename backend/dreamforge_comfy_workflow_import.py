@@ -399,6 +399,11 @@ def comfy_workflow_mode(
         return "hires"
     if mode_key in ("area_composition", "composite"):
         return "area_composition"
+    if (model_family or "").lower() == "hidream_o1" and mode_key in (
+        "ipadapter",
+        "reference_ipadapter",
+    ):
+        return "hidream_reference"
     if mode_key == "ipadapter":
         return "ipadapter"
     if mode_key == "ipadapter_faceid":

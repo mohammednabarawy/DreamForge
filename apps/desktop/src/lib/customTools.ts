@@ -17,9 +17,50 @@ export interface CustomTool {
   model_overrides?: Record<string, string>;
 }
 
+export function normalizeWorkflowPath(path: string): string {
+  return String(path || "")
+    .trim()
+    .replace(/\\/g, "/")
+    .toLowerCase();
+}
+
+/** Resolve a custom tool by id, with fallbacks when ids drift after re-import. */
+export function resolveCustomTool(
+  tools: CustomTool[] | undefined,
+  customToolId: string | undefined | null,
+): CustomTool | undefined {
+  const id = String(customToolId || "").trim();
+  const list = tools ?? [];
+  if (!list.length) return undefined;
+  if (id) {
+    const direct = list.find((item) => item.id === id);
+    if (direct) return direct;
+  }
+  if (list.length === 1) {
+    return list[0];
+  }
+  return undefined;
+}
+
+/** Upsert a tool by workflow path so re-import keeps a stable tool id. */
+export function upsertCustomTool(list: CustomTool[], tool: CustomTool): CustomTool[] {
+  const normalized = normalizeWorkflowPath(tool.workflow_path);
+  const existingIndex = list.findIndex(
+    (item) => normalizeWorkflowPath(item.workflow_path) === normalized,
+  );
+  if (existingIndex < 0) {
+    return [...list, tool];
+  }
+  const stableId = list[existingIndex].id;
+  const merged = { ...tool, id: stableId };
+  return list.map((item, index) => (index === existingIndex ? merged : item));
+}
+
 export interface ParsedComfyWorkflow {
   nodes: Record<string, any>;
-  apiFormat: boolean;
+  /** True when the workflow can be imported and executed by DreamForge. */
+  importable: boolean;
+  uiFormat?: boolean;
   error?: string;
   warning?: string;
   repairedNodes?: string[];
@@ -92,16 +133,32 @@ function normalizeWorkflowNodes(json: Record<string, unknown>): Record<string, a
   return {};
 }
 
+function uiInputIsLinked(meta: Record<string, unknown> | undefined, field: string): boolean {
+  if (!meta || !Array.isArray(meta.inputs)) return false;
+  for (const input of meta.inputs) {
+    if (!input || typeof input !== "object") continue;
+    const row = input as Record<string, unknown>;
+    if (String(row.name ?? "") !== field) continue;
+    return row.link != null;
+  }
+  return false;
+}
+
 export async function parseComfyWorkflowJson(path: string): Promise<ParsedComfyWorkflow> {
   try {
     const { parseComfyWorkflowFile } = await import("./studioBridge");
     const remote = await parseComfyWorkflowFile(path);
     if (remote?.ok) {
       const nodes = (remote.nodes ?? {}) as Record<string, any>;
+      const uiFormat = Boolean(remote.ui_format);
+      const importable = Boolean(
+        remote.api_format || uiFormat || Object.keys(nodes).length > 0,
+      );
       return {
         nodes,
-        apiFormat: Boolean(remote.api_format),
-        error: remote.api_format ? undefined : remote.error || remote.warning || undefined,
+        importable,
+        uiFormat,
+        error: importable ? undefined : remote.error || remote.warning || undefined,
         warning: remote.warning || undefined,
         repairedNodes: remote.repaired_nodes ?? [],
       };
@@ -114,14 +171,15 @@ export async function parseComfyWorkflowJson(path: string): Promise<ParsedComfyW
     const content = await readTextFile(path);
     if (!content) throw new Error("File could not be read");
     const json = JSON.parse(content) as Record<string, unknown>;
-    const apiFormat = looksLikeApiPrompt(json);
+    const uiFormat = isUiWorkflow(json);
+    const importable = looksLikeApiPrompt(json) || uiFormat;
     const nodes = normalizeWorkflowNodes(json);
     if (!Object.keys(nodes).length) {
       throw new Error("Invalid ComfyUI workflow format");
     }
-    return { nodes, apiFormat };
+    return { nodes, importable, uiFormat };
   } catch (err: any) {
-    return { nodes: {}, apiFormat: false, error: err.message };
+    return { nodes: {}, importable: false, error: err.message };
   }
 }
 
@@ -141,6 +199,13 @@ export function detectPotentialBindings(nodes: Record<string, any>): Record<stri
     } else if (type === "LoadImageMask") {
       potentials[id] = { type: "mask", node_id: id, field: "image", label: `LoadImageMask (${id})` };
     } else if (TEXT_NODE_TYPES.has(type)) {
+      const textValue = (node as Record<string, unknown>).inputs?.text;
+      if (Array.isArray(textValue) && textValue.length === 2) {
+        continue;
+      }
+      if (uiInputIsLinked((node as Record<string, unknown>)._meta as Record<string, unknown>, "text")) {
+        continue;
+      }
       potentials[id] = { type: "text", node_id: id, field: "text", label: `Prompt (${type} ${id})` };
     } else if (type === "KSampler" || type === "KSamplerAdvanced") {
       potentials[`${id}_seed`] = { type: "number", node_id: id, field: "seed", label: `Seed (${id})` };

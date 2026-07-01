@@ -1,8 +1,7 @@
-feat: enhance custom tools integration and robust engine error recovery
+feat: support importing native ComfyUI workflows and stabilize custom tool IDs
 
-- Refactored useDreamForge to track custom tool and workflow dependencies
-- Implemented robust engine boot retry logic for recoverable failures
-- Added CustomToolImportModal for tool imports and model overrides
-- Enhanced backend workflow loading and dependency tracking for tools
-- Updated generation loops with rigorous requirements checking
-- Improved error handling and validation logic across the frontend and backend bridge API
+- Enhanced `CustomToolImportModal` to accept standard ComfyUI UI workflows without requiring the API format export.
+- Added `resolveCustomTool` and `upsertCustomTool` in `customTools.ts` to prevent custom tool IDs from drifting when re-importing identical workflow paths.
+- Added persistence for the selected custom tool in `studioBridge.ts` via `selected_custom_tool_id`.
+- Updated `useDreamForge` and `CreativeToolboxPanel` to leverage the new resolution logic for stable active tool selection.
+- Refactored `parseComfyWorkflowJson` to detect `ui_format` and determine if a workflow is `importable`.

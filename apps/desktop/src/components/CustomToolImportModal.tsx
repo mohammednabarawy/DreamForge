@@ -21,7 +21,8 @@ export function CustomToolImportModal({
   const [description, setDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
-  const [apiFormat, setApiFormat] = useState<boolean | null>(null);
+  const [importable, setImportable] = useState<boolean | null>(null);
+  const [uiFormat, setUiFormat] = useState<boolean>(false);
 
   const [selectedBindings, setSelectedBindings] = useState<Record<string, CustomToolBinding>>({});
   const [saving, setSaving] = useState(false);
@@ -34,19 +35,19 @@ export function CustomToolImportModal({
       setFilePath(path);
       setWarning(null);
       
-      const { nodes, error, apiFormat: isApi, warning: repairWarning } = await parseComfyWorkflowJson(path);
-      if (error && !isApi) {
-        setError(error);
-        setApiFormat(null);
-        setPotentials({});
-        return;
-      }
-      
+      const {
+        nodes,
+        error,
+        importable: canImport,
+        uiFormat: isUi,
+        warning: repairWarning,
+      } = await parseComfyWorkflowJson(path);
       const detected = detectPotentialBindings(nodes);
       setPotentials(detected);
-      setApiFormat(isApi);
+      setImportable(canImport);
+      setUiFormat(Boolean(isUi));
       setWarning(repairWarning ?? null);
-      setError(isApi ? null : "UI workflow JSON detected — export Save (API Format) from ComfyUI before running this tool.");
+      setError(canImport ? null : error ?? "Invalid ComfyUI workflow format");
     } catch (err: any) {
       setError(err.message);
     }
@@ -63,7 +64,7 @@ export function CustomToolImportModal({
   };
 
   const handleSave = async () => {
-    if (!name || !filePath || apiFormat !== true) return;
+    if (!name || !filePath || importable !== true) return;
     setSaving(true);
     setSaveError(null);
     try {
@@ -105,17 +106,16 @@ export function CustomToolImportModal({
               {warning}
             </div>
           )}
-          {apiFormat === false && (
-            <div className="rounded border border-amber-700/60 bg-amber-950/40 p-2 text-[10px] text-amber-200">
-              This file looks like a UI workflow. Re-export with Save (API Format) so DreamForge can execute it.
+          {uiFormat && (
+            <div className="rounded border border-sky-700/60 bg-sky-950/40 p-2 text-[10px] text-sky-200">
+              UI workflow detected. DreamForge converts it automatically when you generate — no API export required.
             </div>
           )}
           
           <div className="space-y-2">
             <label className="text-xs font-semibold text-[#cccccc]">Workflow File</label>
             <p className="text-[10px] leading-snug text-[#aaaaaa]">
-              Use ComfyUI <span className="text-[#cccccc]">Save (API Format)</span> — the default UI
-              workflow export cannot run in DreamForge.
+              Select your normal ComfyUI workflow save (.json). An API export in the same folder is optional.
             </p>
             <div className="flex gap-2">
               <input 
@@ -123,7 +123,7 @@ export function CustomToolImportModal({
                 readOnly 
                 value={filePath} 
                 className="flex-1 rounded border border-[#3c3c3c] bg-[#1e1e1e] p-1.5 text-xs text-[#cccccc]"
-                placeholder="Select a ComfyUI JSON API workflow..."
+                placeholder="Select a ComfyUI workflow JSON..."
               />
               <button 
                 onClick={handlePick}
@@ -187,7 +187,7 @@ export function CustomToolImportModal({
           </button>
           <button 
             onClick={handleSave}
-            disabled={!name || !filePath || apiFormat !== true || saving}
+            disabled={!name || !filePath || importable !== true || saving}
             className="rounded bg-[#0e639c] px-4 py-1.5 text-xs text-white hover:bg-[#1177bb] disabled:opacity-50"
           >
             {saving ? "Saving…" : "Import Tool"}

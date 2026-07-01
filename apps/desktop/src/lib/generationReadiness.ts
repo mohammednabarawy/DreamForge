@@ -6,6 +6,7 @@ import { isEditFamilyMode, type StudioMode } from "./model-selection";
 import { isFluxFillModel, selectFluxFillModel } from "./inpaintModel";
 import { vramProfileFromHardware } from "./vramProfiles";
 import type { CustomTool } from "./customTools";
+import { resolveCustomTool } from "./customTools";
 
 export { isEditFamilyMode, vramProfileFromHardware };
 export type { EditFamilyPlanState };
@@ -85,11 +86,14 @@ export function computeGenerateReadiness(args: {
     const customToolId = args.settings.custom_tool_id?.trim();
     if (customToolId) {
       const tools = args.customTools ?? [];
-      const tool = tools.find((item) => item.id === customToolId);
+      const tool = resolveCustomTool(tools, customToolId);
       if (!tool) {
         return {
           ok: false,
-          reason: "Selected custom tool was removed — re-import or pick another tool",
+          reason:
+            tools.length > 0
+              ? "Select your custom tool again under Custom Tools (Use Tool)"
+              : "Selected custom tool was removed — re-import or pick another tool",
           missingCompanions: false,
           companionBlockedOnly: false,
         };

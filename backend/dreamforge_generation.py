@@ -1849,11 +1849,11 @@ def run_generation(
                 load_api_workflow_template(workflow_path)
             except (OSError, ValueError) as exc:
                 err = comfy_workflow_validation(
-                    f"{tool.get('name') or custom_tool_id} requires ComfyUI Save (API Format) JSON. {exc}",
+                    f"{tool.get('name') or custom_tool_id} workflow could not be loaded. {exc}",
                     job_id=job_id,
                     suggestions=[
-                        "In ComfyUI, use Save (API Format) — not the default UI workflow export.",
-                        "Re-import the API JSON in Creative Toolbox.",
+                        "Use a ComfyUI workflow JSON (normal save or Save API Format).",
+                        "Re-import the workflow in Creative Toolbox.",
                     ],
                 )
                 emit_event(stream_sink, err)

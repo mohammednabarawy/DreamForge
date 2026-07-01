@@ -67,6 +67,8 @@ export type DreamForgeAppConfig = {
     civitai_api_key?: string;
     civitai_api_key_configured?: boolean;
     civitai_api_key_tail?: string;
+    /** Last selected Creative Toolbox custom tool (survives app restart). */
+    selected_custom_tool_id?: string;
   };
   custom_tools?: Array<{
     id: string;

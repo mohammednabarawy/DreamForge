@@ -113,7 +113,7 @@ def test_custom_tool_preflight_flags_missing_nodes_and_ui_json(tmp_path: Path):
     ui_path = tmp_path / "ui.json"
     ui_path.write_text(json.dumps({"nodes": [{"id": 1, "type": "LoadImage"}]}), encoding="utf-8")
     ui_tool = {"workflow_path": str(ui_path)}
-    assert custom_tool_preflight(ui_tool, {}) == ["workflow_not_api_format"]
+    assert custom_tool_preflight(ui_tool, None) == []
 
 
 def test_build_custom_tool_prompt_graph_requires_api_format(tmp_path: Path, monkeypatch):
@@ -142,7 +142,7 @@ def test_build_custom_tool_prompt_graph_requires_api_format(tmp_path: Path, monk
     client = SimpleNamespace(
         upload_image=lambda **_: {"name": "uploaded.png"},
     )
-    with pytest.raises(CustomToolError, match="API Format"):
+    with pytest.raises(CustomToolError, match="workflow could not be loaded"):
         build_custom_tool_prompt_graph(
             client=client,
             job=job,
@@ -206,7 +206,43 @@ def test_custom_tool_dependency_entries_maps_known_nodes(monkeypatch, tmp_path):
     assert entries[0]["install_via"] == "manager"
 
 
-def test_custom_tool_dependency_entries_unknown_nodes_use_manager_hint(tmp_path):
+def test_custom_tool_dependency_entries_never_flag_ui_workflow_as_api_format(tmp_path: Path):
+    ui_path = tmp_path / "Carousel Maker v2 - LoRAtech.json"
+    ui_path.write_text(
+        json.dumps(
+            {
+                "nodes": [
+                    {"id": 148, "type": "LoadImage", "mode": 0},
+                    {"id": 108, "type": "CLIPTextEncode", "mode": 0},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    tool = {"workflow_path": str(ui_path), "id": "carousel", "name": "Carousel", "bindings": {}}
+    entries = custom_tool_dependency_entries(tool, object_info=None)
+    assert all(str(item.get("id") or "") != "workflow_not_api_format" for item in entries)
+
+
+def test_collect_task_missing_skips_gallery_model_when_custom_tool_selected():
+    from dreamforge_companion_download import _collect_task_missing
+
+    _model, missing = _collect_task_missing(
+        model_name="ideogram4_fp8_scaled.safetensors",
+        studio_mode="generate",
+        upscale_method=None,
+        performance=None,
+        template_id=None,
+        edit_task=None,
+        custom_tool_id="custom_carousel",
+    )
+    assert not any(
+        "ideogram4" in str(item.get("relative") or item.get("filename") or "")
+        for item in missing
+    )
+
+
+def test_custom_tool_dependency_entries_unknown_nodes_use_manager_hint(tmp_path: Path):
     workflow = tmp_path / "tool.json"
     workflow.write_text(
         json.dumps({"1": {"class_type": "TotallyUnknownNode", "inputs": {}}}),

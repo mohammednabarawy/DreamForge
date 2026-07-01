@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { GenerationSettings, ModelDependencyItem, ModelGalleryItem } from "../lib/tauri-api";
 import { CustomToolImportModal } from "./CustomToolImportModal";
 import type { CustomTool } from "../lib/customTools";
+import { resolveCustomTool, upsertCustomTool } from "../lib/customTools";
 import { useDreamForge } from "../hooks/useDreamForge";
 import { EDIT_TASKS, type EditTask, patchForEditTask } from "../lib/inpaintIntent";
 import { defaultPromptPatchForEditTask } from "../lib/editTaskPrompts";
@@ -33,27 +34,41 @@ export function CreativeToolboxPanel({
   const activeCustomToolId = settings.custom_tool_id;
   const nativeTasks = EDIT_TASKS.filter((item) => item.toolboxOnly);
   const customTools = appConfig?.custom_tools || [];
-  const activeTool = customTools.find((tool) => tool.id === activeCustomToolId);
+  const activeTool = resolveCustomTool(customTools, activeCustomToolId);
+
+  const persistCustomToolSelection = async (toolId: string | undefined) => {
+    await saveAppConfig({
+      ui: {
+        selected_custom_tool_id: toolId,
+      },
+    });
+  };
 
   const handleSaveCustomTool = async (tool: CustomTool) => {
-    const nextTools = [...customTools, tool];
+    const nextTools = upsertCustomTool(customTools, tool);
+    const savedTool = resolveCustomTool(nextTools, tool.id) ?? tool;
     await saveAppConfig({
       custom_tools: nextTools,
       ...(appConfig?.ui?.studio_mode !== "toolbox"
-        ? { ui: { studio_mode: "toolbox" } }
-        : {}),
+        ? { ui: { studio_mode: "toolbox", selected_custom_tool_id: savedTool.id } }
+        : { ui: { selected_custom_tool_id: savedTool.id } }),
     });
     onChange({
-      custom_tool_id: tool.id,
+      custom_tool_id: savedTool.id,
       edit_task: undefined,
       inpaint_intent: undefined,
     });
     setIsImportModalOpen(false);
   };
 
-  const handleRemoveCustomTool = (toolId: string) => {
-    saveAppConfig({
-      custom_tools: customTools.filter((tool) => tool.id !== toolId),
+  const handleRemoveCustomTool = async (toolId: string) => {
+    const nextTools = customTools.filter((tool) => tool.id !== toolId);
+    await saveAppConfig({
+      custom_tools: nextTools,
+      ui: {
+        selected_custom_tool_id:
+          activeCustomToolId === toolId ? undefined : appConfig?.ui?.selected_custom_tool_id,
+      },
     });
     if (activeCustomToolId === toolId) {
       onChange({ custom_tool_id: undefined });
@@ -95,10 +110,11 @@ export function CreativeToolboxPanel({
       edit_task: undefined,
       inpaint_intent: undefined,
     });
+    void persistCustomToolSelection(tool.id);
   };
 
   useEffect(() => {
-    const toolId = activeCustomToolId?.trim();
+    const toolId = resolveCustomTool(customTools, activeCustomToolId)?.id?.trim();
     if (!toolId) {
       setCustomToolMissing([]);
       setCustomToolDepsReady(null);
@@ -398,7 +414,9 @@ export function CreativeToolboxPanel({
           ) : (
             <div className="space-y-2">
               {customTools.map((tool) => {
-                const active = activeCustomToolId === tool.id;
+                const active =
+                  activeCustomToolId === tool.id ||
+                  (activeTool?.id === tool.id && !customTools.some((item) => item.id === activeCustomToolId));
                 return (
                   <div
                     key={tool.id}

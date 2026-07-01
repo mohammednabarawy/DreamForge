@@ -70,6 +70,15 @@ export function customNodeItemsFromActions(actions?: RepairAction[]): ModelDepen
   return items;
 }
 
+export function isDownloadableCompanionItem(item: ModelDependencyItem): boolean {
+  if (item.kind === "custom_tool") return false;
+  const itemId = String(item.id ?? item.filename ?? "").trim();
+  if (itemId === "workflow_not_api_format" || itemId === "workflow_file_missing") {
+    return false;
+  }
+  return true;
+}
+
 export function isCustomNodePackItem(item: ModelDependencyItem): boolean {
   return item.kind === "custom_node_pack";
 }

@@ -372,7 +372,7 @@ def _collect_task_missing(
 
     missing: list[dict] = []
     resolved_model = None
-    if model_name and not (custom_tool_id and str(studio_mode or "").strip().lower() == "toolbox"):
+    if model_name and not custom_tool_id:
         resolved_model = resolve_generation_model(model_name)
         if resolved_model:
             missing.extend(

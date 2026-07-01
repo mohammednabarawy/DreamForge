@@ -102,6 +102,7 @@ _UI_KEYS = {
     "enhance_strength",
     "use_flufferizer",
     "civitai_api_key",
+    "selected_custom_tool_id",
 }
 _EXPERIENCE_VALUES = {"simple", "pro"}
 

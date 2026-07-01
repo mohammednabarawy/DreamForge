@@ -1,8 +1,10 @@
-"""Custom ComfyUI toolbox workflows (API-format only)."""
+"""Custom ComfyUI toolbox workflows (UI or API-format JSON)."""
 
 from __future__ import annotations
 
 import copy
+import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +17,9 @@ from dreamforge_comfy_workflow_import import (
 
 class CustomToolError(ValueError):
     """User-facing custom tool validation or binding failure."""
+
+
+logger = logging.getLogger(__name__)
 
 
 # Loader nodes -> list of (input field, preferred models subfolders).
@@ -381,7 +386,7 @@ def build_custom_tool_prompt_graph(
         graph = load_api_workflow_template(workflow_path)
     except ValueError as exc:
         raise CustomToolError(
-            f"{tool.get('name') or tool_id} requires ComfyUI Save (API Format) JSON. {exc}"
+            f"{tool.get('name') or tool_id} workflow could not be loaded. {exc}"
         ) from exc
 
     graph = apply_custom_tool_model_overrides(graph, tool)
@@ -428,10 +433,9 @@ def custom_tool_preflight(
     workflow_path = str(tool.get("workflow_path") or "").strip()
     if not workflow_path or not Path(workflow_path).is_file():
         return ["workflow_file_missing"]
-    try:
-        graph = load_api_workflow_template(workflow_path)
-    except ValueError:
-        return ["workflow_not_api_format"]
+    graph = _load_custom_tool_graph(tool)
+    if graph is None:
+        return []
     if object_info is None:
         return []
     return sorted(
@@ -624,9 +628,34 @@ def missing_workflow_graph_model_entries(
 
 
 def _load_custom_tool_graph(tool: dict[str, Any]) -> dict[str, Any] | None:
+    from dreamforge_comfy_workflow_import import (
+        is_ui_workflow_format,
+        pseudo_graph_from_ui_data,
+        ui_active_node_count,
+    )
+
     workflow_path = str(tool.get("workflow_path") or "").strip()
     if not workflow_path or not Path(workflow_path).is_file():
         return None
+
+    try:
+        data = json.loads(Path(workflow_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    if is_ui_workflow_format(data):
+        pseudo = pseudo_graph_from_ui_data(data)
+        if not pseudo:
+            return None
+        try:
+            return load_api_workflow_template(workflow_path)
+        except ValueError:
+            logger.info(
+                "Using UI workflow inspection graph for %s (conversion deferred until generation).",
+                Path(workflow_path).name,
+            )
+            return pseudo
+
     try:
         return load_api_workflow_template(workflow_path)
     except ValueError:
@@ -654,16 +683,7 @@ def custom_tool_dependency_entries(
                     "note": "Custom tool workflow JSON was not found on disk.",
                 }
             ]
-        return [
-            {
-                "kind": "custom_tool",
-                "id": "workflow_not_api_format",
-                "filename": "workflow_not_api_format",
-                "relative": workflow_path,
-                "category": "custom_tool",
-                "note": "Custom tool requires ComfyUI Save (API Format) JSON.",
-            }
-        ]
+        return []
 
     missing_nodes = custom_tool_preflight(tool, object_info)
     entries: list[dict[str, Any]] = []

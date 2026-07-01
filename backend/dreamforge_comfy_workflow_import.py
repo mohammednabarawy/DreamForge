@@ -1,20 +1,34 @@
-"""Load ComfyUI workflows exported via Save (API Format).
+"""Load ComfyUI workflows for DreamForge execution.
 
-Comfy's API prompt is a flat dict keyed by node id strings:
-
-    {"3": {"class_type": "KSampler", "inputs": {...}}, ...}
-
-This module loads those templates and patches common DreamForge bindings.
+Supports Comfy Save (API Format) JSON and the default UI workflow export.
+UI workflows are converted to API prompts at load time using ComfyUI's node
+definitions (same approach as comfyui-workflow-to-api-converter-endpoint).
 """
 
 from __future__ import annotations
 
 import copy
 import json
+import logging
 import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
+
+from _paths import BACKEND_ROOT, COMFY_ROOT, PYTHON_EXE
+
+logger = logging.getLogger(__name__)
+
+_UI_SKIP_NODE_TYPES = frozenset(
+    {
+        "MarkdownNote",
+        "Note",
+        "Reroute",
+        "PrimitiveNode",
+    }
+)
 
 
 def is_ui_workflow_format(data: Any) -> bool:
@@ -59,6 +73,34 @@ def _looks_like_api_prompt(data: Any) -> bool:
         return True
     # Some custom nodes omit class_type in API export; still an API prompt graph.
     return valid >= missing
+
+
+def guess_api_workflow_sibling(path: Path) -> Path | None:
+    """Guess a Comfy API export stored next to a UI workflow save."""
+    path = path.resolve()
+    parent = path.parent
+    stem = path.stem
+    suffix = path.suffix
+    candidates: list[Path] = []
+    if " - " in stem:
+        candidates.append(parent / f"{stem.replace(' - ', ' -API- ', 1)}{suffix}")
+    candidates.append(parent / f"{stem}-API{suffix}")
+    for candidate in candidates:
+        try:
+            if candidate.is_file() and candidate.resolve() != path:
+                return candidate
+        except OSError:
+            continue
+    try:
+        for sibling in parent.glob(f"*{suffix}"):
+            if sibling.resolve() == path or "-API-" not in sibling.name:
+                continue
+            ui_match = guess_ui_workflow_sibling(sibling)
+            if ui_match and ui_match.resolve() == path:
+                return sibling
+    except OSError:
+        return None
+    return None
 
 
 def guess_ui_workflow_sibling(path: Path) -> Path | None:
@@ -123,48 +165,205 @@ def _missing_class_type_node_ids(graph: dict[str, Any]) -> list[str]:
     return missing
 
 
+def is_workflow_link(value: Any) -> bool:
+    """True when an API input value references another node output."""
+    return (
+        isinstance(value, list)
+        and len(value) == 2
+        and isinstance(value[1], int)
+        and isinstance(value[0], (str, int))
+    )
+
+
+def ui_active_node_count(ui_data: dict[str, Any]) -> int:
+    """Count UI nodes that participate in execution (not bypassed/notes)."""
+    count = 0
+    for node in ui_data.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        node_type = str(node.get("type") or "").strip()
+        if not node_type or node_type in _UI_SKIP_NODE_TYPES:
+            continue
+        if int(node.get("mode") or 0) == 4:
+            continue
+        count += 1
+    return count
+
+
+def pseudo_graph_from_ui_data(ui_data: dict[str, Any]) -> dict[str, Any]:
+    """Build a minimal API-like graph from a Comfy UI workflow for inspection."""
+    graph: dict[str, Any] = {}
+    for node in ui_data.get("nodes") or []:
+        if not isinstance(node, dict) or node.get("id") is None:
+            continue
+        node_type = str(node.get("type") or "").strip()
+        if not node_type or node_type in _UI_SKIP_NODE_TYPES:
+            continue
+        if int(node.get("mode") or 0) == 4:
+            continue
+        graph[str(node.get("id"))] = {
+            "class_type": node_type,
+            "inputs": {},
+            "_meta": node,
+        }
+    return graph
+
+
+def _convert_cli_script() -> Path:
+    return BACKEND_ROOT / "tools" / "convert_comfy_ui_workflow_cli.py"
+
+
+def convert_ui_workflow_to_api(
+    ui_data: dict[str, Any],
+    *,
+    source_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Convert a Comfy UI workflow dict to an executable API prompt graph."""
+    if not is_ui_workflow_format(ui_data):
+        raise ValueError("Expected Comfy UI workflow JSON with a top-level nodes array.")
+    if not COMFY_ROOT.is_dir():
+        raise ValueError(
+            "ComfyUI is not installed yet, so DreamForge cannot convert UI workflows. "
+            "Install the GPU engine first, or export Save (API Format) from ComfyUI."
+        )
+    cli = _convert_cli_script()
+    if not cli.is_file():
+        raise ValueError(f"UI workflow converter is missing: {cli}")
+
+    python_exe = PYTHON_EXE if PYTHON_EXE and Path(PYTHON_EXE).is_file() else Path(sys.executable)
+    env = os.environ.copy()
+    env["COMFY_ROOT"] = str(COMFY_ROOT)
+    proc = subprocess.run(
+        [str(python_exe), str(cli)],
+        input=json.dumps(ui_data),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        cwd=str(COMFY_ROOT),
+        env=env,
+        timeout=180,
+        check=False,
+    )
+    stdout = (proc.stdout or "").strip()
+    if proc.returncode != 0:
+        detail = (proc.stderr or stdout).strip()
+        label = Path(source_path).name if source_path else "UI workflow"
+        raise ValueError(
+            f"Could not convert {label} from Comfy UI format to API format. {detail}".strip()
+        )
+    json_start = stdout.find("{")
+    json_end = stdout.rfind("}")
+    if json_start < 0 or json_end <= json_start:
+        raise ValueError("UI workflow conversion returned invalid JSON.")
+    try:
+        converted = json.loads(stdout[json_start : json_end + 1])
+    except json.JSONDecodeError as exc:
+        raise ValueError("UI workflow conversion returned invalid JSON.") from exc
+    if not isinstance(converted, dict) or not _looks_like_api_prompt(converted):
+        raise ValueError("UI workflow conversion did not produce a valid API prompt graph.")
+    return converted
+
+
+def convert_ui_workflow_file(path: str | Path) -> dict[str, Any]:
+    file_path = Path(path)
+    ui_data = json.loads(file_path.read_text(encoding="utf-8"))
+    return convert_ui_workflow_to_api(ui_data, source_path=file_path)
+
+
+def _api_graph_from_file_data(data: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(data.get("prompt"), dict):
+        return copy.deepcopy(data["prompt"])
+    return copy.deepcopy(data)
+
+
+def _should_prefer_ui_conversion(
+    api_graph: dict[str, Any],
+    ui_data: dict[str, Any],
+) -> bool:
+    """Prefer UI conversion when the API export dropped executable nodes."""
+    api_nodes = count_api_nodes(api_graph)[2]
+    ui_nodes = ui_active_node_count(ui_data)
+    if ui_nodes <= api_nodes:
+        return False
+    ui_types = {
+        str(node.get("type") or "").strip()
+        for node in ui_data.get("nodes") or []
+        if isinstance(node, dict)
+        and int(node.get("mode") or 0) != 4
+        and str(node.get("type") or "").strip() not in _UI_SKIP_NODE_TYPES
+    }
+    api_types = set(workflow_class_types(api_graph))
+    return bool(ui_types - api_types)
+
+
 def load_api_workflow_template(
     path: str | Path,
     *,
     ui_path: str | Path | None = None,
+    prefer_ui: bool = True,
 ) -> dict[str, Any]:
-    """Read an API-format workflow JSON file."""
+    """Read a Comfy workflow JSON file as an executable API prompt graph."""
     file_path = Path(path)
     raw = file_path.read_text(encoding="utf-8")
     data = json.loads(raw)
-    if is_ui_workflow_format(data):
-        raise ValueError(
-            f"{path} is a Comfy UI workflow JSON. Re-export with Save (API Format)."
-        )
-    if isinstance(data, dict) and isinstance(data.get("prompt"), dict):
-        graph = copy.deepcopy(data["prompt"])
-    else:
-        graph = copy.deepcopy(data)
 
-    missing = _missing_class_type_node_ids(graph)
-    if missing:
-        ui_file = Path(ui_path) if ui_path else guess_ui_workflow_sibling(file_path)
-        if ui_file and ui_file.is_file():
-            ui_data = json.loads(ui_file.read_text(encoding="utf-8"))
-            repair_api_workflow_class_types(graph, ui_node_type_map(ui_data))
+    if is_ui_workflow_format(data):
+        api_sibling = guess_api_workflow_sibling(file_path)
+        if api_sibling and api_sibling.is_file():
+            logger.info(
+                "Using API sibling %s for execution (UI workflow %s).",
+                api_sibling.name,
+                file_path.name,
+            )
+            return load_api_workflow_template(api_sibling, prefer_ui=False)
+        graph = convert_ui_workflow_to_api(data, source_path=file_path)
         missing = _missing_class_type_node_ids(graph)
+        if missing:
+            repair_api_workflow_class_types(graph, ui_node_type_map(data))
+        return graph
+
+    graph = _api_graph_from_file_data(data)
+    missing = _missing_class_type_node_ids(graph)
+    ui_file = Path(ui_path) if ui_path else guess_ui_workflow_sibling(file_path)
+    ui_data: dict[str, Any] | None = None
+    if ui_file and ui_file.is_file():
+        try:
+            ui_candidate = json.loads(ui_file.read_text(encoding="utf-8"))
+            if is_ui_workflow_format(ui_candidate):
+                ui_data = ui_candidate
+        except (OSError, json.JSONDecodeError):
+            ui_data = None
+
+    if missing and ui_data:
+        repair_api_workflow_class_types(graph, ui_node_type_map(ui_data))
+        missing = _missing_class_type_node_ids(graph)
+
+    if prefer_ui and ui_data and _should_prefer_ui_conversion(graph, ui_data):
+        logger.info(
+            "Using UI workflow %s because API export %s is missing executable nodes.",
+            ui_file.name if ui_file else ui_data,
+            file_path.name,
+        )
+        graph = convert_ui_workflow_to_api(ui_data, source_path=ui_file)
+        missing = _missing_class_type_node_ids(graph)
+        if missing:
+            repair_api_workflow_class_types(graph, ui_node_type_map(ui_data))
 
     if not _looks_like_api_prompt(graph):
         if missing:
             raise ValueError(
                 f"{path} is missing class_type on nodes {', '.join(missing)}. "
-                "Re-export with Save (API Format), or keep the UI workflow JSON "
-                "in the same folder so DreamForge can repair custom nodes."
+                "Re-export with Save (API Format), keep the UI workflow JSON in the "
+                "same folder, or point workflow_path at the UI workflow file."
             )
         raise ValueError(
-            f"{path} is not Comfy Save (API Format) JSON "
-            "(expected node dict with class_type + inputs)."
+            f"{path} is not a Comfy UI or Save (API Format) workflow JSON."
         )
     return graph
 
 
 def inspect_comfy_workflow_file(path: str | Path) -> dict[str, Any]:
-    """Parse a workflow file for custom-tool import (with optional UI sibling repair)."""
+    """Parse a workflow file for custom-tool import (UI or API)."""
     file_path = Path(path)
     raw = file_path.read_text(encoding="utf-8")
     data = json.loads(raw)
@@ -175,35 +374,78 @@ def inspect_comfy_workflow_file(path: str | Path) -> dict[str, Any]:
     graph: dict[str, Any] = {}
     repaired_nodes: list[str] = []
     api_format = False
+    converts_at_runtime = False
     try:
-        scratch = copy.deepcopy(_workflow_root(data)) if isinstance(data, dict) else {}
-        missing_before = _missing_class_type_node_ids(scratch)
-        graph = load_api_workflow_template(file_path)
-        api_format = True
-        if missing_before:
-            repaired_nodes = [
-                node_id
-                for node_id in missing_before
-                if isinstance(graph.get(node_id), dict) and graph[node_id].get("class_type")
-            ]
-            if repaired_nodes and ui_sibling:
+        if ui_format:
+            converts_at_runtime = True
+            api_sibling = guess_api_workflow_sibling(file_path)
+            if api_sibling and api_sibling.is_file():
+                graph = load_api_workflow_template(file_path)
+                api_format = True
                 warning = (
-                    f"Repaired {len(repaired_nodes)} custom node(s) using UI workflow "
-                    f"{ui_sibling.name}."
+                    f"UI workflow detected — DreamForge will execute the paired API export "
+                    f"{api_sibling.name} when this tool runs."
                 )
-            elif repaired_nodes:
-                warning = f"Repaired {len(repaired_nodes)} node(s) missing class_type in API export."
+            else:
+                graph = convert_ui_workflow_to_api(data, source_path=file_path)
+                api_format = True
+                warning = (
+                    "UI workflow detected — DreamForge will convert it with ComfyUI node "
+                    "definitions when this tool runs."
+                )
+        else:
+            scratch = copy.deepcopy(_workflow_root(data)) if isinstance(data, dict) else {}
+            missing_before = _missing_class_type_node_ids(scratch)
+            graph = load_api_workflow_template(file_path)
+            api_format = True
+            if missing_before:
+                repaired_nodes = [
+                    node_id
+                    for node_id in missing_before
+                    if isinstance(graph.get(node_id), dict) and graph[node_id].get("class_type")
+                ]
+                if repaired_nodes and ui_sibling:
+                    warning = (
+                        f"Repaired {len(repaired_nodes)} custom node(s) using UI workflow "
+                        f"{ui_sibling.name}."
+                    )
+                elif repaired_nodes:
+                    warning = f"Repaired {len(repaired_nodes)} node(s) missing class_type in API export."
+            if ui_sibling and ui_sibling.is_file():
+                try:
+                    ui_data = json.loads(ui_sibling.read_text(encoding="utf-8"))
+                    if is_ui_workflow_format(ui_data) and _should_prefer_ui_conversion(graph, ui_data):
+                        warning = (
+                            f"API export is missing nodes present in {ui_sibling.name}. "
+                            "Consider pointing this tool at the UI workflow file instead."
+                        )
+                except (OSError, json.JSONDecodeError):
+                    pass
     except ValueError as exc:
         error = str(exc)
-        root = _workflow_root(data) if isinstance(data, dict) else {}
-        if isinstance(root, dict):
-            graph = {str(k): v for k, v in root.items() if isinstance(v, dict)}
+        if ui_format:
+            graph = pseudo_graph_from_ui_data(data) if not graph else graph
+        else:
+            root = _workflow_root(data) if isinstance(data, dict) else {}
+            if isinstance(root, dict):
+                graph = {str(k): v for k, v in root.items() if isinstance(v, dict)}
         valid, missing, total = count_api_nodes(data if isinstance(data, dict) else {})
         api_format = bool(valid and not ui_format and valid >= missing)
+
+    if ui_format and graph:
+        api_format = True
+        converts_at_runtime = True
+        if error and not warning:
+            warning = (
+                "UI workflow will be converted when the GPU engine runs. "
+                f"{error}"
+            )
+            error = ""
 
     return {
         "api_format": api_format,
         "ui_format": ui_format,
+        "converts_at_runtime": converts_at_runtime,
         "nodes": graph,
         "class_types": workflow_class_types(graph) if graph else [],
         "repaired_nodes": repaired_nodes,
@@ -488,13 +730,19 @@ def patch_node_field(
     node_id: str,
     field: str,
     value: Any,
+    *,
+    preserve_links: bool = True,
 ) -> bool:
     """Set a single input on a specific API workflow node."""
     node = graph.get(str(node_id))
     if not isinstance(node, dict):
         return False
     inputs = node.setdefault("inputs", {})
-    inputs[str(field)] = value
+    field_name = str(field)
+    existing = inputs.get(field_name)
+    if preserve_links and is_workflow_link(existing):
+        return False
+    inputs[field_name] = value
     return True
 
 

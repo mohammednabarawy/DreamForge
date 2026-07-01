@@ -235,8 +235,10 @@ import {
   companionItemsFromActions,
   companionItemsFromErrorDetails,
   customNodeItemsFromActions,
+  isDownloadableCompanionItem,
   isWorkflowModelItem,
 } from "../lib/companionAssets";
+import { resolveCustomTool } from "../lib/customTools";
 
 function dependencyKey(item: ModelDependencyItem): string {
   return `${item.id ?? ""}|${item.url ?? ""}|${item.filename ?? ""}|${item.relative ?? ""}|${item.expected_path ?? ""}`;
@@ -247,6 +249,7 @@ function mergeDependencyItems(...groups: Array<ModelDependencyItem[] | undefined
   const keys = new Set<string>();
   for (const group of groups) {
     for (const item of group ?? []) {
+      if (!isDownloadableCompanionItem(item)) continue;
       const key = dependencyKey(item);
       if (keys.has(key)) continue;
       keys.add(key);
@@ -1083,6 +1086,14 @@ export function useDreamForge() {
           ...app,
           custom_tools: Array.isArray(app.custom_tools) ? app.custom_tools : [],
         });
+        const savedToolId = app.ui?.selected_custom_tool_id?.trim();
+        if (savedToolId) {
+          setSettings((prev) =>
+            prev.custom_tool_id === savedToolId
+              ? prev
+              : { ...prev, custom_tool_id: savedToolId },
+          );
+        }
       }
       setAgentProviders(providers);
       if (styleProfile?.profile) {
@@ -2272,6 +2283,13 @@ export function useDreamForge() {
         meta?.studioMode ??
         ((appConfig?.ui.studio_mode ?? "generate") as StudioMode);
       let sanitized = sanitizeEditFamilySettings(preparedSettings, studioMode);
+      const resolvedCustomTool = resolveCustomTool(
+        appConfig?.custom_tools,
+        sanitized.custom_tool_id,
+      );
+      if (resolvedCustomTool) {
+        sanitized = { ...sanitized, custom_tool_id: resolvedCustomTool.id };
+      }
       sanitized = await enforceCreativeTaskSettingsRemote(sanitized, {
         studioMode,
         gallery: modelGalleryAll,
@@ -2298,8 +2316,7 @@ export function useDreamForge() {
         customToolWorkflowMissing: customToolDependencies.missing,
         agentPlan: agentPlanRef.current,
         lastError,
-        skipBaseModelCompanions:
-          studioMode === "toolbox" && Boolean(sanitized.custom_tool_id?.trim()),
+        skipBaseModelCompanions: Boolean(sanitized.custom_tool_id?.trim()),
       }).length;
       const readiness = computeGenerateReadiness({
         workerReady,
@@ -3234,8 +3251,21 @@ export function useDreamForge() {
   ]);
 
   useEffect(() => {
+    const tools = appConfig?.custom_tools ?? [];
+    if (!tools.length) return;
+    const currentId = settings.custom_tool_id?.trim();
+    const resolved = resolveCustomTool(tools, currentId);
+    if (!resolved || resolved.id === currentId) return;
+    patchSettings({ custom_tool_id: resolved.id });
+  }, [appConfig?.custom_tools, patchSettings, settings.custom_tool_id]);
+
+  useEffect(() => {
     const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
-    const customToolId = settings.custom_tool_id?.trim();
+    const customTool = resolveCustomTool(
+      appConfig?.custom_tools,
+      settings.custom_tool_id,
+    );
+    const customToolId = customTool?.id;
     if (!workerReady || studioMode !== "toolbox" || !customToolId) {
       setCustomToolDependencies({ ready: true, missing: [] });
       return;
@@ -3284,8 +3314,7 @@ export function useDreamForge() {
       }),
     [settings, selected, previewUrl, studioMode],
   );
-  const skipBaseModelCompanions =
-    studioMode === "toolbox" && Boolean(settings.custom_tool_id?.trim());
+  const skipBaseModelCompanions = Boolean(settings.custom_tool_id?.trim());
   const generateReadiness = useMemo(
     () => {
       const mergedMissingCount = mergeAllCompanionMissing({
@@ -3975,8 +4004,7 @@ export function useDreamForge() {
     const studioMode =
       opts?.studioMode ??
       ((appConfig?.ui.studio_mode ?? "generate") as StudioMode);
-    const skipBaseModelCompanions =
-      studioMode === "toolbox" && Boolean(settingsRef.current.custom_tool_id?.trim());
+    const skipBaseModelCompanions = Boolean(settingsRef.current.custom_tool_id?.trim());
     let fromModel = modelDependencies.missing;
     if (model && !skipBaseModelCompanions) {
       try {

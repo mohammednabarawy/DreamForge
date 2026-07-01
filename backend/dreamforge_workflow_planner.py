@@ -1033,7 +1033,7 @@ def required_custom_node_pack_ids(
     task = str(edit_task or "").strip().lower()
     if mode == "upscale" or method:
         pack_ids.append("ComfyUI_UltimateSDUpscale")
-    if mode == "edit" and task == "photo_restore":
+    if task == "photo_restore":
         pack_ids.extend(
             [
                 "comfyui_controlnet_aux",
@@ -1041,11 +1041,11 @@ def required_custom_node_pack_ids(
                 "ComfyUI-Impact-Subpack",
             ]
         )
-    if mode == "edit" and task == "portrait_master":
+    elif task == "portrait_master":
         pack_ids.append("comfyui_controlnet_aux")
-    if mode == "edit" and task == "cutout_compose":
+    elif task == "cutout_compose":
         pack_ids.append("ComfyUI_essentials")
-    if mode == "edit" and task == "outfit_transfer":
+    elif task == "outfit_transfer":
         pack_ids.append("ComfyUI_LayerStyle")
     return list(dict.fromkeys(pack_ids))
 

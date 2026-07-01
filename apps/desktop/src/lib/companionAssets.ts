@@ -84,11 +84,39 @@ export function workflowModelItemFromCatalogId(catalogId: string): ModelDependen
     catalog_id: catalogId,
     id: catalogId,
     filename: catalogId,
-    relative: `segformer_b2_clothes/model.safetensors`,
-    category: "segformer_b2_clothes",
+    relative: catalogId,
+    category: "workflow_models",
     install_via: "direct",
-    note: "Workflow segmentation weights required by the selected tool.",
+    note: "Workflow weights required by the selected tool.",
   };
+}
+
+export function companionItemsFromErrorDetails(
+  details?: Record<string, unknown> | null,
+): ModelDependencyItem[] {
+  const missing = details?.missing;
+  if (!Array.isArray(missing)) return [];
+  return missing.filter(
+    (item): item is ModelDependencyItem =>
+      typeof item === "object" && item !== null && Boolean(item),
+  );
+}
+
+export function companionItemsFromActions(actions?: RepairAction[]): ModelDependencyItem[] {
+  const items: ModelDependencyItem[] = [];
+  for (const action of actions ?? []) {
+    if (action.action !== "download_model_companions") continue;
+    if (Array.isArray(action.missing)) {
+      items.push(...(action.missing as ModelDependencyItem[]));
+      continue;
+    }
+    for (const catalogId of Array.isArray(action.catalog_ids) ? action.catalog_ids : []) {
+      const id = String(catalogId ?? "").trim();
+      if (!id) continue;
+      items.push(workflowModelItemFromCatalogId(id));
+    }
+  }
+  return items;
 }
 
 export function clampUpscaleBy(value: number): number {

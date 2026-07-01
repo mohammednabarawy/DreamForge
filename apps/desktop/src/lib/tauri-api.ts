@@ -294,6 +294,7 @@ export type RepairAction = {
   requires_approval?: boolean;
   hint?: string;
   missing?: Array<Record<string, unknown>>;
+  catalog_ids?: string[];
   nodes?: string[];
   pack_id?: string;
   vram_profile?: string;

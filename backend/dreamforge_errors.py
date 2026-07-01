@@ -141,12 +141,20 @@ def build_failure_report(
         )
         add("disable_optional_stage", approval=True, nodes=nodes)
     elif code == "missing_model_dependencies":
+        missing = [item for item in (detail_map.get("missing") or []) if isinstance(item, Mapping)]
         recommended = list(detail_map.get("recommended_actions") or [])
         for item in recommended:
             if isinstance(item, Mapping):
                 payload = dict(item)
                 payload["requires_approval"] = True
                 actions.append(payload)
+        if missing:
+            add(
+                "download_model_companions",
+                approval=True,
+                missing=missing,
+                hint="Download workflow annotators and companion files before retrying.",
+            )
         add("switch_model_route", approval=True, hint="Use an already-installed compatible local model.")
     elif code in {"missing_input_image", "invalid_input_image"}:
         add("request_input", input="image", hint="Ask the user to attach or re-import a valid local image.")
@@ -301,8 +309,9 @@ def missing_model_dependencies(
         "missing_model_dependencies",
         f"Missing companion files for the selected model: {names}",
         suggestions=[
-            "Open the Models panel and click 'Download missing companions'.",
-            "Or place the listed files into models/{vae,text_encoders,clip_vision}.",
+            "Click Download next to Generate, or use Download missing assets in the error dialog.",
+            "Workflow tools may need annotator weights under ComfyUI custom_nodes.",
+            "Large workflow weights (over 500 MB) require approval before download.",
         ],
         details={"missing": list(missing), "recommended_actions": list(actions or [])},
         recoverable=True,
@@ -765,6 +774,7 @@ def _try_missing_annotator_weights(msg: str, *, job_id: str | None = None) -> di
     actions = [
         {
             "action": "download_model_companions",
+            "missing": missing,
             "catalog_ids": catalog_ids,
             "hint": "Download annotator weights into ComfyUI before retrying.",
         }

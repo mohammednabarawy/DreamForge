@@ -229,20 +229,11 @@ import {
 } from "../lib/workflowPlanActions";
 import { isEditFamilyMode } from "../lib/generationReadiness";
 import {
+  companionItemsFromActions,
+  companionItemsFromErrorDetails,
   customNodeItemsFromActions,
+  isWorkflowModelItem,
 } from "../lib/companionAssets";
-
-function companionItemsFromActions(actions?: RepairAction[]) {
-  return (
-    actions
-      ?.filter((action) => action.action === "download_model_companions")
-      .flatMap((action) =>
-        Array.isArray(action.missing)
-          ? (action.missing as ModelDependencyItem[])
-          : [],
-      ) ?? []
-  );
-}
 
 function dependencyKey(item: ModelDependencyItem): string {
   return `${item.id ?? ""}|${item.url ?? ""}|${item.filename ?? ""}|${item.relative ?? ""}|${item.expected_path ?? ""}`;
@@ -260,6 +251,27 @@ function mergeDependencyItems(...groups: Array<ModelDependencyItem[] | undefined
     }
   }
   return merged;
+}
+
+function mergeAllCompanionMissing(args: {
+  modelMissing: ModelDependencyItem[];
+  studioMissing: ModelDependencyItem[];
+  taskWorkflowMissing: ModelDependencyItem[];
+  agentPlan?: { readiness?: { recommended_actions?: RepairAction[] } } | null;
+  lastError?: FriendlyError | null;
+}): ModelDependencyItem[] {
+  return mergeDependencyItems(
+    args.modelMissing,
+    args.studioMissing,
+    args.taskWorkflowMissing,
+    companionItemsFromActions(args.agentPlan?.readiness?.recommended_actions),
+    companionItemsFromErrorDetails(args.lastError?.details),
+    companionItemsFromActions(args.lastError?.failureReport?.repair_actions),
+    companionItemsFromActions(
+      (args.lastError?.details?.recommended_actions as RepairAction[] | undefined) ?? [],
+    ),
+    customNodeItemsFromActions(args.lastError?.failureReport?.repair_actions),
+  );
 }
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
@@ -531,6 +543,10 @@ export function useDreamForge() {
     ready: boolean;
   }>({ missing: [], ready: true });
   const [studioResources, setStudioResources] = useState<{
+    missing: ModelDependencyItem[];
+    ready: boolean;
+  }>({ missing: [], ready: true });
+  const [taskWorkflowDependencies, setTaskWorkflowDependencies] = useState<{
     missing: ModelDependencyItem[];
     ready: boolean;
   }>({ missing: [], ready: true });
@@ -2250,17 +2266,13 @@ export function useDreamForge() {
         setStatus("Select a base model");
         return false;
       }
-      const mergedMissingCount = mergeDependencyItems(
-        modelDependencies.missing,
-        studioResources.missing,
-        companionItemsFromActions(
-          agentPlanRef.current?.readiness?.recommended_actions as RepairAction[] | undefined,
-        ),
-        companionItemsFromActions(lastError?.failureReport?.repair_actions),
-        companionItemsFromActions(
-          (lastError?.details?.recommended_actions as RepairAction[] | undefined) ?? [],
-        ),
-      ).length;
+      const mergedMissingCount = mergeAllCompanionMissing({
+        modelMissing: modelDependencies.missing,
+        studioMissing: studioResources.missing,
+        taskWorkflowMissing: taskWorkflowDependencies.missing,
+        agentPlan: agentPlanRef.current,
+        lastError,
+      }).length;
       const readiness = computeGenerateReadiness({
         workerReady,
         generating: generatingRef.current,
@@ -3130,6 +3142,45 @@ export function useDreamForge() {
     companionDownloadPhase,
   ]);
 
+  useEffect(() => {
+    const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+    const task = settings.edit_task?.trim();
+    if (!workerReady || studioMode !== "toolbox" || !task) {
+      setTaskWorkflowDependencies({ ready: true, missing: [] });
+      return;
+    }
+    let cancelled = false;
+    void ensureCreativeTaskReady({
+      edit_task: task,
+      auto_download_tier_a: false,
+      auto_download_tier_b: false,
+      auto_install_nodes: false,
+    })
+      .then((result) => {
+        if (cancelled) return;
+        const missing = (result.missing ?? []).filter((item) =>
+          isWorkflowModelItem(item as ModelDependencyItem),
+        ) as ModelDependencyItem[];
+        setTaskWorkflowDependencies({
+          ready: missing.length === 0,
+          missing,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setTaskWorkflowDependencies({ ready: true, missing: [] });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    appConfig?.ui.studio_mode,
+    settings.edit_task,
+    workerReady,
+    companionDownloadPhase,
+  ]);
+
   const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
   const planSettingsSnapshot = useMemo(
     () => computePlanSettingsSnapshot(settings, studioMode),
@@ -3150,17 +3201,13 @@ export function useDreamForge() {
   );
   const generateReadiness = useMemo(
     () => {
-      const mergedMissingCount = mergeDependencyItems(
-        modelDependencies.missing,
-        studioResources.missing,
-        companionItemsFromActions(
-          agentPlan?.readiness?.recommended_actions as RepairAction[] | undefined,
-        ),
-        companionItemsFromActions(lastError?.failureReport?.repair_actions),
-        companionItemsFromActions(
-          (lastError?.details?.recommended_actions as RepairAction[] | undefined) ?? [],
-        ),
-      ).length;
+      const mergedMissingCount = mergeAllCompanionMissing({
+        modelMissing: modelDependencies.missing,
+        studioMissing: studioResources.missing,
+        taskWorkflowMissing: taskWorkflowDependencies.missing,
+        agentPlan,
+        lastError,
+      }).length;
       return computeGenerateReadiness({
         workerReady,
         generating,
@@ -3190,6 +3237,7 @@ export function useDreamForge() {
       settings,
       modelDependencies,
       studioResources,
+      taskWorkflowDependencies,
       agentPlan,
       lastError,
       modelGalleryAll,
@@ -3202,22 +3250,19 @@ export function useDreamForge() {
   const effectiveGenerateReadiness = useMemo(() => generateReadiness, [generateReadiness]);
   const mergedMissingDependencies = useMemo(
     () =>
-      mergeDependencyItems(
-        modelDependencies.missing,
-        studioResources.missing,
-        companionItemsFromActions(
-          agentPlan?.readiness?.recommended_actions as RepairAction[] | undefined,
-        ),
-        companionItemsFromActions(lastError?.failureReport?.repair_actions),
-        companionItemsFromActions(
-          (lastError?.details?.recommended_actions as RepairAction[] | undefined) ?? [],
-        ),
-      ),
+      mergeAllCompanionMissing({
+        modelMissing: modelDependencies.missing,
+        studioMissing: studioResources.missing,
+        taskWorkflowMissing: taskWorkflowDependencies.missing,
+        agentPlan,
+        lastError,
+      }),
     [
       agentPlan,
       lastError,
       modelDependencies.missing,
       studioResources.missing,
+      taskWorkflowDependencies.missing,
     ],
   );
   const missingDownloadCount = mergedMissingDependencies.length;
@@ -3829,12 +3874,6 @@ export function useDreamForge() {
     const plan = agentPlanRef.current;
     const plannedModel =
       typeof plan?.proposed?.model === "string" ? plan.proposed.model : "";
-    const fromErrorReport = companionItemsFromActions(
-      lastError?.failureReport?.repair_actions,
-    );
-    const fromErrorDetails = companionItemsFromActions(
-      (lastError?.details?.recommended_actions as RepairAction[] | undefined) ?? [],
-    );
     const model = ((settingsRef.current.model ?? "") || plannedModel).trim();
     let fromModel = modelDependencies.missing;
     if (model) {
@@ -3876,23 +3915,22 @@ export function useDreamForge() {
         /* keep cached studioMissing */
       }
     }
-    const fromPlan = companionItemsFromActions(
-      plan?.readiness?.recommended_actions as RepairAction[] | undefined,
-    );
-    const fromCustomNodes = customNodeItemsFromActions(
-      lastError?.failureReport?.repair_actions,
-    );
-    const merged = mergeDependencyItems(
-      fromModel,
+    const merged = mergeAllCompanionMissing({
+      modelMissing: fromModel,
       studioMissing,
-      fromPlan,
-      fromErrorReport,
-      fromErrorDetails,
-      fromCustomNodes,
-    );
+      taskWorkflowMissing: taskWorkflowDependencies.missing,
+      agentPlan: plan,
+      lastError,
+    });
     return { model: model || "workflow-assets", merged };
   },
-    [appConfig?.ui.studio_mode, lastError, modelDependencies.missing, studioResources.missing],
+    [
+      appConfig?.ui.studio_mode,
+      lastError,
+      modelDependencies.missing,
+      studioResources.missing,
+      taskWorkflowDependencies.missing,
+    ],
   );
 
   const promptMissingCompanionsDownload = useCallback(
@@ -3937,6 +3975,7 @@ export function useDreamForge() {
         templateId ?? "",
         currentSettings.performance ?? "",
         upscaleForPrep,
+        currentSettings.edit_task ?? "",
       ].join("|");
       const prepCached = assetPrepReadyRef.current;
       if (
@@ -3961,10 +4000,18 @@ export function useDreamForge() {
                 ? currentSettings.post_upscale ?? "ultimate_sd_upscale"
                 : undefined,
           performance: currentSettings.performance ?? null,
+          edit_task: currentSettings.edit_task?.trim() || null,
           auto_download_tier_a: true,
           auto_download_tier_b: false,
           auto_install_nodes: true,
           template_id: templateId ?? null,
+        });
+        const taskMissing = (result.missing ?? []).filter((item) =>
+          isWorkflowModelItem(item as ModelDependencyItem),
+        ) as ModelDependencyItem[];
+        setTaskWorkflowDependencies({
+          ready: taskMissing.length === 0,
+          missing: taskMissing,
         });
         const lastSetup = result.node_setup?.[result.node_setup.length - 1];
         if (lastSetup) {
@@ -4062,6 +4109,7 @@ export function useDreamForge() {
                     ? settingsRef.current.post_upscale ?? "ultimate_sd_upscale"
                     : undefined,
               performance: settingsRef.current.performance ?? null,
+              edit_task: settingsRef.current.edit_task?.trim() || null,
               auto_download_tier_a: true,
               auto_download_tier_b: true,
               auto_install_nodes: true,
@@ -4072,6 +4120,13 @@ export function useDreamForge() {
                   settingsRef.current.post_upscale_enabled,
                 ) ??
                 null,
+            });
+            const recheckTaskMissing = (recheck.missing ?? []).filter((item) =>
+              isWorkflowModelItem(item as ModelDependencyItem),
+            ) as ModelDependencyItem[];
+            setTaskWorkflowDependencies({
+              ready: recheckTaskMissing.length === 0,
+              missing: recheckTaskMissing,
             });
             if (recheck.ready) {
               assetPrepReadyRef.current = { key: prepCacheKey, at: Date.now() };
@@ -4146,22 +4201,16 @@ export function useDreamForge() {
     const plan = agentPlanRef.current;
     const plannedModel =
       typeof plan?.proposed?.model === "string" ? plan.proposed.model : "";
-    const fromErrorReport = companionItemsFromActions(
-      lastError?.failureReport?.repair_actions,
-    );
-    const fromErrorDetails = companionItemsFromActions(
-      (lastError?.details?.recommended_actions as RepairAction[] | undefined) ?? [],
-    );
     const model = ((settingsRef.current.model ?? "") || plannedModel).trim();
-    if (!model && fromErrorReport.length === 0 && fromErrorDetails.length === 0) {
-      setStatus("Select a model first");
-      return;
-    }
     if (!workerReadyRef.current) {
       setStatus(COMFY_NOT_READY_REASON);
       return;
     }
     const { merged } = await resolveMergedMissingDependencies();
+    if (!model && merged.length === 0) {
+      setStatus("Select a model first");
+      return;
+    }
     if (merged.length === 0) {
       setStatus("All companion files are already present");
       return;

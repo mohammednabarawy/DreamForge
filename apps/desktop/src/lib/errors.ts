@@ -75,11 +75,11 @@ const COPY: Record<DreamForgeErrorCode, CopyEntry> = {
   missing_model_dependencies: {
     title: "Companion files missing",
     message:
-      "The selected model needs additional files (CLIP / VAE / text " +
-      "encoders) that were not found on disk.",
+      "Required helper files for this model or toolbox tool are not on disk yet.",
     suggestions: [
-      "Open the Models panel and click 'Download missing companions'.",
-      "Or place the listed files into models/{vae,text_encoders,clip_vision}.",
+      "Click Download next to Generate, or Download missing assets in the error dialog.",
+      "Workflow tools may need annotator weights under ComfyUI custom_nodes.",
+      "Large workflow weights (over 500 MB) require approval before download.",
     ],
     recoverable: true,
   },

@@ -3,8 +3,8 @@ platform win32 -- Python 3.13.12, pytest-9.0.3, pluggy-1.6.0
 rootdir: D:\DreamForge\backend
 configfile: pytest.ini
 plugins: anyio-4.10.0
-collected 11 items
+collected 13 items
 
-tests\test_comfy_manager.py ...........                                  [100%]
+tests\test_comfy_manager.py .............                                [100%]
 
-============================= 11 passed in 0.40s ==============================
+============================= 13 passed in 0.35s ==============================

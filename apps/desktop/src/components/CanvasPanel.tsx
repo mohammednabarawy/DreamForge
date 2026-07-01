@@ -68,9 +68,6 @@ type Props = {
   engineState: EngineState;
   bootMessage: string;
   bootPhase?: string;
-  workerLogTail: string;
-  restarting: boolean;
-  onRestartEngine: () => void;
   companionBootstrapBusy?: boolean;
   companionBootstrapMessage?: string;
   studioMode: StudioMode;
@@ -138,9 +135,6 @@ export function CanvasPanel({
   engineState,
   bootMessage,
   bootPhase,
-  workerLogTail,
-  restarting,
-  onRestartEngine,
   companionBootstrapBusy,
   companionBootstrapMessage,
   studioMode,
@@ -448,10 +442,6 @@ export function CanvasPanel({
         <EngineBootOverlay
           engineState={engineState}
           bootMessage={bootMessage}
-          workerLogTail={workerLogTail}
-          onRestart={onRestartEngine}
-          restarting={restarting}
-          onOpenFullLog={onOpenFullLog}
           companionBootstrapBusy={companionBootstrapBusy}
         />
         {showInlineMask ? (

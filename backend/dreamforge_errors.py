@@ -720,6 +720,58 @@ def _try_parse_comfy_http_validation(msg: str) -> dict[str, Any] | None:
     }
 
 
+_COMFY_DEPENDENCY_HINTS = (
+    "locate the file on the hub",
+    "local cache",
+    "cannot find the requested files",
+    "huggingface.co",
+    "connection and try again",
+    "no such file or directory",
+    "filenotfounderror",
+)
+
+
+def _try_missing_annotator_weights(msg: str, *, job_id: str | None = None) -> dict | None:
+    """Map missing preprocessor weights (HF hub / cache failures) to companion downloads."""
+    msg_lower = msg.lower()
+    if not any(hint in msg_lower for hint in _COMFY_DEPENDENCY_HINTS):
+        return None
+
+    missing_nodes: list[str] = []
+    for match in re.finditer(r"([A-Za-z0-9]+Preprocessor)", msg):
+        node = match.group(1).strip()
+        if node and node not in missing_nodes:
+            missing_nodes.append(node)
+    if "depth_anything" in msg_lower or "depthanythingv2" in msg_lower:
+        if "DepthAnythingV2Preprocessor" not in missing_nodes:
+            missing_nodes.append("DepthAnythingV2Preprocessor")
+    if "sk_model" in msg_lower or "lineartstandard" in msg_lower:
+        if "LineartStandardPreprocessor" not in missing_nodes:
+            missing_nodes.append("LineartStandardPreprocessor")
+    if not missing_nodes:
+        return None
+
+    try:
+        from dreamforge_comfy_manager import missing_workflow_model_entries
+
+        missing = missing_workflow_model_entries(missing_nodes=missing_nodes)
+    except Exception:
+        missing = []
+    if not missing:
+        return None
+
+    catalog_ids = [str(item.get("catalog_id") or item.get("id") or "") for item in missing]
+    catalog_ids = [item for item in catalog_ids if item]
+    actions = [
+        {
+            "action": "download_model_companions",
+            "catalog_ids": catalog_ids,
+            "hint": "Download annotator weights into ComfyUI before retrying.",
+        }
+    ]
+    return missing_model_dependencies(missing, job_id=job_id, actions=actions)
+
+
 def from_exception(exc: BaseException, *, job_id: str | None = None) -> dict:
     """Map an arbitrary exception onto the closest structured code.
 
@@ -832,6 +884,10 @@ def from_exception(exc: BaseException, *, job_id: str | None = None) -> dict:
     ):
         return virtual_memory_low(f"{name}: {msg}", job_id=job_id)
 
+    annotator_payload = _try_missing_annotator_weights(msg, job_id=job_id)
+    if annotator_payload is not None:
+        return annotator_payload
+
     _comfy_crash_hints = (
         "connection could be made because the target machine actively refused",
         "comfyui server became unreachable",
@@ -844,6 +900,7 @@ def from_exception(exc: BaseException, *, job_id: str | None = None) -> dict:
         name == "ComfyExecutionError"
         and "paging file" not in msg_lower
         and "1455" not in msg_lower
+        and not any(hint in msg_lower for hint in _COMFY_DEPENDENCY_HINTS)
     ):
         return error(
             "comfy_server_crashed",

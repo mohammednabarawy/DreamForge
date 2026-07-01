@@ -116,6 +116,36 @@ def test_missing_workflow_model_entries_for_outfit_transfer(monkeypatch, tmp_pat
     assert "segformer_b2_clothes" not in missing_now
 
 
+def test_workflow_model_directory_for_annotators_uses_comfy_root(monkeypatch, tmp_path):
+    from dreamforge_comfy_manager import workflow_model_directory
+
+    comfy_root = tmp_path / "engines" / "comfyui"
+    comfy_root.mkdir(parents=True)
+    monkeypatch.setattr("dreamforge_comfy_manager._comfy_root", lambda: comfy_root)
+
+    depth_dir = workflow_model_directory("depth_anything_v2_vitl")
+    assert depth_dir == (
+        comfy_root
+        / "custom_nodes/comfyui_controlnet_aux/ckpts/depth-anything/Depth-Anything-V2-Large"
+    )
+
+
+def test_missing_workflow_model_entries_for_portrait_master(monkeypatch, tmp_path):
+    from dreamforge_comfy_manager import missing_workflow_model_entries
+
+    comfy_root = tmp_path / "comfy"
+    comfy_root.mkdir()
+    monkeypatch.setattr("dreamforge_comfy_manager._comfy_root", lambda: comfy_root)
+    monkeypatch.setattr("dreamforge_comfy_manager._models_root", lambda: tmp_path / "models")
+
+    entries = missing_workflow_model_entries(edit_task="portrait_master")
+    depth = next((item for item in entries if item["catalog_id"] == "depth_anything_v2_vitl"), None)
+    assert depth is not None
+    assert depth["filename"] == "depth_anything_v2_vitl.pth"
+    assert "custom_nodes" in depth["expected_path"]
+    assert depth["download_tier"] == "B"
+
+
 def test_install_workflow_models_direct_download(monkeypatch, tmp_path):
     from dreamforge_comfy_manager import install_workflow_models, workflow_model_ready
 

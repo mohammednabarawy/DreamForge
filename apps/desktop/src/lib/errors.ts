@@ -184,14 +184,13 @@ const COPY: Record<DreamForgeErrorCode, CopyEntry> = {
     recoverable: true,
   },
   worker_boot_failed: {
-    title: "GPU engine did not finish starting",
+    title: "GPU engine failed to start",
     message:
-      "The GPU worker stopped before ComfyUI finished loading. This can " +
-      "happen if the engine was restarted while it was still booting.",
+      "First launch loads PyTorch and the generation pipeline. This usually takes 20–90 seconds.",
     suggestions: [
       "Click Restart GPU engine and wait until the status shows Engine ready.",
-      "Avoid generating until asset checks and engine boot have finished.",
-      "Check outputs/dreamforge/logs/worker.log if this keeps happening.",
+      "First launch can take 20–90 seconds while PyTorch and ComfyUI load.",
+      "Open the worker log if startup keeps failing.",
     ],
     recoverable: true,
   },
@@ -661,6 +660,24 @@ export function describeError(
       ...(nodeIssues.length > 0 ? { node_issues: nodeIssues } : {}),
     },
     failureReport: payload.failure_report,
+  };
+}
+
+const ENGINE_BOOT_DEFAULT_MESSAGE =
+  "First launch loads PyTorch and the generation pipeline. This usually takes 20–90 seconds.";
+
+/** Structured error when the GPU worker fails during startup (no generation error payload). */
+export function engineBootFailureError(
+  bootMessage?: string,
+  workerLogTail?: string,
+): FriendlyError {
+  const base = describeError({ code: "worker_boot_failed" });
+  const message = bootMessage?.trim() || ENGINE_BOOT_DEFAULT_MESSAGE;
+  const tail = workerLogTail?.trim();
+  return {
+    ...base,
+    message,
+    details: tail ? { worker_log_tail: tail } : undefined,
   };
 }
 

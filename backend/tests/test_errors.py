@@ -214,6 +214,25 @@ def test_from_exception_maps_comfy_execution_paging_file_to_virtual_memory_low()
     _is_error(payload, "virtual_memory_low")
 
 
+def test_from_exception_maps_depth_anything_hub_failure_to_missing_model_dependencies():
+    class ComfyExecutionError(RuntimeError):
+        pass
+
+    payload = from_exception(
+        ComfyExecutionError(
+            "DepthAnythingV2Preprocessor: An error happened while trying to locate the file on the Hub "
+            "and we cannot find the requested files in the local cache."
+        )
+    )
+    _is_error(payload, "missing_model_dependencies")
+    assert payload["code"] != "comfy_server_crashed"
+    missing = payload["details"]["missing"]
+    assert any(item.get("catalog_id") == "depth_anything_v2_vitl" for item in missing)
+    report = payload["failure_report"]
+    assert report is not None
+    assert any(action["action"] == "download_model_companions" for action in report["repair_actions"])
+
+
 def test_from_exception_maps_enospc_to_disk_full():
     err = OSError(28, "No space left on device", "C:/outputs/x.png")
     payload = from_exception(err)

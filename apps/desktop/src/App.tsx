@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { AnimatePresence, motion } from "framer-motion";
 import { Loader2 } from "lucide-react";
@@ -13,8 +13,10 @@ import { AppSettingsModal } from "./components/AppSettingsModal";
 import { PromptEnhanceModal } from "./components/PromptEnhanceModal";
 import { SetupWizard } from "./components/SetupWizard";
 import { ReliabilityBanner } from "./components/ReliabilityBanner";
+import { EngineFailureModal } from "./components/EngineFailureModal";
 import { useDreamForge } from "./hooks/useDreamForge";
 import { shouldHideGlobalStatusForProgress } from "./lib/studioProgress";
+import { engineBootFailureError } from "./lib/errors";
 import { getSetupGateStatus } from "./lib/runtimeSetup";
 
 export default function App() {
@@ -45,11 +47,48 @@ function DreamForgeStudio() {
   const mc = useDreamForge();
   const [fullLogOpen, setFullLogOpen] = useState(false);
   const [appSettingsOpen, setAppSettingsOpen] = useState(false);
+  const [bootFailureDismissed, setBootFailureDismissed] = useState(false);
   const hideGlobalStatus = shouldHideGlobalStatusForProgress({
     engineState: mc.engineState,
     generating: mc.generating,
     companionBootstrapBusy: mc.companionBootstrapBusy,
   });
+
+  useEffect(() => {
+    if (mc.engineState !== "failed") {
+      setBootFailureDismissed(false);
+    }
+  }, [mc.engineState]);
+
+  useEffect(() => {
+    if (mc.lastError) {
+      setBootFailureDismissed(false);
+    }
+  }, [mc.lastError]);
+
+  const failureModalError = useMemo(() => {
+    if (mc.lastError) return mc.lastError;
+    if (mc.engineState === "failed" && !bootFailureDismissed) {
+      return engineBootFailureError(mc.bootMessage, mc.workerLogTail);
+    }
+    return null;
+  }, [
+    mc.lastError,
+    mc.engineState,
+    mc.bootMessage,
+    mc.workerLogTail,
+    bootFailureDismissed,
+  ]);
+
+  const handleDismissFailure = () => {
+    if (mc.lastError) {
+      mc.dismissLastError();
+      return;
+    }
+    if (mc.engineState === "failed") {
+      setBootFailureDismissed(true);
+    }
+  };
 
   const profileLabel = "Local profile";
   const profileDetail = mc.userStyleProfile
@@ -79,18 +118,6 @@ function DreamForgeStudio() {
           })
         }
         onOpenAppSettings={() => setAppSettingsOpen(true)}
-      />
-      <ReliabilityBanner
-        lastError={mc.lastError}
-        warnings={mc.warnings}
-        onDismissError={mc.dismissLastError}
-        onDismissWarning={mc.dismissWarning}
-        onDismissAllWarnings={mc.dismissAllWarnings}
-        onRestartEngine={() => void mc.runRestartEngine()}
-        onDownloadCompanions={() => void mc.downloadMissingCompanions()}
-        onLowerVramProfile={mc.lowerVramProfile}
-        companionDownloadBusy={mc.companionDownloadBusy}
-        restarting={mc.restarting}
       />
       <AnimatePresence mode="wait">
         {mc.status && !hideGlobalStatus && (
@@ -160,9 +187,6 @@ function DreamForgeStudio() {
             engineState={mc.engineState}
             bootMessage={mc.bootMessage}
             bootPhase={mc.bootPhase}
-            workerLogTail={mc.workerLogTail}
-            restarting={mc.restarting}
-            onRestartEngine={() => void mc.runRestartEngine()}
             companionBootstrapBusy={mc.companionBootstrapBusy}
             companionBootstrapMessage={mc.companionBootstrapMessage}
             studioMode={mc.studioMode}
@@ -323,6 +347,22 @@ function DreamForgeStudio() {
         originalPrompt={mc.enhanceModalOriginalPrompt}
         onApply={mc.onApplyEnhancedPrompt}
         onEnhance={mc.onEnhancePromptCall}
+      />
+      <EngineFailureModal
+        error={failureModalError}
+        workerLogTail={mc.workerLogTail}
+        onDismiss={handleDismissFailure}
+        onRestartEngine={() => void mc.runRestartEngine()}
+        onDownloadCompanions={() => void mc.downloadMissingCompanions()}
+        onLowerVramProfile={mc.lowerVramProfile}
+        onOpenFullLog={() => setFullLogOpen(true)}
+        companionDownloadBusy={mc.companionDownloadBusy}
+        restarting={mc.restarting}
+      />
+      <ReliabilityBanner
+        warnings={mc.warnings}
+        onDismissWarning={mc.dismissWarning}
+        onDismissAllWarnings={mc.dismissAllWarnings}
       />
       </div>
     </>

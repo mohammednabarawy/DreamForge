@@ -61,7 +61,7 @@ WORKFLOW_MODEL_CATALOG: dict[str, dict[str, Any]] = {
         "relative": "../custom_nodes/comfyui_controlnet_aux/ckpts/depth-anything/Depth-Anything-V2-Large",
         "save_path": "../custom_nodes/comfyui_controlnet_aux/ckpts/depth-anything/Depth-Anything-V2-Large",
         "type": "annotator",
-        "edit_tasks": ["photo_restore", "cutout_compose", "outfit_transfer"],
+        "edit_tasks": ["photo_restore", "cutout_compose", "outfit_transfer", "portrait_master"],
         "required_nodes": ["DepthAnythingV2Preprocessor"],
         "min_bytes": 100 * 1024 * 1024,
         "note": "Depth Anything V2 weights for structure-preserving controls.",
@@ -317,6 +317,20 @@ def _models_root() -> Path:
     return Path(MODELS_ROOT)
 
 
+def _comfy_root() -> Path:
+    from _paths import COMFY_ROOT
+
+    return Path(COMFY_ROOT)
+
+
+def _workflow_model_base_path(relative: str) -> Path:
+    """Resolve catalog relative paths under models/ or ComfyUI custom_nodes/."""
+    rel = str(relative or "").strip().replace("\\", "/")
+    if rel.startswith("../custom_nodes/") or rel.startswith("custom_nodes/"):
+        return _comfy_root() / rel.removeprefix("../")
+    return _models_root() / rel
+
+
 def workflow_model_catalog_entry(catalog_id: str) -> dict[str, Any] | None:
     entry = WORKFLOW_MODEL_CATALOG.get(str(catalog_id or "").strip())
     return dict(entry) if isinstance(entry, dict) else None
@@ -325,7 +339,7 @@ def workflow_model_catalog_entry(catalog_id: str) -> dict[str, Any] | None:
 def workflow_model_directory(catalog_id: str) -> Path:
     entry = workflow_model_catalog_entry(catalog_id) or {}
     relative = str(entry.get("relative") or catalog_id).strip()
-    return _models_root() / relative
+    return _workflow_model_base_path(relative)
 
 
 def workflow_model_ready(catalog_id: str) -> bool:
@@ -333,8 +347,6 @@ def workflow_model_ready(catalog_id: str) -> bool:
     if not entry:
         return False
     root = workflow_model_directory(catalog_id)
-    if not root.is_dir():
-        return False
     for spec in entry.get("files") or []:
         if not isinstance(spec, dict):
             continue
@@ -373,29 +385,31 @@ def missing_workflow_model_entries(
             (
                 spec
                 for spec in (entry.get("files") or [])
-                if isinstance(spec, dict) and str(spec.get("filename") or "").endswith((".safetensors", ".bin", ".pt"))
+                if isinstance(spec, dict)
+                and str(spec.get("filename") or "").endswith((".safetensors", ".bin", ".pt", ".pth"))
             ),
             None,
         )
         relative = str(entry.get("relative") or catalog_id)
         filename = str((primary or {}).get("filename") or catalog_id)
-        missing.append(
-            {
-                "kind": "workflow_model",
-                "id": catalog_id,
-                "catalog_id": catalog_id,
-                "name": str(entry.get("name") or catalog_id),
-                "filename": filename,
-                "relative": f"{relative}/{filename}",
-                "expected_path": str(workflow_model_directory(catalog_id) / filename),
-                "category": relative,
-                "install_via": "direct",
-                "url": str((primary or {}).get("url") or ""),
-                "min_bytes": int(entry.get("min_bytes") or 1024 * 1024),
-                "download_tier": "A",
-                "note": str(entry.get("note") or f"{catalog_id} required weights for {task or 'ComfyUI'}"),
-            }
-        )
+        row = {
+            "kind": "workflow_model",
+            "id": catalog_id,
+            "catalog_id": catalog_id,
+            "name": str(entry.get("name") or catalog_id),
+            "filename": filename,
+            "relative": f"{relative}/{filename}",
+            "expected_path": str(workflow_model_directory(catalog_id) / filename),
+            "category": relative,
+            "install_via": "direct",
+            "url": str((primary or {}).get("url") or ""),
+            "min_bytes": int((primary or {}).get("min_bytes") or entry.get("min_bytes") or 1024 * 1024),
+            "note": str(entry.get("note") or f"{catalog_id} required weights for {task or 'ComfyUI'}"),
+        }
+        from dreamforge_companion_download import companion_download_tier
+
+        row["download_tier"] = companion_download_tier(row)
+        missing.append(row)
     return missing
 
 

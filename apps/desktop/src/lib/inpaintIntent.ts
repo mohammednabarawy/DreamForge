@@ -10,6 +10,10 @@ import {
 } from "./inpaintModel";
 import { DEFAULT_QWEN_EDIT_MODEL, selectQwenEditModel } from "./editModel";
 import { qwenEdit2511LightningPatch } from "./qwenEditDefaults";
+import {
+  PORTRAIT_MASTER_SAMPLING,
+  buildPortraitMasterPrompt,
+} from "./portraitMaster";
 
 export type InpaintIntent = "default" | "improve_detail" | "modify_content";
 export type EditTask = NonNullable<GenerationSettings["edit_task"]>;
@@ -100,6 +104,7 @@ export const EDIT_TASKS: Array<{
   hint: string;
   inpaintIntent?: InpaintIntent;
   inpaintOnly?: boolean;
+  toolboxOnly?: boolean;
 }> = [
   {
     id: "remove",
@@ -152,6 +157,7 @@ export const EDIT_TASKS: Array<{
     label: "Restore photo",
     short: "Restore",
     hint: "Restore old, damaged, or low-quality photos with structure-preserving ControlNet.",
+    toolboxOnly: true,
   },
   {
     id: "outfit_transfer",
@@ -159,6 +165,7 @@ export const EDIT_TASKS: Array<{
     short: "Outfit",
     hint: "Use the source person plus an outfit reference; add a mask for Flux Fill fallback.",
     inpaintIntent: "modify_content",
+    toolboxOnly: true,
   },
   {
     id: "cutout_compose",
@@ -166,6 +173,14 @@ export const EDIT_TASKS: Array<{
     short: "Cutout",
     hint: "Remove background from subject and harmonize lighting with a new background canvas.",
     inpaintIntent: "modify_content",
+    toolboxOnly: true,
+  },
+  {
+    id: "portrait_master",
+    label: "Portrait Master",
+    short: "Portrait",
+    hint: "Slider-driven portrait prompts with pose and depth ControlNet from your reference photo.",
+    toolboxOnly: true,
   },
 ];
 
@@ -213,6 +228,35 @@ export function patchForEditTask(
     patch.depth_strength = PHOTO_RESTORE_SAMPLING.depth_strength;
     patch.lineart_strength = PHOTO_RESTORE_SAMPLING.lineart_strength;
     patch.face_preservation = true;
+  } else if (task === "portrait_master") {
+    const restoreModel = selectPhotoRestoreModel(gallery);
+    patch.edit_type = undefined;
+    patch.cn_type = undefined;
+    patch.cn_selection = undefined;
+    patch.inpaint_mask_path = undefined;
+    patch.model = restoreModel || undefined;
+    patch.portrait_shot = "portrait";
+    patch.portrait_age = 30;
+    patch.portrait_expression = "neutral";
+    patch.portrait_lighting = "studio";
+    patch.portrait_skin_detail = 0.5;
+    patch.portrait_eye_detail = 0.5;
+    patch.steps = PORTRAIT_MASTER_SAMPLING.steps;
+    patch.cfg_scale = PORTRAIT_MASTER_SAMPLING.cfg_scale;
+    patch.sampler = PORTRAIT_MASTER_SAMPLING.sampler;
+    patch.scheduler = PORTRAIT_MASTER_SAMPLING.scheduler;
+    patch.edit_strength = PORTRAIT_MASTER_SAMPLING.edit_strength;
+    patch.portrait_pose_strength = PORTRAIT_MASTER_SAMPLING.portrait_pose_strength;
+    patch.portrait_depth_strength = PORTRAIT_MASTER_SAMPLING.portrait_depth_strength;
+    patch.prompt = buildPortraitMasterPrompt({
+      edit_task: "portrait_master",
+      portrait_shot: patch.portrait_shot,
+      portrait_age: patch.portrait_age,
+      portrait_expression: patch.portrait_expression,
+      portrait_lighting: patch.portrait_lighting,
+      portrait_skin_detail: patch.portrait_skin_detail,
+      portrait_eye_detail: patch.portrait_eye_detail,
+    } as GenerationSettings);
   } else if (task === "outfit_transfer") {
     patch.outpaint_direction = undefined;
     patch.outpaint_amount = undefined;

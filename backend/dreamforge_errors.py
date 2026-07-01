@@ -129,12 +129,14 @@ def build_failure_report(
     elif code == "missing_custom_node_pack":
         pack_id = detail_map.get("pack_id") or "unknown"
         nodes = detail_map.get("nodes") or []
+        install_via = detail_map.get("install_via")
         add("replace_node_pattern", approval=True, nodes=nodes, hint="Rebuild this stage with a first-party fallback pattern when possible.")
         add(
             "install_custom_node_pack",
             approval=True,
             pack_id=pack_id,
             nodes=nodes,
+            install_via=install_via,
             hint="Install custom nodes only after the user approves the exact pack.",
         )
         add("disable_optional_stage", approval=True, nodes=nodes)
@@ -247,18 +249,40 @@ def missing_custom_node_pack(
     job_id: str | None = None,
     nodes: Iterable[str] | None = None,
 ) -> dict:
+    node_list = list(nodes or [])
+    resolved_pack = str(pack_id or "").strip()
+    if not resolved_pack or resolved_pack in {"unknown", "ComfyUI workflow"}:
+        try:
+            from dreamforge_workflow_planner import resolve_pack_id_for_nodes
+
+            resolved_pack = resolve_pack_id_for_nodes(node_list) or resolved_pack or "unknown"
+        except Exception:
+            resolved_pack = resolved_pack or "unknown"
+    install_via = None
+    if resolved_pack and resolved_pack != "unknown":
+        try:
+            from dreamforge_comfy_manager import resolve_pack_install_strategy
+            from dreamforge_workflow_planner import _recipe_entry_for_pack
+
+            entry = _recipe_entry_for_pack(resolved_pack)
+            install_via = resolve_pack_install_strategy(entry, resolved_pack)
+        except Exception:
+            install_via = None
     node_hint = ""
-    if nodes:
-        node_hint = f" (nodes: {', '.join(str(n) for n in nodes)})"
+    if node_list:
+        node_hint = f" (nodes: {', '.join(str(n) for n in node_list)})"
+    details: dict[str, Any] = {"pack_id": resolved_pack, "nodes": node_list}
+    if install_via:
+        details["install_via"] = install_via
     return error(
         "missing_custom_node_pack",
-        f"Required ComfyUI custom node pack is not installed: {pack_id}{node_hint}",
+        f"Required ComfyUI custom node pack is not installed: {resolved_pack}{node_hint}",
         suggestions=[
             "Install the pack into ComfyUI/custom_nodes using the Models panel or Krita recipe installer.",
             "Restart ComfyUI after installing custom nodes.",
             "Use Brain plan readiness to review required dependencies before running.",
         ],
-        details={"pack_id": pack_id, "nodes": list(nodes or [])},
+        details=details,
         recoverable=True,
         job_id=job_id,
     )

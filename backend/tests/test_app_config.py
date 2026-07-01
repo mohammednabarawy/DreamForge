@@ -415,6 +415,26 @@ def test_qwen_lightning_defaults_apply_for_speed_modes():
     assert patch["cfg_scale"] == 1.0
 
 
+def test_save_app_config_persists_custom_tools(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv(app_config.CONFIG_ENV, str(tmp_path / "app-config.json"))
+    saved = app_config.save_app_config(
+        {
+            "custom_tools": [
+                {
+                    "id": "custom_1",
+                    "name": "Pixel Art",
+                    "description": "Test tool",
+                    "workflow_path": "D:/workflows/pixel.json",
+                    "bindings": {},
+                }
+            ]
+        }
+    )
+    assert saved["custom_tools"][0]["name"] == "Pixel Art"
+    reloaded = app_config.load_app_config(redacted=False)
+    assert reloaded["custom_tools"][0]["workflow_path"] == "D:/workflows/pixel.json"
+
+
 def test_agent_provider_change_resets_defaults(tmp_path: Path, monkeypatch):
     monkeypatch.setenv(app_config.CONFIG_ENV, str(tmp_path / "app-config.json"))
     

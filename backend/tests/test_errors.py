@@ -283,3 +283,15 @@ def test_build_failure_report_never_auto_retries_expensive_repairs():
     assert report["auto_retry"] is False
     assert report["max_auto_retries"] == 0
     assert any(action["requires_approval"] for action in report["repair_actions"])
+
+
+def test_missing_custom_node_pack_resolves_pack_from_nodes():
+    from dreamforge_errors import missing_custom_node_pack
+
+    payload = missing_custom_node_pack(
+        "ComfyUI workflow",
+        nodes=["LayerMask: SegformerB2ClothesUltra"],
+    )
+    assert payload["code"] == "missing_custom_node_pack"
+    assert payload["details"]["pack_id"] == "ComfyUI_LayerStyle"
+    assert payload["details"]["install_via"] == "manager"

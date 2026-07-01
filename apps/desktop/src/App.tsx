@@ -245,6 +245,7 @@ function DreamForgeStudio() {
             modelDependencies={mc.modelDependencies}
             companionDownloadBusy={mc.companionDownloadBusy}
             onDownloadCompanions={() => void mc.downloadMissingCompanions()}
+            onInstallCompanionItems={(items) => mc.installCompanionItems(items)}
             onRefreshModelDependencies={() => void mc.refreshModelDependencies()}
             studioSettings={mc.studioSettings}
             onSaveStudioSettings={(patch) => void mc.saveStudioSettings(patch)}

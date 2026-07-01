@@ -20,6 +20,7 @@ VALID_EDIT_TASKS = frozenset(
         "photo_restore",
         "outfit_transfer",
         "cutout_compose",
+        "portrait_master",
     }
 )
 
@@ -37,6 +38,7 @@ EDIT_TASK_LABELS: dict[str, str] = {
     "photo_restore": "Restore photo",
     "outfit_transfer": "Outfit transfer",
     "cutout_compose": "Cutout compose",
+    "portrait_master": "Portrait Master",
 }
 
 # Maps high-level tasks onto existing inpaint intent presets where applicable.
@@ -62,10 +64,12 @@ EDIT_TASK_DEFAULT_PROMPTS: dict[str, str] = {
         "preserve the face, pose, body shape, background, and lighting"
     ),
     "cutout_compose": (
-        "remove the background from the subject in image 1 and place them naturally "
-        "into the scene in image 2, matching lighting, shadows, perspective, and color grading"
+        "harmonize the lighting, shadows, perspective, and color grading "
+        "so the subject looks naturally integrated into the background"
     ),
 }
+
+PORTRAIT_MASTER_DEFAULT_PROMPT = "professional portrait photograph, photorealistic"
 
 EDIT_TASK_PRESETS: dict[str, dict[str, Any]] = {
     "remove": {
@@ -170,6 +174,25 @@ EDIT_TASK_PRESETS: dict[str, dict[str, Any]] = {
         "hint": "Remove background from subject and harmonize lighting with a new background canvas.",
         "default_prompt": EDIT_TASK_DEFAULT_PROMPTS["cutout_compose"],
     },
+    "portrait_master": {
+        "edit_strength": 0.55,
+        "requires_mask": False,
+        "scope": "source_image",
+        "hint": "Generate a portrait from slider-driven prompts with pose and depth ControlNet.",
+        "default_prompt": PORTRAIT_MASTER_DEFAULT_PROMPT,
+        "steps": 20,
+        "cfg": 5.5,
+        "sampler_name": "dpmpp_2m",
+        "scheduler": "karras",
+        "portrait_pose_strength": 0.65,
+        "portrait_depth_strength": 0.55,
+        "portrait_shot": "portrait",
+        "portrait_age": 30,
+        "portrait_expression": "neutral",
+        "portrait_lighting": "studio",
+        "portrait_skin_detail": 0.5,
+        "portrait_eye_detail": 0.5,
+    },
 }
 
 OUTFIT_TRANSFER_REGION_LABELS = {
@@ -178,6 +201,69 @@ OUTFIT_TRANSFER_REGION_LABELS = {
     "full_outfit": "full outfit",
     "shoes_accessories": "shoes and accessories",
 }
+
+SEGFORMER_TOGGLE_DEFAULTS: dict[str, bool] = {
+    "face": False,
+    "hair": False,
+    "hat": False,
+    "sunglass": False,
+    "left_arm": False,
+    "right_arm": False,
+    "left_leg": False,
+    "right_leg": False,
+    "upper_clothes": False,
+    "skirt": False,
+    "pants": False,
+    "dress": False,
+    "belt": False,
+    "shoe": False,
+    "bag": False,
+    "scarf": False,
+}
+
+
+def _normalize_outfit_transfer_regions(job: Any) -> list[str]:
+    regions = getattr(job, "outfit_transfer_regions", None) or []
+    if isinstance(regions, str):
+        regions = [part.strip() for part in regions.split(",")]
+    return [str(item).strip() for item in regions if str(item).strip()]
+
+
+def outfit_transfer_wants_auto_mask(job: Any) -> bool:
+    """True when Segformer should build a garment mask instead of using Qwen compose."""
+    if normalize_edit_task(getattr(job, "edit_task", None)) != "outfit_transfer":
+        return False
+    if str(getattr(job, "inpaint_mask_path", None) or "").strip():
+        return False
+    if bool(getattr(job, "outfit_auto_mask", False)):
+        return True
+    return bool(_normalize_outfit_transfer_regions(job))
+
+
+def segformer_toggles_for_outfit_regions(regions: list[str] | None) -> dict[str, bool]:
+    """Map toolbox garment regions to LayerMask Segformer boolean toggles."""
+    toggles = dict(SEGFORMER_TOGGLE_DEFAULTS)
+    keys = [str(item).strip() for item in (regions or []) if str(item).strip()]
+    if not keys:
+        toggles["upper_clothes"] = True
+        toggles["pants"] = True
+        return toggles
+    for region in keys:
+        if region == "upper_body":
+            toggles["upper_clothes"] = True
+            toggles["dress"] = True
+            toggles["scarf"] = True
+        elif region == "lower_body":
+            toggles["pants"] = True
+            toggles["skirt"] = True
+        elif region == "full_outfit":
+            for key in ("upper_clothes", "skirt", "pants", "dress", "belt"):
+                toggles[key] = True
+        elif region == "shoes_accessories":
+            toggles["shoe"] = True
+            toggles["bag"] = True
+            toggles["belt"] = True
+    return toggles
 
 
 def resolve_edit_task_default_prompt(prompt: str, job: Any) -> str:
@@ -431,6 +517,11 @@ def apply_edit_task_defaults_to_job(
             setattr(job, "edit_type", "inpaint")
             setattr(job, "cn_type", "inpaint")
             setattr(job, "cn_selection", "Custom...")
+        elif outfit_transfer_wants_auto_mask(job):
+            setattr(job, "outfit_auto_mask", True)
+            setattr(job, "edit_type", "inpaint")
+            setattr(job, "cn_type", "inpaint")
+            setattr(job, "cn_selection", "Custom...")
         elif str(getattr(job, "edit_type", "") or "").lower() in {"", "auto", "kontext", "img2img"}:
             setattr(job, "edit_type", "qwen_edit")
             setattr(job, "cn_type", None)
@@ -445,4 +536,44 @@ def apply_edit_task_defaults_to_job(
             current = getattr(job, "edit_strength", None)
             if current is None or float(current) >= 0.9:
                 setattr(job, "edit_strength", preset_strength)
+    elif defaults.get("edit_task") == "portrait_master":
+        if str(getattr(job, "edit_type", "") or "").lower() in {
+            "",
+            "auto",
+            "kontext",
+            "qwen_edit",
+            "inpaint",
+            "outpaint",
+        }:
+            setattr(job, "edit_type", "auto")
+        if str(getattr(job, "cn_type", "") or "").lower() in {
+            "inpaint",
+            "outpaint",
+            "kontext",
+            "qwen_edit",
+        }:
+            setattr(job, "cn_type", None)
+            setattr(job, "cn_selection", None)
+        for key in (
+            "steps",
+            "cfg_scale",
+            "sampler",
+            "scheduler",
+            "portrait_pose_strength",
+            "portrait_depth_strength",
+            "portrait_shot",
+            "portrait_age",
+            "portrait_expression",
+            "portrait_lighting",
+            "portrait_skin_detail",
+            "portrait_eye_detail",
+        ):
+            if key == "cfg_scale":
+                preset_key = "cfg"
+            elif key == "sampler":
+                preset_key = "sampler_name"
+            else:
+                preset_key = key
+            if preset_key in defaults and getattr(job, key, None) is None:
+                setattr(job, key, defaults[preset_key])
     return defaults

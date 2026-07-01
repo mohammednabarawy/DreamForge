@@ -7,6 +7,7 @@ export const SIMPLE_STUDIO_MODES: Array<{ id: StudioMode; label: string }> = [
   { id: "edit", label: "Edit" },
   { id: "inpaint", label: "Fix region" },
   { id: "upscale", label: "Enhance" },
+  { id: "toolbox", label: "Toolbox" },
 ];
 
 export const PRO_STUDIO_MODES: Array<{ id: StudioMode; label: string }> = [
@@ -14,6 +15,7 @@ export const PRO_STUDIO_MODES: Array<{ id: StudioMode; label: string }> = [
   { id: "edit", label: "Edit" },
   { id: "inpaint", label: "Inpaint" },
   { id: "upscale", label: "Upscale" },
+  { id: "toolbox", label: "Creative Toolbox" },
   { id: "agent", label: "Agent" },
 ];
 

@@ -4,6 +4,7 @@ export type GenerationSection =
   | "creativeTemplate"
   | "upscalePanel"
   | "editFamilyPanel"
+  | "toolboxPanel"
   | "performance"
   | "aspectRatio"
   | "imageNumber"
@@ -27,6 +28,7 @@ export type GenerationTabContext = {
   isEdit: boolean;
   isInpaint: boolean;
   isUpscale: boolean;
+  isToolbox: boolean;
   isGenerateFamily: boolean;
 };
 
@@ -65,6 +67,7 @@ export function buildGenerationTabContext(input: {
     isEdit: studioMode === "edit",
     isInpaint: studioMode === "inpaint",
     isUpscale: studioMode === "upscale",
+    isToolbox: studioMode === "toolbox",
     isGenerateFamily: isGenerateFamilyMode(studioMode),
   };
 }
@@ -81,6 +84,8 @@ export function generationSectionVisible(
       return ctx.isUpscale;
     case "editFamilyPanel":
       return ctx.isEdit || ctx.isInpaint;
+    case "toolboxPanel":
+      return ctx.isToolbox;
     case "performance":
       return !ctx.isUpscale;
     case "aspectRatio":
@@ -96,7 +101,8 @@ export function generationSectionVisible(
         ctx.advancedMode &&
           ((ctx.isGenerateFamily && ctx.showGenerateLikeSettings) ||
             ctx.isEdit ||
-            ctx.isInpaint),
+            ctx.isInpaint ||
+            ctx.isToolbox),
       );
     case "controlNet":
       return ctx.isGenerateFamily && !ctx.isModernModel && Boolean(ctx.advancedMode);
@@ -140,7 +146,7 @@ export function inspectorTabsForMode(input: {
       ? ["discover", "models", "loras", "settings", "automation"]
       : ["discover", "models", "settings"];
   }
-  if (studioMode === "edit") {
+  if (studioMode === "edit" || studioMode === "toolbox") {
     return powerUserInspector
       ? ["discover", "models", "loras", "settings", "automation"]
       : ["discover", "models", "settings"];
@@ -159,4 +165,5 @@ export const MODE_AUTO_SUMMARY: Partial<Record<string, string>> = {
   edit: "Auto: best edit model · describe the change · performance preset",
   inpaint: "Auto: Flux Fill inpaint · mask from canvas · named intent presets",
   upscale: "Auto: SDXL upscale route · tile settings tuned for quality",
+  toolbox: "Auto: Native tools and custom ComfyUI workflow imports",
 };

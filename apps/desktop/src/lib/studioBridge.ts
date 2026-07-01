@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { GenerationSettings, ModelGalleryItem } from "./tauri-api";
+import type { GenerationSettings, ModelDependencyItem, ModelGalleryItem } from "./tauri-api";
 
 export type StudioSettings = {
   path_checkpoints?: string;
@@ -58,7 +58,7 @@ export type DreamForgeAppConfig = {
     allow_cloud_image_context?: boolean;
   };
   ui: {
-    studio_mode: "generate" | "edit" | "inpaint" | "upscale" | "agent";
+    studio_mode: "generate" | "edit" | "inpaint" | "upscale" | "toolbox" | "agent";
     experience: "simple" | "pro";
     advanced_mode: boolean;
     auto_enhance_on_generate?: boolean;
@@ -68,12 +68,20 @@ export type DreamForgeAppConfig = {
     civitai_api_key_configured?: boolean;
     civitai_api_key_tail?: string;
   };
+  custom_tools?: Array<{
+    id: string;
+    name: string;
+    description: string;
+    workflow_path: string;
+    bindings: Record<string, any>;
+  }>;
 };
 
 export type DreamForgeAppConfigPatch = {
   agent?: Partial<DreamForgeAppConfig["agent"]>;
   privacy?: Partial<DreamForgeAppConfig["privacy"]>;
   ui?: Partial<DreamForgeAppConfig["ui"]>;
+  custom_tools?: DreamForgeAppConfig["custom_tools"];
 };
 
 export type AgentProviderTestResult = {
@@ -544,7 +552,14 @@ export type EnsureCreativeTaskReadyResult = {
   studio_mode?: string;
 };
 
-export async function installCustomNodePacks(packIds: string[]) {
+export async function installCustomNodePacks(
+  packIds: string[],
+  options?: {
+    strategy?: "auto" | "pinned" | "manager";
+    restart_comfy?: boolean;
+    progress_file?: string;
+  },
+) {
   return bridgeInvoke<{
     ok?: boolean;
     ready?: boolean;
@@ -554,10 +569,62 @@ export async function installCustomNodePacks(packIds: string[]) {
       ready?: boolean;
       missing_nodes?: string[];
       directory_present?: boolean;
+      install_via?: string;
     }>;
-    errors?: Array<{ pack_id?: string; error?: string }>;
+    errors?: Array<{ pack_id?: string; error?: string; code?: string; hint?: string }>;
     messages?: string[];
-  }>("install_custom_node_packs", { pack_ids: packIds });
+    needs_comfy_restart?: boolean;
+  }>("install_custom_node_packs", {
+    pack_ids: packIds,
+    strategy: options?.strategy ?? "auto",
+    restart_comfy: options?.restart_comfy ?? true,
+    progress_file: options?.progress_file ?? null,
+  });
+}
+
+export async function getManagerQueueStatus() {
+  return bridgeInvoke<{
+    ok?: boolean;
+    error?: string;
+    base_url?: string;
+    status?: {
+      total_count?: number;
+      done_count?: number;
+      in_progress_count?: number;
+      is_processing?: boolean;
+    };
+  }>("get_manager_queue_status", {});
+}
+
+export async function installWorkflowModels(
+  catalogIds: string[],
+  options?: { prefer_manager?: boolean; progress_file?: string },
+) {
+  return bridgeInvoke<{
+    ok?: boolean;
+    ready?: boolean;
+    installed?: string[];
+    errors?: Array<{ pack_id?: string; error?: string; code?: string; hint?: string }>;
+    messages?: string[];
+  }>("install_workflow_models", {
+    catalog_ids: catalogIds,
+    prefer_manager: options?.prefer_manager ?? true,
+    progress_file: options?.progress_file ?? null,
+  });
+}
+
+export async function fetchCustomToolDependencies(toolId: string, useObjectInfo = true) {
+  return bridgeInvoke<{
+    ok?: boolean;
+    ready?: boolean;
+    missing?: ModelDependencyItem[];
+    tool_id?: string;
+    tool_name?: string;
+    error?: string;
+  }>("custom_tool_dependencies", {
+    tool_id: toolId,
+    use_object_info: useObjectInfo,
+  });
 }
 
 export async function ensureCreativeTaskReady(args: {

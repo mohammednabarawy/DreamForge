@@ -76,4 +76,15 @@ def build_edit_lineage(
             "index": getattr(job, "automation_index", None) or (data or {}).get("automation_index"),
             "total": getattr(job, "automation_total", None) or (data or {}).get("automation_total"),
         }
+    custom_tool_id = str(getattr(job, "custom_tool_id", None) or (data or {}).get("custom_tool_id") or "").strip()
+    if custom_tool_id:
+        lineage["custom_tool_id"] = custom_tool_id
+        from dreamforge_custom_tools import find_custom_tool
+
+        tool = find_custom_tool(custom_tool_id)
+        if tool:
+            lineage["custom_tool_name"] = str(tool.get("name") or "")
+            workflow_path = str(tool.get("workflow_path") or "").strip()
+            if workflow_path:
+                lineage["custom_tool_workflow"] = workflow_path
     return lineage

@@ -283,6 +283,39 @@ TEMPLATE_REGISTRY: dict[str, WorkflowTemplateSpec] = {
         optional_nodes=["FaceDetailer", "UltralyticsDetectorProvider", "SAMLoader"],
         research_basis=["official_controlnet", "comfyui_controlnet_aux", "workflow_research:photo_restore"],
     ),
+    "portrait_master": WorkflowTemplateSpec(
+        id="portrait_master",
+        label="Portrait Master",
+        operation="edit_image",
+        mode="edit",
+        summary="Load portrait reference, preprocess OpenPose + depth, apply ControlNet Union, sample, decode.",
+        builder="comfy_portrait_master",
+        node_pattern=[
+            "LoadImage",
+            "OpenposePreprocessor",
+            "DepthAnythingV2Preprocessor",
+            "SetUnionControlNetType",
+            "ControlNetApplyAdvanced",
+            "KSampler",
+            "VAEDecode",
+            "SaveImage",
+        ],
+        required_inputs=["input_image"],
+        optional_inputs=[
+            "prompt",
+            "portrait_shot",
+            "portrait_age",
+            "portrait_expression",
+            "portrait_lighting",
+            "portrait_skin_detail",
+            "portrait_eye_detail",
+            "portrait_pose_strength",
+            "portrait_depth_strength",
+        ],
+        required_models=["checkpoint_or_unet", "clip", "vae", "controlnet_model"],
+        required_node_packs=["comfyui_controlnet_aux"],
+        research_basis=["official_controlnet", "comfyui_controlnet_aux", "workflow_research:portrait_master"],
+    ),
 }
 
 
@@ -421,7 +454,10 @@ def template_ids_for_operations(
     strict_inpaint: bool = False,
     qwen_edit: bool = False,
     photo_restore: bool = False,
+    portrait_master: bool = False,
 ) -> list[str]:
+    if portrait_master:
+        return ["portrait_master"]
     if photo_restore:
         return ["photo_restore"]
     ids: list[str] = []
@@ -464,6 +500,7 @@ def build_live_workflow_blueprint(
     strict_inpaint = _strict_inpaint_requested(settings)
     qwen_edit = _qwen_edit_requested(settings)
     photo_restore = str(settings.get("edit_task") or "").lower() == "photo_restore"
+    portrait_master = str(settings.get("edit_task") or "").lower() == "portrait_master"
     ops = operations or resolve_operations_from_intent(
         intent,
         has_image=has_image,
@@ -477,6 +514,7 @@ def build_live_workflow_blueprint(
         strict_inpaint=strict_inpaint,
         qwen_edit=qwen_edit,
         photo_restore=photo_restore,
+        portrait_master=portrait_master,
     )
     templates = [TEMPLATE_REGISTRY[item].to_dict() for item in template_ids if item in TEMPLATE_REGISTRY]
     required_inputs = _dedupe([value for spec in templates for value in spec.get("required_inputs", [])])
@@ -756,12 +794,16 @@ def _recommended_actions(
         known_packs = {}
     for pack in missing_node_packs:
         meta = known_packs.get(pack, {})
+        from dreamforge_comfy_manager import resolve_pack_install_strategy
+
+        install_via = resolve_pack_install_strategy(meta or None, pack)
         actions.append(
             {
                 "action": "install_custom_node_pack",
                 "pack_id": pack,
                 "url": meta.get("url", ""),
                 "version": meta.get("version"),
+                "install_via": install_via,
                 "reason": meta.get("reason", "Required for this workflow template"),
             }
         )
@@ -999,8 +1041,12 @@ def required_custom_node_pack_ids(
                 "ComfyUI-Impact-Subpack",
             ]
         )
+    if mode == "edit" and task == "portrait_master":
+        pack_ids.append("comfyui_controlnet_aux")
     if mode == "edit" and task == "cutout_compose":
         pack_ids.append("ComfyUI_essentials")
+    if mode == "edit" and task == "outfit_transfer":
+        pack_ids.append("ComfyUI_LayerStyle")
     return list(dict.fromkeys(pack_ids))
 
 
@@ -1010,11 +1056,20 @@ def missing_custom_node_pack_entries(
     object_info: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Return installable entries for custom-node packs that are not ready."""
+    from dreamforge_comfy_manager import resolve_pack_install_strategy
+
     missing: list[dict[str, Any]] = []
     for pack_id in dict.fromkeys(str(item).strip() for item in pack_ids if str(item).strip()):
         status = assess_custom_node_pack(pack_id, object_info=object_info)
         if status.get("ready"):
             continue
+        entry = _recipe_entry_for_pack(pack_id)
+        install_via = resolve_pack_install_strategy(entry, pack_id)
+        note = (
+            "Install via ComfyUI-Manager (cm-cli)."
+            if install_via == "manager"
+            else "ComfyUI custom node pack from the pinned DreamForge recipe."
+        )
         missing.append(
             {
                 "kind": "custom_node_pack",
@@ -1023,7 +1078,8 @@ def missing_custom_node_pack_entries(
                 "filename": pack_id,
                 "relative": f"engines/comfyui/custom_nodes/{pack_id}",
                 "category": "custom_nodes",
-                "note": "ComfyUI custom node pack from the pinned DreamForge recipe.",
+                "note": note,
+                "install_via": install_via,
                 "url": status.get("url") or "",
                 "missing_nodes": list(status.get("missing_nodes") or []),
                 "required_nodes": list(status.get("required_nodes") or []),
@@ -1080,6 +1136,8 @@ def assess_custom_node_pack(
         available = set(object_info.keys())
         missing_nodes = [node for node in required_nodes if node not in available]
     ready = directory_present and not missing_nodes
+    from dreamforge_comfy_manager import resolve_pack_install_strategy
+
     return {
         "pack_id": pack_id,
         "directory_present": directory_present,
@@ -1088,6 +1146,9 @@ def assess_custom_node_pack(
         "required_nodes": required_nodes,
         "url": (entry or {}).get("url", ""),
         "version": (entry or {}).get("version"),
+        "install_via": resolve_pack_install_strategy(entry, pack_id)
+        if entry or pack_id
+        else "manager",
         "ready": ready,
     }
 

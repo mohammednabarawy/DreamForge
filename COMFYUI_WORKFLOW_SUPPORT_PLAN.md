@@ -451,79 +451,38 @@ Tests:
 - Verify raw-latent path is not disabled by 4-step preset.
 - Verify UI caps Qwen compose references at 3.
 
-### Phase 2 - Photo Restore Task
+### Phase 2 - Creative Toolbox
 
-Goal: add a high-value "Restore Photo" workflow inside DreamForge without duplicating generic ControlNet.
+Goal: add high-value tools ("Restore Photo", "Outfit Transfer", "Cutout Compose") inside DreamForge in a unified Creative Toolbox grouping.
 
 Implementation:
-
-- Add `edit_task="photo_restore"` or a Creative Task route.
+- Add `edit_task` choices for `"photo_restore"`, `"outfit_transfer"`, and `"cutout_compose"`.
 - Use existing inpaint/controlnet primitives where possible.
-- Add preprocessors:
-  - Depth Anything V2/V3 if available.
-  - LineArt preprocessor if available.
-  - Optional Canny fallback.
-- Add ControlNet Union routing:
-  - Match `control_type` to preprocessor output.
-  - Use low strengths first: depth around `0.1-0.2`, lineart around `0.2-0.5`.
-- Optional face pass:
-  - Reuse `comfy_face_detail_basic` if Impact Pack/SAM/Ultralytics are installed.
-  - Do not require ReActor as first implementation due to identity/face-swap dependency and safety complexity.
-- Optional final upscale:
-  - Use existing Ultimate SD Upscale preset.
+- **Photo Restore**:
+  - Add preprocessors: Depth Anything V2/V3, LineArt, Canny fallback.
+  - Add ControlNet Union routing with low strengths.
+- **Outfit Transfer**:
+  - Add SegformerB2ClothesUltra for automatic mask, with manual mask fallback.
+  - Prefer Qwen Edit multi-image compose, falling back to Flux Fill.
+- **Cutout Compose**:
+  - If `ComfyUI-RMBG` exists, use `RMBG` or BEN2 node.
+  - Harmonize lighting and perspective with Qwen/Kontext.
 
 Files likely touched:
-
 - `backend/dreamforge_comfy_workflows.py`
 - `backend/dreamforge_generation.py`
 - `backend/dreamforge_workflow_planner.py`
-- `backend/dreamforge_krita_resources.py`
 - `apps/desktop/src/lib/creativeTask.ts`
-- `apps/desktop/src/components/EditFamilySettingsPanel.tsx`
+- `apps/desktop/src/components/CreativeToolboxPanel.tsx`
 
 Tests:
+- Missing dependencies give actionable errors (e.g. Segformer, RMBG).
+- Existing paths remain unchanged.
+- Output path handles mask previews if needed.
 
-- Missing preprocessor gives actionable error.
-- Existing generic ControlNet path remains unchanged.
-- Photo restore route builds expected ControlNet/preprocessor nodes only when assets are present.
 
-### Phase 3 - Outfit Transfer Task
 
-Goal: support outfit-to-outfit workflows as a deliberate task with segmentation/mask review, not a hidden role mode.
-
-Implementation:
-
-- Add `edit_task="outfit_transfer"`.
-- Inputs:
-  - Person/source image.
-  - Outfit reference image.
-  - Optional manual mask.
-- Automatic mask:
-  - Use `LayerMask: SegformerB2ClothesUltra` if available.
-  - Provide manual mask fallback with current inpaint mask editor.
-- Generation path:
-  - Prefer Qwen Edit multi-image compose for natural outfit prompts when available.
-  - For mask-constrained workflows, use Flux Fill / inpaint + mask.
-  - Optional ControlNet structure for pose preservation.
-- UI:
-  - Garment region checklist: upper body, lower body, full outfit, shoes/accessories.
-  - Show mask preview before running.
-
-Files likely touched:
-
-- `backend/dreamforge_generation.py`
-- `backend/dreamforge_comfy_workflows.py`
-- `apps/desktop/src/lib/creativeTask.ts`
-- `apps/desktop/src/components/InpaintContextOverlay.tsx`
-- `apps/desktop/src/components/EditFamilySettingsPanel.tsx`
-
-Tests:
-
-- Manual mask path works without Segformer.
-- Segformer missing dependency produces clear install guidance.
-- Outfit transfer does not alter non-clothing regions when mask is supplied.
-
-### Phase 4 - Upscale Preset Improvements
+### Phase 3 - Upscale Preset Improvements
 
 Goal: incorporate workflow and web-researched upscale defaults as presets, not replacement defaults.
 
@@ -547,7 +506,7 @@ Tests:
 - Existing upscale preset tests remain valid.
 - New presets produce expected parameter patches.
 
-### Phase 5 - Ideogram4 Layout Builder Enhancement
+### Phase 4 - Ideogram4 Layout Builder Enhancement
 
 Goal: improve current Ideogram support using the workflow's structured-caption ideas without requiring KJNodes.
 
@@ -579,34 +538,9 @@ Tests:
 - Add malformed JSON validation tests.
 - Add layout-to-caption roundtrip tests.
 
-### Phase 6 - Cutout Compose / Put Object Here
 
-Goal: product/person cutout composition using RMBG-style masks and Qwen/Kontext references.
 
-Implementation:
-
-- Add `edit_task="cutout_compose"`.
-- Input:
-  - Subject/object image.
-  - Background/canvas image.
-  - Optional placement prompt.
-- Background removal:
-  - If `ComfyUI-RMBG` exists, use `RMBG` or BEN2 node.
-  - Otherwise fall back to manual mask or skip feature.
-- Composition:
-  - Use mask to place subject.
-  - Use Qwen/Kontext to harmonize lighting and perspective.
-- UI:
-  - Optional placement controls: center, left, right, foreground, background.
-  - Mask preview and refine button.
-
-Tests:
-
-- Missing RMBG dependency is actionable.
-- Manual mask fallback works.
-- Output path and manifest support alpha/mask previews if needed.
-
-### Phase 7 - Custom Tools / Pro Sandbox
+### Phase 5 - Custom Tools / Pro Sandbox
 
 Goal: let advanced users run carefully validated ComfyUI workflow JSONs without turning every new node trend into a hard-coded DreamForge feature.
 
@@ -706,15 +640,12 @@ Guardrails:
 
 ### Medium Risk / High Value
 
-5. Photo Restore task.
-6. Outfit Transfer task.
-7. Cutout Compose / RMBG task.
+5. Creative Toolbox grouping (Photo Restore, Outfit Transfer, Cutout Compose).
 
 ### Large Feature
 
-8. Creative Toolbox grouping.
-9. Custom Tools / Pro Sandbox workflow importer.
-10. Visual workflow-binding editor for imported tool inputs.
+6. Custom Tools / Pro Sandbox workflow importer.
+7. Visual workflow-binding editor for imported tool inputs.
 
 ## External Research References
 

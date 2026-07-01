@@ -1,0 +1,119 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.12, pytest-9.0.3, pluggy-1.6.0
+rootdir: D:\DreamForge\backend
+configfile: pytest.ini
+plugins: anyio-4.10.0
+collected 733 items
+
+backend\tests\test_agent_runtime.py ......                               [  0%]
+backend\tests\test_app_config.py ....................                    [  3%]
+backend\tests\test_arabic_composite.py ........                          [  4%]
+backend\tests\test_arabic_pipeline_cli_output.py ...                     [  5%]
+backend\tests\test_aspect_presets.py ..                                  [  5%]
+backend\tests\test_auto_enhance.py .....                                 [  6%]
+backend\tests\test_automation.py ...                                     [  6%]
+backend\tests\test_bootstrap_markers.py ....                             [  6%]
+backend\tests\test_brain_planning.py ......                              [  7%]
+backend\tests\test_canny_thresholds.py ...                               [  8%]
+backend\tests\test_cli_inventory.py .....                                [  8%]
+backend\tests\test_comfy_client_stream_fallback.py ..                    [  9%]
+backend\tests\test_comfy_client_wait.py .....                            [  9%]
+backend\tests\test_comfy_generation_helpers.py .........                 [ 11%]
+backend\tests\test_comfy_launch.py ...............                       [ 13%]
+backend\tests\test_comfy_models.py .............                         [ 14%]
+backend\tests\test_comfy_server_lifecycle.py .......                     [ 15%]
+backend\tests\test_comfy_workflow_research.py .......                    [ 16%]
+backend\tests\test_comfy_workflows.py .................................. [ 21%]
+.......                                                                  [ 22%]
+backend\tests\test_comfy_ws.py ..............                            [ 24%]
+backend\tests\test_companion_download.py .......................         [ 27%]
+backend\tests\test_creative_tasks.py ...........                         [ 28%]
+backend\tests\test_creative_templates.py ......                          [ 29%]
+backend\tests\test_custom_node_packs.py ....                             [ 30%]
+backend\tests\test_dreamforge_prompt_loras.py ....                       [ 30%]
+backend\tests\test_dreamforge_prompt_pipeline.py ....                    [ 31%]
+backend\tests\test_dynamic_presets.py ........                           [ 32%]
+backend\tests\test_edit_inpaint_benchmark.py .....                       [ 33%]
+backend\tests\test_edit_lineage.py ...                                   [ 33%]
+backend\tests\test_edit_routing.py ...                                   [ 33%]
+backend\tests\test_edit_tasks.py ........F...                            [ 35%]
+backend\tests\test_engine_core.py ...                                    [ 36%]
+backend\tests\test_errors.py ...................                         [ 38%]
+backend\tests\test_flux_llm_enhance.py ..............................    [ 42%]
+backend\tests\test_generation_input.py .                                 [ 42%]
+backend\tests\test_generation_routing.py ............................... [ 47%]
+............................                                             [ 50%]
+backend\tests\test_hidream_o1_profiles.py .......                        [ 51%]
+backend\tests\test_identity.py ...........                               [ 53%]
+backend\tests\test_ideogram4_layout.py ..                                [ 53%]
+backend\tests\test_ideogram4_prompt.py ................................. [ 58%]
+.....                                                                    [ 58%]
+backend\tests\test_ideogram4_templates.py ...                            [ 59%]
+backend\tests\test_ideogram4_workflows.py ..........                     [ 60%]
+backend\tests\test_image_metadata.py ...                                 [ 60%]
+backend\tests\test_inpaint_intent.py .....                               [ 61%]
+backend\tests\test_inpaint_routing.py ...                                [ 62%]
+backend\tests\test_inpaint_selection.py .....                            [ 62%]
+backend\tests\test_inventory_json_commands.py ..                         [ 63%]
+backend\tests\test_ipadapter_multi.py ...                                [ 63%]
+backend\tests\test_krita_recipes.py .....                                [ 64%]
+backend\tests\test_krita_resources.py ..................                 [ 66%]
+backend\tests\test_mcp_server.py ..............                          [ 68%]
+backend\tests\test_mode_contract.py ....                                 [ 69%]
+backend\tests\test_model_capability_registry.py ....                     [ 69%]
+backend\tests\test_model_classifier.py ....................              [ 72%]
+backend\tests\test_model_library_cache.py ...                            [ 72%]
+backend\tests\test_model_router.py ..........                            [ 74%]
+backend\tests\test_model_ui_defaults.py ...........                      [ 75%]
+backend\tests\test_output_delete.py ...                                  [ 75%]
+backend\tests\test_output_delete_reimport.py .                           [ 76%]
+backend\tests\test_paths.py ......                                       [ 76%]
+backend\tests\test_pipeline_chain.py ....                                [ 77%]
+backend\tests\test_plan_preview_integration.py ........                  [ 78%]
+backend\tests\test_preflight.py .........                                [ 79%]
+backend\tests\test_qwen_lightning_companion.py ......                    [ 80%]
+backend\tests\test_reference_role.py .....                               [ 81%]
+backend\tests\test_references.py ...........                             [ 82%]
+backend\tests\test_route_matrix.py .................................     [ 87%]
+backend\tests\test_runtime_paths.py .........                            [ 88%]
+backend\tests\test_studio_bridge_interrogate.py ..                       [ 88%]
+backend\tests\test_studio_prompt_enhance.py ...............              [ 90%]
+backend\tests\test_task_router.py ......                                 [ 91%]
+backend\tests\test_upscale_presets.py ......                             [ 92%]
+backend\tests\test_upscale_routing.py ...                                [ 92%]
+backend\tests\test_vary_image.py ...                                     [ 93%]
+backend\tests\test_vram_profiles.py ..........                           [ 94%]
+backend\tests\test_workflow_executor.py ....                             [ 95%]
+backend\tests\test_workflow_planner.py .................                 [ 97%]
+backend\tests\test_workflow_routing.py ..................                [100%]
+
+================================== FAILURES ===================================
+________ test_apply_outfit_transfer_defaults_prefers_qwen_without_mask ________
+
+    def test_apply_outfit_transfer_defaults_prefers_qwen_without_mask():
+        job = SimpleNamespace(
+            edit_task="outfit_transfer",
+            edit_type="auto",
+            cn_type="img2img",
+            cn_selection="Custom...",
+            edit_strength=None,
+            inpaint_mask_path=None,
+        )
+        defaults = apply_edit_task_defaults_to_job(job, mode="edit")
+        assert defaults["edit_task"] == "outfit_transfer"
+        assert job.edit_type == "qwen_edit"
+        assert job.cn_type is None
+>       assert job.cn_selection is None
+E       AssertionError: assert 'Custom...' is None
+E        +  where 'Custom...' = namespace(edit_task='outfit_transfer', edit_type='qwen_edit', cn_type=None, cn_selection='Custom...', edit_strength=1.0, inpaint_mask_path=None, inpaint_intent='modify_content').cn_selection
+
+backend\tests\test_edit_tasks.py:125: AssertionError
+============================== warnings summary ===============================
+tests/test_cli_inventory.py::test_hidream_o1_family_and_dependencies
+  C:\Users\moham\miniconda3\Lib\site-packages\requests\__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (7.4.3)/charset_normalizer (3.4.4) doesn't match a supported version!
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED backend\tests\test_edit_tasks.py::test_apply_outfit_transfer_defaults_prefers_qwen_without_mask
+================== 1 failed, 732 passed, 1 warning in 33.37s ==================

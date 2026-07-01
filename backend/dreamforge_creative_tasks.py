@@ -148,6 +148,8 @@ def resolve_creative_task(
 
         mode = "generate"
 
+    routing_mode = "edit" if mode == "toolbox" else mode
+
     base = dict(settings) if isinstance(settings, dict) else {}
 
     gallery = model_gallery if isinstance(model_gallery, list) else []
@@ -200,7 +202,7 @@ def resolve_creative_task(
 
 
 
-    if mode == "edit":
+    if mode in {"edit", "toolbox"}:
 
         src = (selected_image or base.get("input_image") or patch.get("input_image") or "").strip()
 
@@ -214,7 +216,9 @@ def resolve_creative_task(
 
             patch["upscale_method"] = None
 
-        patch["inpaint_mask_path"] = None
+        if mode == "edit":
+
+            patch["inpaint_mask_path"] = None
 
     elif mode == "inpaint":
 
@@ -263,7 +267,7 @@ def resolve_creative_task(
 
         patch.pop("post_upscale", None)
 
-    merged = _complete_patch_for_mode(mode, {**base, **patch}, selected_image, gallery)
+    merged = _complete_patch_for_mode(routing_mode, {**base, **patch}, selected_image, gallery)
 
     if (
         mode == "upscale"
@@ -276,13 +280,14 @@ def resolve_creative_task(
     route_reason = ""
     route_warnings: list[str] = []
     workflow_kind = mode
-    if mode in {"edit", "inpaint", "upscale"}:
+    if routing_mode in {"edit", "inpaint", "upscale"}:
         routed = apply_task_routing(
             merged,
-            mode,
+            routing_mode,
             gallery,
             advanced_mode=advanced_mode,
             user_picked_model=user_picked_model,
+            toolbox_studio_mode=mode if mode == "toolbox" else None,
         )
         merged = routed.patch
         route_reason = routed.route_reason
@@ -295,7 +300,7 @@ def resolve_creative_task(
 
         merged["template_id"] = resolved_template_id
 
-    if merged.get("post_upscale") and mode in {"edit", "inpaint"}:
+    if merged.get("post_upscale") and mode in {"edit", "inpaint", "toolbox"}:
 
         merged["upscale_image"] = None
 
@@ -409,7 +414,7 @@ def enforce_creative_task_settings(
 
     patch = resolved.get("patch") if isinstance(resolved.get("patch"), dict) else {}
 
-    if mode not in {"edit", "inpaint", "upscale"}:
+    if mode not in {"edit", "inpaint", "upscale", "toolbox"}:
 
         return apply_vram_quality_defaults(
 

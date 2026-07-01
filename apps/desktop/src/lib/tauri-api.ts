@@ -168,11 +168,22 @@ export type GenerationSettings = {
     | "global_edit"
     | "photo_restore"
     | "outfit_transfer"
-    | "cutout_compose";
+    | "cutout_compose"
+    | "portrait_master";
+  /** Active imported ComfyUI custom tool (execution pending backend wiring). */
+  custom_tool_id?: string;
   cutout_placement?: "center" | "left" | "right" | "foreground" | "background";
   outfit_transfer_regions?: Array<
     "upper_body" | "lower_body" | "full_outfit" | "shoes_accessories"
   >;
+  portrait_shot?: "closeup" | "portrait" | "medium" | "full";
+  portrait_age?: number;
+  portrait_expression?: "neutral" | "happy" | "serious" | "confident";
+  portrait_lighting?: "soft" | "studio" | "natural" | "dramatic";
+  portrait_skin_detail?: number;
+  portrait_eye_detail?: number;
+  portrait_pose_strength?: number;
+  portrait_depth_strength?: number;
   /** Photo restore: depth ControlNet strength (0.1–0.2 typical). */
   depth_strength?: number;
   /** Photo restore: lineart ControlNet strength (0.2–0.5 typical). */
@@ -668,11 +679,22 @@ export async function pickImageFile() {
   return invoke<string | null>("pick_image_file");
 }
 
-export async function pickTextFile() {
-  return invoke<string | null>("pick_text_file");
+export async function readTextFile(path: string): Promise<string | null> {
+  if (!isTauri()) return null;
+  return await invoke("read_text_file", { path });
 }
 
-export async function pickFolder() {
+export async function pickTextFile(): Promise<string | null> {
+  if (!isTauri()) return null;
+  return await invoke("pick_text_file");
+}
+
+export async function pickJsonFile(): Promise<string | null> {
+  if (!isTauri()) return null;
+  return await invoke("pick_json_file");
+}
+
+export async function pickFolder(): Promise<string | null> {
   return invoke<string | null>("pick_folder");
 }
 
@@ -932,9 +954,12 @@ export type ModelDependencyItem = {
   download_tier?: "A" | "B";
   min_bytes?: number;
   requires_hf_token?: boolean;
-  kind?: "model" | "custom_node_pack";
+  kind?: "model" | "custom_node_pack" | "workflow_model";
   pack_id?: string;
+  catalog_id?: string;
   missing_nodes?: string[];
+  /** pinned = DreamForge recipe SHA; manager = ComfyUI-Manager cm-cli; direct = HF workflow model */
+  install_via?: "pinned" | "manager" | "direct";
 };
 
 export type ModelDependenciesResult = {

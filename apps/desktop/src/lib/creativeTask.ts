@@ -34,6 +34,7 @@ import { applyUpscalePresetAtSubmit, patchForUpscalePreset } from "./upscalePres
 import { applyAutoEnhanceAtSubmit } from "./autoEnhance";
 import { applyHiDreamPerformanceAtSubmit } from "./hidreamPerformance";
 import { selectCuratedUpscaleModel } from "./upscaleModel";
+import { patchForEditTask } from "./inpaintIntent";
 
 export type CreativeTaskContext = {
   studioMode: StudioMode;
@@ -92,7 +93,7 @@ export function enforceEditJobSettings(
   gallery: ModelGalleryItem[],
   advancedMode?: boolean,
 ): GenerationSettings {
-  if (studioMode !== "edit") return settings;
+  if (studioMode !== "edit" && studioMode !== "toolbox") return settings;
   if (isPhotoRestoreTask(settings)) {
     const restorePatch = patchForPhotoRestoreTask(settings, gallery);
     return {
@@ -214,14 +215,14 @@ export function enforceCreativeTaskSettings(
   const { studioMode, gallery, advancedMode, vramProfile, vramGb, mpsAvailable } =
     ctx;
   let next = applyCreativeTemplateDefaults(settings, studioMode);
-  if (studioMode === "edit") {
+  if (studioMode === "edit" || studioMode === "toolbox") {
     next = enforceEditJobSettings(next, studioMode, gallery, advancedMode);
   } else if (studioMode === "inpaint") {
     next = enforceInpaintJobSettings(next, studioMode, gallery, advancedMode);
   } else if (studioMode === "upscale") {
     next = enforceUpscaleJobSettings(next, studioMode);
   }
-  if (next.post_upscale && (studioMode === "edit" || studioMode === "inpaint")) {
+  if (next.post_upscale && (studioMode === "edit" || studioMode === "inpaint" || studioMode === "toolbox")) {
     next = {
       ...next,
       upscale_image: undefined,
@@ -253,7 +254,7 @@ export function selectedImageForCreativeTask(
   historyImage?: string,
 ): string {
   const history = (historyImage ?? "").trim();
-  if (studioMode === "inpaint" || studioMode === "edit") {
+  if (studioMode === "inpaint" || studioMode === "edit" || studioMode === "toolbox") {
     return (settings.input_image ?? history).trim();
   }
   if (studioMode === "upscale") {
@@ -352,6 +353,9 @@ function studioModeDefaultStatus(
       ? `Edit mode - default edit model selected (${routedLabel}). User overrides stay visible in the inspector.`
       : "Edit mode - default edit model is missing; review the asset download prompt";
   }
+  if (mode === "toolbox") {
+    return "Creative Toolbox - select a native tool or imported custom workflow";
+  }
   return `${mode[0].toUpperCase()}${mode.slice(1)} mode - configured defaults are applied for this mode`;
 }
 
@@ -400,6 +404,32 @@ export function planStudioModeSwitch(
   };
   if (useIdeogramRoute) {
     Object.assign(patch, ideogram4SettingsDefaults());
+  }
+
+  if (mode === "toolbox") {
+    const enteringToolbox = previousMode !== "toolbox";
+    if (enteringToolbox) {
+      refUpdates.userPickedModel = false;
+      refUpdates.userPickedLoras = false;
+      refUpdates.userPickedStyle = false;
+      patch.lora = [];
+    }
+    patch.style = "image_edit";
+    patch.upscale_image = undefined;
+    patch.upscale_method = undefined;
+    const toolboxTask = settings.edit_task;
+    if (toolboxTask === "photo_restore") {
+      Object.assign(patch, patchForPhotoRestoreTask(settings, gallery));
+    } else if (toolboxTask) {
+      Object.assign(
+        patch,
+        patchForEditTask(toolboxTask, gallery, {
+          hasMask: Boolean(settings.inpaint_mask_path?.trim()),
+        }),
+      );
+    }
+    const src = (selectedImage ?? settings.input_image ?? "").trim();
+    if (src) patch.input_image = src;
   }
 
   if (mode === "edit") {
@@ -511,7 +541,7 @@ export function planStudioModeSwitch(
     if (src) patch.upscale_image = src;
   }
 
-  if (mode !== "inpaint" && mode !== "edit" && mode !== "upscale") {
+  if (mode !== "inpaint" && mode !== "edit" && mode !== "upscale" && mode !== "toolbox") {
     refUpdates.userPickedModel = false;
     refUpdates.userPickedLoras = false;
     refUpdates.userPickedStyle = false;

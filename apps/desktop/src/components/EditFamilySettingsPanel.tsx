@@ -74,9 +74,10 @@ export function EditFamilySettingsPanel({
   const inpaintIntent = normalizeInpaintIntent(settings.inpaint_intent);
   const activeIntent = INPAINT_INTENTS.find((item) => item.id === inpaintIntent);
   const activeTask = normalizeEditTask(settings.edit_task);
-  const visibleEditTasks = EDIT_TASKS.filter((item) =>
-    isInpaint ? item.id !== "global_edit" && item.id !== "photo_restore" : !item.inpaintOnly,
-  );
+  const visibleEditTasks = EDIT_TASKS.filter((item) => {
+    if (item.toolboxOnly) return false;
+    return isInpaint ? item.id !== "global_edit" : !item.inpaintOnly;
+  });
 
   const applyInpaintIntent = (intent: typeof inpaintIntent) => {
     onChange({

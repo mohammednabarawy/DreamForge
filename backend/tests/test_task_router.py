@@ -135,3 +135,38 @@ def test_resolve_edit_routes_kontext():
     patch = result["patch"]
     assert patch["edit_type"] == "kontext"
     assert "kontext" in patch["model"].lower()
+
+
+def test_toolbox_custom_tool_skips_native_task_routing():
+    routed = apply_task_routing(
+        {
+            "custom_tool_id": "custom_pixel",
+            "edit_task": "cutout_compose",
+            "edit_strength": 1.0,
+            "input_image": "D:/photo.png",
+            "reference_images": ["D:/bg.png"],
+        },
+        "edit",
+        GALLERY,
+        toolbox_studio_mode="toolbox",
+    )
+    assert routed.patch["custom_tool_id"] == "custom_pixel"
+    assert float(routed.patch.get("edit_strength") or 0) == 1.0
+    assert routed.route_reason != "toolbox_cutout_compose"
+
+
+def test_toolbox_outfit_transfer_regions_route_segformer():
+    routed = apply_task_routing(
+        {
+            "edit_task": "outfit_transfer",
+            "outfit_transfer_regions": ["upper_body"],
+            "input_image": "D:/photo.png",
+            "reference_images": ["D:/outfit.png"],
+        },
+        "edit",
+        GALLERY,
+        toolbox_studio_mode="toolbox",
+    )
+    assert routed.patch.get("outfit_auto_mask") is True
+    assert routed.patch["edit_type"] == "inpaint"
+    assert routed.route_reason == "toolbox_outfit_segformer"

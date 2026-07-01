@@ -18,7 +18,7 @@ import {
   applyHiDreamO1DevAtSubmit,
   isHiDreamO1DevCheckpoint,
 } from "../lib/hidreamO1Profiles";
-import type { GenerationSettings, UiDefaults, ModelGalleryItem } from "../lib/tauri-api";
+import type { GenerationSettings, ModelDependencyItem, UiDefaults, ModelGalleryItem } from "../lib/tauri-api";
 import type { StudioSettings } from "../lib/studioBridge";
 import { listCreativeTemplates, type CreativeTemplateSummary } from "../lib/studioBridge";
 import { defaultTemplateIdForMode } from "../lib/creativeTemplates";
@@ -29,6 +29,7 @@ import {
   MODE_AUTO_SUMMARY,
 } from "../lib/generationTabVisibility";
 import { EditFamilySettingsPanel } from "./EditFamilySettingsPanel";
+import { CreativeToolboxPanel } from "./CreativeToolboxPanel";
 import { UltimateSDUpscalePanel } from "./UltimateSDUpscalePanel";
 import { AutoEnhancePanel } from "./AutoEnhancePanel";
 
@@ -50,6 +51,7 @@ type Props = {
   activeModelLabel: string;
   advancedMode?: boolean;
   modelGallery?: ModelGalleryItem[];
+  onInstallCompanionItems?: (items: ModelDependencyItem[]) => void;
 };
 
 export function isModernModel(label: string): boolean {
@@ -129,6 +131,7 @@ export function GenerationSettingsPanel({
   activeModelLabel,
   advancedMode = false,
   modelGallery = [],
+  onInstallCompanionItems,
 }: Props) {
   const [creativeTemplates, setCreativeTemplates] = useState<CreativeTemplateSummary[]>([]);
 
@@ -316,6 +319,14 @@ export function GenerationSettingsPanel({
           showEditStrength={showEditStrength}
           advancedMode={advancedMode}
           modelGallery={modelGallery}
+        />
+      )}
+      {show("toolboxPanel") && (
+        <CreativeToolboxPanel
+          settings={settings}
+          onChange={onChange}
+          modelGallery={modelGallery}
+          onInstallCompanionItems={onInstallCompanionItems}
         />
       )}
 

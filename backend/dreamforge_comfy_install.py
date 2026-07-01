@@ -177,11 +177,23 @@ def _install_custom_node_requirements(dest: Path, *, progress: ProgressCallback 
 
 
 def ensure_krita_custom_nodes(*, progress: ProgressCallback = None, optional: bool = False) -> None:
+    from dreamforge_comfy_manager import install_packs_via_manager, resolve_pack_install_strategy
+
     packs = list(COMFY_INSTALL_RECIPE.get("required_custom_nodes") or [])
     if optional:
         packs.extend(COMFY_INSTALL_RECIPE.get("optional_custom_nodes") or [])
+    manager_ids: list[str] = []
     for entry in packs:
-        ensure_custom_node_pack(entry, progress=progress)
+        pack_id = str(entry.get("id") or "")
+        if resolve_pack_install_strategy(entry, pack_id) == "manager":
+            manager_ids.append(pack_id)
+        else:
+            ensure_custom_node_pack(entry, progress=progress)
+    if manager_ids:
+        result = install_packs_via_manager(manager_ids, progress=progress)
+        if result.errors:
+            failed = ", ".join(item.get("pack_id", "?") for item in result.errors)
+            raise RuntimeError(f"ComfyUI-Manager install failed for: {failed}")
 
 
 def ensure_dreamforge_comfy_backend(*, progress: ProgressCallback = None, optional_nodes: bool = False) -> None:

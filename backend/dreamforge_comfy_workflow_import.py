@@ -313,6 +313,31 @@ def patch_api_workflow(graph: dict[str, Any], bindings: dict[str, Any]) -> dict[
     return out
 
 
+def patch_node_field(
+    graph: dict[str, Any],
+    node_id: str,
+    field: str,
+    value: Any,
+) -> bool:
+    """Set a single input on a specific API workflow node."""
+    node = graph.get(str(node_id))
+    if not isinstance(node, dict):
+        return False
+    inputs = node.setdefault("inputs", {})
+    inputs[str(field)] = value
+    return True
+
+
+def workflow_class_types(graph: dict[str, Any]) -> list[str]:
+    return sorted(
+        {
+            str(node.get("class_type"))
+            for node in graph.values()
+            if isinstance(node, dict) and node.get("class_type")
+        }
+    )
+
+
 def build_prompt_from_template(path: str | Path, bindings: dict[str, Any]) -> dict[str, Any]:
     graph = load_api_workflow_template(path)
     return patch_api_workflow(graph, bindings)

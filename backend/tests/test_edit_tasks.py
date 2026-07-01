@@ -6,6 +6,8 @@ from dreamforge_edit_tasks import (
     cutout_compose_has_background,
     merge_outfit_transfer_prompt,
     outfit_transfer_has_reference,
+    outfit_transfer_wants_auto_mask,
+    segformer_toggles_for_outfit_regions,
     resolve_edit_task_default_prompt,
     resolve_edit_task_defaults,
     normalize_edit_task,
@@ -169,6 +171,25 @@ def test_outfit_transfer_has_reference():
     )
 
 
+def test_outfit_transfer_wants_auto_mask_when_regions_selected():
+    job = SimpleNamespace(
+        edit_task="outfit_transfer",
+        outfit_transfer_regions=["upper_body"],
+        inpaint_mask_path=None,
+    )
+    assert outfit_transfer_wants_auto_mask(job)
+    assert not outfit_transfer_wants_auto_mask(
+        SimpleNamespace(edit_task="outfit_transfer", inpaint_mask_path="/tmp/mask.png")
+    )
+
+
+def test_segformer_toggles_for_outfit_regions():
+    toggles = segformer_toggles_for_outfit_regions(["upper_body", "shoes_accessories"])
+    assert toggles["upper_clothes"] is True
+    assert toggles["shoe"] is True
+    assert toggles["face"] is False
+
+
 def test_cutout_compose_has_background():
     assert cutout_compose_has_background(
         SimpleNamespace(input_image="/tmp/subject.png", reference_images=["/tmp/bg.png"])
@@ -180,7 +201,7 @@ def test_cutout_compose_has_background():
 
 def test_resolve_edit_task_default_prompt():
     job = SimpleNamespace(edit_task="cutout_compose")
-    assert "image 1" in resolve_edit_task_default_prompt("", job)
+    assert "harmonize" in resolve_edit_task_default_prompt("", job).lower()
     assert resolve_edit_task_default_prompt("custom prompt", job) == "custom prompt"
 
 

@@ -508,7 +508,28 @@ def _build_comfy_prompt_graph(
     model_loader_args: dict | None = None,
     qwen_reference_filenames: list[str] | None = None,
     kontext_reference_filenames: list[str] | None = None,
+    client=None,
+    input_path: str | None = None,
+    extra_reference_paths: list[str] | None = None,
+    mask_path: str | None = None,
 ):
+    if mode == "custom_tool":
+        from dreamforge_custom_tools import CustomToolError, build_custom_tool_prompt_graph
+
+        if client is None:
+            raise CustomToolError("Custom tool execution requires an active ComfyUI client.")
+        return build_custom_tool_prompt_graph(
+            client=client,
+            job=job,
+            settings=settings,
+            prompt=prompt,
+            negative=negative,
+            seed=seed,
+            input_path=input_path,
+            extra_reference_paths=extra_reference_paths,
+            mask_path=mask_path,
+        )
+
     from dreamforge_comfy_workflow_import import (
         build_prompt_from_template,
         resolve_comfy_workflow_template,
@@ -543,7 +564,9 @@ def _build_comfy_prompt_graph(
         comfy_kandinsky5_img2img,
         comfy_kandinsky5_txt2img,
         comfy_photo_restore,
+        comfy_portrait_master,
         comfy_cutout_compose,
+        comfy_outfit_transfer,
     )
 
     explicit = getattr(job, "comfy_workflow_api", None) or getattr(
@@ -797,6 +820,21 @@ def _build_comfy_prompt_graph(
                 "denoise": edit_strength if input_filename and not use_structure else 1.0,
             }
         )
+    elif mode == "portrait_master":
+        from dreamforge_portrait_master import build_portrait_master_negative
+
+        graph = comfy_portrait_master(
+            {
+                **common,
+                "image": input_filename,
+                "controlnet_model": getattr(job, "controlnet_model", None)
+                or _first_inventory_model("controlnet", ("union",)),
+                "portrait_pose_strength": float(getattr(job, "portrait_pose_strength", 0.65)),
+                "portrait_depth_strength": float(getattr(job, "portrait_depth_strength", 0.55)),
+                "denoise": edit_strength,
+                "negative": build_portrait_master_negative(job),
+            }
+        )
     elif mode == "photo_restore":
         control_image = (
             getattr(job, "control_image", None)
@@ -855,6 +893,27 @@ def _build_comfy_prompt_graph(
             if settings.get(key) is not None:
                 cutout_args[key] = settings[key]
         graph = comfy_cutout_compose(cutout_args)
+    elif mode == "outfit_transfer" and input_filename:
+        from dreamforge_edit_tasks import segformer_toggles_for_outfit_regions
+
+        regions = getattr(job, "outfit_transfer_regions", None) or []
+        if isinstance(regions, str):
+            regions = [part.strip() for part in regions.split(",") if part.strip()]
+        outfit_args: dict[str, Any] = {
+            **loader_args,
+            "prompt": prompt,
+            "negative": negative,
+            "steps": settings["steps"],
+            "cfg": settings["cfg"],
+            "sampler_name": settings["sampler_name"],
+            "scheduler": settings["scheduler"],
+            "seed": seed,
+            "denoise": edit_strength,
+            "filename_prefix": "DreamForge",
+            "image": input_filename,
+            "segformer_toggles": segformer_toggles_for_outfit_regions(regions),
+        }
+        graph = comfy_outfit_transfer(outfit_args)
     elif mode == "outpaint" and input_filename:
         graph = comfy_outpaint_basic(
             {
@@ -1538,6 +1597,9 @@ def run_generation(
 
         prompt = merge_outfit_transfer_prompt(prompt, job)
         prompt = merge_cutout_compose_prompt(prompt, job)
+        from dreamforge_portrait_master import merge_portrait_master_prompt
+
+        prompt = merge_portrait_master_prompt(prompt, job)
         negative = prepared["negative"]
         settings = dict(settings)
         settings["negative"] = negative
@@ -1658,7 +1720,13 @@ def run_generation(
             edit_task_defaults = apply_edit_task_defaults_to_job(
                 job,
                 mode="edit"
-                if task_name in {"global_edit", "photo_restore", "outfit_transfer", "cutout_compose"}
+                if task_name in {
+                    "global_edit",
+                    "photo_restore",
+                    "outfit_transfer",
+                    "cutout_compose",
+                    "portrait_master",
+                }
                 else "inpaint",
             )
             if task_name == "photo_restore":
@@ -1695,6 +1763,53 @@ def run_generation(
                     ]
                     emit_event(stream_sink, err)
                     return {"status": "error", **err}
+
+        custom_tool_id = str(getattr(job, "custom_tool_id", None) or "").strip()
+        if custom_tool_id:
+            from dreamforge_comfy_workflow_import import load_api_workflow_template
+            from dreamforge_custom_tools import _sorted_bindings, find_custom_tool
+            from dreamforge_errors import comfy_workflow_validation, invalid_request
+
+            tool = find_custom_tool(custom_tool_id)
+            if not tool:
+                err = invalid_request(
+                    f"Custom tool {custom_tool_id!r} was not found.",
+                    job_id=job_id,
+                )
+                err["suggestions"] = [
+                    "Re-import the workflow in Creative Toolbox or pick another custom tool."
+                ]
+                emit_event(stream_sink, err)
+                return {"status": "error", **err}
+            workflow_path = str(tool.get("workflow_path") or "").strip()
+            if not workflow_path:
+                err = comfy_workflow_validation(
+                    f"Custom tool {tool.get('name') or custom_tool_id} has no workflow file.",
+                    job_id=job_id,
+                )
+                emit_event(stream_sink, err)
+                return {"status": "error", **err}
+            try:
+                load_api_workflow_template(workflow_path)
+            except (OSError, ValueError) as exc:
+                err = comfy_workflow_validation(
+                    f"{tool.get('name') or custom_tool_id} requires ComfyUI Save (API Format) JSON. {exc}",
+                    job_id=job_id,
+                    suggestions=[
+                        "In ComfyUI, use Save (API Format) — not the default UI workflow export.",
+                        "Re-import the API JSON in Creative Toolbox.",
+                    ],
+                )
+                emit_event(stream_sink, err)
+                return {"status": "error", **err}
+            image_bindings = _sorted_bindings(tool, "image")
+            if image_bindings and not str(getattr(job, "input_image", None) or "").strip():
+                err = invalid_request(
+                    f"{tool.get('name') or custom_tool_id} needs an input image for its bindings.",
+                    job_id=job_id,
+                )
+                emit_event(stream_sink, err)
+                return {"status": "error", **err}
 
         from dreamforge_workflow_routing import resolve_comfy_workflow_mode, resolve_input_routing
 
@@ -2337,6 +2452,13 @@ def run_generation(
             model_family=model_family,
             input_filename=input_filename,
         )
+        if str(getattr(job, "custom_tool_id", None) or "").strip():
+            comfy_mode = "custom_tool"
+        if (
+            str(getattr(job, "edit_task", "") or "").strip().lower() == "outfit_transfer"
+            and bool(getattr(job, "outfit_auto_mask", False))
+        ):
+            comfy_mode = "outfit_transfer"
         if comfy_mode in ("ipadapter", "ipadapter_controlnet", "ipadapter_faceid"):
             from dreamforge_workflow_planner import custom_node_pack_present
 
@@ -2615,25 +2737,40 @@ def run_generation(
             settings,
         )
 
-        prompt_graph, template_used = _build_comfy_prompt_graph(
-            job=job,
-            mode=comfy_mode,
-            model=model,
-            model_family=model_family,
-            settings=settings,
-            prompt=prompt,
-            negative=negative,
-            seed=seed,
-            edit_strength=edit_strength,
-            cn_upscale=cn_upscale,
-            input_filename=input_filename or reference_filename,
-            mask_filename=mask_filename,
-            reference_stitch_filename=reference_stitch_filename,
-            grow_mask_by=grow_mask_by,
-            model_loader_args=resolved_loaders,
-            qwen_reference_filenames=qwen_reference_filenames or None,
-            kontext_reference_filenames=kontext_reference_filenames or None,
-        )
+        try:
+            prompt_graph, template_used = _build_comfy_prompt_graph(
+                job=job,
+                mode=comfy_mode,
+                model=model,
+                model_family=model_family,
+                settings=settings,
+                prompt=prompt,
+                negative=negative,
+                seed=seed,
+                edit_strength=edit_strength,
+                cn_upscale=cn_upscale,
+                input_filename=input_filename or reference_filename,
+                mask_filename=mask_filename,
+                reference_stitch_filename=reference_stitch_filename,
+                grow_mask_by=grow_mask_by,
+                model_loader_args=resolved_loaders,
+                qwen_reference_filenames=qwen_reference_filenames or None,
+                kontext_reference_filenames=kontext_reference_filenames or None,
+                client=client,
+                input_path=input_path,
+                extra_reference_paths=_coerce_reference_image_paths(job),
+                mask_path=mask_path,
+            )
+        except Exception as exc:
+            from dreamforge_custom_tools import CustomToolError
+
+            if isinstance(exc, CustomToolError):
+                from dreamforge_errors import comfy_workflow_validation
+
+                err = comfy_workflow_validation(str(exc), job_id=job_id)
+                emit_event(stream_sink, err)
+                return {"status": "error", **err}
+            raise
         comfy_workflow_class_types = sorted(
             {
                 str(node.get("class_type"))
@@ -2642,12 +2779,20 @@ def run_generation(
             }
         )
         comfy_workflow_builder = (
+            "custom_tool"
+            if comfy_mode == "custom_tool"
+            else (
+            "comfy_outfit_transfer"
+            if comfy_mode == "outfit_transfer"
+            else (
             "comfy_flux_fill_inpaint"
             if "InpaintModelConditioning" in comfy_workflow_class_types
             else (
                 "comfy_inpaint_basic"
                 if "VAEEncodeForInpaint" in comfy_workflow_class_types
                 else (Path(template_used).stem if template_used else None)
+            )
+            )
             )
         )
 
@@ -2661,6 +2806,40 @@ def run_generation(
                 for node_type in comfy_workflow_class_types
                 if node_type not in object_info
             )
+            if missing_workflow_nodes and comfy_mode == "outfit_transfer":
+                segformer_nodes = {"LayerMask: SegformerB2ClothesUltra"}
+                if segformer_nodes & set(missing_workflow_nodes):
+                    try:
+                        from dreamforge_comfy_install import ensure_dreamforge_comfy_backend
+                        from dreamforge_comfy_server import restart_managed_comfy_server
+
+                        emit_event(
+                            stream_sink,
+                            {
+                                "type": "progress",
+                                "job_id": job_id,
+                                "phase": "preflight",
+                                "progress": 3,
+                                "message": (
+                                    "Installing garment segmentation nodes (ComfyUI_LayerStyle) "
+                                    "and restarting ComfyUI…"
+                                ),
+                            },
+                        )
+                        ensure_dreamforge_comfy_backend(optional_nodes=True)
+                        server = restart_managed_comfy_server(
+                            timeout_s=90.0,
+                            reason="outfit_segformer_nodes",
+                        )
+                        client = ComfyClient(server.base_url)
+                        object_info = client.object_info(timeout_s=30.0)
+                        missing_workflow_nodes = sorted(
+                            node_type
+                            for node_type in comfy_workflow_class_types
+                            if node_type not in object_info
+                        )
+                    except Exception:
+                        pass
             if missing_workflow_nodes and comfy_mode == "cutout_compose":
                 essentials_nodes = {"RemBGSession+", "ImageRemoveBackground+"}
                 if essentials_nodes & set(missing_workflow_nodes):
@@ -2696,8 +2875,14 @@ def run_generation(
                     except Exception:
                         pass
             if missing_workflow_nodes:
+                from dreamforge_workflow_planner import resolve_pack_id_for_nodes
+
+                pack_id = (
+                    resolve_pack_id_for_nodes(missing_workflow_nodes)
+                    or str(comfy_workflow_builder or "unknown")
+                )
                 err = missing_custom_node_pack(
-                    str(comfy_workflow_builder or "ComfyUI workflow"),
+                    pack_id,
                     job_id=job_id,
                     nodes=missing_workflow_nodes,
                 )
@@ -2981,6 +3166,17 @@ def run_generation(
             background_reference_path = resolve_cutout_background_path(job)
             if background_reference_path:
                 routing["background_image"] = background_reference_path
+            custom_tool_id = str(getattr(job, "custom_tool_id", None) or "").strip()
+            if custom_tool_id:
+                from dreamforge_custom_tools import find_custom_tool
+
+                routing["custom_tool_id"] = custom_tool_id
+                tool = find_custom_tool(custom_tool_id)
+                if tool:
+                    routing["custom_tool_name"] = str(tool.get("name") or "")
+                    workflow_path = str(tool.get("workflow_path") or "").strip()
+                    if workflow_path:
+                        routing["custom_tool_workflow"] = workflow_path
             if post_upscale_method:
                 routing["post_upscale"] = str(post_upscale_method)
                 routing["chain"] = ["primary", "upscale"]

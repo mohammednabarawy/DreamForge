@@ -1,0 +1,3619 @@
+diff --git a/COMFYUI_WORKFLOW_SUPPORT_PLAN.md b/COMFYUI_WORKFLOW_SUPPORT_PLAN.md
+index 6c68a5c..73c5d61 100644
+--- a/COMFYUI_WORKFLOW_SUPPORT_PLAN.md
++++ b/COMFYUI_WORKFLOW_SUPPORT_PLAN.md
+@@ -451,79 +451,38 @@ Tests:
+ - Verify raw-latent path is not disabled by 4-step preset.
+ - Verify UI caps Qwen compose references at 3.
+ 
+-### Phase 2 - Photo Restore Task
++### Phase 2 - Creative Toolbox
+ 
+-Goal: add a high-value "Restore Photo" workflow inside DreamForge without duplicating generic ControlNet.
++Goal: add high-value tools ("Restore Photo", "Outfit Transfer", "Cutout Compose") inside DreamForge in a unified Creative Toolbox grouping.
+ 
+ Implementation:
+-
+-- Add `edit_task="photo_restore"` or a Creative Task route.
++- Add `edit_task` choices for `"photo_restore"`, `"outfit_transfer"`, and `"cutout_compose"`.
+ - Use existing inpaint/controlnet primitives where possible.
+-- Add preprocessors:
+-  - Depth Anything V2/V3 if available.
+-  - LineArt preprocessor if available.
+-  - Optional Canny fallback.
+-- Add ControlNet Union routing:
+-  - Match `control_type` to preprocessor output.
+-  - Use low strengths first: depth around `0.1-0.2`, lineart around `0.2-0.5`.
+-- Optional face pass:
+-  - Reuse `comfy_face_detail_basic` if Impact Pack/SAM/Ultralytics are installed.
+-  - Do not require ReActor as first implementation due to identity/face-swap dependency and safety complexity.
+-- Optional final upscale:
+-  - Use existing Ultimate SD Upscale preset.
++- **Photo Restore**:
++  - Add preprocessors: Depth Anything V2/V3, LineArt, Canny fallback.
++  - Add ControlNet Union routing with low strengths.
++- **Outfit Transfer**:
++  - Add SegformerB2ClothesUltra for automatic mask, with manual mask fallback.
++  - Prefer Qwen Edit multi-image compose, falling back to Flux Fill.
++- **Cutout Compose**:
++  - If `ComfyUI-RMBG` exists, use `RMBG` or BEN2 node.
++  - Harmonize lighting and perspective with Qwen/Kontext.
+ 
+ Files likely touched:
+-
+ - `backend/dreamforge_comfy_workflows.py`
+ - `backend/dreamforge_generation.py`
+ - `backend/dreamforge_workflow_planner.py`
+-- `backend/dreamforge_krita_resources.py`
+ - `apps/desktop/src/lib/creativeTask.ts`
+-- `apps/desktop/src/components/EditFamilySettingsPanel.tsx`
++- `apps/desktop/src/components/CreativeToolboxPanel.tsx`
+ 
+ Tests:
++- Missing dependencies give actionable errors (e.g. Segformer, RMBG).
++- Existing paths remain unchanged.
++- Output path handles mask previews if needed.
+ 
+-- Missing preprocessor gives actionable error.
+-- Existing generic ControlNet path remains unchanged.
+-- Photo restore route builds expected ControlNet/preprocessor nodes only when assets are present.
+-
+-### Phase 3 - Outfit Transfer Task
+-
+-Goal: support outfit-to-outfit workflows as a deliberate task with segmentation/mask review, not a hidden role mode.
+-
+-Implementation:
+-
+-- Add `edit_task="outfit_transfer"`.
+-- Inputs:
+-  - Person/source image.
+-  - Outfit reference image.
+-  - Optional manual mask.
+-- Automatic mask:
+-  - Use `LayerMask: SegformerB2ClothesUltra` if available.
+-  - Provide manual mask fallback with current inpaint mask editor.
+-- Generation path:
+-  - Prefer Qwen Edit multi-image compose for natural outfit prompts when available.
+-  - For mask-constrained workflows, use Flux Fill / inpaint + mask.
+-  - Optional ControlNet structure for pose preservation.
+-- UI:
+-  - Garment region checklist: upper body, lower body, full outfit, shoes/accessories.
+-  - Show mask preview before running.
+ 
+-Files likely touched:
+ 
+-- `backend/dreamforge_generation.py`
+-- `backend/dreamforge_comfy_workflows.py`
+-- `apps/desktop/src/lib/creativeTask.ts`
+-- `apps/desktop/src/components/InpaintContextOverlay.tsx`
+-- `apps/desktop/src/components/EditFamilySettingsPanel.tsx`
+-
+-Tests:
+-
+-- Manual mask path works without Segformer.
+-- Segformer missing dependency produces clear install guidance.
+-- Outfit transfer does not alter non-clothing regions when mask is supplied.
+-
+-### Phase 4 - Upscale Preset Improvements
++### Phase 3 - Upscale Preset Improvements
+ 
+ Goal: incorporate workflow and web-researched upscale defaults as presets, not replacement defaults.
+ 
+@@ -547,7 +506,7 @@ Tests:
+ - Existing upscale preset tests remain valid.
+ - New presets produce expected parameter patches.
+ 
+-### Phase 5 - Ideogram4 Layout Builder Enhancement
++### Phase 4 - Ideogram4 Layout Builder Enhancement
+ 
+ Goal: improve current Ideogram support using the workflow's structured-caption ideas without requiring KJNodes.
+ 
+@@ -579,34 +538,9 @@ Tests:
+ - Add malformed JSON validation tests.
+ - Add layout-to-caption roundtrip tests.
+ 
+-### Phase 6 - Cutout Compose / Put Object Here
+-
+-Goal: product/person cutout composition using RMBG-style masks and Qwen/Kontext references.
+-
+-Implementation:
+-
+-- Add `edit_task="cutout_compose"`.
+-- Input:
+-  - Subject/object image.
+-  - Background/canvas image.
+-  - Optional placement prompt.
+-- Background removal:
+-  - If `ComfyUI-RMBG` exists, use `RMBG` or BEN2 node.
+-  - Otherwise fall back to manual mask or skip feature.
+-- Composition:
+-  - Use mask to place subject.
+-  - Use Qwen/Kontext to harmonize lighting and perspective.
+-- UI:
+-  - Optional placement controls: center, left, right, foreground, background.
+-  - Mask preview and refine button.
+-
+-Tests:
+ 
+-- Missing RMBG dependency is actionable.
+-- Manual mask fallback works.
+-- Output path and manifest support alpha/mask previews if needed.
+ 
+-### Phase 7 - Custom Tools / Pro Sandbox
++### Phase 5 - Custom Tools / Pro Sandbox
+ 
+ Goal: let advanced users run carefully validated ComfyUI workflow JSONs without turning every new node trend into a hard-coded DreamForge feature.
+ 
+@@ -706,15 +640,12 @@ Guardrails:
+ 
+ ### Medium Risk / High Value
+ 
+-5. Photo Restore task.
+-6. Outfit Transfer task.
+-7. Cutout Compose / RMBG task.
++5. Creative Toolbox grouping (Photo Restore, Outfit Transfer, Cutout Compose).
+ 
+ ### Large Feature
+ 
+-8. Creative Toolbox grouping.
+-9. Custom Tools / Pro Sandbox workflow importer.
+-10. Visual workflow-binding editor for imported tool inputs.
++6. Custom Tools / Pro Sandbox workflow importer.
++7. Visual workflow-binding editor for imported tool inputs.
+ 
+ ## External Research References
+ 
+diff --git a/apps/desktop/src-tauri/src/lib.rs b/apps/desktop/src-tauri/src/lib.rs
+index 3f561d3..90277f2 100644
+--- a/apps/desktop/src-tauri/src/lib.rs
++++ b/apps/desktop/src-tauri/src/lib.rs
+@@ -1,6 +1,5 @@
+ use base64::{engine::general_purpose::STANDARD, Engine as _};
+ use futures_util::StreamExt;
+-use image::imageops::FilterType;
+ use image::GenericImageView;
+ use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
+ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
+@@ -2896,6 +2895,42 @@ fn pick_text_file() -> Result<Option<String>, String> {
+     Ok(picked.map(|path| path.to_string_lossy().into_owned()))
+ }
+ 
++#[tauri::command]
++fn pick_json_file() -> Result<Option<String>, String> {
++    let picked = rfd::FileDialog::new()
++        .add_filter("JSON", &["json"])
++        .pick_file();
++    Ok(picked.map(|path| path.to_string_lossy().into_owned()))
++}
++
++#[tauri::command]
++fn read_text_file(path: String) -> Result<String, String> {
++    let trimmed = path.trim();
++    if trimmed.is_empty() {
++        return Err("path is required".to_string());
++    }
++    let file = Path::new(trimmed);
++    if !file.is_file() {
++        return Err(format!("File not found: {trimmed}"));
++    }
++    fs::read_to_string(file).map_err(|e| e.to_string())
++}
++
++#[tauri::command]
++fn write_text_file(path: String, content: String) -> Result<(), String> {
++    let trimmed = path.trim();
++    if trimmed.is_empty() {
++        return Err("path is required".to_string());
++    }
++    let file = Path::new(trimmed);
++    if let Some(parent) = file.parent() {
++        if !parent.as_os_str().is_empty() {
++            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
++        }
++    }
++    fs::write(file, content).map_err(|e| e.to_string())
++}
++
+ #[tauri::command]
+ fn pick_folder() -> Result<Option<String>, String> {
+     let picked = rfd::FileDialog::new().pick_folder();
+@@ -3803,8 +3838,11 @@ pub fn run() {
+             bridge_invoke,
+             write_temp_png,
+             read_image_preview,
++            read_text_file,
++            write_text_file,
+             pick_image_file,
+             pick_text_file,
++            pick_json_file,
+             pick_folder,
+             read_live_preview,
+             invoke_generation,
+diff --git a/apps/desktop/src/App.tsx b/apps/desktop/src/App.tsx
+index 8f5d308..68de0d3 100644
+--- a/apps/desktop/src/App.tsx
++++ b/apps/desktop/src/App.tsx
+@@ -245,6 +245,7 @@ function DreamForgeStudio() {
+             modelDependencies={mc.modelDependencies}
+             companionDownloadBusy={mc.companionDownloadBusy}
+             onDownloadCompanions={() => void mc.downloadMissingCompanions()}
++            onInstallCompanionItems={(items) => mc.installCompanionItems(items)}
+             onRefreshModelDependencies={() => void mc.refreshModelDependencies()}
+             studioSettings={mc.studioSettings}
+             onSaveStudioSettings={(patch) => void mc.saveStudioSettings(patch)}
+diff --git a/apps/desktop/src/components/CompanionDownloadModal.tsx b/apps/desktop/src/components/CompanionDownloadModal.tsx
+index 45c94b1..44112e9 100644
+--- a/apps/desktop/src/components/CompanionDownloadModal.tsx
++++ b/apps/desktop/src/components/CompanionDownloadModal.tsx
+@@ -86,6 +86,19 @@ function phaseMessage(phase: CompanionDownloadPhase, pct: number): string {
+   return "Ready.";
+ }
+ 
++function installViaLabel(installVia?: string): string | null {
++  if (installVia === "manager") return "ComfyUI Manager";
++  if (installVia === "pinned") return "Pinned pack";
++  if (installVia === "direct") return "Workflow model";
++  return null;
++}
++
++function hasManagerSecurityLines(lines: CompanionDownloadLine[]): boolean {
++  return lines.some((line) =>
++    /security policy|manager_security_blocked|blocked by comfyui-manager/i.test(line.text),
++  );
++}
++
+ export function CompanionDownloadModal({
+   open,
+   phase,
+@@ -127,6 +140,10 @@ export function CompanionDownloadModal({
+     "—";
+   const downloadableCount = pendingMissing.filter((item) => item.url).length;
+   const customNodeCount = pendingMissing.filter((item) => item.kind === "custom_node_pack").length;
++  const managerNodeCount = pendingMissing.filter(
++    (item) => item.kind === "custom_node_pack" && item.install_via === "manager",
++  ).length;
++  const pinnedNodeCount = customNodeCount - managerNodeCount;
+   const canApprove = pendingMissing.length > 0 && (downloadableCount > 0 || customNodeCount > 0);
+   const fileDownloaded = fileProgress?.downloaded ?? 0;
+   const fileTotal = fileProgress?.total ?? 0;
+@@ -224,6 +241,13 @@ export function CompanionDownloadModal({
+             </div>
+           </div>
+ 
++          {hasManagerSecurityLines(lines) && (
++            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] leading-snug text-amber-100">
++              ComfyUI-Manager blocked one or more installs. In ComfyUI open Manager → Settings →
++              Security, allow the repository, or retry with a pinned DreamForge pack when offered.
++            </div>
++          )}
++
+           <div>
+             <div className="mb-1 flex items-center justify-between gap-2">
+               <p className="truncate font-mono text-[11px] text-dfui-fg" title={fileName}>
+@@ -290,6 +314,11 @@ export function CompanionDownloadModal({
+                       <p className="mt-0.5 truncate font-mono text-[10px] text-dfui-muted">
+                         {item.relative ?? item.expected_path ?? item.category ?? "models"}
+                       </p>
++                      {installViaLabel(item.install_via) && (
++                        <p className="mt-1 text-[10px] font-medium text-df-blue">
++                          {installViaLabel(item.install_via)}
++                        </p>
++                      )}
+                     </div>
+                     {item.url ? (
+                       <a
+@@ -388,7 +417,9 @@ export function CompanionDownloadModal({
+                 className="rounded-lg bg-df-blue px-3 py-1.5 text-xs font-semibold text-white hover:bg-df-blue/90 disabled:cursor-not-allowed disabled:opacity-50"
+               >
+                 {customNodeCount > 0 && downloadableCount === 0
+-                  ? `Install ${customNodeCount} node pack(s)`
++                  ? managerNodeCount > 0 && pinnedNodeCount === 0
++                    ? `Install ${managerNodeCount} pack(s) via ComfyUI Manager`
++                    : `Install ${customNodeCount} node pack(s)`
+                   : customNodeCount > 0
+                     ? `Install & download ${pendingMissing.length} item(s)`
+                     : downloadableCount
+diff --git a/apps/desktop/src/components/EditFamilySettingsPanel.tsx b/apps/desktop/src/components/EditFamilySettingsPanel.tsx
+index 0500f3f..90445a8 100644
+--- a/apps/desktop/src/components/EditFamilySettingsPanel.tsx
++++ b/apps/desktop/src/components/EditFamilySettingsPanel.tsx
+@@ -74,9 +74,10 @@ export function EditFamilySettingsPanel({
+   const inpaintIntent = normalizeInpaintIntent(settings.inpaint_intent);
+   const activeIntent = INPAINT_INTENTS.find((item) => item.id === inpaintIntent);
+   const activeTask = normalizeEditTask(settings.edit_task);
+-  const visibleEditTasks = EDIT_TASKS.filter((item) =>
+-    isInpaint ? item.id !== "global_edit" && item.id !== "photo_restore" : !item.inpaintOnly,
+-  );
++  const visibleEditTasks = EDIT_TASKS.filter((item) => {
++    if (item.toolboxOnly) return false;
++    return isInpaint ? item.id !== "global_edit" : !item.inpaintOnly;
++  });
+ 
+   const applyInpaintIntent = (intent: typeof inpaintIntent) => {
+     onChange({
+diff --git a/apps/desktop/src/components/GenerationSettingsPanel.tsx b/apps/desktop/src/components/GenerationSettingsPanel.tsx
+index 254102f..1f38bfe 100644
+--- a/apps/desktop/src/components/GenerationSettingsPanel.tsx
++++ b/apps/desktop/src/components/GenerationSettingsPanel.tsx
+@@ -18,7 +18,7 @@ import {
+   applyHiDreamO1DevAtSubmit,
+   isHiDreamO1DevCheckpoint,
+ } from "../lib/hidreamO1Profiles";
+-import type { GenerationSettings, UiDefaults, ModelGalleryItem } from "../lib/tauri-api";
++import type { GenerationSettings, ModelDependencyItem, UiDefaults, ModelGalleryItem } from "../lib/tauri-api";
+ import type { StudioSettings } from "../lib/studioBridge";
+ import { listCreativeTemplates, type CreativeTemplateSummary } from "../lib/studioBridge";
+ import { defaultTemplateIdForMode } from "../lib/creativeTemplates";
+@@ -29,6 +29,7 @@ import {
+   MODE_AUTO_SUMMARY,
+ } from "../lib/generationTabVisibility";
+ import { EditFamilySettingsPanel } from "./EditFamilySettingsPanel";
++import { CreativeToolboxPanel } from "./CreativeToolboxPanel";
+ import { UltimateSDUpscalePanel } from "./UltimateSDUpscalePanel";
+ import { AutoEnhancePanel } from "./AutoEnhancePanel";
+ 
+@@ -50,6 +51,7 @@ type Props = {
+   activeModelLabel: string;
+   advancedMode?: boolean;
+   modelGallery?: ModelGalleryItem[];
++  onInstallCompanionItems?: (items: ModelDependencyItem[]) => void;
+ };
+ 
+ export function isModernModel(label: string): boolean {
+@@ -129,6 +131,7 @@ export function GenerationSettingsPanel({
+   activeModelLabel,
+   advancedMode = false,
+   modelGallery = [],
++  onInstallCompanionItems,
+ }: Props) {
+   const [creativeTemplates, setCreativeTemplates] = useState<CreativeTemplateSummary[]>([]);
+ 
+@@ -318,6 +321,14 @@ export function GenerationSettingsPanel({
+           modelGallery={modelGallery}
+         />
+       )}
++      {show("toolboxPanel") && (
++        <CreativeToolboxPanel
++          settings={settings}
++          onChange={onChange}
++          modelGallery={modelGallery}
++          onInstallCompanionItems={onInstallCompanionItems}
++        />
++      )}
+ 
+       {show("performance") && (
+       <SettingsSection
+diff --git a/apps/desktop/src/components/InspectorPanel.tsx b/apps/desktop/src/components/InspectorPanel.tsx
+index 44a596b..2b37465 100644
+--- a/apps/desktop/src/components/InspectorPanel.tsx
++++ b/apps/desktop/src/components/InspectorPanel.tsx
+@@ -72,6 +72,7 @@ type Props = {
+   modelDependencies?: { missing: Array<{ id?: string; relative?: string; note?: string }>; ready: boolean };
+   companionDownloadBusy?: boolean;
+   onDownloadCompanions?: () => void;
++  onInstallCompanionItems?: (items: import("../lib/tauri-api").ModelDependencyItem[]) => void;
+   onRefreshModelDependencies?: () => void;
+   studioSettings?: StudioSettings | null;
+   onSaveStudioSettings?: (patch: StudioSettings) => void | Promise<void>;
+@@ -112,6 +113,7 @@ export function InspectorPanel({
+   modelDependencies,
+   companionDownloadBusy,
+   onDownloadCompanions,
++  onInstallCompanionItems,
+   onRefreshModelDependencies,
+   studioSettings,
+   onSaveStudioSettings,
+@@ -639,6 +641,7 @@ export function InspectorPanel({
+               activeModelLabel={activeModelLabel}
+               advancedMode={advancedMode}
+               modelGallery={modelGallery}
++              onInstallCompanionItems={onInstallCompanionItems}
+             />
+           </div>
+         )}
+diff --git a/apps/desktop/src/hooks/useCompanionDownload.ts b/apps/desktop/src/hooks/useCompanionDownload.ts
+index 4ce92a2..b1ea8ea 100644
+--- a/apps/desktop/src/hooks/useCompanionDownload.ts
++++ b/apps/desktop/src/hooks/useCompanionDownload.ts
+@@ -1,14 +1,17 @@
+ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+ import { isTauri } from "@tauri-apps/api/core";
+-import { downloadCompanionEntries, installCustomNodePacks, verifyCompanionEntries } from "../lib/studioBridge";
++import { appDataDir, join } from "@tauri-apps/api/path";
++import { downloadCompanionEntries, installCustomNodePacks, installWorkflowModels, verifyCompanionEntries } from "../lib/studioBridge";
+ import {
+   checkModelDependencies,
+   downloadModel,
+   onDownloadProgress,
++  readTextFile,
+   type DownloadProgressPayload,
+   type ModelDependencyItem,
+ } from "../lib/tauri-api";
+-import { isCustomNodePackItem } from "../lib/companionAssets";
++import { isCustomNodePackItem, isWorkflowModelItem } from "../lib/companionAssets";
++import { formatCompanionInstallError } from "../lib/companionInstallErrors";
+ 
+ export type CompanionDownloadPhase = "idle" | "confirm" | "running" | "done" | "error";
+ 
+@@ -52,6 +55,54 @@ function companionFilename(item: ModelDependencyItem): string {
+   return parts[parts.length - 1] || item.id || "companion.safetensors";
+ }
+ 
++async function companionInstallProgressPath(): Promise<string | null> {
++  if (!isTauri()) return null;
++  try {
++    return await join(await appDataDir(), "companion_install_progress.jsonl");
++  } catch {
++    return null;
++  }
++}
++
++type ProgressPollHandle = {
++  stop: () => void;
++};
++
++function startInstallProgressPolling(
++  progressPath: string,
++  onLine: (message: string) => void,
++): ProgressPollHandle {
++  let offset = 0;
++  let stopped = false;
++  const timer = window.setInterval(async () => {
++    if (stopped) return;
++    try {
++      const content = await readTextFile(progressPath);
++      if (!content || content.length <= offset) return;
++      const chunk = content.slice(offset);
++      offset = content.length;
++      for (const line of chunk.split("\n")) {
++        const trimmed = line.trim();
++        if (!trimmed) continue;
++        try {
++          const parsed = JSON.parse(trimmed) as { message?: string };
++          if (parsed.message) onLine(parsed.message);
++        } catch {
++          onLine(trimmed);
++        }
++      }
++    } catch {
++      /* progress file not created yet */
++    }
++  }, 450);
++  return {
++    stop: () => {
++      stopped = true;
++      window.clearInterval(timer);
++    },
++  };
++}
++
+ function itemDestination(item: ModelDependencyItem): string {
+   return item.relative ?? `${item.category ?? "models"}/${companionFilename(item)}`;
+ }
+@@ -176,7 +227,25 @@ export function useCompanionDownload(options?: Options) {
+       }
+ 
+       const customNodePacks = missing.filter(isCustomNodePackItem);
+-      const modelAssets = missing.filter((item) => !isCustomNodePackItem(item));
++      const workflowModels = missing.filter(isWorkflowModelItem);
++      const modelAssets = missing.filter(
++        (item) => !isCustomNodePackItem(item) && !isWorkflowModelItem(item),
++      );
++
++      const progressPath = await companionInstallProgressPath();
++      let progressPoll: ProgressPollHandle | null = null;
++      const beginLiveProgress = () => {
++        if (!progressPath) return;
++        progressPoll?.stop();
++        progressPoll = startInstallProgressPolling(progressPath, (message) => {
++          if (runId !== runIdRef.current) return;
++          append("info", message);
++        });
++      };
++      const endLiveProgress = () => {
++        progressPoll?.stop();
++        progressPoll = null;
++      };
+ 
+       let failures = 0;
+       if (customNodePacks.length > 0) {
+@@ -196,20 +265,34 @@ export function useCompanionDownload(options?: Options) {
+           append("info", `Installing custom node pack: ${itemLabel(item)}`);
+         }
+         try {
+-          const payload = await installCustomNodePacks(packIds);
++          const managerCount = customNodePacks.filter(
++            (item) => item.install_via === "manager",
++          ).length;
++          if (managerCount > 0) {
++            append(
++              "info",
++              `Using ComfyUI-Manager for ${managerCount} optional node pack(s)…`,
++            );
++          }
++          beginLiveProgress();
++          const payload = await installCustomNodePacks(packIds, {
++            strategy: "auto",
++            restart_comfy: true,
++            progress_file: progressPath ?? undefined,
++          });
++          endLiveProgress();
+           if (runId !== runIdRef.current) return;
+-          for (const message of payload.messages ?? []) {
+-            append("info", message);
++          if (!progressPath) {
++            for (const message of payload.messages ?? []) {
++              append("info", message);
++            }
+           }
+           for (const packId of payload.installed ?? []) {
+             append("ok", `Installed custom node pack: ${packId}`);
+           }
+           for (const err of payload.errors ?? []) {
+             failures += 1;
+-            append(
+-              "error",
+-              `Failed ${err.pack_id ?? "custom node pack"}: ${err.error ?? "unknown error"}`,
+-            );
++            append("error", formatCompanionInstallError(err));
+           }
+           if (payload.ready) {
+             append("ok", "Custom node packs are installed and registered.");
+@@ -217,11 +300,50 @@ export function useCompanionDownload(options?: Options) {
+             append("warn", "Custom node packs installed but ComfyUI still needs a restart.");
+           }
+         } catch (e) {
++          endLiveProgress();
+           failures += customNodePacks.length;
+           append("error", `Custom node install failed: ${String(e)}`);
+         }
+       }
+ 
++      if (workflowModels.length > 0) {
++        const catalogIds = workflowModels
++          .map((item) => item.catalog_id ?? item.id)
++          .filter((value): value is string => Boolean(value?.trim()));
++        append(
++          "info",
++          `Installing ${catalogIds.length} workflow model pack(s) (Segformer weights, etc.)…`,
++        );
++        setTotalCount(customNodePacks.length + workflowModels.length + modelAssets.length);
++        try {
++          beginLiveProgress();
++          const payload = await installWorkflowModels(catalogIds, {
++            prefer_manager: true,
++            progress_file: progressPath ?? undefined,
++          });
++          endLiveProgress();
++          if (runId !== runIdRef.current) return;
++          if (!progressPath) {
++            for (const message of payload.messages ?? []) {
++              append("info", message);
++            }
++          }
++          for (const catalogId of payload.installed ?? []) {
++            append("ok", `Installed workflow model: ${catalogId}`);
++          }
++          for (const err of payload.errors ?? []) {
++            failures += 1;
++            append("error", formatCompanionInstallError(err));
++          }
++        } catch (e) {
++          endLiveProgress();
++          failures += workflowModels.length;
++          append("error", `Workflow model install failed: ${String(e)}`);
++        }
++      }
++
++      endLiveProgress();
++
+       const withoutUrl = modelAssets.filter((item) => !item.url);
+       for (const item of withoutUrl) {
+         append(
+@@ -234,7 +356,7 @@ export function useCompanionDownload(options?: Options) {
+       const downloadable = modelAssets.filter((item) => item.url);
+       if (downloadable.length > 0) {
+         append("info", `Downloading ${downloadable.length} asset(s) to the models folder…`);
+-        setTotalCount(customNodePacks.length + downloadable.length);
++        setTotalCount(customNodePacks.length + workflowModels.length + downloadable.length);
+         for (let i = 0; i < downloadable.length; i += 1) {
+           if (runId !== runIdRef.current) return;
+           const item = downloadable[i];
+diff --git a/apps/desktop/src/hooks/useDreamForge.ts b/apps/desktop/src/hooks/useDreamForge.ts
+index 873aac5..5457804 100644
+--- a/apps/desktop/src/hooks/useDreamForge.ts
++++ b/apps/desktop/src/hooks/useDreamForge.ts
+@@ -2052,6 +2052,7 @@ export function useDreamForge() {
+           ...(appConfig?.ui ?? {}),
+           ...(patch.ui ?? {}),
+         },
++        custom_tools: patch.custom_tools ?? appConfig?.custom_tools,
+       } as DreamForgeAppConfigPatch;
+       const saved = await saveAppConfig(merged);
+       setAppConfig(saved);
+@@ -2277,6 +2278,7 @@ export function useDreamForge() {
+         modelGallery: modelGalleryAll,
+         studioMode,
+         inpaintMaskSyncing,
++        customTools: appConfig?.custom_tools,
+       });
+       if (!readiness.ok) {
+         setStatus(readiness.reason);
+@@ -2312,7 +2314,11 @@ export function useDreamForge() {
+         use_comfy_server: true,
+         workflow_mode:
+           sanitized.workflow_mode ??
+-          (studioMode === "generate" ? "generate" : studioMode),
++          (studioMode === "generate"
++            ? "generate"
++            : studioMode === "toolbox"
++              ? "edit"
++              : studioMode),
+       };
+       const activeModel = findGalleryModel(modelGalleryAll, params.model ?? "");
+       const modelFamily = (activeModel?.family ?? "").toLowerCase();
+@@ -2600,6 +2606,7 @@ export function useDreamForge() {
+             modelGallery: modelGalleryAll,
+             studioMode: targetMode,
+             inpaintMaskSyncing,
++            customTools: appConfig?.custom_tools,
+           });
+           if (!localReady.ok && !localReady.missingCompanions) {
+             setStatus(localReady.reason);
+@@ -3172,6 +3179,7 @@ export function useDreamForge() {
+         studioMode,
+         editPlanState: isEditFamilyMode(studioMode) ? editPlanState : undefined,
+         inpaintMaskSyncing,
++        customTools: appConfig?.custom_tools,
+       });
+     },
+     [
+@@ -3188,6 +3196,7 @@ export function useDreamForge() {
+       studioMode,
+       editPlanState,
+       inpaintMaskSyncing,
++      appConfig?.custom_tools,
+     ],
+   );
+   const effectiveGenerateReadiness = useMemo(() => generateReadiness, [generateReadiness]);
+@@ -3524,7 +3533,7 @@ export function useDreamForge() {
+       ) {
+         void applyModelProfile(plan.profileItem);
+       }
+-      if (mode === "inpaint" || mode === "edit" || mode === "upscale") {
++      if (mode === "inpaint" || mode === "edit" || mode === "upscale" || mode === "toolbox") {
+         let studioMissing: ModelDependencyItem[] = [];
+         try {
+           const studioRes = await checkStudioResources(
+@@ -4125,6 +4134,14 @@ export function useDreamForge() {
+     return { ready: merged.length === 0, stillMissing: merged };
+   };
+ 
++  const installCompanionItems = useCallback(
++    (items: ModelDependencyItem[], model?: string) => {
++      const resolved = (model || settingsRef.current.model || "workflow-assets").trim();
++      startCompanionDownload(resolved || "workflow-assets", items);
++    },
++    [startCompanionDownload],
++  );
++
+   const downloadMissingCompanions = useCallback(async () => {
+     const plan = agentPlanRef.current;
+     const plannedModel =
+@@ -4335,6 +4352,7 @@ export function useDreamForge() {
+     creativeTask,
+     refreshModelDependencies,
+     downloadMissingCompanions,
++    installCompanionItems,
+     companionDownload,
+     lowerVramProfile: lowerVramProfileHandler,
+     canGenerate: effectiveGenerateReadiness.ok,
+diff --git a/apps/desktop/src/lib/companionAssets.ts b/apps/desktop/src/lib/companionAssets.ts
+index 49f898a..32d4747 100644
+--- a/apps/desktop/src/lib/companionAssets.ts
++++ b/apps/desktop/src/lib/companionAssets.ts
+@@ -10,6 +10,10 @@ const NODE_TO_PACK: Record<string, string> = {
+   INPAINT_ColorMatch: "comfyui-inpaint-nodes",
+   InpaintPreprocessor: "comfyui_controlnet_aux",
+   DepthAnythingV2Preprocessor: "comfyui_controlnet_aux",
++  OpenposePreprocessor: "comfyui_controlnet_aux",
++  "LayerMask: SegformerB2ClothesUltra": "ComfyUI_LayerStyle",
++  "RemBGSession+": "ComfyUI_essentials",
++  "ImageRemoveBackground+": "ComfyUI_essentials",
+ };
+ 
+ export function resolvePackIdFromRepairAction(action: RepairAction): string | undefined {
+@@ -22,7 +26,12 @@ export function resolvePackIdFromRepairAction(action: RepairAction): string | un
+   return undefined;
+ }
+ 
+-export function customNodeItemFromPackId(packId: string, nodes?: string[]): ModelDependencyItem {
++export function customNodeItemFromPackId(
++  packId: string,
++  nodes?: string[],
++  installVia?: "pinned" | "manager",
++): ModelDependencyItem {
++  const via = installVia ?? "pinned";
+   return {
+     kind: "custom_node_pack",
+     pack_id: packId,
+@@ -30,10 +39,15 @@ export function customNodeItemFromPackId(packId: string, nodes?: string[]): Mode
+     filename: packId,
+     relative: `engines/comfyui/custom_nodes/${packId}`,
+     category: "custom_nodes",
++    install_via: via,
+     note:
+-      nodes && nodes.length > 0
+-        ? `Install ComfyUI nodes: ${nodes.join(", ")}`
+-        : "Install ComfyUI custom node pack from the pinned DreamForge recipe.",
++      via === "manager"
++        ? nodes && nodes.length > 0
++          ? `Install via ComfyUI-Manager: ${nodes.join(", ")}`
++          : "Install via ComfyUI-Manager (cm-cli)."
++        : nodes && nodes.length > 0
++          ? `Install ComfyUI nodes: ${nodes.join(", ")}`
++          : "Install ComfyUI custom node pack from the pinned DreamForge recipe.",
+   };
+ }
+ 
+@@ -45,7 +59,13 @@ export function customNodeItemsFromActions(actions?: RepairAction[]): ModelDepen
+     const packId = resolvePackIdFromRepairAction(action);
+     if (!packId || seen.has(packId)) continue;
+     seen.add(packId);
+-    items.push(customNodeItemFromPackId(packId, action.nodes));
++    items.push(
++      customNodeItemFromPackId(
++        packId,
++        action.nodes,
++        action.install_via === "manager" ? "manager" : "pinned",
++      ),
++    );
+   }
+   return items;
+ }
+@@ -54,6 +74,23 @@ export function isCustomNodePackItem(item: ModelDependencyItem): boolean {
+   return item.kind === "custom_node_pack";
+ }
+ 
++export function isWorkflowModelItem(item: ModelDependencyItem): boolean {
++  return item.kind === "workflow_model" || Boolean(item.catalog_id?.trim());
++}
++
++export function workflowModelItemFromCatalogId(catalogId: string): ModelDependencyItem {
++  return {
++    kind: "workflow_model",
++    catalog_id: catalogId,
++    id: catalogId,
++    filename: catalogId,
++    relative: `segformer_b2_clothes/model.safetensors`,
++    category: "segformer_b2_clothes",
++    install_via: "direct",
++    note: "Workflow segmentation weights required by the selected tool.",
++  };
++}
++
+ export function clampUpscaleBy(value: number): number {
+   if (!Number.isFinite(value)) return 2;
+   return Math.max(1, Math.min(4, value));
+diff --git a/apps/desktop/src/lib/creativeTask.ts b/apps/desktop/src/lib/creativeTask.ts
+index 4199a17..2271cc2 100644
+--- a/apps/desktop/src/lib/creativeTask.ts
++++ b/apps/desktop/src/lib/creativeTask.ts
+@@ -34,6 +34,7 @@ import { applyUpscalePresetAtSubmit, patchForUpscalePreset } from "./upscalePres
+ import { applyAutoEnhanceAtSubmit } from "./autoEnhance";
+ import { applyHiDreamPerformanceAtSubmit } from "./hidreamPerformance";
+ import { selectCuratedUpscaleModel } from "./upscaleModel";
++import { patchForEditTask } from "./inpaintIntent";
+ 
+ export type CreativeTaskContext = {
+   studioMode: StudioMode;
+@@ -92,7 +93,7 @@ export function enforceEditJobSettings(
+   gallery: ModelGalleryItem[],
+   advancedMode?: boolean,
+ ): GenerationSettings {
+-  if (studioMode !== "edit") return settings;
++  if (studioMode !== "edit" && studioMode !== "toolbox") return settings;
+   if (isPhotoRestoreTask(settings)) {
+     const restorePatch = patchForPhotoRestoreTask(settings, gallery);
+     return {
+@@ -214,14 +215,14 @@ export function enforceCreativeTaskSettings(
+   const { studioMode, gallery, advancedMode, vramProfile, vramGb, mpsAvailable } =
+     ctx;
+   let next = applyCreativeTemplateDefaults(settings, studioMode);
+-  if (studioMode === "edit") {
++  if (studioMode === "edit" || studioMode === "toolbox") {
+     next = enforceEditJobSettings(next, studioMode, gallery, advancedMode);
+   } else if (studioMode === "inpaint") {
+     next = enforceInpaintJobSettings(next, studioMode, gallery, advancedMode);
+   } else if (studioMode === "upscale") {
+     next = enforceUpscaleJobSettings(next, studioMode);
+   }
+-  if (next.post_upscale && (studioMode === "edit" || studioMode === "inpaint")) {
++  if (next.post_upscale && (studioMode === "edit" || studioMode === "inpaint" || studioMode === "toolbox")) {
+     next = {
+       ...next,
+       upscale_image: undefined,
+@@ -253,7 +254,7 @@ export function selectedImageForCreativeTask(
+   historyImage?: string,
+ ): string {
+   const history = (historyImage ?? "").trim();
+-  if (studioMode === "inpaint" || studioMode === "edit") {
++  if (studioMode === "inpaint" || studioMode === "edit" || studioMode === "toolbox") {
+     return (settings.input_image ?? history).trim();
+   }
+   if (studioMode === "upscale") {
+@@ -352,6 +353,9 @@ function studioModeDefaultStatus(
+       ? `Edit mode - default edit model selected (${routedLabel}). User overrides stay visible in the inspector.`
+       : "Edit mode - default edit model is missing; review the asset download prompt";
+   }
++  if (mode === "toolbox") {
++    return "Creative Toolbox - select a native tool or imported custom workflow";
++  }
+   return `${mode[0].toUpperCase()}${mode.slice(1)} mode - configured defaults are applied for this mode`;
+ }
+ 
+@@ -402,6 +406,32 @@ export function planStudioModeSwitch(
+     Object.assign(patch, ideogram4SettingsDefaults());
+   }
+ 
++  if (mode === "toolbox") {
++    const enteringToolbox = previousMode !== "toolbox";
++    if (enteringToolbox) {
++      refUpdates.userPickedModel = false;
++      refUpdates.userPickedLoras = false;
++      refUpdates.userPickedStyle = false;
++      patch.lora = [];
++    }
++    patch.style = "image_edit";
++    patch.upscale_image = undefined;
++    patch.upscale_method = undefined;
++    const toolboxTask = settings.edit_task;
++    if (toolboxTask === "photo_restore") {
++      Object.assign(patch, patchForPhotoRestoreTask(settings, gallery));
++    } else if (toolboxTask) {
++      Object.assign(
++        patch,
++        patchForEditTask(toolboxTask, gallery, {
++          hasMask: Boolean(settings.inpaint_mask_path?.trim()),
++        }),
++      );
++    }
++    const src = (selectedImage ?? settings.input_image ?? "").trim();
++    if (src) patch.input_image = src;
++  }
++
+   if (mode === "edit") {
+     const enteringEdit = previousMode !== "edit";
+     if (enteringEdit) {
+@@ -511,7 +541,7 @@ export function planStudioModeSwitch(
+     if (src) patch.upscale_image = src;
+   }
+ 
+-  if (mode !== "inpaint" && mode !== "edit" && mode !== "upscale") {
++  if (mode !== "inpaint" && mode !== "edit" && mode !== "upscale" && mode !== "toolbox") {
+     refUpdates.userPickedModel = false;
+     refUpdates.userPickedLoras = false;
+     refUpdates.userPickedStyle = false;
+diff --git a/apps/desktop/src/lib/experienceUi.ts b/apps/desktop/src/lib/experienceUi.ts
+index db5618d..091e037 100644
+--- a/apps/desktop/src/lib/experienceUi.ts
++++ b/apps/desktop/src/lib/experienceUi.ts
+@@ -7,6 +7,7 @@ export const SIMPLE_STUDIO_MODES: Array<{ id: StudioMode; label: string }> = [
+   { id: "edit", label: "Edit" },
+   { id: "inpaint", label: "Fix region" },
+   { id: "upscale", label: "Enhance" },
++  { id: "toolbox", label: "Toolbox" },
+ ];
+ 
+ export const PRO_STUDIO_MODES: Array<{ id: StudioMode; label: string }> = [
+@@ -14,6 +15,7 @@ export const PRO_STUDIO_MODES: Array<{ id: StudioMode; label: string }> = [
+   { id: "edit", label: "Edit" },
+   { id: "inpaint", label: "Inpaint" },
+   { id: "upscale", label: "Upscale" },
++  { id: "toolbox", label: "Creative Toolbox" },
+   { id: "agent", label: "Agent" },
+ ];
+ 
+diff --git a/apps/desktop/src/lib/generationReadiness.ts b/apps/desktop/src/lib/generationReadiness.ts
+index f77eb6f..716bc9f 100644
+--- a/apps/desktop/src/lib/generationReadiness.ts
++++ b/apps/desktop/src/lib/generationReadiness.ts
+@@ -5,6 +5,7 @@ import type { EditFamilyPlanState } from "./workflowPlanActions";
+ import { isEditFamilyMode, type StudioMode } from "./model-selection";
+ import { isFluxFillModel, selectFluxFillModel } from "./inpaintModel";
+ import { vramProfileFromHardware } from "./vramProfiles";
++import type { CustomTool } from "./customTools";
+ 
+ export { isEditFamilyMode, vramProfileFromHardware };
+ export type { EditFamilyPlanState };
+@@ -34,6 +35,7 @@ export function computeGenerateReadiness(args: {
+   editPlanState?: EditFamilyPlanState;
+   /** True while debounced mask export is still writing to disk. */
+   inpaintMaskSyncing?: boolean;
++  customTools?: CustomTool[];
+ }): GenerateReadiness {
+   if (args.generating) {
+     return { ok: false, reason: "Generation in progress", missingCompanions: false, companionBlockedOnly: false };
+@@ -77,6 +79,118 @@ export function computeGenerateReadiness(args: {
+       companionBlockedOnly: false,
+     };
+   }
++  if (studio === "toolbox") {
++    const customToolId = args.settings.custom_tool_id?.trim();
++    if (customToolId) {
++      const tools = args.customTools ?? [];
++      const tool = tools.find((item) => item.id === customToolId);
++      if (!tool) {
++        return {
++          ok: false,
++          reason: "Selected custom tool was removed — re-import or pick another tool",
++          missingCompanions: false,
++          companionBlockedOnly: false,
++        };
++      }
++      const imageBindings = Object.values(tool.bindings ?? {}).filter(
++        (binding) => binding.type === "image",
++      );
++      if (imageBindings.length > 0 && !hasEditImage) {
++        return {
++          ok: false,
++          reason: `${tool.name} needs an input image for its bindings`,
++          missingCompanions: false,
++          companionBlockedOnly: false,
++        };
++      }
++      const maskBindings = Object.values(tool.bindings ?? {}).filter(
++        (binding) => binding.type === "mask",
++      );
++      if (maskBindings.length > 0 && !hasInpaintMask && !hasEditImage) {
++        return {
++          ok: false,
++          reason: `${tool.name} needs an image or inpaint mask for its mask bindings`,
++          missingCompanions: false,
++          companionBlockedOnly: false,
++        };
++      }
++      return { ok: true, reason: "", missingCompanions: false, companionBlockedOnly: false };
++    }
++    const task = (args.settings.edit_task ?? "").trim().toLowerCase();
++    if (!task) {
++      return {
++        ok: false,
++        reason: "Select a native tool in the Creative Toolbox",
++        missingCompanions: false,
++        companionBlockedOnly: false,
++      };
++    }
++    if (!hasEditImage) {
++      return {
++        ok: false,
++        reason: "Attach the subject image for the selected toolbox tool",
++        missingCompanions: false,
++        companionBlockedOnly: false,
++      };
++    }
++    const inputPath = (args.settings.input_image ?? "").trim();
++    const extraRefs = (args.settings.reference_images ?? []).map((item) => item.trim()).filter(Boolean);
++    const refPath = (args.settings.reference_image ?? "").trim();
++    const hasExtraRef =
++      extraRefs.length > 0 ||
++      (Boolean(refPath) && refPath !== inputPath);
++    if (task === "cutout_compose" && !hasExtraRef) {
++      return {
++        ok: false,
++        reason: "Cutout compose needs a background image in the reference panel",
++        missingCompanions: false,
++        companionBlockedOnly: false,
++      };
++    }
++    if (task === "outfit_transfer" && !hasInpaintMask) {
++      const regions = args.settings.outfit_transfer_regions ?? [];
++      if (regions.length > 0) {
++        const modelItem = args.modelGallery.find((item) => item.engine_name === args.model);
++        if (!modelItem || !isFluxFillModel(modelItem)) {
++          const flux = selectFluxFillModel(args.modelGallery);
++          return {
++            ok: false,
++            missingCompanions: !flux,
++            companionBlockedOnly: !flux,
++            reason: flux
++              ? "Outfit transfer with garment regions requires Flux Fill — reselect the tool or pick a Fill checkpoint"
++              : "Flux Fill is missing — approve the asset download prompt before auto-mask outfit transfer",
++          };
++        }
++      }
++    }
++    if (task === "outfit_transfer" && !hasExtraRef && !hasInpaintMask) {
++      return {
++        ok: false,
++        reason: "Outfit transfer needs an outfit reference image or a garment mask",
++        missingCompanions: false,
++        companionBlockedOnly: false,
++      };
++    }
++    if (
++      task === "outfit_transfer" &&
++      hasInpaintMask &&
++      args.settings.edit_type === "inpaint"
++    ) {
++      const modelItem = args.modelGallery.find((item) => item.engine_name === args.model);
++      if (!modelItem || !isFluxFillModel(modelItem)) {
++        const flux = selectFluxFillModel(args.modelGallery);
++        return {
++          ok: false,
++          missingCompanions: !flux,
++          companionBlockedOnly: !flux,
++          reason: flux
++            ? "Outfit transfer with mask requires Flux Fill — reselect the tool or pick a Fill checkpoint"
++            : "Flux Fill is missing — approve the asset download prompt before masked outfit transfer",
++        };
++      }
++    }
++  }
+   if (studio === "inpaint" && !hasEditImage) {
+     return {
+       ok: false,
+diff --git a/apps/desktop/src/lib/generationTabVisibility.ts b/apps/desktop/src/lib/generationTabVisibility.ts
+index 49890e9..1ccadf4 100644
+--- a/apps/desktop/src/lib/generationTabVisibility.ts
++++ b/apps/desktop/src/lib/generationTabVisibility.ts
+@@ -4,6 +4,7 @@ export type GenerationSection =
+   | "creativeTemplate"
+   | "upscalePanel"
+   | "editFamilyPanel"
++  | "toolboxPanel"
+   | "performance"
+   | "aspectRatio"
+   | "imageNumber"
+@@ -27,6 +28,7 @@ export type GenerationTabContext = {
+   isEdit: boolean;
+   isInpaint: boolean;
+   isUpscale: boolean;
++  isToolbox: boolean;
+   isGenerateFamily: boolean;
+ };
+ 
+@@ -65,6 +67,7 @@ export function buildGenerationTabContext(input: {
+     isEdit: studioMode === "edit",
+     isInpaint: studioMode === "inpaint",
+     isUpscale: studioMode === "upscale",
++    isToolbox: studioMode === "toolbox",
+     isGenerateFamily: isGenerateFamilyMode(studioMode),
+   };
+ }
+@@ -81,6 +84,8 @@ export function generationSectionVisible(
+       return ctx.isUpscale;
+     case "editFamilyPanel":
+       return ctx.isEdit || ctx.isInpaint;
++    case "toolboxPanel":
++      return ctx.isToolbox;
+     case "performance":
+       return !ctx.isUpscale;
+     case "aspectRatio":
+@@ -96,7 +101,8 @@ export function generationSectionVisible(
+         ctx.advancedMode &&
+           ((ctx.isGenerateFamily && ctx.showGenerateLikeSettings) ||
+             ctx.isEdit ||
+-            ctx.isInpaint),
++            ctx.isInpaint ||
++            ctx.isToolbox),
+       );
+     case "controlNet":
+       return ctx.isGenerateFamily && !ctx.isModernModel && Boolean(ctx.advancedMode);
+@@ -140,7 +146,7 @@ export function inspectorTabsForMode(input: {
+       ? ["discover", "models", "loras", "settings", "automation"]
+       : ["discover", "models", "settings"];
+   }
+-  if (studioMode === "edit") {
++  if (studioMode === "edit" || studioMode === "toolbox") {
+     return powerUserInspector
+       ? ["discover", "models", "loras", "settings", "automation"]
+       : ["discover", "models", "settings"];
+@@ -159,4 +165,5 @@ export const MODE_AUTO_SUMMARY: Partial<Record<string, string>> = {
+   edit: "Auto: best edit model · describe the change · performance preset",
+   inpaint: "Auto: Flux Fill inpaint · mask from canvas · named intent presets",
+   upscale: "Auto: SDXL upscale route · tile settings tuned for quality",
++  toolbox: "Auto: Native tools and custom ComfyUI workflow imports",
+ };
+diff --git a/apps/desktop/src/lib/inpaintIntent.ts b/apps/desktop/src/lib/inpaintIntent.ts
+index eb232be..d3a2229 100644
+--- a/apps/desktop/src/lib/inpaintIntent.ts
++++ b/apps/desktop/src/lib/inpaintIntent.ts
+@@ -10,6 +10,10 @@ import {
+ } from "./inpaintModel";
+ import { DEFAULT_QWEN_EDIT_MODEL, selectQwenEditModel } from "./editModel";
+ import { qwenEdit2511LightningPatch } from "./qwenEditDefaults";
++import {
++  PORTRAIT_MASTER_SAMPLING,
++  buildPortraitMasterPrompt,
++} from "./portraitMaster";
+ 
+ export type InpaintIntent = "default" | "improve_detail" | "modify_content";
+ export type EditTask = NonNullable<GenerationSettings["edit_task"]>;
+@@ -100,6 +104,7 @@ export const EDIT_TASKS: Array<{
+   hint: string;
+   inpaintIntent?: InpaintIntent;
+   inpaintOnly?: boolean;
++  toolboxOnly?: boolean;
+ }> = [
+   {
+     id: "remove",
+@@ -152,6 +157,7 @@ export const EDIT_TASKS: Array<{
+     label: "Restore photo",
+     short: "Restore",
+     hint: "Restore old, damaged, or low-quality photos with structure-preserving ControlNet.",
++    toolboxOnly: true,
+   },
+   {
+     id: "outfit_transfer",
+@@ -159,6 +165,7 @@ export const EDIT_TASKS: Array<{
+     short: "Outfit",
+     hint: "Use the source person plus an outfit reference; add a mask for Flux Fill fallback.",
+     inpaintIntent: "modify_content",
++    toolboxOnly: true,
+   },
+   {
+     id: "cutout_compose",
+@@ -166,6 +173,14 @@ export const EDIT_TASKS: Array<{
+     short: "Cutout",
+     hint: "Remove background from subject and harmonize lighting with a new background canvas.",
+     inpaintIntent: "modify_content",
++    toolboxOnly: true,
++  },
++  {
++    id: "portrait_master",
++    label: "Portrait Master",
++    short: "Portrait",
++    hint: "Slider-driven portrait prompts with pose and depth ControlNet from your reference photo.",
++    toolboxOnly: true,
+   },
+ ];
+ 
+@@ -213,6 +228,35 @@ export function patchForEditTask(
+     patch.depth_strength = PHOTO_RESTORE_SAMPLING.depth_strength;
+     patch.lineart_strength = PHOTO_RESTORE_SAMPLING.lineart_strength;
+     patch.face_preservation = true;
++  } else if (task === "portrait_master") {
++    const restoreModel = selectPhotoRestoreModel(gallery);
++    patch.edit_type = undefined;
++    patch.cn_type = undefined;
++    patch.cn_selection = undefined;
++    patch.inpaint_mask_path = undefined;
++    patch.model = restoreModel || undefined;
++    patch.portrait_shot = "portrait";
++    patch.portrait_age = 30;
++    patch.portrait_expression = "neutral";
++    patch.portrait_lighting = "studio";
++    patch.portrait_skin_detail = 0.5;
++    patch.portrait_eye_detail = 0.5;
++    patch.steps = PORTRAIT_MASTER_SAMPLING.steps;
++    patch.cfg_scale = PORTRAIT_MASTER_SAMPLING.cfg_scale;
++    patch.sampler = PORTRAIT_MASTER_SAMPLING.sampler;
++    patch.scheduler = PORTRAIT_MASTER_SAMPLING.scheduler;
++    patch.edit_strength = PORTRAIT_MASTER_SAMPLING.edit_strength;
++    patch.portrait_pose_strength = PORTRAIT_MASTER_SAMPLING.portrait_pose_strength;
++    patch.portrait_depth_strength = PORTRAIT_MASTER_SAMPLING.portrait_depth_strength;
++    patch.prompt = buildPortraitMasterPrompt({
++      edit_task: "portrait_master",
++      portrait_shot: patch.portrait_shot,
++      portrait_age: patch.portrait_age,
++      portrait_expression: patch.portrait_expression,
++      portrait_lighting: patch.portrait_lighting,
++      portrait_skin_detail: patch.portrait_skin_detail,
++      portrait_eye_detail: patch.portrait_eye_detail,
++    } as GenerationSettings);
+   } else if (task === "outfit_transfer") {
+     patch.outpaint_direction = undefined;
+     patch.outpaint_amount = undefined;
+diff --git a/apps/desktop/src/lib/model-selection.ts b/apps/desktop/src/lib/model-selection.ts
+index 6b569ca..a4cea5b 100644
+--- a/apps/desktop/src/lib/model-selection.ts
++++ b/apps/desktop/src/lib/model-selection.ts
+@@ -17,10 +17,10 @@ export type StyleRecipe = {
+   notes?: string;
+ };
+ 
+-export type StudioMode = "generate" | "edit" | "inpaint" | "upscale" | "agent";
++export type StudioMode = "generate" | "edit" | "inpaint" | "upscale" | "toolbox" | "agent";
+ 
+ export function isEditFamilyMode(mode?: StudioMode): boolean {
+-  return mode === "edit" || mode === "inpaint" || mode === "upscale";
++  return mode === "edit" || mode === "inpaint" || mode === "upscale" || mode === "toolbox";
+ }
+ 
+ export function modelBasename(path: string | null | undefined): string {
+@@ -160,6 +160,9 @@ export function selectCuratedModelForMode(
+   if (mode === "inpaint") {
+     return selectCuratedInpaintModel(gallery, current);
+   }
++  if (mode === "toolbox") {
++    return selectCuratedEditModel(gallery);
++  }
+   if (mode === "edit") {
+     return selectCuratedEditModel(gallery);
+   }
+diff --git a/apps/desktop/src/lib/routeResolution.ts b/apps/desktop/src/lib/routeResolution.ts
+index ed4a948..38d8106 100644
+--- a/apps/desktop/src/lib/routeResolution.ts
++++ b/apps/desktop/src/lib/routeResolution.ts
+@@ -96,6 +96,19 @@ export function resolveEffectiveRoute(
+     };
+   }
+ 
++  if (studioMode === "toolbox") {
++    const task = (settings.edit_task ?? "").trim().toLowerCase();
++    const hasMask = Boolean(settings.inpaint_mask_path?.trim());
++    const inpaintLike =
++      task === "outfit_transfer" && hasMask && settings.edit_type === "inpaint";
++    return {
++      task: "edit",
++      sourcePath: settings.input_image?.trim(),
++      isGenerateReference: false,
++      outputKind: inpaintLike ? "inpaint" : "edit",
++    };
++  }
++
+   return {
+     task: "edit",
+     sourcePath: settings.input_image?.trim(),
+@@ -127,6 +140,13 @@ export function sanitizeSettingsForStudioMode(
+     return next;
+   }
+ 
++  if (studioMode === "toolbox") {
++    const next = { ...settings };
++    next.upscale_image = undefined;
++    next.upscale_method = undefined;
++    return next;
++  }
++
+   if (studioMode !== "generate" && studioMode !== "agent") {
+     return settings;
+   }
+diff --git a/apps/desktop/src/lib/studioBridge.ts b/apps/desktop/src/lib/studioBridge.ts
+index 8e9bd73..be4ad12 100644
+--- a/apps/desktop/src/lib/studioBridge.ts
++++ b/apps/desktop/src/lib/studioBridge.ts
+@@ -1,5 +1,5 @@
+ import { invoke } from "@tauri-apps/api/core";
+-import type { GenerationSettings, ModelGalleryItem } from "./tauri-api";
++import type { GenerationSettings, ModelDependencyItem, ModelGalleryItem } from "./tauri-api";
+ 
+ export type StudioSettings = {
+   path_checkpoints?: string;
+@@ -58,7 +58,7 @@ export type DreamForgeAppConfig = {
+     allow_cloud_image_context?: boolean;
+   };
+   ui: {
+-    studio_mode: "generate" | "edit" | "inpaint" | "upscale" | "agent";
++    studio_mode: "generate" | "edit" | "inpaint" | "upscale" | "toolbox" | "agent";
+     experience: "simple" | "pro";
+     advanced_mode: boolean;
+     auto_enhance_on_generate?: boolean;
+@@ -68,12 +68,20 @@ export type DreamForgeAppConfig = {
+     civitai_api_key_configured?: boolean;
+     civitai_api_key_tail?: string;
+   };
++  custom_tools?: Array<{
++    id: string;
++    name: string;
++    description: string;
++    workflow_path: string;
++    bindings: Record<string, any>;
++  }>;
+ };
+ 
+ export type DreamForgeAppConfigPatch = {
+   agent?: Partial<DreamForgeAppConfig["agent"]>;
+   privacy?: Partial<DreamForgeAppConfig["privacy"]>;
+   ui?: Partial<DreamForgeAppConfig["ui"]>;
++  custom_tools?: DreamForgeAppConfig["custom_tools"];
+ };
+ 
+ export type AgentProviderTestResult = {
+@@ -544,7 +552,14 @@ export type EnsureCreativeTaskReadyResult = {
+   studio_mode?: string;
+ };
+ 
+-export async function installCustomNodePacks(packIds: string[]) {
++export async function installCustomNodePacks(
++  packIds: string[],
++  options?: {
++    strategy?: "auto" | "pinned" | "manager";
++    restart_comfy?: boolean;
++    progress_file?: string;
++  },
++) {
+   return bridgeInvoke<{
+     ok?: boolean;
+     ready?: boolean;
+@@ -554,10 +569,62 @@ export async function installCustomNodePacks(packIds: string[]) {
+       ready?: boolean;
+       missing_nodes?: string[];
+       directory_present?: boolean;
++      install_via?: string;
+     }>;
+-    errors?: Array<{ pack_id?: string; error?: string }>;
++    errors?: Array<{ pack_id?: string; error?: string; code?: string; hint?: string }>;
++    messages?: string[];
++    needs_comfy_restart?: boolean;
++  }>("install_custom_node_packs", {
++    pack_ids: packIds,
++    strategy: options?.strategy ?? "auto",
++    restart_comfy: options?.restart_comfy ?? true,
++    progress_file: options?.progress_file ?? null,
++  });
++}
++
++export async function getManagerQueueStatus() {
++  return bridgeInvoke<{
++    ok?: boolean;
++    error?: string;
++    base_url?: string;
++    status?: {
++      total_count?: number;
++      done_count?: number;
++      in_progress_count?: number;
++      is_processing?: boolean;
++    };
++  }>("get_manager_queue_status", {});
++}
++
++export async function installWorkflowModels(
++  catalogIds: string[],
++  options?: { prefer_manager?: boolean; progress_file?: string },
++) {
++  return bridgeInvoke<{
++    ok?: boolean;
++    ready?: boolean;
++    installed?: string[];
++    errors?: Array<{ pack_id?: string; error?: string; code?: string; hint?: string }>;
+     messages?: string[];
+-  }>("install_custom_node_packs", { pack_ids: packIds });
++  }>("install_workflow_models", {
++    catalog_ids: catalogIds,
++    prefer_manager: options?.prefer_manager ?? true,
++    progress_file: options?.progress_file ?? null,
++  });
++}
++
++export async function fetchCustomToolDependencies(toolId: string, useObjectInfo = true) {
++  return bridgeInvoke<{
++    ok?: boolean;
++    ready?: boolean;
++    missing?: ModelDependencyItem[];
++    tool_id?: string;
++    tool_name?: string;
++    error?: string;
++  }>("custom_tool_dependencies", {
++    tool_id: toolId,
++    use_object_info: useObjectInfo,
++  });
+ }
+ 
+ export async function ensureCreativeTaskReady(args: {
+diff --git a/apps/desktop/src/lib/tauri-api.ts b/apps/desktop/src/lib/tauri-api.ts
+index b91c100..bec417b 100644
+--- a/apps/desktop/src/lib/tauri-api.ts
++++ b/apps/desktop/src/lib/tauri-api.ts
+@@ -168,11 +168,22 @@ export type GenerationSettings = {
+     | "global_edit"
+     | "photo_restore"
+     | "outfit_transfer"
+-    | "cutout_compose";
++    | "cutout_compose"
++    | "portrait_master";
++  /** Active imported ComfyUI custom tool (execution pending backend wiring). */
++  custom_tool_id?: string;
+   cutout_placement?: "center" | "left" | "right" | "foreground" | "background";
+   outfit_transfer_regions?: Array<
+     "upper_body" | "lower_body" | "full_outfit" | "shoes_accessories"
+   >;
++  portrait_shot?: "closeup" | "portrait" | "medium" | "full";
++  portrait_age?: number;
++  portrait_expression?: "neutral" | "happy" | "serious" | "confident";
++  portrait_lighting?: "soft" | "studio" | "natural" | "dramatic";
++  portrait_skin_detail?: number;
++  portrait_eye_detail?: number;
++  portrait_pose_strength?: number;
++  portrait_depth_strength?: number;
+   /** Photo restore: depth ControlNet strength (0.1–0.2 typical). */
+   depth_strength?: number;
+   /** Photo restore: lineart ControlNet strength (0.2–0.5 typical). */
+@@ -668,11 +679,22 @@ export async function pickImageFile() {
+   return invoke<string | null>("pick_image_file");
+ }
+ 
+-export async function pickTextFile() {
+-  return invoke<string | null>("pick_text_file");
++export async function readTextFile(path: string): Promise<string | null> {
++  if (!isTauri()) return null;
++  return await invoke("read_text_file", { path });
+ }
+ 
+-export async function pickFolder() {
++export async function pickTextFile(): Promise<string | null> {
++  if (!isTauri()) return null;
++  return await invoke("pick_text_file");
++}
++
++export async function pickJsonFile(): Promise<string | null> {
++  if (!isTauri()) return null;
++  return await invoke("pick_json_file");
++}
++
++export async function pickFolder(): Promise<string | null> {
+   return invoke<string | null>("pick_folder");
+ }
+ 
+@@ -932,9 +954,12 @@ export type ModelDependencyItem = {
+   download_tier?: "A" | "B";
+   min_bytes?: number;
+   requires_hf_token?: boolean;
+-  kind?: "model" | "custom_node_pack";
++  kind?: "model" | "custom_node_pack" | "workflow_model";
+   pack_id?: string;
++  catalog_id?: string;
+   missing_nodes?: string[];
++  /** pinned = DreamForge recipe SHA; manager = ComfyUI-Manager cm-cli; direct = HF workflow model */
++  install_via?: "pinned" | "manager" | "direct";
+ };
+ 
+ export type ModelDependenciesResult = {
+diff --git a/apps/desktop/src/lib/workflowPlanActions.ts b/apps/desktop/src/lib/workflowPlanActions.ts
+index adb41af..8470578 100644
+--- a/apps/desktop/src/lib/workflowPlanActions.ts
++++ b/apps/desktop/src/lib/workflowPlanActions.ts
+@@ -1,5 +1,5 @@
+ import type { GenerationSettings } from "./tauri-api";
+-import type { AgentPlanSnapshot, WorkflowReadiness } from "./studioBridge";
++import type { AgentPlanResult, AgentPlanSnapshot, WorkflowReadiness } from "./studioBridge";
+ import {
+   isEditFamilyMode,
+   modelBasename,
+@@ -164,8 +164,8 @@ export function buildPlanSnapshotFromDryRun(args: {
+   const mergedForSnapshot: GenerationSettings = { ...args.baseSettings, ...proposed };
+   const mode =
+     typeof args.planPayload.mode === "string"
+-      ? (args.planPayload.mode as StudioMode)
+-      : args.studioMode;
++      ? (args.planPayload.mode as AgentPlanResult["mode"])
++      : (args.studioMode === "toolbox" ? "edit" : args.studioMode) as AgentPlanResult["mode"];
+ 
+   return {
+     source: "dry-run",
+diff --git a/backend/dreamforge_app_config.py b/backend/dreamforge_app_config.py
+index 02539e9..d255afb 100644
+--- a/backend/dreamforge_app_config.py
++++ b/backend/dreamforge_app_config.py
+@@ -80,9 +80,11 @@ DEFAULT_APP_CONFIG: dict[str, Any] = {
+         "use_flufferizer": True,
+         "civitai_api_key": "",
+     },
++    "custom_tools": [],
+ }
+ 
+ _ALLOWED_ROOTS = {"agent", "privacy", "ui"}
++_TOP_LEVEL_KEYS = frozenset({"custom_tools"})
+ _AGENT_KEYS = {
+     "provider",
+     "base_url",
+@@ -346,6 +348,9 @@ def _merge_allowed(base: dict[str, Any], incoming: dict[str, Any]) -> dict[str,
+         for key, value in incoming[root].items():
+             if key in allowed:
+                 merged[root][key] = value
++    for key in _TOP_LEVEL_KEYS:
++        if key in incoming:
++            merged[key] = incoming[key]
+     return merged
+ 
+ 
+diff --git a/backend/dreamforge_comfy_install.py b/backend/dreamforge_comfy_install.py
+index f377585..44bb3a0 100644
+--- a/backend/dreamforge_comfy_install.py
++++ b/backend/dreamforge_comfy_install.py
+@@ -177,11 +177,23 @@ def _install_custom_node_requirements(dest: Path, *, progress: ProgressCallback
+ 
+ 
+ def ensure_krita_custom_nodes(*, progress: ProgressCallback = None, optional: bool = False) -> None:
++    from dreamforge_comfy_manager import install_packs_via_manager, resolve_pack_install_strategy
++
+     packs = list(COMFY_INSTALL_RECIPE.get("required_custom_nodes") or [])
+     if optional:
+         packs.extend(COMFY_INSTALL_RECIPE.get("optional_custom_nodes") or [])
++    manager_ids: list[str] = []
+     for entry in packs:
+-        ensure_custom_node_pack(entry, progress=progress)
++        pack_id = str(entry.get("id") or "")
++        if resolve_pack_install_strategy(entry, pack_id) == "manager":
++            manager_ids.append(pack_id)
++        else:
++            ensure_custom_node_pack(entry, progress=progress)
++    if manager_ids:
++        result = install_packs_via_manager(manager_ids, progress=progress)
++        if result.errors:
++            failed = ", ".join(item.get("pack_id", "?") for item in result.errors)
++            raise RuntimeError(f"ComfyUI-Manager install failed for: {failed}")
+ 
+ 
+ def ensure_dreamforge_comfy_backend(*, progress: ProgressCallback = None, optional_nodes: bool = False) -> None:
+diff --git a/backend/dreamforge_comfy_workflow_import.py b/backend/dreamforge_comfy_workflow_import.py
+index c958c69..c2ae8e6 100644
+--- a/backend/dreamforge_comfy_workflow_import.py
++++ b/backend/dreamforge_comfy_workflow_import.py
+@@ -313,6 +313,31 @@ def patch_api_workflow(graph: dict[str, Any], bindings: dict[str, Any]) -> dict[
+     return out
+ 
+ 
++def patch_node_field(
++    graph: dict[str, Any],
++    node_id: str,
++    field: str,
++    value: Any,
++) -> bool:
++    """Set a single input on a specific API workflow node."""
++    node = graph.get(str(node_id))
++    if not isinstance(node, dict):
++        return False
++    inputs = node.setdefault("inputs", {})
++    inputs[str(field)] = value
++    return True
++
++
++def workflow_class_types(graph: dict[str, Any]) -> list[str]:
++    return sorted(
++        {
++            str(node.get("class_type"))
++            for node in graph.values()
++            if isinstance(node, dict) and node.get("class_type")
++        }
++    )
++
++
+ def build_prompt_from_template(path: str | Path, bindings: dict[str, Any]) -> dict[str, Any]:
+     graph = load_api_workflow_template(path)
+     return patch_api_workflow(graph, bindings)
+diff --git a/backend/dreamforge_comfy_workflows.py b/backend/dreamforge_comfy_workflows.py
+index f2ead73..19a580f 100644
+--- a/backend/dreamforge_comfy_workflows.py
++++ b/backend/dreamforge_comfy_workflows.py
+@@ -2086,39 +2086,65 @@ def comfy_flux_fill_inpaint(args: dict[str, Any]) -> dict[str, Any]:
+     prompt = str(args.get("prompt", ""))
+     negative = str(args.get("negative", "")).strip()
+     image_filename = str(args["image"])
+-    mask_filename = str(args["mask"])
++    mask_filename = str(args.get("mask") or "")
+     steps = int(args.get("steps", 20))
+     guidance = float(args.get("guidance", args.get("cfg", 30.0)))
+     sampler = str(args.get("sampler_name", "euler"))
+     scheduler = str(args.get("scheduler", "normal"))
+     seed = int(args.get("seed", 0))
+     denoise = float(args.get("denoise", args.get("edit_strength", 1.0)))
+-    g: dict[str, Any] = {}
+-    model_out, clip_out, vae_out, _next = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+-    g["2"] = _node("LoadImage", {"image": image_filename, "upload": "image"})
+-    g["3"] = _node("LoadImage", {"image": mask_filename, "upload": "image"})
+-    g["4"] = _node("ImageToMask", {"image": ["3", 0], "channel": "red"})
++    pixels_link = args.get("pixels_link")
++    mask_link = args.get("mask_link")
++    g: dict[str, Any] = dict(args.get("base_graph") or {})
++    if args.get("model_out") and args.get("clip_out") and args.get("vae_out"):
++        model_out = args["model_out"]
++        clip_out = args["clip_out"]
++        vae_out = args["vae_out"]
++        next_id = int(args.get("node_start") or 20)
++    else:
++        model_out, clip_out, vae_out, next_id = _add_model_loader(g, {**args, "ckpt_name": ckpt})
++    if pixels_link is None:
++        g[str(next_id)] = _node("LoadImage", {"image": image_filename, "upload": "image"})
++        pixels_link = [str(next_id), 0]
++        next_id += 1
++    if mask_link is None:
++        if not mask_filename:
++            raise ValueError("mask is required for flux fill inpaint workflow")
++        g[str(next_id)] = _node("LoadImage", {"image": mask_filename, "upload": "image"})
++        next_id += 1
++        g[str(next_id)] = _node("ImageToMask", {"image": [str(next_id - 1), 0], "channel": "red"})
++        mask_link = [str(next_id), 0]
++        next_id += 1
+     # Mask grow/feather is applied in prepare_inpaint_mask_bytes before upload.
+-    mask_link: list[str | int] = ["4", 0]
+-    g["6"] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
++    pos_id = str(next_id)
++    g[pos_id] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
++    next_id += 1
+     if negative:
+-        g["7"] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
+-        negative_out: list[str | int] = ["7", 0]
++        neg_id = str(next_id)
++        g[neg_id] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
++        negative_out: list[str | int] = [neg_id, 0]
++        next_id += 1
+     else:
+-        g["7"] = _node("ConditioningZeroOut", {"conditioning": ["6", 0]})
+-        negative_out = ["7", 0]
+-    g["8"] = _node("FluxGuidance", {"conditioning": ["6", 0], "guidance": guidance})
+-    g["9"] = _node(
++        neg_id = str(next_id)
++        g[neg_id] = _node("ConditioningZeroOut", {"conditioning": [pos_id, 0]})
++        negative_out = [neg_id, 0]
++        next_id += 1
++    guidance_id = str(next_id)
++    g[guidance_id] = _node("FluxGuidance", {"conditioning": [pos_id, 0], "guidance": guidance})
++    next_id += 1
++    conditioning_id = str(next_id)
++    g[conditioning_id] = _node(
+         "InpaintModelConditioning",
+         {
+-            "positive": ["8", 0],
++            "positive": [guidance_id, 0],
+             "negative": negative_out,
+             "vae": vae_out,
+-            "pixels": ["2", 0],
++            "pixels": pixels_link,
+             "mask": mask_link,
+             "noise_mask": True,
+         },
+     )
++    next_id += 1
+     # DifferentialDiffusion is NOT part of the canonical ComfyUI Flux Fill graph.
+     # It overrides the model's denoise-mask function with a per-timestep threshold
+     # schedule that, combined with InpaintModelConditioning(noise_mask=True), can
+@@ -2127,17 +2153,20 @@ def comfy_flux_fill_inpaint(args: dict[str, Any]) -> dict[str, Any]:
+     # off by default; it can be re-enabled for experimentation via env var.
+     use_diff_diff = os.environ.get("DREAMFORGE_FLUX_FILL_DIFFDIFF", "0") == "1"
+     if use_diff_diff:
+-        g["10"] = _node("DifferentialDiffusion", {"model": model_out})
+-        sampler_model: list[str | int] = ["10", 0]
++        diff_id = str(next_id)
++        g[diff_id] = _node("DifferentialDiffusion", {"model": model_out})
++        sampler_model: list[str | int] = [diff_id, 0]
++        next_id += 1
+     else:
+         sampler_model = model_out
+-    g["11"] = _node(
++    sampler_id = str(next_id)
++    g[sampler_id] = _node(
+         "KSampler",
+         {
+             "model": sampler_model,
+-            "positive": ["9", 0],
+-            "negative": ["9", 1],
+-            "latent_image": ["9", 2],
++            "positive": [conditioning_id, 0],
++            "negative": [conditioning_id, 1],
++            "latent_image": [conditioning_id, 2],
+             "seed": seed,
+             "steps": steps,
+             "cfg": 1.0,
+@@ -2146,14 +2175,73 @@ def comfy_flux_fill_inpaint(args: dict[str, Any]) -> dict[str, Any]:
+             "denoise": denoise,
+         },
+     )
+-    g["12"] = _vae_decode_node(args, ["11", 0], vae_out)
+-    g["13"] = _node(
++    next_id += 1
++    decode_id = str(next_id)
++    g[decode_id] = _vae_decode_node(args, [sampler_id, 0], vae_out)
++    next_id += 1
++    g[str(next_id)] = _node(
+         "SaveImage",
+-        {"images": ["12", 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
++        {"images": [decode_id, 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+     )
+     return g
+ 
+ 
++def comfy_outfit_transfer(args: dict[str, Any]) -> dict[str, Any]:
++    """Outfit transfer with Segformer garment mask + Flux Fill inpaint."""
++    image_filename = str(args["image"])
++    toggles = dict(args.get("segformer_toggles") or {})
++    g: dict[str, Any] = {}
++    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": str(args["ckpt_name"])})
++    g[str(n)] = _node("LoadImage", {"image": image_filename, "upload": "image"})
++    pixels_link: list[str | int] = [str(n), 0]
++    n += 1
++    segformer_inputs: dict[str, Any] = {
++        "image": pixels_link,
++        "detail_method": str(args.get("segformer_detail_method", "GuidedFilter")),
++        "detail_erode": int(args.get("segformer_detail_erode", 8)),
++        "detail_dilate": int(args.get("segformer_detail_dilate", 6)),
++        "black_point": float(args.get("segformer_black_point", 0.15)),
++        "white_point": float(args.get("segformer_white_point", 0.99)),
++        "process_detail": bool(args.get("segformer_process_detail", True)),
++        "device": str(args.get("segformer_device", "cuda")),
++        "max_megapixels": float(args.get("segformer_max_megapixels", 2.0)),
++    }
++    for key, default in (
++        ("face", False),
++        ("hair", False),
++        ("hat", False),
++        ("sunglass", False),
++        ("left_arm", False),
++        ("right_arm", False),
++        ("left_leg", False),
++        ("right_leg", False),
++        ("upper_clothes", False),
++        ("skirt", False),
++        ("pants", False),
++        ("dress", False),
++        ("belt", False),
++        ("shoe", False),
++        ("bag", False),
++        ("scarf", False),
++    ):
++        segformer_inputs[key] = bool(toggles.get(key, default))
++    g[str(n)] = _node("LayerMask: SegformerB2ClothesUltra", segformer_inputs)
++    mask_link: list[str | int] = [str(n), 1]
++    n += 1
++    return comfy_flux_fill_inpaint(
++        {
++            **args,
++            "base_graph": g,
++            "pixels_link": pixels_link,
++            "mask_link": mask_link,
++            "model_out": model_out,
++            "clip_out": clip_out,
++            "vae_out": vae_out,
++            "node_start": n,
++        }
++    )
++
++
+ def comfy_inpaint_basic(args: dict[str, Any]) -> dict[str, Any]:
+     """Standard VAEEncodeForInpaint + KSampler workflow."""
+     ckpt = str(args["ckpt_name"])
+@@ -3313,7 +3401,7 @@ def comfy_photo_restore(args: dict[str, Any]) -> dict[str, Any]:
+     # Apply Lineart
+     g[str(n)] = _node("SetUnionControlNetType", {
+         "control_net": [cn_model_node, 0],
+-        "type": "lineart",
++        "type": "canny/lineart/anime_lineart/mlsd",
+     })
+     lineart_cn = [str(n), 0]
+     n += 1
+@@ -3433,3 +3521,161 @@ def comfy_photo_restore(args: dict[str, Any]) -> dict[str, Any]:
+         {"images": decoded_image, "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+     )
+     return g
++
++
++def comfy_portrait_master(args: dict[str, Any]) -> dict[str, Any]:
++    """Portrait Master: SDXL img2img with OpenPose + depth ControlNet from the reference portrait."""
++    ckpt = str(args["ckpt_name"])
++    prompt = str(args.get("prompt", ""))
++    negative = str(args.get("negative", ""))
++    image_filename = args.get("image") or args.get("input_image") or ""
++    if not image_filename:
++        raise ValueError("image is required for portrait_master workflow")
++    controlnet_model = str(args.get("controlnet_model") or args.get("cn_model") or "")
++    if not controlnet_model:
++        raise ValueError("controlnet_model is required for portrait_master workflow")
++
++    width = int(args.get("width", 1024))
++    height = int(args.get("height", 1024))
++    steps = int(args.get("steps", 20))
++    cfg = float(args.get("cfg", 5.5))
++    sampler = str(args.get("sampler_name", "dpmpp_2m"))
++    scheduler = str(args.get("scheduler", "karras"))
++    seed = int(args.get("seed", 0))
++    denoise = float(args.get("denoise", args.get("edit_strength", 0.55)))
++
++    pose_strength = float(args.get("portrait_pose_strength", 0.65))
++    depth_strength = float(args.get("portrait_depth_strength", 0.55))
++    portrait_megapixels = float(args.get("portrait_megapixels", 2.0))
++
++    g: dict[str, Any] = {}
++    g["1"] = _node("LoadImage", {"image": str(image_filename), "upload": "image"})
++    g["2"] = _node(
++        "ImageScaleToTotalPixels",
++        {
++            "image": ["1", 0],
++            "upscale_method": str(args.get("portrait_scale_method", "nearest-exact")),
++            "megapixels": portrait_megapixels,
++            "resolution_steps": int(args.get("portrait_resolution_steps", 1)),
++        },
++    )
++    scaled_image = ["2", 0]
++
++    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
++
++    g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
++    pos = [str(n), 0]
++    n += 1
++
++    g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
++    neg = [str(n), 0]
++    n += 1
++
++    g[str(n)] = _node(
++        "OpenposePreprocessor",
++        {
++            "image": scaled_image,
++            "detect_hand": "enable",
++            "detect_body": "enable",
++            "detect_face": "enable",
++            "resolution": 1024,
++        },
++    )
++    pose_preprocessed = [str(n), 0]
++    n += 1
++
++    g[str(n)] = _node(
++        "DepthAnythingV2Preprocessor",
++        {
++            "image": scaled_image,
++            "ckpt_name": "depth_anything_v2_vitl.pth",
++            "resolution": 1024,
++        },
++    )
++    depth_preprocessed = [str(n), 0]
++    n += 1
++
++    g[str(n)] = _node("ControlNetLoader", {"control_net_name": controlnet_model})
++    cn_model_node = str(n)
++    n += 1
++
++    g[str(n)] = _node(
++        "SetUnionControlNetType",
++        {"control_net": [cn_model_node, 0], "type": "openpose"},
++    )
++    pose_cn = [str(n), 0]
++    n += 1
++
++    g[str(n)] = _node(
++        "ControlNetApplyAdvanced",
++        {
++            "positive": pos,
++            "negative": neg,
++            "control_net": pose_cn,
++            "image": pose_preprocessed,
++            "strength": pose_strength,
++            "start_percent": 0.0,
++            "end_percent": 1.0,
++        },
++    )
++    pos_pose, neg_pose = [str(n), 0], [str(n), 1]
++    n += 1
++
++    g[str(n)] = _node(
++        "SetUnionControlNetType",
++        {"control_net": [cn_model_node, 0], "type": "depth"},
++    )
++    depth_cn = [str(n), 0]
++    n += 1
++
++    g[str(n)] = _node(
++        "ControlNetApplyAdvanced",
++        {
++            "positive": pos_pose,
++            "negative": neg_pose,
++            "control_net": depth_cn,
++            "image": depth_preprocessed,
++            "strength": depth_strength,
++            "start_percent": 0.0,
++            "end_percent": 0.9,
++        },
++    )
++    pos_final, neg_final = [str(n), 0], [str(n), 1]
++    n += 1
++
++    g[str(n)] = _node("VAEEncode", {"pixels": scaled_image, "vae": vae_out})
++    latent = [str(n), 0]
++    n += 1
++
++    g[str(n)] = _node(
++        "KSampler",
++        _sampler_inputs(
++            model_out=model_out,
++            positive=pos_final,
++            negative=neg_final,
++            latent=latent,
++            seed=seed,
++            steps=steps,
++            cfg=cfg,
++            sampler=sampler,
++            scheduler=scheduler,
++            denoise=denoise,
++        ),
++    )
++    samp = str(n)
++    n += 1
++
++    g[str(n)] = _vae_decode_node(args, [samp, 0], vae_out)
++    dec = str(n)
++    g[str(n + 1)] = _node(
++        "SaveImage",
++        {"images": [dec, 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
++    )
++    return g
++
++
++def build_custom_tool_prompt_graph(*_args, **_kwargs):
++    """Registry symbol for feature-surface audit; runtime graphs live in dreamforge_custom_tools."""
++    raise RuntimeError(
++        "Custom tool graphs are built through dreamforge_custom_tools.build_custom_tool_prompt_graph"
++    )
+diff --git a/backend/dreamforge_companion_download.py b/backend/dreamforge_companion_download.py
+index 9fdc520..2f6869c 100644
+--- a/backend/dreamforge_companion_download.py
++++ b/backend/dreamforge_companion_download.py
+@@ -93,6 +93,11 @@ COMPANION_SOURCES: dict[str, dict[str, Any]] = {
+         "url": f"{HF_BASE_FLUX2_VAE}/flux2-vae.safetensors",
+         "min_bytes": 300 * 1024 * 1024,
+     },
++    "segformer_b2_clothes": {
++        "url": "https://huggingface.co/mattmdjaga/segformer_b2_clothes/resolve/main/model.safetensors",
++        "min_bytes": 100 * 1024 * 1024,
++        "catalog_id": "segformer_b2_clothes",
++    },
+ }
+ 
+ # Studio upscalers / inpaint assets (Krita AI Diffusion manifest URLs).
+@@ -281,6 +286,7 @@ def _collect_task_missing(
+     upscale_method: str | None,
+     performance: str | None,
+     template_id: str | None = None,
++    edit_task: str | None = None,
+ ) -> tuple[Any | None, list[dict]]:
+     from dreamforge_cli_inventory import (
+         check_model_dependencies,
+@@ -314,6 +320,10 @@ def _collect_task_missing(
+     post_upscale = chain_method or upscale_method
+     if post_upscale and studio_mode in {None, "edit", "inpaint", "generate"}:
+         missing.extend(check_studio_resources("upscale", upscale_method=post_upscale))
++    if edit_task:
++        from dreamforge_comfy_manager import missing_workflow_model_entries
++
++        missing.extend(missing_workflow_model_entries(edit_task=edit_task))
+     return resolved_model, tag_companion_tiers(_merge_missing_items(missing))
+ 
+ 
+@@ -435,6 +445,7 @@ def ensure_creative_task_ready(
+         upscale_method=upscale_method,
+         performance=performance,
+         template_id=template_id,
++        edit_task=edit_task,
+     )
+     tier_a = [item for item in missing if item.get("download_tier") == "A"]
+     tier_b = [item for item in missing if item.get("download_tier") == "B"]
+@@ -482,6 +493,7 @@ def ensure_creative_task_ready(
+         upscale_method=upscale_method,
+         performance=performance,
+         template_id=template_id,
++        edit_task=edit_task,
+     )
+     still_a = [item for item in missing_after if item.get("download_tier") == "A"]
+     still_b = [item for item in missing_after if item.get("download_tier") == "B"]
+diff --git a/backend/dreamforge_creative_tasks.py b/backend/dreamforge_creative_tasks.py
+index 51386a6..0e33628 100644
+--- a/backend/dreamforge_creative_tasks.py
++++ b/backend/dreamforge_creative_tasks.py
+@@ -148,6 +148,8 @@ def resolve_creative_task(
+ 
+         mode = "generate"
+ 
++    routing_mode = "edit" if mode == "toolbox" else mode
++
+     base = dict(settings) if isinstance(settings, dict) else {}
+ 
+     gallery = model_gallery if isinstance(model_gallery, list) else []
+@@ -200,7 +202,7 @@ def resolve_creative_task(
+ 
+ 
+ 
+-    if mode == "edit":
++    if mode in {"edit", "toolbox"}:
+ 
+         src = (selected_image or base.get("input_image") or patch.get("input_image") or "").strip()
+ 
+@@ -214,7 +216,9 @@ def resolve_creative_task(
+ 
+             patch["upscale_method"] = None
+ 
+-        patch["inpaint_mask_path"] = None
++        if mode == "edit":
++
++            patch["inpaint_mask_path"] = None
+ 
+     elif mode == "inpaint":
+ 
+@@ -263,7 +267,7 @@ def resolve_creative_task(
+ 
+         patch.pop("post_upscale", None)
+ 
+-    merged = _complete_patch_for_mode(mode, {**base, **patch}, selected_image, gallery)
++    merged = _complete_patch_for_mode(routing_mode, {**base, **patch}, selected_image, gallery)
+ 
+     if (
+         mode == "upscale"
+@@ -276,13 +280,14 @@ def resolve_creative_task(
+     route_reason = ""
+     route_warnings: list[str] = []
+     workflow_kind = mode
+-    if mode in {"edit", "inpaint", "upscale"}:
++    if routing_mode in {"edit", "inpaint", "upscale"}:
+         routed = apply_task_routing(
+             merged,
+-            mode,
++            routing_mode,
+             gallery,
+             advanced_mode=advanced_mode,
+             user_picked_model=user_picked_model,
++            toolbox_studio_mode=mode if mode == "toolbox" else None,
+         )
+         merged = routed.patch
+         route_reason = routed.route_reason
+@@ -295,7 +300,7 @@ def resolve_creative_task(
+ 
+         merged["template_id"] = resolved_template_id
+ 
+-    if merged.get("post_upscale") and mode in {"edit", "inpaint"}:
++    if merged.get("post_upscale") and mode in {"edit", "inpaint", "toolbox"}:
+ 
+         merged["upscale_image"] = None
+ 
+@@ -409,7 +414,7 @@ def enforce_creative_task_settings(
+ 
+     patch = resolved.get("patch") if isinstance(resolved.get("patch"), dict) else {}
+ 
+-    if mode not in {"edit", "inpaint", "upscale"}:
++    if mode not in {"edit", "inpaint", "upscale", "toolbox"}:
+ 
+         return apply_vram_quality_defaults(
+ 
+diff --git a/backend/dreamforge_desktop_bridge.py b/backend/dreamforge_desktop_bridge.py
+index a44ecd8..7bd34e4 100644
+--- a/backend/dreamforge_desktop_bridge.py
++++ b/backend/dreamforge_desktop_bridge.py
+@@ -1083,23 +1083,59 @@ def cmd_suggest_dynamic_preset(params: dict) -> dict:
+ 
+ def cmd_install_custom_node_packs(params: dict) -> dict:
+     from dreamforge_comfy_install import ensure_custom_node_pack
++    from dreamforge_comfy_manager import (
++        fix_packs_via_manager,
++        install_packs_via_manager,
++        resolve_pack_install_strategy,
++    )
+     from dreamforge_workflow_planner import _recipe_entry_for_pack, assess_custom_node_pack
+ 
+     pack_ids = params.get("pack_ids") or params.get("packs") or []
+     if isinstance(pack_ids, str):
+         pack_ids = [pack_ids]
++    strategy = str(params.get("strategy") or "auto").strip().lower()
++    pack_strategies = params.get("pack_strategies") if isinstance(params.get("pack_strategies"), dict) else {}
+     messages: list[str] = []
++    from dreamforge_comfy_manager import make_progress_sink
+ 
+-    def _progress(message: str) -> None:
+-        messages.append(message)
++    _progress = make_progress_sink(messages, progress_file=params.get("progress_file"))
+ 
+     installed: list[str] = []
+     errors: list[dict[str, str]] = []
++    manager_ids: list[str] = []
++    pinned_ids: list[str] = []
+     for raw_id in pack_ids:
+         pack_id = str(raw_id).strip()
+         if not pack_id:
+             continue
+         entry = _recipe_entry_for_pack(pack_id)
++        pack_strategy = str(pack_strategies.get(pack_id) or strategy or "auto").strip().lower()
++        if pack_strategy == "auto":
++            pack_strategy = resolve_pack_install_strategy(entry, pack_id)
++        if pack_strategy == "manager":
++            manager_ids.append(pack_id)
++        else:
++            if not entry:
++                errors.append({"pack_id": pack_id, "error": "unknown custom node pack"})
++                continue
++            pinned_ids.append(pack_id)
++
++    if manager_ids:
++        manager_result = install_packs_via_manager(
++            manager_ids,
++            progress=_progress,
++            exit_on_fail=bool(params.get("exit_on_fail")),
++        )
++        messages.extend(manager_result.messages)
++        installed.extend(manager_result.installed)
++        errors.extend(manager_result.errors)
++        if manager_result.installed and params.get("fix_manager_deps", True):
++            fix_result = fix_packs_via_manager(manager_result.installed, progress=_progress)
++            messages.extend(fix_result.messages)
++            errors.extend(fix_result.errors)
++
++    for pack_id in pinned_ids:
++        entry = _recipe_entry_for_pack(pack_id)
+         if not entry:
+             errors.append({"pack_id": pack_id, "error": "unknown custom node pack"})
+             continue
+@@ -1109,6 +1145,16 @@ def cmd_install_custom_node_packs(params: dict) -> dict:
+         except Exception as exc:
+             errors.append({"pack_id": pack_id, "error": str(exc)})
+ 
++    needs_restart = bool(installed)
++    if installed and params.get("restart_comfy", True):
++        try:
++            from dreamforge_comfy_server import restart_managed_comfy_server
++
++            _progress("Restarting ComfyUI to register new custom nodes…")
++            restart_managed_comfy_server(timeout_s=90.0, reason="custom_node_install")
++        except Exception as exc:
++            messages.append(f"ComfyUI restart failed: {exc}")
++
+     object_info = None
+     if installed and not params.get("skip_object_info"):
+         try:
+@@ -1127,7 +1173,64 @@ def cmd_install_custom_node_packs(params: dict) -> dict:
+         "packs": packs,
+         "errors": errors,
+         "messages": messages,
+-        "needs_comfy_restart": bool(installed),
++        "needs_comfy_restart": needs_restart,
++    }
++
++
++def cmd_install_workflow_models(params: dict) -> dict:
++    from dreamforge_comfy_manager import install_workflow_models, make_progress_sink, workflow_model_ready
++
++    catalog_ids = params.get("catalog_ids") or params.get("models") or []
++    if isinstance(catalog_ids, str):
++        catalog_ids = [catalog_ids]
++    messages: list[str] = []
++    _progress = make_progress_sink(messages, progress_file=params.get("progress_file"))
++
++    result = install_workflow_models(
++        [str(item).strip() for item in catalog_ids if str(item).strip()],
++        progress=_progress,
++        prefer_manager=bool(params.get("prefer_manager", True)),
++    )
++    ready = bool(result.installed) and not result.errors
++    if catalog_ids:
++        ready = all(workflow_model_ready(str(item)) for item in catalog_ids) and not result.errors
++    return {
++        "ok": ready,
++        "ready": ready,
++        "installed": result.installed,
++        "errors": result.errors,
++        "messages": messages,
++    }
++
++
++def cmd_get_manager_queue_status(_params: dict) -> dict:
++    from dreamforge_comfy_manager import get_manager_queue_status
++
++    return get_manager_queue_status()
++
++
++def cmd_custom_tool_dependencies(params: dict) -> dict:
++    from dreamforge_custom_tools import custom_tool_dependency_entries, find_custom_tool
++
++    tool_id = str(params.get("tool_id") or params.get("custom_tool_id") or "").strip()
++    tool = find_custom_tool(tool_id)
++    if not tool:
++        return {"ok": False, "error": f"custom tool not found: {tool_id}", "missing": []}
++    object_info = None
++    if params.get("use_object_info"):
++        try:
++            from dreamforge_comfy_server import fetch_comfy_object_info
++
++            object_info = fetch_comfy_object_info(timeout_s=20.0)
++        except Exception as exc:
++            return {"ok": False, "error": str(exc), "missing": []}
++    missing = custom_tool_dependency_entries(tool, object_info=object_info)
++    return {
++        "ok": True,
++        "ready": not missing,
++        "missing": missing,
++        "tool_id": tool_id,
++        "tool_name": tool.get("name") or tool_id,
+     }
+ 
+ 
+@@ -1389,6 +1492,9 @@ HANDLERS = {
+     "suggest_dynamic_preset": cmd_suggest_dynamic_preset,
+     "check_custom_node_packs": cmd_check_custom_node_packs,
+     "install_custom_node_packs": cmd_install_custom_node_packs,
++    "install_workflow_models": cmd_install_workflow_models,
++    "get_manager_queue_status": cmd_get_manager_queue_status,
++    "custom_tool_dependencies": cmd_custom_tool_dependencies,
+     "check_comfy_backend": cmd_check_comfy_backend,
+     "install_comfy_backend": cmd_install_comfy_backend,
+     **STUDIO_HANDLERS,
+diff --git a/backend/dreamforge_edit_lineage.py b/backend/dreamforge_edit_lineage.py
+index 4fcec15..1ec82e5 100644
+--- a/backend/dreamforge_edit_lineage.py
++++ b/backend/dreamforge_edit_lineage.py
+@@ -76,4 +76,15 @@ def build_edit_lineage(
+             "index": getattr(job, "automation_index", None) or (data or {}).get("automation_index"),
+             "total": getattr(job, "automation_total", None) or (data or {}).get("automation_total"),
+         }
++    custom_tool_id = str(getattr(job, "custom_tool_id", None) or (data or {}).get("custom_tool_id") or "").strip()
++    if custom_tool_id:
++        lineage["custom_tool_id"] = custom_tool_id
++        from dreamforge_custom_tools import find_custom_tool
++
++        tool = find_custom_tool(custom_tool_id)
++        if tool:
++            lineage["custom_tool_name"] = str(tool.get("name") or "")
++            workflow_path = str(tool.get("workflow_path") or "").strip()
++            if workflow_path:
++                lineage["custom_tool_workflow"] = workflow_path
+     return lineage
+diff --git a/backend/dreamforge_edit_tasks.py b/backend/dreamforge_edit_tasks.py
+index 03ff938..4f85a6b 100644
+--- a/backend/dreamforge_edit_tasks.py
++++ b/backend/dreamforge_edit_tasks.py
+@@ -20,6 +20,7 @@ VALID_EDIT_TASKS = frozenset(
+         "photo_restore",
+         "outfit_transfer",
+         "cutout_compose",
++        "portrait_master",
+     }
+ )
+ 
+@@ -37,6 +38,7 @@ EDIT_TASK_LABELS: dict[str, str] = {
+     "photo_restore": "Restore photo",
+     "outfit_transfer": "Outfit transfer",
+     "cutout_compose": "Cutout compose",
++    "portrait_master": "Portrait Master",
+ }
+ 
+ # Maps high-level tasks onto existing inpaint intent presets where applicable.
+@@ -62,11 +64,13 @@ EDIT_TASK_DEFAULT_PROMPTS: dict[str, str] = {
+         "preserve the face, pose, body shape, background, and lighting"
+     ),
+     "cutout_compose": (
+-        "remove the background from the subject in image 1 and place them naturally "
+-        "into the scene in image 2, matching lighting, shadows, perspective, and color grading"
++        "harmonize the lighting, shadows, perspective, and color grading "
++        "so the subject looks naturally integrated into the background"
+     ),
+ }
+ 
++PORTRAIT_MASTER_DEFAULT_PROMPT = "professional portrait photograph, photorealistic"
++
+ EDIT_TASK_PRESETS: dict[str, dict[str, Any]] = {
+     "remove": {
+         "inpaint_intent": "modify_content",
+@@ -170,6 +174,25 @@ EDIT_TASK_PRESETS: dict[str, dict[str, Any]] = {
+         "hint": "Remove background from subject and harmonize lighting with a new background canvas.",
+         "default_prompt": EDIT_TASK_DEFAULT_PROMPTS["cutout_compose"],
+     },
++    "portrait_master": {
++        "edit_strength": 0.55,
++        "requires_mask": False,
++        "scope": "source_image",
++        "hint": "Generate a portrait from slider-driven prompts with pose and depth ControlNet.",
++        "default_prompt": PORTRAIT_MASTER_DEFAULT_PROMPT,
++        "steps": 20,
++        "cfg": 5.5,
++        "sampler_name": "dpmpp_2m",
++        "scheduler": "karras",
++        "portrait_pose_strength": 0.65,
++        "portrait_depth_strength": 0.55,
++        "portrait_shot": "portrait",
++        "portrait_age": 30,
++        "portrait_expression": "neutral",
++        "portrait_lighting": "studio",
++        "portrait_skin_detail": 0.5,
++        "portrait_eye_detail": 0.5,
++    },
+ }
+ 
+ OUTFIT_TRANSFER_REGION_LABELS = {
+@@ -179,6 +202,69 @@ OUTFIT_TRANSFER_REGION_LABELS = {
+     "shoes_accessories": "shoes and accessories",
+ }
+ 
++SEGFORMER_TOGGLE_DEFAULTS: dict[str, bool] = {
++    "face": False,
++    "hair": False,
++    "hat": False,
++    "sunglass": False,
++    "left_arm": False,
++    "right_arm": False,
++    "left_leg": False,
++    "right_leg": False,
++    "upper_clothes": False,
++    "skirt": False,
++    "pants": False,
++    "dress": False,
++    "belt": False,
++    "shoe": False,
++    "bag": False,
++    "scarf": False,
++}
++
++
++def _normalize_outfit_transfer_regions(job: Any) -> list[str]:
++    regions = getattr(job, "outfit_transfer_regions", None) or []
++    if isinstance(regions, str):
++        regions = [part.strip() for part in regions.split(",")]
++    return [str(item).strip() for item in regions if str(item).strip()]
++
++
++def outfit_transfer_wants_auto_mask(job: Any) -> bool:
++    """True when Segformer should build a garment mask instead of using Qwen compose."""
++    if normalize_edit_task(getattr(job, "edit_task", None)) != "outfit_transfer":
++        return False
++    if str(getattr(job, "inpaint_mask_path", None) or "").strip():
++        return False
++    if bool(getattr(job, "outfit_auto_mask", False)):
++        return True
++    return bool(_normalize_outfit_transfer_regions(job))
++
++
++def segformer_toggles_for_outfit_regions(regions: list[str] | None) -> dict[str, bool]:
++    """Map toolbox garment regions to LayerMask Segformer boolean toggles."""
++    toggles = dict(SEGFORMER_TOGGLE_DEFAULTS)
++    keys = [str(item).strip() for item in (regions or []) if str(item).strip()]
++    if not keys:
++        toggles["upper_clothes"] = True
++        toggles["pants"] = True
++        return toggles
++    for region in keys:
++        if region == "upper_body":
++            toggles["upper_clothes"] = True
++            toggles["dress"] = True
++            toggles["scarf"] = True
++        elif region == "lower_body":
++            toggles["pants"] = True
++            toggles["skirt"] = True
++        elif region == "full_outfit":
++            for key in ("upper_clothes", "skirt", "pants", "dress", "belt"):
++                toggles[key] = True
++        elif region == "shoes_accessories":
++            toggles["shoe"] = True
++            toggles["bag"] = True
++            toggles["belt"] = True
++    return toggles
++
+ 
+ def resolve_edit_task_default_prompt(prompt: str, job: Any) -> str:
+     """Fill an empty user prompt with the canonical default for special edit tasks."""
+@@ -431,6 +517,11 @@ def apply_edit_task_defaults_to_job(
+             setattr(job, "edit_type", "inpaint")
+             setattr(job, "cn_type", "inpaint")
+             setattr(job, "cn_selection", "Custom...")
++        elif outfit_transfer_wants_auto_mask(job):
++            setattr(job, "outfit_auto_mask", True)
++            setattr(job, "edit_type", "inpaint")
++            setattr(job, "cn_type", "inpaint")
++            setattr(job, "cn_selection", "Custom...")
+         elif str(getattr(job, "edit_type", "") or "").lower() in {"", "auto", "kontext", "img2img"}:
+             setattr(job, "edit_type", "qwen_edit")
+             setattr(job, "cn_type", None)
+@@ -445,4 +536,44 @@ def apply_edit_task_defaults_to_job(
+             current = getattr(job, "edit_strength", None)
+             if current is None or float(current) >= 0.9:
+                 setattr(job, "edit_strength", preset_strength)
++    elif defaults.get("edit_task") == "portrait_master":
++        if str(getattr(job, "edit_type", "") or "").lower() in {
++            "",
++            "auto",
++            "kontext",
++            "qwen_edit",
++            "inpaint",
++            "outpaint",
++        }:
++            setattr(job, "edit_type", "auto")
++        if str(getattr(job, "cn_type", "") or "").lower() in {
++            "inpaint",
++            "outpaint",
++            "kontext",
++            "qwen_edit",
++        }:
++            setattr(job, "cn_type", None)
++            setattr(job, "cn_selection", None)
++        for key in (
++            "steps",
++            "cfg_scale",
++            "sampler",
++            "scheduler",
++            "portrait_pose_strength",
++            "portrait_depth_strength",
++            "portrait_shot",
++            "portrait_age",
++            "portrait_expression",
++            "portrait_lighting",
++            "portrait_skin_detail",
++            "portrait_eye_detail",
++        ):
++            if key == "cfg_scale":
++                preset_key = "cfg"
++            elif key == "sampler":
++                preset_key = "sampler_name"
++            else:
++                preset_key = key
++            if preset_key in defaults and getattr(job, key, None) is None:
++                setattr(job, key, defaults[preset_key])
+     return defaults
+diff --git a/backend/dreamforge_engine.py b/backend/dreamforge_engine.py
+index fafd2ab..1b5eab5 100644
+--- a/backend/dreamforge_engine.py
++++ b/backend/dreamforge_engine.py
+@@ -163,6 +163,8 @@ class DreamForgeEngine:
+             "inpaint_mask_grow_by": "inpaint_mask_grow_by",
+             "inpaint_intent": "inpaint_intent",
+             "edit_task": "edit_task",
++            "custom_tool_id": "custom_tool_id",
++            "outfit_auto_mask": "outfit_auto_mask",
+             "outfit_transfer_regions": "outfit_transfer_regions",
+             "inpaint_additional_prompt": "inpaint_additional_prompt",
+             "inpaint_hard_mask": "inpaint_hard_mask",
+@@ -175,6 +177,14 @@ class DreamForgeEngine:
+             "controlnet_model": "controlnet_model",
+             "depth_strength": "depth_strength",
+             "lineart_strength": "lineart_strength",
++            "portrait_shot": "portrait_shot",
++            "portrait_age": "portrait_age",
++            "portrait_expression": "portrait_expression",
++            "portrait_lighting": "portrait_lighting",
++            "portrait_skin_detail": "portrait_skin_detail",
++            "portrait_eye_detail": "portrait_eye_detail",
++            "portrait_pose_strength": "portrait_pose_strength",
++            "portrait_depth_strength": "portrait_depth_strength",
+             "cn_strength": "cn_strength",
+             "cn_start": "cn_start",
+             "cn_stop": "cn_stop",
+@@ -287,6 +297,8 @@ class DreamForgeEngine:
+             "inpaint_mask_grow_by": None,
+             "inpaint_intent": None,
+             "edit_task": None,
++            "custom_tool_id": None,
++            "outfit_auto_mask": False,
+             "outfit_transfer_regions": None,
+             "inpaint_additional_prompt": None,
+             "inpaint_hard_mask": False,
+@@ -299,6 +311,14 @@ class DreamForgeEngine:
+             "controlnet_model": None,
+             "depth_strength": None,
+             "lineart_strength": None,
++            "portrait_shot": None,
++            "portrait_age": None,
++            "portrait_expression": None,
++            "portrait_lighting": None,
++            "portrait_skin_detail": None,
++            "portrait_eye_detail": None,
++            "portrait_pose_strength": None,
++            "portrait_depth_strength": None,
+             "cn_strength": None,
+             "cn_start": None,
+             "cn_stop": None,
+diff --git a/backend/dreamforge_errors.py b/backend/dreamforge_errors.py
+index 9898bb7..f54ba48 100644
+--- a/backend/dreamforge_errors.py
++++ b/backend/dreamforge_errors.py
+@@ -129,12 +129,14 @@ def build_failure_report(
+     elif code == "missing_custom_node_pack":
+         pack_id = detail_map.get("pack_id") or "unknown"
+         nodes = detail_map.get("nodes") or []
++        install_via = detail_map.get("install_via")
+         add("replace_node_pattern", approval=True, nodes=nodes, hint="Rebuild this stage with a first-party fallback pattern when possible.")
+         add(
+             "install_custom_node_pack",
+             approval=True,
+             pack_id=pack_id,
+             nodes=nodes,
++            install_via=install_via,
+             hint="Install custom nodes only after the user approves the exact pack.",
+         )
+         add("disable_optional_stage", approval=True, nodes=nodes)
+@@ -247,18 +249,40 @@ def missing_custom_node_pack(
+     job_id: str | None = None,
+     nodes: Iterable[str] | None = None,
+ ) -> dict:
++    node_list = list(nodes or [])
++    resolved_pack = str(pack_id or "").strip()
++    if not resolved_pack or resolved_pack in {"unknown", "ComfyUI workflow"}:
++        try:
++            from dreamforge_workflow_planner import resolve_pack_id_for_nodes
++
++            resolved_pack = resolve_pack_id_for_nodes(node_list) or resolved_pack or "unknown"
++        except Exception:
++            resolved_pack = resolved_pack or "unknown"
++    install_via = None
++    if resolved_pack and resolved_pack != "unknown":
++        try:
++            from dreamforge_comfy_manager import resolve_pack_install_strategy
++            from dreamforge_workflow_planner import _recipe_entry_for_pack
++
++            entry = _recipe_entry_for_pack(resolved_pack)
++            install_via = resolve_pack_install_strategy(entry, resolved_pack)
++        except Exception:
++            install_via = None
+     node_hint = ""
+-    if nodes:
+-        node_hint = f" (nodes: {', '.join(str(n) for n in nodes)})"
++    if node_list:
++        node_hint = f" (nodes: {', '.join(str(n) for n in node_list)})"
++    details: dict[str, Any] = {"pack_id": resolved_pack, "nodes": node_list}
++    if install_via:
++        details["install_via"] = install_via
+     return error(
+         "missing_custom_node_pack",
+-        f"Required ComfyUI custom node pack is not installed: {pack_id}{node_hint}",
++        f"Required ComfyUI custom node pack is not installed: {resolved_pack}{node_hint}",
+         suggestions=[
+             "Install the pack into ComfyUI/custom_nodes using the Models panel or Krita recipe installer.",
+             "Restart ComfyUI after installing custom nodes.",
+             "Use Brain plan readiness to review required dependencies before running.",
+         ],
+-        details={"pack_id": pack_id, "nodes": list(nodes or [])},
++        details=details,
+         recoverable=True,
+         job_id=job_id,
+     )
+diff --git a/backend/dreamforge_feature_surfaces.py b/backend/dreamforge_feature_surfaces.py
+index bb4cb8a..0bdecf7 100644
+--- a/backend/dreamforge_feature_surfaces.py
++++ b/backend/dreamforge_feature_surfaces.py
+@@ -40,6 +40,9 @@ BACKEND_COMFY_MODES = frozenset(
+         "area_composition",
+         "qwen_edit",
+         "cutout_compose",
++        "outfit_transfer",
++        "custom_tool",
++        "portrait_master",
+     }
+ )
+ 
+@@ -55,9 +58,10 @@ UI_SURFACE_TO_COMFY_MODES: dict[str, frozenset[str]] = {
+     "reference_role:inpaint": frozenset({"inpaint"}),
+     "reference_role:upscale": frozenset({"upscale"}),
+     "studio_mode:generate": frozenset({"txt2img", "img2img", "ipadapter", "ipadapter_controlnet", "ipadapter_faceid"}),
+-    "studio_mode:edit": frozenset({"kontext", "qwen_edit", "img2img", "photo_restore"}),
++    "studio_mode:edit": frozenset({"kontext", "qwen_edit", "img2img"}),
+     "studio_mode:inpaint": frozenset({"inpaint"}),
+     "studio_mode:upscale": frozenset({"upscale"}),
++    "studio_mode:toolbox": frozenset({"photo_restore", "qwen_edit", "inpaint", "cutout_compose", "outfit_transfer", "custom_tool", "portrait_master"}),
+     "inpaint_intent:default": frozenset({"inpaint"}),
+     "inpaint_intent:improve_detail": frozenset({"inpaint"}),
+     "inpaint_intent:modify_content": frozenset({"inpaint"}),
+@@ -75,8 +79,9 @@ UI_SURFACE_TO_COMFY_MODES: dict[str, frozenset[str]] = {
+     "identity_mode:preserve_face": frozenset({"kontext", "qwen_edit", "img2img"}),
+     "identity_mode:ipadapter_faceid": frozenset({"ipadapter_faceid", "kontext", "qwen_edit"}),
+     "edit_task:photo_restore": frozenset({"photo_restore"}),
+-    "edit_task:outfit_transfer": frozenset({"qwen_edit", "inpaint"}),
++    "edit_task:outfit_transfer": frozenset({"qwen_edit", "inpaint", "outfit_transfer"}),
+     "edit_task:cutout_compose": frozenset({"cutout_compose"}),
++    "edit_task:portrait_master": frozenset({"portrait_master"}),
+ }
+ 
+ COMFY_MODE_GRAPH_BUILDERS: dict[str, str] = {
+@@ -96,6 +101,9 @@ COMFY_MODE_GRAPH_BUILDERS: dict[str, str] = {
+     "txt2img": "comfy_txt2img_basic",
+     "qwen_edit": "comfy_qwen_image_edit",
+     "cutout_compose": "comfy_cutout_compose",
++    "outfit_transfer": "comfy_outfit_transfer",
++    "portrait_master": "comfy_portrait_master",
++    "custom_tool": "build_custom_tool_prompt_graph",
+ }
+ 
+ ASSET_GATED_FEATURES = frozenset(
+@@ -153,7 +161,7 @@ def audit_comfy_mode_graph_builders() -> list[str]:
+             issues.append(f"comfy mode {mode!r} maps to missing builder {builder}")
+     gen_text = _read_text(REPO_ROOT / "backend" / "dreamforge_generation.py")
+     for mode in BACKEND_COMFY_MODES:
+-        if mode in {"txt2img", "qwen_edit"}:
++        if mode in {"txt2img", "qwen_edit", "custom_tool", "outfit_transfer", "portrait_master"}:
+             continue
+         if (
+             f'mode == "{mode}"' not in gen_text
+diff --git a/backend/dreamforge_generation.py b/backend/dreamforge_generation.py
+index 1fd3b9b..bb531b0 100644
+--- a/backend/dreamforge_generation.py
++++ b/backend/dreamforge_generation.py
+@@ -508,7 +508,28 @@ def _build_comfy_prompt_graph(
+     model_loader_args: dict | None = None,
+     qwen_reference_filenames: list[str] | None = None,
+     kontext_reference_filenames: list[str] | None = None,
++    client=None,
++    input_path: str | None = None,
++    extra_reference_paths: list[str] | None = None,
++    mask_path: str | None = None,
+ ):
++    if mode == "custom_tool":
++        from dreamforge_custom_tools import CustomToolError, build_custom_tool_prompt_graph
++
++        if client is None:
++            raise CustomToolError("Custom tool execution requires an active ComfyUI client.")
++        return build_custom_tool_prompt_graph(
++            client=client,
++            job=job,
++            settings=settings,
++            prompt=prompt,
++            negative=negative,
++            seed=seed,
++            input_path=input_path,
++            extra_reference_paths=extra_reference_paths,
++            mask_path=mask_path,
++        )
++
+     from dreamforge_comfy_workflow_import import (
+         build_prompt_from_template,
+         resolve_comfy_workflow_template,
+@@ -543,7 +564,9 @@ def _build_comfy_prompt_graph(
+         comfy_kandinsky5_img2img,
+         comfy_kandinsky5_txt2img,
+         comfy_photo_restore,
++        comfy_portrait_master,
+         comfy_cutout_compose,
++        comfy_outfit_transfer,
+     )
+ 
+     explicit = getattr(job, "comfy_workflow_api", None) or getattr(
+@@ -797,6 +820,21 @@ def _build_comfy_prompt_graph(
+                 "denoise": edit_strength if input_filename and not use_structure else 1.0,
+             }
+         )
++    elif mode == "portrait_master":
++        from dreamforge_portrait_master import build_portrait_master_negative
++
++        graph = comfy_portrait_master(
++            {
++                **common,
++                "image": input_filename,
++                "controlnet_model": getattr(job, "controlnet_model", None)
++                or _first_inventory_model("controlnet", ("union",)),
++                "portrait_pose_strength": float(getattr(job, "portrait_pose_strength", 0.65)),
++                "portrait_depth_strength": float(getattr(job, "portrait_depth_strength", 0.55)),
++                "denoise": edit_strength,
++                "negative": build_portrait_master_negative(job),
++            }
++        )
+     elif mode == "photo_restore":
+         control_image = (
+             getattr(job, "control_image", None)
+@@ -855,6 +893,27 @@ def _build_comfy_prompt_graph(
+             if settings.get(key) is not None:
+                 cutout_args[key] = settings[key]
+         graph = comfy_cutout_compose(cutout_args)
++    elif mode == "outfit_transfer" and input_filename:
++        from dreamforge_edit_tasks import segformer_toggles_for_outfit_regions
++
++        regions = getattr(job, "outfit_transfer_regions", None) or []
++        if isinstance(regions, str):
++            regions = [part.strip() for part in regions.split(",") if part.strip()]
++        outfit_args: dict[str, Any] = {
++            **loader_args,
++            "prompt": prompt,
++            "negative": negative,
++            "steps": settings["steps"],
++            "cfg": settings["cfg"],
++            "sampler_name": settings["sampler_name"],
++            "scheduler": settings["scheduler"],
++            "seed": seed,
++            "denoise": edit_strength,
++            "filename_prefix": "DreamForge",
++            "image": input_filename,
++            "segformer_toggles": segformer_toggles_for_outfit_regions(regions),
++        }
++        graph = comfy_outfit_transfer(outfit_args)
+     elif mode == "outpaint" and input_filename:
+         graph = comfy_outpaint_basic(
+             {
+@@ -1538,6 +1597,9 @@ def run_generation(
+ 
+         prompt = merge_outfit_transfer_prompt(prompt, job)
+         prompt = merge_cutout_compose_prompt(prompt, job)
++        from dreamforge_portrait_master import merge_portrait_master_prompt
++
++        prompt = merge_portrait_master_prompt(prompt, job)
+         negative = prepared["negative"]
+         settings = dict(settings)
+         settings["negative"] = negative
+@@ -1658,7 +1720,13 @@ def run_generation(
+             edit_task_defaults = apply_edit_task_defaults_to_job(
+                 job,
+                 mode="edit"
+-                if task_name in {"global_edit", "photo_restore", "outfit_transfer", "cutout_compose"}
++                if task_name in {
++                    "global_edit",
++                    "photo_restore",
++                    "outfit_transfer",
++                    "cutout_compose",
++                    "portrait_master",
++                }
+                 else "inpaint",
+             )
+             if task_name == "photo_restore":
+@@ -1696,6 +1764,53 @@ def run_generation(
+                     emit_event(stream_sink, err)
+                     return {"status": "error", **err}
+ 
++        custom_tool_id = str(getattr(job, "custom_tool_id", None) or "").strip()
++        if custom_tool_id:
++            from dreamforge_comfy_workflow_import import load_api_workflow_template
++            from dreamforge_custom_tools import _sorted_bindings, find_custom_tool
++            from dreamforge_errors import comfy_workflow_validation, invalid_request
++
++            tool = find_custom_tool(custom_tool_id)
++            if not tool:
++                err = invalid_request(
++                    f"Custom tool {custom_tool_id!r} was not found.",
++                    job_id=job_id,
++                )
++                err["suggestions"] = [
++                    "Re-import the workflow in Creative Toolbox or pick another custom tool."
++                ]
++                emit_event(stream_sink, err)
++                return {"status": "error", **err}
++            workflow_path = str(tool.get("workflow_path") or "").strip()
++            if not workflow_path:
++                err = comfy_workflow_validation(
++                    f"Custom tool {tool.get('name') or custom_tool_id} has no workflow file.",
++                    job_id=job_id,
++                )
++                emit_event(stream_sink, err)
++                return {"status": "error", **err}
++            try:
++                load_api_workflow_template(workflow_path)
++            except (OSError, ValueError) as exc:
++                err = comfy_workflow_validation(
++                    f"{tool.get('name') or custom_tool_id} requires ComfyUI Save (API Format) JSON. {exc}",
++                    job_id=job_id,
++                    suggestions=[
++                        "In ComfyUI, use Save (API Format) — not the default UI workflow export.",
++                        "Re-import the API JSON in Creative Toolbox.",
++                    ],
++                )
++                emit_event(stream_sink, err)
++                return {"status": "error", **err}
++            image_bindings = _sorted_bindings(tool, "image")
++            if image_bindings and not str(getattr(job, "input_image", None) or "").strip():
++                err = invalid_request(
++                    f"{tool.get('name') or custom_tool_id} needs an input image for its bindings.",
++                    job_id=job_id,
++                )
++                emit_event(stream_sink, err)
++                return {"status": "error", **err}
++
+         from dreamforge_workflow_routing import resolve_comfy_workflow_mode, resolve_input_routing
+ 
+         route = resolve_input_routing(
+@@ -2337,6 +2452,13 @@ def run_generation(
+             model_family=model_family,
+             input_filename=input_filename,
+         )
++        if str(getattr(job, "custom_tool_id", None) or "").strip():
++            comfy_mode = "custom_tool"
++        if (
++            str(getattr(job, "edit_task", "") or "").strip().lower() == "outfit_transfer"
++            and bool(getattr(job, "outfit_auto_mask", False))
++        ):
++            comfy_mode = "outfit_transfer"
+         if comfy_mode in ("ipadapter", "ipadapter_controlnet", "ipadapter_faceid"):
+             from dreamforge_workflow_planner import custom_node_pack_present
+ 
+@@ -2615,25 +2737,40 @@ def run_generation(
+             settings,
+         )
+ 
+-        prompt_graph, template_used = _build_comfy_prompt_graph(
+-            job=job,
+-            mode=comfy_mode,
+-            model=model,
+-            model_family=model_family,
+-            settings=settings,
+-            prompt=prompt,
+-            negative=negative,
+-            seed=seed,
+-            edit_strength=edit_strength,
+-            cn_upscale=cn_upscale,
+-            input_filename=input_filename or reference_filename,
+-            mask_filename=mask_filename,
+-            reference_stitch_filename=reference_stitch_filename,
+-            grow_mask_by=grow_mask_by,
+-            model_loader_args=resolved_loaders,
+-            qwen_reference_filenames=qwen_reference_filenames or None,
+-            kontext_reference_filenames=kontext_reference_filenames or None,
+-        )
++        try:
++            prompt_graph, template_used = _build_comfy_prompt_graph(
++                job=job,
++                mode=comfy_mode,
++                model=model,
++                model_family=model_family,
++                settings=settings,
++                prompt=prompt,
++                negative=negative,
++                seed=seed,
++                edit_strength=edit_strength,
++                cn_upscale=cn_upscale,
++                input_filename=input_filename or reference_filename,
++                mask_filename=mask_filename,
++                reference_stitch_filename=reference_stitch_filename,
++                grow_mask_by=grow_mask_by,
++                model_loader_args=resolved_loaders,
++                qwen_reference_filenames=qwen_reference_filenames or None,
++                kontext_reference_filenames=kontext_reference_filenames or None,
++                client=client,
++                input_path=input_path,
++                extra_reference_paths=_coerce_reference_image_paths(job),
++                mask_path=mask_path,
++            )
++        except Exception as exc:
++            from dreamforge_custom_tools import CustomToolError
++
++            if isinstance(exc, CustomToolError):
++                from dreamforge_errors import comfy_workflow_validation
++
++                err = comfy_workflow_validation(str(exc), job_id=job_id)
++                emit_event(stream_sink, err)
++                return {"status": "error", **err}
++            raise
+         comfy_workflow_class_types = sorted(
+             {
+                 str(node.get("class_type"))
+@@ -2642,6 +2779,12 @@ def run_generation(
+             }
+         )
+         comfy_workflow_builder = (
++            "custom_tool"
++            if comfy_mode == "custom_tool"
++            else (
++            "comfy_outfit_transfer"
++            if comfy_mode == "outfit_transfer"
++            else (
+             "comfy_flux_fill_inpaint"
+             if "InpaintModelConditioning" in comfy_workflow_class_types
+             else (
+@@ -2649,6 +2792,8 @@ def run_generation(
+                 if "VAEEncodeForInpaint" in comfy_workflow_class_types
+                 else (Path(template_used).stem if template_used else None)
+             )
++            )
++            )
+         )
+ 
+         if comfy_workflow_class_types:
+@@ -2661,6 +2806,40 @@ def run_generation(
+                 for node_type in comfy_workflow_class_types
+                 if node_type not in object_info
+             )
++            if missing_workflow_nodes and comfy_mode == "outfit_transfer":
++                segformer_nodes = {"LayerMask: SegformerB2ClothesUltra"}
++                if segformer_nodes & set(missing_workflow_nodes):
++                    try:
++                        from dreamforge_comfy_install import ensure_dreamforge_comfy_backend
++                        from dreamforge_comfy_server import restart_managed_comfy_server
++
++                        emit_event(
++                            stream_sink,
++                            {
++                                "type": "progress",
++                                "job_id": job_id,
++                                "phase": "preflight",
++                                "progress": 3,
++                                "message": (
++                                    "Installing garment segmentation nodes (ComfyUI_LayerStyle) "
++                                    "and restarting ComfyUI…"
++                                ),
++                            },
++                        )
++                        ensure_dreamforge_comfy_backend(optional_nodes=True)
++                        server = restart_managed_comfy_server(
++                            timeout_s=90.0,
++                            reason="outfit_segformer_nodes",
++                        )
++                        client = ComfyClient(server.base_url)
++                        object_info = client.object_info(timeout_s=30.0)
++                        missing_workflow_nodes = sorted(
++                            node_type
++                            for node_type in comfy_workflow_class_types
++                            if node_type not in object_info
++                        )
++                    except Exception:
++                        pass
+             if missing_workflow_nodes and comfy_mode == "cutout_compose":
+                 essentials_nodes = {"RemBGSession+", "ImageRemoveBackground+"}
+                 if essentials_nodes & set(missing_workflow_nodes):
+@@ -2696,8 +2875,14 @@ def run_generation(
+                     except Exception:
+                         pass
+             if missing_workflow_nodes:
++                from dreamforge_workflow_planner import resolve_pack_id_for_nodes
++
++                pack_id = (
++                    resolve_pack_id_for_nodes(missing_workflow_nodes)
++                    or str(comfy_workflow_builder or "unknown")
++                )
+                 err = missing_custom_node_pack(
+-                    str(comfy_workflow_builder or "ComfyUI workflow"),
++                    pack_id,
+                     job_id=job_id,
+                     nodes=missing_workflow_nodes,
+                 )
+@@ -2981,6 +3166,17 @@ def run_generation(
+             background_reference_path = resolve_cutout_background_path(job)
+             if background_reference_path:
+                 routing["background_image"] = background_reference_path
++            custom_tool_id = str(getattr(job, "custom_tool_id", None) or "").strip()
++            if custom_tool_id:
++                from dreamforge_custom_tools import find_custom_tool
++
++                routing["custom_tool_id"] = custom_tool_id
++                tool = find_custom_tool(custom_tool_id)
++                if tool:
++                    routing["custom_tool_name"] = str(tool.get("name") or "")
++                    workflow_path = str(tool.get("workflow_path") or "").strip()
++                    if workflow_path:
++                        routing["custom_tool_workflow"] = workflow_path
+             if post_upscale_method:
+                 routing["post_upscale"] = str(post_upscale_method)
+                 routing["chain"] = ["primary", "upscale"]
+diff --git a/backend/dreamforge_krita_recipes.py b/backend/dreamforge_krita_recipes.py
+index 4a4722a..6e15123 100644
+--- a/backend/dreamforge_krita_recipes.py
++++ b/backend/dreamforge_krita_recipes.py
+@@ -200,6 +200,13 @@ COMFY_INSTALL_RECIPE: dict[str, Any] = {
+             "reason": "UltralyticsDetectorProvider bbox/segm models for FaceDetailer.",
+             "nodes": ["UltralyticsDetectorProvider"],
+         },
++        {
++            "id": "ComfyUI_LayerStyle",
++            "url": "https://github.com/chflame163/ComfyUI_LayerStyle",
++            "install_via": "manager",
++            "reason": "SegformerB2ClothesUltra auto garment masks for outfit transfer.",
++            "nodes": ["LayerMask: SegformerB2ClothesUltra"],
++        },
+     ],
+ }
+ 
+diff --git a/backend/dreamforge_task_router.py b/backend/dreamforge_task_router.py
+index bb8c485..61ffb63 100644
+--- a/backend/dreamforge_task_router.py
++++ b/backend/dreamforge_task_router.py
+@@ -99,6 +99,158 @@ class RouteDecision:
+     warnings: list[str] = field(default_factory=list)
+ 
+ 
++def _apply_toolbox_task_routing(
++    out: dict[str, Any],
++    gallery_list: list[Any],
++) -> str:
++    """Apply toolbox-native task presets after generic edit routing."""
++    task = str(out.get("edit_task") or "").strip().lower()
++    if task == "photo_restore":
++        from dreamforge_edit_tasks import resolve_edit_task_defaults
++
++        restore_model = _pick_photo_restore_model(gallery_list)
++        if restore_model:
++            out["model"] = restore_model
++        defaults = resolve_edit_task_defaults(task, mode="edit", settings=out)
++        for key in (
++            "steps",
++            "cfg_scale",
++            "sampler",
++            "scheduler",
++            "edit_strength",
++            "depth_strength",
++            "lineart_strength",
++            "face_preservation",
++            "edit_type",
++            "cn_type",
++            "cn_selection",
++        ):
++            if defaults.get(key) is not None:
++                out[key] = defaults[key]
++        out["inpaint_mask_path"] = None
++        return "toolbox_photo_restore"
++    if task == "portrait_master":
++        from dreamforge_edit_tasks import resolve_edit_task_defaults
++
++        portrait_model = _pick_photo_restore_model(gallery_list)
++        if portrait_model:
++            out["model"] = portrait_model
++        defaults = resolve_edit_task_defaults(task, mode="edit", settings=out)
++        for key in (
++            "steps",
++            "cfg_scale",
++            "sampler",
++            "scheduler",
++            "edit_strength",
++            "portrait_pose_strength",
++            "portrait_depth_strength",
++            "portrait_shot",
++            "portrait_age",
++            "portrait_expression",
++            "portrait_lighting",
++            "portrait_skin_detail",
++            "portrait_eye_detail",
++            "edit_type",
++            "cn_type",
++            "cn_selection",
++        ):
++            if defaults.get(key) is not None:
++                out[key] = defaults[key]
++        out["inpaint_mask_path"] = None
++        return "toolbox_portrait_master"
++    if task == "outfit_transfer":
++        has_mask = bool(str(out.get("inpaint_mask_path") or "").strip())
++        regions = out.get("outfit_transfer_regions") or []
++        if isinstance(regions, str):
++            regions = [part.strip() for part in regions.split(",") if part.strip()]
++        wants_auto_mask = bool(regions) and not has_mask
++        if has_mask:
++            from dreamforge_inpaint_routing import pick_best_inpaint_model
++
++            fill = pick_best_inpaint_model(gallery_list)
++            if fill:
++                out["model"] = fill
++            out["edit_type"] = "inpaint"
++            out["cn_selection"] = "Custom..."
++            out["cn_type"] = "inpaint"
++            out["inpaint_intent"] = "modify_content"
++            return "toolbox_outfit_inpaint"
++        if wants_auto_mask:
++            from dreamforge_inpaint_routing import pick_best_inpaint_model
++
++            fill = pick_best_inpaint_model(gallery_list)
++            if fill:
++                out["model"] = fill
++            out["edit_type"] = "inpaint"
++            out["cn_selection"] = "Custom..."
++            out["cn_type"] = "inpaint"
++            out["inpaint_intent"] = "modify_content"
++            out["outfit_auto_mask"] = True
++            return "toolbox_outfit_segformer"
++        from dreamforge_cli_inventory import pick_best_qwen_edit_model
++
++        qwen = pick_best_qwen_edit_model(gallery_list)
++        if qwen:
++            out["model"] = qwen
++        out.update(
++            edit_routing_patch(
++                gallery_list,
++                out.get("model") or qwen or "",
++                preferred_edit_type="qwen_edit",
++            )
++        )
++        out["qwen_edit_mode"] = out.get("qwen_edit_mode") or "plus"
++        out["inpaint_mask_path"] = None
++        return "toolbox_outfit_qwen"
++    if task == "cutout_compose":
++        from dreamforge_cli_inventory import pick_best_qwen_edit_model
++        from dreamforge_edit_tasks import EDIT_TASK_PRESETS
++
++        qwen = pick_best_qwen_edit_model(gallery_list)
++        if qwen:
++            out["model"] = qwen
++        out.update(
++            edit_routing_patch(
++                gallery_list,
++                out.get("model") or qwen or "",
++                preferred_edit_type="qwen_edit",
++            )
++        )
++        out["qwen_edit_mode"] = out.get("qwen_edit_mode") or "plus"
++        preset_strength = EDIT_TASK_PRESETS["cutout_compose"].get("edit_strength")
++        current = out.get("edit_strength")
++        if preset_strength is not None and (
++            current is None or float(current) >= 0.9
++        ):
++            out["edit_strength"] = preset_strength
++        out["inpaint_mask_path"] = None
++        return "toolbox_cutout_compose"
++    return ""
++
++
++def _pick_photo_restore_model(gallery_list: list[Any]) -> str:
++    needles = ("epicrealism", "juggernaut", "realvis", "dreamshaper", "sd_xl", "sdxl")
++    best_name = ""
++    best_score = -1
++    for raw in gallery_list:
++        if not isinstance(raw, dict):
++            continue
++        hay = _gallery_hay(raw)
++        family = str(raw.get("family") or "").lower()
++        score = 0
++        if family == "sdxl" or "sdxl" in hay:
++            score += 100
++        for needle in needles:
++            if needle in hay:
++                score += 25
++        if "turbo" in hay or "lightning" in hay:
++            score -= 10
++        if score > best_score:
++            best_score = score
++            best_name = str(raw.get("engine_name") or raw.get("relative_path") or "")
++    return best_name
++
++
+ def apply_task_routing(
+     settings: dict[str, Any],
+     studio_mode: str,
+@@ -106,6 +258,7 @@ def apply_task_routing(
+     *,
+     advanced_mode: bool = False,
+     user_picked_model: bool = False,
++    toolbox_studio_mode: str | None = None,
+ ) -> RouteDecision:
+     """Apply mode contracts; mutate and return a settings patch dict."""
+     mode = (studio_mode or "generate").strip().lower()
+@@ -178,6 +331,12 @@ def apply_task_routing(
+         out["user_picked_model"] = bool(manual)
+         out["advanced_mode"] = bool(advanced_mode)
+         kind = str(out.get("edit_type") or "kontext")
++        if (toolbox_studio_mode or "").strip().lower() == "toolbox":
++            if not str(out.get("custom_tool_id") or "").strip():
++                toolbox_reason = _apply_toolbox_task_routing(out, gallery_list)
++                if toolbox_reason:
++                    reason = toolbox_reason
++                    kind = f"toolbox_{str(out.get('edit_task') or 'edit')}"
+         return RouteDecision(
+             patch=out,
+             route_reason=reason,
+diff --git a/backend/dreamforge_workflow_planner.py b/backend/dreamforge_workflow_planner.py
+index 30eec0f..623d9c9 100644
+--- a/backend/dreamforge_workflow_planner.py
++++ b/backend/dreamforge_workflow_planner.py
+@@ -283,6 +283,39 @@ TEMPLATE_REGISTRY: dict[str, WorkflowTemplateSpec] = {
+         optional_nodes=["FaceDetailer", "UltralyticsDetectorProvider", "SAMLoader"],
+         research_basis=["official_controlnet", "comfyui_controlnet_aux", "workflow_research:photo_restore"],
+     ),
++    "portrait_master": WorkflowTemplateSpec(
++        id="portrait_master",
++        label="Portrait Master",
++        operation="edit_image",
++        mode="edit",
++        summary="Load portrait reference, preprocess OpenPose + depth, apply ControlNet Union, sample, decode.",
++        builder="comfy_portrait_master",
++        node_pattern=[
++            "LoadImage",
++            "OpenposePreprocessor",
++            "DepthAnythingV2Preprocessor",
++            "SetUnionControlNetType",
++            "ControlNetApplyAdvanced",
++            "KSampler",
++            "VAEDecode",
++            "SaveImage",
++        ],
++        required_inputs=["input_image"],
++        optional_inputs=[
++            "prompt",
++            "portrait_shot",
++            "portrait_age",
++            "portrait_expression",
++            "portrait_lighting",
++            "portrait_skin_detail",
++            "portrait_eye_detail",
++            "portrait_pose_strength",
++            "portrait_depth_strength",
++        ],
++        required_models=["checkpoint_or_unet", "clip", "vae", "controlnet_model"],
++        required_node_packs=["comfyui_controlnet_aux"],
++        research_basis=["official_controlnet", "comfyui_controlnet_aux", "workflow_research:portrait_master"],
++    ),
+ }
+ 
+ 
+@@ -421,7 +454,10 @@ def template_ids_for_operations(
+     strict_inpaint: bool = False,
+     qwen_edit: bool = False,
+     photo_restore: bool = False,
++    portrait_master: bool = False,
+ ) -> list[str]:
++    if portrait_master:
++        return ["portrait_master"]
+     if photo_restore:
+         return ["photo_restore"]
+     ids: list[str] = []
+@@ -464,6 +500,7 @@ def build_live_workflow_blueprint(
+     strict_inpaint = _strict_inpaint_requested(settings)
+     qwen_edit = _qwen_edit_requested(settings)
+     photo_restore = str(settings.get("edit_task") or "").lower() == "photo_restore"
++    portrait_master = str(settings.get("edit_task") or "").lower() == "portrait_master"
+     ops = operations or resolve_operations_from_intent(
+         intent,
+         has_image=has_image,
+@@ -477,6 +514,7 @@ def build_live_workflow_blueprint(
+         strict_inpaint=strict_inpaint,
+         qwen_edit=qwen_edit,
+         photo_restore=photo_restore,
++        portrait_master=portrait_master,
+     )
+     templates = [TEMPLATE_REGISTRY[item].to_dict() for item in template_ids if item in TEMPLATE_REGISTRY]
+     required_inputs = _dedupe([value for spec in templates for value in spec.get("required_inputs", [])])
+@@ -756,12 +794,16 @@ def _recommended_actions(
+         known_packs = {}
+     for pack in missing_node_packs:
+         meta = known_packs.get(pack, {})
++        from dreamforge_comfy_manager import resolve_pack_install_strategy
++
++        install_via = resolve_pack_install_strategy(meta or None, pack)
+         actions.append(
+             {
+                 "action": "install_custom_node_pack",
+                 "pack_id": pack,
+                 "url": meta.get("url", ""),
+                 "version": meta.get("version"),
++                "install_via": install_via,
+                 "reason": meta.get("reason", "Required for this workflow template"),
+             }
+         )
+@@ -999,8 +1041,12 @@ def required_custom_node_pack_ids(
+                 "ComfyUI-Impact-Subpack",
+             ]
+         )
++    if mode == "edit" and task == "portrait_master":
++        pack_ids.append("comfyui_controlnet_aux")
+     if mode == "edit" and task == "cutout_compose":
+         pack_ids.append("ComfyUI_essentials")
++    if mode == "edit" and task == "outfit_transfer":
++        pack_ids.append("ComfyUI_LayerStyle")
+     return list(dict.fromkeys(pack_ids))
+ 
+ 
+@@ -1010,11 +1056,20 @@ def missing_custom_node_pack_entries(
+     object_info: dict[str, Any] | None = None,
+ ) -> list[dict[str, Any]]:
+     """Return installable entries for custom-node packs that are not ready."""
++    from dreamforge_comfy_manager import resolve_pack_install_strategy
++
+     missing: list[dict[str, Any]] = []
+     for pack_id in dict.fromkeys(str(item).strip() for item in pack_ids if str(item).strip()):
+         status = assess_custom_node_pack(pack_id, object_info=object_info)
+         if status.get("ready"):
+             continue
++        entry = _recipe_entry_for_pack(pack_id)
++        install_via = resolve_pack_install_strategy(entry, pack_id)
++        note = (
++            "Install via ComfyUI-Manager (cm-cli)."
++            if install_via == "manager"
++            else "ComfyUI custom node pack from the pinned DreamForge recipe."
++        )
+         missing.append(
+             {
+                 "kind": "custom_node_pack",
+@@ -1023,7 +1078,8 @@ def missing_custom_node_pack_entries(
+                 "filename": pack_id,
+                 "relative": f"engines/comfyui/custom_nodes/{pack_id}",
+                 "category": "custom_nodes",
+-                "note": "ComfyUI custom node pack from the pinned DreamForge recipe.",
++                "note": note,
++                "install_via": install_via,
+                 "url": status.get("url") or "",
+                 "missing_nodes": list(status.get("missing_nodes") or []),
+                 "required_nodes": list(status.get("required_nodes") or []),
+@@ -1080,6 +1136,8 @@ def assess_custom_node_pack(
+         available = set(object_info.keys())
+         missing_nodes = [node for node in required_nodes if node not in available]
+     ready = directory_present and not missing_nodes
++    from dreamforge_comfy_manager import resolve_pack_install_strategy
++
+     return {
+         "pack_id": pack_id,
+         "directory_present": directory_present,
+@@ -1088,6 +1146,9 @@ def assess_custom_node_pack(
+         "required_nodes": required_nodes,
+         "url": (entry or {}).get("url", ""),
+         "version": (entry or {}).get("version"),
++        "install_via": resolve_pack_install_strategy(entry, pack_id)
++        if entry or pack_id
++        else "manager",
+         "ready": ready,
+     }
+ 
+diff --git a/backend/dreamforge_workflow_routing.py b/backend/dreamforge_workflow_routing.py
+index 8610563..d2f0faa 100644
+--- a/backend/dreamforge_workflow_routing.py
++++ b/backend/dreamforge_workflow_routing.py
+@@ -95,6 +95,8 @@ class WorkflowRoute:
+     warnings: list[str] = field(default_factory=list)
+     comfy_mode: str | None = None
+     edit_task: str | None = None
++    custom_tool_id: str | None = None
++    outfit_auto_mask: bool = False
+ 
+ 
+ def _reference_role(job, studio_mode: str | None = None) -> str:
+@@ -304,6 +306,8 @@ def resolve_input_routing(
+         label = "Transferring outfit"
+     elif _norm(getattr(job, "edit_task", None)) == "cutout_compose":
+         label = "Composing cutout"
++    elif _norm(getattr(job, "edit_task", None)) == "portrait_master":
++        label = "Portrait Master"
+ 
+     return WorkflowRoute(
+         plan_mode=plan_mode,
+@@ -318,6 +322,8 @@ def resolve_input_routing(
+         route_label=label,
+         warnings=warnings,
+         edit_task=_norm(getattr(job, "edit_task", None)) or None,
++        custom_tool_id=str(getattr(job, "custom_tool_id", None) or "").strip() or None,
++        outfit_auto_mask=bool(getattr(job, "outfit_auto_mask", False)),
+     )
+ 
+ 
+@@ -380,8 +386,17 @@ def resolve_comfy_workflow_mode(
+ ) -> str:
+     if getattr(route, "edit_task", None) == "photo_restore":
+         return "photo_restore"
++    if getattr(route, "edit_task", None) == "portrait_master":
++        return "portrait_master"
+     if getattr(route, "edit_task", None) == "cutout_compose":
+         return "cutout_compose"
++    if (
++        getattr(route, "edit_task", None) == "outfit_transfer"
++        and bool(getattr(route, "outfit_auto_mask", False))
++    ):
++        return "outfit_transfer"
++    if str(getattr(route, "custom_tool_id", None) or "").strip():
++        return "custom_tool"
+ 
+     from dreamforge_comfy_workflow_import import comfy_workflow_mode
+ 
+diff --git a/backend/tests/test_app_config.py b/backend/tests/test_app_config.py
+index 55d2d45..b671477 100644
+--- a/backend/tests/test_app_config.py
++++ b/backend/tests/test_app_config.py
+@@ -415,6 +415,26 @@ def test_qwen_lightning_defaults_apply_for_speed_modes():
+     assert patch["cfg_scale"] == 1.0
+ 
+ 
++def test_save_app_config_persists_custom_tools(tmp_path: Path, monkeypatch):
++    monkeypatch.setenv(app_config.CONFIG_ENV, str(tmp_path / "app-config.json"))
++    saved = app_config.save_app_config(
++        {
++            "custom_tools": [
++                {
++                    "id": "custom_1",
++                    "name": "Pixel Art",
++                    "description": "Test tool",
++                    "workflow_path": "D:/workflows/pixel.json",
++                    "bindings": {},
++                }
++            ]
++        }
++    )
++    assert saved["custom_tools"][0]["name"] == "Pixel Art"
++    reloaded = app_config.load_app_config(redacted=False)
++    assert reloaded["custom_tools"][0]["workflow_path"] == "D:/workflows/pixel.json"
++
++
+ def test_agent_provider_change_resets_defaults(tmp_path: Path, monkeypatch):
+     monkeypatch.setenv(app_config.CONFIG_ENV, str(tmp_path / "app-config.json"))
+     
+diff --git a/backend/tests/test_comfy_workflows.py b/backend/tests/test_comfy_workflows.py
+index 2af4455..6ba1589 100644
+--- a/backend/tests/test_comfy_workflows.py
++++ b/backend/tests/test_comfy_workflows.py
+@@ -35,6 +35,7 @@ from dreamforge_comfy_workflows import (
+     comfy_pid_flux_upscale,
+     comfy_photo_restore,
+     comfy_cutout_compose,
++    comfy_outfit_transfer,
+     compute_cutout_layout,
+     comfy_kandinsky5_img2img,
+     comfy_flux_img2img,
+@@ -103,6 +104,13 @@ def test_photo_restore_builds_depth_lineart_controlnet_nodes():
+     assert "LineartStandardPreprocessor" in class_types
+     assert "SetUnionControlNetType" in class_types
+     assert "ControlNetApplyAdvanced" in class_types
++    union_types = [
++        node["inputs"]["type"]
++        for node in graph.values()
++        if node.get("class_type") == "SetUnionControlNetType"
++    ]
++    assert "depth" in union_types
++    assert "canny/lineart/anime_lineart/mlsd" in union_types
+     assert "ImageScaleToTotalPixels" in class_types
+     depth_nodes = [
+         n for n in graph.values() if n.get("class_type") == "ControlNetApplyAdvanced"
+@@ -449,6 +457,35 @@ def test_flux_fill_inpaint_uses_inpaint_model_conditioning():
+     assert zero_out is not None
+ 
+ 
++def test_outfit_transfer_graph_uses_segformer_and_flux_fill():
++    graph = comfy_outfit_transfer(
++        {
++            "ckpt_name": "flux1-fill-dev.safetensors",
++            "relative_path": "flux1-fill-dev.safetensors",
++            "category": "diffusion_models",
++            "family": "flux_fill",
++            "image": "person.png",
++            "prompt": "transfer outfit from image 2",
++            "negative": "",
++            "cfg": 30.0,
++            "steps": 20,
++            "denoise": 0.85,
++            "segformer_toggles": {
++                "upper_clothes": True,
++                "pants": True,
++            },
++        }
++    )
++    class_types = {node.get("class_type") for node in graph.values()}
++    assert "LayerMask: SegformerB2ClothesUltra" in class_types
++    assert "InpaintModelConditioning" in class_types
++    segformer = next(
++        node for node in graph.values() if node.get("class_type") == "LayerMask: SegformerB2ClothesUltra"
++    )
++    assert segformer["inputs"]["upper_clothes"] is True
++    assert segformer["inputs"]["pants"] is True
++
++
+ def test_flux_fill_inpaint_routes_from_generation_graph_builder():
+     graph, _template = _build_comfy_prompt_graph(
+         job=SimpleNamespace(),
+diff --git a/backend/tests/test_creative_tasks.py b/backend/tests/test_creative_tasks.py
+index aef8179..2f78f86 100644
+--- a/backend/tests/test_creative_tasks.py
++++ b/backend/tests/test_creative_tasks.py
+@@ -183,3 +183,23 @@ def test_enforce_on_submit_inpaint_uses_default_when_model_empty():
+     )
+     assert out["edit_type"] == "inpaint"
+     assert "flux1-fill" in out["model"]
++
++
++def test_resolve_toolbox_cutout_compose_routes_qwen():
++    result = resolve_creative_task(
++        "toolbox",
++        {
++            "prompt": "blend subject into background",
++            "edit_task": "cutout_compose",
++            "input_image": "D:/subject.png",
++            "reference_images": ["D:/background.png"],
++        },
++        GALLERY,
++        selected_image="D:/subject.png",
++    )
++    patch = result["patch"]
++    assert result["studio_mode"] == "toolbox"
++    assert patch["edit_task"] == "cutout_compose"
++    assert patch["edit_type"] == "qwen_edit"
++    assert "qwen" in patch["model"].lower()
++    assert float(patch["edit_strength"]) <= 0.4
+diff --git a/backend/tests/test_edit_tasks.py b/backend/tests/test_edit_tasks.py
+index f8133ec..0e636fe 100644
+--- a/backend/tests/test_edit_tasks.py
++++ b/backend/tests/test_edit_tasks.py
+@@ -6,6 +6,8 @@ from dreamforge_edit_tasks import (
+     cutout_compose_has_background,
+     merge_outfit_transfer_prompt,
+     outfit_transfer_has_reference,
++    outfit_transfer_wants_auto_mask,
++    segformer_toggles_for_outfit_regions,
+     resolve_edit_task_default_prompt,
+     resolve_edit_task_defaults,
+     normalize_edit_task,
+@@ -169,6 +171,25 @@ def test_outfit_transfer_has_reference():
+     )
+ 
+ 
++def test_outfit_transfer_wants_auto_mask_when_regions_selected():
++    job = SimpleNamespace(
++        edit_task="outfit_transfer",
++        outfit_transfer_regions=["upper_body"],
++        inpaint_mask_path=None,
++    )
++    assert outfit_transfer_wants_auto_mask(job)
++    assert not outfit_transfer_wants_auto_mask(
++        SimpleNamespace(edit_task="outfit_transfer", inpaint_mask_path="/tmp/mask.png")
++    )
++
++
++def test_segformer_toggles_for_outfit_regions():
++    toggles = segformer_toggles_for_outfit_regions(["upper_body", "shoes_accessories"])
++    assert toggles["upper_clothes"] is True
++    assert toggles["shoe"] is True
++    assert toggles["face"] is False
++
++
+ def test_cutout_compose_has_background():
+     assert cutout_compose_has_background(
+         SimpleNamespace(input_image="/tmp/subject.png", reference_images=["/tmp/bg.png"])
+@@ -180,7 +201,7 @@ def test_cutout_compose_has_background():
+ 
+ def test_resolve_edit_task_default_prompt():
+     job = SimpleNamespace(edit_task="cutout_compose")
+-    assert "image 1" in resolve_edit_task_default_prompt("", job)
++    assert "harmonize" in resolve_edit_task_default_prompt("", job).lower()
+     assert resolve_edit_task_default_prompt("custom prompt", job) == "custom prompt"
+ 
+ 
+diff --git a/backend/tests/test_errors.py b/backend/tests/test_errors.py
+index aec15b6..51e8625 100644
+--- a/backend/tests/test_errors.py
++++ b/backend/tests/test_errors.py
+@@ -283,3 +283,15 @@ def test_build_failure_report_never_auto_retries_expensive_repairs():
+     assert report["auto_retry"] is False
+     assert report["max_auto_retries"] == 0
+     assert any(action["requires_approval"] for action in report["repair_actions"])
++
++
++def test_missing_custom_node_pack_resolves_pack_from_nodes():
++    from dreamforge_errors import missing_custom_node_pack
++
++    payload = missing_custom_node_pack(
++        "ComfyUI workflow",
++        nodes=["LayerMask: SegformerB2ClothesUltra"],
++    )
++    assert payload["code"] == "missing_custom_node_pack"
++    assert payload["details"]["pack_id"] == "ComfyUI_LayerStyle"
++    assert payload["details"]["install_via"] == "manager"
+diff --git a/backend/tests/test_task_router.py b/backend/tests/test_task_router.py
+index f4e50a1..4498a3a 100644
+--- a/backend/tests/test_task_router.py
++++ b/backend/tests/test_task_router.py
+@@ -135,3 +135,38 @@ def test_resolve_edit_routes_kontext():
+     patch = result["patch"]
+     assert patch["edit_type"] == "kontext"
+     assert "kontext" in patch["model"].lower()
++
++
++def test_toolbox_custom_tool_skips_native_task_routing():
++    routed = apply_task_routing(
++        {
++            "custom_tool_id": "custom_pixel",
++            "edit_task": "cutout_compose",
++            "edit_strength": 1.0,
++            "input_image": "D:/photo.png",
++            "reference_images": ["D:/bg.png"],
++        },
++        "edit",
++        GALLERY,
++        toolbox_studio_mode="toolbox",
++    )
++    assert routed.patch["custom_tool_id"] == "custom_pixel"
++    assert float(routed.patch.get("edit_strength") or 0) == 1.0
++    assert routed.route_reason != "toolbox_cutout_compose"
++
++
++def test_toolbox_outfit_transfer_regions_route_segformer():
++    routed = apply_task_routing(
++        {
++            "edit_task": "outfit_transfer",
++            "outfit_transfer_regions": ["upper_body"],
++            "input_image": "D:/photo.png",
++            "reference_images": ["D:/outfit.png"],
++        },
++        "edit",
++        GALLERY,
++        toolbox_studio_mode="toolbox",
++    )
++    assert routed.patch.get("outfit_auto_mask") is True
++    assert routed.patch["edit_type"] == "inpaint"
++    assert routed.route_reason == "toolbox_outfit_segformer"
+diff --git a/backend/tests/test_workflow_routing.py b/backend/tests/test_workflow_routing.py
+index c1fef28..7291bd3 100644
+--- a/backend/tests/test_workflow_routing.py
++++ b/backend/tests/test_workflow_routing.py
+@@ -348,6 +348,33 @@ def test_resolve_input_routing_outfit_transfer_mask_fallback():
+     assert route.cn_type == "inpaint"
+ 
+ 
++def test_resolve_input_routing_outfit_transfer_auto_mask():
++    job = SimpleNamespace(
++        edit_task="outfit_transfer",
++        outfit_auto_mask=True,
++        outfit_transfer_regions=["upper_body"],
++        input_image="/tmp/person.png",
++        reference_images=["/tmp/outfit.png"],
++        edit_type="inpaint",
++        cn_selection="Custom...",
++        cn_type="inpaint",
++    )
++    route = resolve_input_routing(
++        job,
++        model={"engine_name": "flux1-fill-dev-fp8.safetensors"},
++        model_family="flux_fill",
++        studio_mode="toolbox",
++    )
++    assert route.outfit_auto_mask is True
++    mode = resolve_comfy_workflow_mode(
++        route,
++        model={"engine_name": "flux1-fill-dev-fp8.safetensors"},
++        model_family="flux_fill",
++        input_filename="person.png",
++    )
++    assert mode == "outfit_transfer"
++
++
+ def test_resolve_input_routing_extend_uses_outpaint_not_inpaint():
+     job = SimpleNamespace(
+         reference_role="inpaint",

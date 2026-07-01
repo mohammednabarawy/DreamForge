@@ -348,6 +348,33 @@ def test_resolve_input_routing_outfit_transfer_mask_fallback():
     assert route.cn_type == "inpaint"
 
 
+def test_resolve_input_routing_outfit_transfer_auto_mask():
+    job = SimpleNamespace(
+        edit_task="outfit_transfer",
+        outfit_auto_mask=True,
+        outfit_transfer_regions=["upper_body"],
+        input_image="/tmp/person.png",
+        reference_images=["/tmp/outfit.png"],
+        edit_type="inpaint",
+        cn_selection="Custom...",
+        cn_type="inpaint",
+    )
+    route = resolve_input_routing(
+        job,
+        model={"engine_name": "flux1-fill-dev-fp8.safetensors"},
+        model_family="flux_fill",
+        studio_mode="toolbox",
+    )
+    assert route.outfit_auto_mask is True
+    mode = resolve_comfy_workflow_mode(
+        route,
+        model={"engine_name": "flux1-fill-dev-fp8.safetensors"},
+        model_family="flux_fill",
+        input_filename="person.png",
+    )
+    assert mode == "outfit_transfer"
+
+
 def test_resolve_input_routing_extend_uses_outpaint_not_inpaint():
     job = SimpleNamespace(
         reference_role="inpaint",

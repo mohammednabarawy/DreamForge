@@ -93,6 +93,11 @@ COMPANION_SOURCES: dict[str, dict[str, Any]] = {
         "url": f"{HF_BASE_FLUX2_VAE}/flux2-vae.safetensors",
         "min_bytes": 300 * 1024 * 1024,
     },
+    "segformer_b2_clothes": {
+        "url": "https://huggingface.co/mattmdjaga/segformer_b2_clothes/resolve/main/model.safetensors",
+        "min_bytes": 100 * 1024 * 1024,
+        "catalog_id": "segformer_b2_clothes",
+    },
 }
 
 # Studio upscalers / inpaint assets (Krita AI Diffusion manifest URLs).
@@ -281,6 +286,7 @@ def _collect_task_missing(
     upscale_method: str | None,
     performance: str | None,
     template_id: str | None = None,
+    edit_task: str | None = None,
 ) -> tuple[Any | None, list[dict]]:
     from dreamforge_cli_inventory import (
         check_model_dependencies,
@@ -314,6 +320,10 @@ def _collect_task_missing(
     post_upscale = chain_method or upscale_method
     if post_upscale and studio_mode in {None, "edit", "inpaint", "generate"}:
         missing.extend(check_studio_resources("upscale", upscale_method=post_upscale))
+    if edit_task:
+        from dreamforge_comfy_manager import missing_workflow_model_entries
+
+        missing.extend(missing_workflow_model_entries(edit_task=edit_task))
     return resolved_model, tag_companion_tiers(_merge_missing_items(missing))
 
 
@@ -435,6 +445,7 @@ def ensure_creative_task_ready(
         upscale_method=upscale_method,
         performance=performance,
         template_id=template_id,
+        edit_task=edit_task,
     )
     tier_a = [item for item in missing if item.get("download_tier") == "A"]
     tier_b = [item for item in missing if item.get("download_tier") == "B"]
@@ -482,6 +493,7 @@ def ensure_creative_task_ready(
         upscale_method=upscale_method,
         performance=performance,
         template_id=template_id,
+        edit_task=edit_task,
     )
     still_a = [item for item in missing_after if item.get("download_tier") == "A"]
     still_b = [item for item in missing_after if item.get("download_tier") == "B"]

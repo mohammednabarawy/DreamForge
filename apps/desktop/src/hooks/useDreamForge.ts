@@ -2052,6 +2052,7 @@ export function useDreamForge() {
           ...(appConfig?.ui ?? {}),
           ...(patch.ui ?? {}),
         },
+        custom_tools: patch.custom_tools ?? appConfig?.custom_tools,
       } as DreamForgeAppConfigPatch;
       const saved = await saveAppConfig(merged);
       setAppConfig(saved);
@@ -2277,6 +2278,7 @@ export function useDreamForge() {
         modelGallery: modelGalleryAll,
         studioMode,
         inpaintMaskSyncing,
+        customTools: appConfig?.custom_tools,
       });
       if (!readiness.ok) {
         setStatus(readiness.reason);
@@ -2312,7 +2314,11 @@ export function useDreamForge() {
         use_comfy_server: true,
         workflow_mode:
           sanitized.workflow_mode ??
-          (studioMode === "generate" ? "generate" : studioMode),
+          (studioMode === "generate"
+            ? "generate"
+            : studioMode === "toolbox"
+              ? "edit"
+              : studioMode),
       };
       const activeModel = findGalleryModel(modelGalleryAll, params.model ?? "");
       const modelFamily = (activeModel?.family ?? "").toLowerCase();
@@ -2600,6 +2606,7 @@ export function useDreamForge() {
             modelGallery: modelGalleryAll,
             studioMode: targetMode,
             inpaintMaskSyncing,
+            customTools: appConfig?.custom_tools,
           });
           if (!localReady.ok && !localReady.missingCompanions) {
             setStatus(localReady.reason);
@@ -3172,6 +3179,7 @@ export function useDreamForge() {
         studioMode,
         editPlanState: isEditFamilyMode(studioMode) ? editPlanState : undefined,
         inpaintMaskSyncing,
+        customTools: appConfig?.custom_tools,
       });
     },
     [
@@ -3188,6 +3196,7 @@ export function useDreamForge() {
       studioMode,
       editPlanState,
       inpaintMaskSyncing,
+      appConfig?.custom_tools,
     ],
   );
   const effectiveGenerateReadiness = useMemo(() => generateReadiness, [generateReadiness]);
@@ -3524,7 +3533,7 @@ export function useDreamForge() {
       ) {
         void applyModelProfile(plan.profileItem);
       }
-      if (mode === "inpaint" || mode === "edit" || mode === "upscale") {
+      if (mode === "inpaint" || mode === "edit" || mode === "upscale" || mode === "toolbox") {
         let studioMissing: ModelDependencyItem[] = [];
         try {
           const studioRes = await checkStudioResources(
@@ -4125,6 +4134,14 @@ export function useDreamForge() {
     return { ready: merged.length === 0, stillMissing: merged };
   };
 
+  const installCompanionItems = useCallback(
+    (items: ModelDependencyItem[], model?: string) => {
+      const resolved = (model || settingsRef.current.model || "workflow-assets").trim();
+      startCompanionDownload(resolved || "workflow-assets", items);
+    },
+    [startCompanionDownload],
+  );
+
   const downloadMissingCompanions = useCallback(async () => {
     const plan = agentPlanRef.current;
     const plannedModel =
@@ -4335,6 +4352,7 @@ export function useDreamForge() {
     creativeTask,
     refreshModelDependencies,
     downloadMissingCompanions,
+    installCompanionItems,
     companionDownload,
     lowerVramProfile: lowerVramProfileHandler,
     canGenerate: effectiveGenerateReadiness.ok,

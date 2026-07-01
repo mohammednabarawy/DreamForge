@@ -1083,22 +1083,58 @@ def cmd_suggest_dynamic_preset(params: dict) -> dict:
 
 def cmd_install_custom_node_packs(params: dict) -> dict:
     from dreamforge_comfy_install import ensure_custom_node_pack
+    from dreamforge_comfy_manager import (
+        fix_packs_via_manager,
+        install_packs_via_manager,
+        resolve_pack_install_strategy,
+    )
     from dreamforge_workflow_planner import _recipe_entry_for_pack, assess_custom_node_pack
 
     pack_ids = params.get("pack_ids") or params.get("packs") or []
     if isinstance(pack_ids, str):
         pack_ids = [pack_ids]
+    strategy = str(params.get("strategy") or "auto").strip().lower()
+    pack_strategies = params.get("pack_strategies") if isinstance(params.get("pack_strategies"), dict) else {}
     messages: list[str] = []
+    from dreamforge_comfy_manager import make_progress_sink
 
-    def _progress(message: str) -> None:
-        messages.append(message)
+    _progress = make_progress_sink(messages, progress_file=params.get("progress_file"))
 
     installed: list[str] = []
     errors: list[dict[str, str]] = []
+    manager_ids: list[str] = []
+    pinned_ids: list[str] = []
     for raw_id in pack_ids:
         pack_id = str(raw_id).strip()
         if not pack_id:
             continue
+        entry = _recipe_entry_for_pack(pack_id)
+        pack_strategy = str(pack_strategies.get(pack_id) or strategy or "auto").strip().lower()
+        if pack_strategy == "auto":
+            pack_strategy = resolve_pack_install_strategy(entry, pack_id)
+        if pack_strategy == "manager":
+            manager_ids.append(pack_id)
+        else:
+            if not entry:
+                errors.append({"pack_id": pack_id, "error": "unknown custom node pack"})
+                continue
+            pinned_ids.append(pack_id)
+
+    if manager_ids:
+        manager_result = install_packs_via_manager(
+            manager_ids,
+            progress=_progress,
+            exit_on_fail=bool(params.get("exit_on_fail")),
+        )
+        messages.extend(manager_result.messages)
+        installed.extend(manager_result.installed)
+        errors.extend(manager_result.errors)
+        if manager_result.installed and params.get("fix_manager_deps", True):
+            fix_result = fix_packs_via_manager(manager_result.installed, progress=_progress)
+            messages.extend(fix_result.messages)
+            errors.extend(fix_result.errors)
+
+    for pack_id in pinned_ids:
         entry = _recipe_entry_for_pack(pack_id)
         if not entry:
             errors.append({"pack_id": pack_id, "error": "unknown custom node pack"})
@@ -1108,6 +1144,16 @@ def cmd_install_custom_node_packs(params: dict) -> dict:
             installed.append(pack_id)
         except Exception as exc:
             errors.append({"pack_id": pack_id, "error": str(exc)})
+
+    needs_restart = bool(installed)
+    if installed and params.get("restart_comfy", True):
+        try:
+            from dreamforge_comfy_server import restart_managed_comfy_server
+
+            _progress("Restarting ComfyUI to register new custom nodes…")
+            restart_managed_comfy_server(timeout_s=90.0, reason="custom_node_install")
+        except Exception as exc:
+            messages.append(f"ComfyUI restart failed: {exc}")
 
     object_info = None
     if installed and not params.get("skip_object_info"):
@@ -1127,7 +1173,64 @@ def cmd_install_custom_node_packs(params: dict) -> dict:
         "packs": packs,
         "errors": errors,
         "messages": messages,
-        "needs_comfy_restart": bool(installed),
+        "needs_comfy_restart": needs_restart,
+    }
+
+
+def cmd_install_workflow_models(params: dict) -> dict:
+    from dreamforge_comfy_manager import install_workflow_models, make_progress_sink, workflow_model_ready
+
+    catalog_ids = params.get("catalog_ids") or params.get("models") or []
+    if isinstance(catalog_ids, str):
+        catalog_ids = [catalog_ids]
+    messages: list[str] = []
+    _progress = make_progress_sink(messages, progress_file=params.get("progress_file"))
+
+    result = install_workflow_models(
+        [str(item).strip() for item in catalog_ids if str(item).strip()],
+        progress=_progress,
+        prefer_manager=bool(params.get("prefer_manager", True)),
+    )
+    ready = bool(result.installed) and not result.errors
+    if catalog_ids:
+        ready = all(workflow_model_ready(str(item)) for item in catalog_ids) and not result.errors
+    return {
+        "ok": ready,
+        "ready": ready,
+        "installed": result.installed,
+        "errors": result.errors,
+        "messages": messages,
+    }
+
+
+def cmd_get_manager_queue_status(_params: dict) -> dict:
+    from dreamforge_comfy_manager import get_manager_queue_status
+
+    return get_manager_queue_status()
+
+
+def cmd_custom_tool_dependencies(params: dict) -> dict:
+    from dreamforge_custom_tools import custom_tool_dependency_entries, find_custom_tool
+
+    tool_id = str(params.get("tool_id") or params.get("custom_tool_id") or "").strip()
+    tool = find_custom_tool(tool_id)
+    if not tool:
+        return {"ok": False, "error": f"custom tool not found: {tool_id}", "missing": []}
+    object_info = None
+    if params.get("use_object_info"):
+        try:
+            from dreamforge_comfy_server import fetch_comfy_object_info
+
+            object_info = fetch_comfy_object_info(timeout_s=20.0)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc), "missing": []}
+    missing = custom_tool_dependency_entries(tool, object_info=object_info)
+    return {
+        "ok": True,
+        "ready": not missing,
+        "missing": missing,
+        "tool_id": tool_id,
+        "tool_name": tool.get("name") or tool_id,
     }
 
 
@@ -1389,6 +1492,9 @@ HANDLERS = {
     "suggest_dynamic_preset": cmd_suggest_dynamic_preset,
     "check_custom_node_packs": cmd_check_custom_node_packs,
     "install_custom_node_packs": cmd_install_custom_node_packs,
+    "install_workflow_models": cmd_install_workflow_models,
+    "get_manager_queue_status": cmd_get_manager_queue_status,
+    "custom_tool_dependencies": cmd_custom_tool_dependencies,
     "check_comfy_backend": cmd_check_comfy_backend,
     "install_comfy_backend": cmd_install_comfy_backend,
     **STUDIO_HANDLERS,

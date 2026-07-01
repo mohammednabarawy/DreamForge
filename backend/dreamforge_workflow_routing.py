@@ -95,6 +95,8 @@ class WorkflowRoute:
     warnings: list[str] = field(default_factory=list)
     comfy_mode: str | None = None
     edit_task: str | None = None
+    custom_tool_id: str | None = None
+    outfit_auto_mask: bool = False
 
 
 def _reference_role(job, studio_mode: str | None = None) -> str:
@@ -304,6 +306,8 @@ def resolve_input_routing(
         label = "Transferring outfit"
     elif _norm(getattr(job, "edit_task", None)) == "cutout_compose":
         label = "Composing cutout"
+    elif _norm(getattr(job, "edit_task", None)) == "portrait_master":
+        label = "Portrait Master"
 
     return WorkflowRoute(
         plan_mode=plan_mode,
@@ -318,6 +322,8 @@ def resolve_input_routing(
         route_label=label,
         warnings=warnings,
         edit_task=_norm(getattr(job, "edit_task", None)) or None,
+        custom_tool_id=str(getattr(job, "custom_tool_id", None) or "").strip() or None,
+        outfit_auto_mask=bool(getattr(job, "outfit_auto_mask", False)),
     )
 
 
@@ -380,8 +386,17 @@ def resolve_comfy_workflow_mode(
 ) -> str:
     if getattr(route, "edit_task", None) == "photo_restore":
         return "photo_restore"
+    if getattr(route, "edit_task", None) == "portrait_master":
+        return "portrait_master"
     if getattr(route, "edit_task", None) == "cutout_compose":
         return "cutout_compose"
+    if (
+        getattr(route, "edit_task", None) == "outfit_transfer"
+        and bool(getattr(route, "outfit_auto_mask", False))
+    ):
+        return "outfit_transfer"
+    if str(getattr(route, "custom_tool_id", None) or "").strip():
+        return "custom_tool"
 
     from dreamforge_comfy_workflow_import import comfy_workflow_mode
 

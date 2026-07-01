@@ -96,6 +96,19 @@ export function resolveEffectiveRoute(
     };
   }
 
+  if (studioMode === "toolbox") {
+    const task = (settings.edit_task ?? "").trim().toLowerCase();
+    const hasMask = Boolean(settings.inpaint_mask_path?.trim());
+    const inpaintLike =
+      task === "outfit_transfer" && hasMask && settings.edit_type === "inpaint";
+    return {
+      task: "edit",
+      sourcePath: settings.input_image?.trim(),
+      isGenerateReference: false,
+      outputKind: inpaintLike ? "inpaint" : "edit",
+    };
+  }
+
   return {
     task: "edit",
     sourcePath: settings.input_image?.trim(),
@@ -124,6 +137,13 @@ export function sanitizeSettingsForStudioMode(
     if (studioMode === "edit") {
       next.inpaint_mask_path = undefined;
     }
+    return next;
+  }
+
+  if (studioMode === "toolbox") {
+    const next = { ...settings };
+    next.upscale_image = undefined;
+    next.upscale_method = undefined;
     return next;
   }
 

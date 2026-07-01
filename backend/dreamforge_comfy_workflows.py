@@ -2086,39 +2086,65 @@ def comfy_flux_fill_inpaint(args: dict[str, Any]) -> dict[str, Any]:
     prompt = str(args.get("prompt", ""))
     negative = str(args.get("negative", "")).strip()
     image_filename = str(args["image"])
-    mask_filename = str(args["mask"])
+    mask_filename = str(args.get("mask") or "")
     steps = int(args.get("steps", 20))
     guidance = float(args.get("guidance", args.get("cfg", 30.0)))
     sampler = str(args.get("sampler_name", "euler"))
     scheduler = str(args.get("scheduler", "normal"))
     seed = int(args.get("seed", 0))
     denoise = float(args.get("denoise", args.get("edit_strength", 1.0)))
-    g: dict[str, Any] = {}
-    model_out, clip_out, vae_out, _next = _add_model_loader(g, {**args, "ckpt_name": ckpt})
-    g["2"] = _node("LoadImage", {"image": image_filename, "upload": "image"})
-    g["3"] = _node("LoadImage", {"image": mask_filename, "upload": "image"})
-    g["4"] = _node("ImageToMask", {"image": ["3", 0], "channel": "red"})
-    # Mask grow/feather is applied in prepare_inpaint_mask_bytes before upload.
-    mask_link: list[str | int] = ["4", 0]
-    g["6"] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
-    if negative:
-        g["7"] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
-        negative_out: list[str | int] = ["7", 0]
+    pixels_link = args.get("pixels_link")
+    mask_link = args.get("mask_link")
+    g: dict[str, Any] = dict(args.get("base_graph") or {})
+    if args.get("model_out") and args.get("clip_out") and args.get("vae_out"):
+        model_out = args["model_out"]
+        clip_out = args["clip_out"]
+        vae_out = args["vae_out"]
+        next_id = int(args.get("node_start") or 20)
     else:
-        g["7"] = _node("ConditioningZeroOut", {"conditioning": ["6", 0]})
-        negative_out = ["7", 0]
-    g["8"] = _node("FluxGuidance", {"conditioning": ["6", 0], "guidance": guidance})
-    g["9"] = _node(
+        model_out, clip_out, vae_out, next_id = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    if pixels_link is None:
+        g[str(next_id)] = _node("LoadImage", {"image": image_filename, "upload": "image"})
+        pixels_link = [str(next_id), 0]
+        next_id += 1
+    if mask_link is None:
+        if not mask_filename:
+            raise ValueError("mask is required for flux fill inpaint workflow")
+        g[str(next_id)] = _node("LoadImage", {"image": mask_filename, "upload": "image"})
+        next_id += 1
+        g[str(next_id)] = _node("ImageToMask", {"image": [str(next_id - 1), 0], "channel": "red"})
+        mask_link = [str(next_id), 0]
+        next_id += 1
+    # Mask grow/feather is applied in prepare_inpaint_mask_bytes before upload.
+    pos_id = str(next_id)
+    g[pos_id] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
+    next_id += 1
+    if negative:
+        neg_id = str(next_id)
+        g[neg_id] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
+        negative_out: list[str | int] = [neg_id, 0]
+        next_id += 1
+    else:
+        neg_id = str(next_id)
+        g[neg_id] = _node("ConditioningZeroOut", {"conditioning": [pos_id, 0]})
+        negative_out = [neg_id, 0]
+        next_id += 1
+    guidance_id = str(next_id)
+    g[guidance_id] = _node("FluxGuidance", {"conditioning": [pos_id, 0], "guidance": guidance})
+    next_id += 1
+    conditioning_id = str(next_id)
+    g[conditioning_id] = _node(
         "InpaintModelConditioning",
         {
-            "positive": ["8", 0],
+            "positive": [guidance_id, 0],
             "negative": negative_out,
             "vae": vae_out,
-            "pixels": ["2", 0],
+            "pixels": pixels_link,
             "mask": mask_link,
             "noise_mask": True,
         },
     )
+    next_id += 1
     # DifferentialDiffusion is NOT part of the canonical ComfyUI Flux Fill graph.
     # It overrides the model's denoise-mask function with a per-timestep threshold
     # schedule that, combined with InpaintModelConditioning(noise_mask=True), can
@@ -2127,17 +2153,20 @@ def comfy_flux_fill_inpaint(args: dict[str, Any]) -> dict[str, Any]:
     # off by default; it can be re-enabled for experimentation via env var.
     use_diff_diff = os.environ.get("DREAMFORGE_FLUX_FILL_DIFFDIFF", "0") == "1"
     if use_diff_diff:
-        g["10"] = _node("DifferentialDiffusion", {"model": model_out})
-        sampler_model: list[str | int] = ["10", 0]
+        diff_id = str(next_id)
+        g[diff_id] = _node("DifferentialDiffusion", {"model": model_out})
+        sampler_model: list[str | int] = [diff_id, 0]
+        next_id += 1
     else:
         sampler_model = model_out
-    g["11"] = _node(
+    sampler_id = str(next_id)
+    g[sampler_id] = _node(
         "KSampler",
         {
             "model": sampler_model,
-            "positive": ["9", 0],
-            "negative": ["9", 1],
-            "latent_image": ["9", 2],
+            "positive": [conditioning_id, 0],
+            "negative": [conditioning_id, 1],
+            "latent_image": [conditioning_id, 2],
             "seed": seed,
             "steps": steps,
             "cfg": 1.0,
@@ -2146,12 +2175,71 @@ def comfy_flux_fill_inpaint(args: dict[str, Any]) -> dict[str, Any]:
             "denoise": denoise,
         },
     )
-    g["12"] = _vae_decode_node(args, ["11", 0], vae_out)
-    g["13"] = _node(
+    next_id += 1
+    decode_id = str(next_id)
+    g[decode_id] = _vae_decode_node(args, [sampler_id, 0], vae_out)
+    next_id += 1
+    g[str(next_id)] = _node(
         "SaveImage",
-        {"images": ["12", 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+        {"images": [decode_id, 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
     )
     return g
+
+
+def comfy_outfit_transfer(args: dict[str, Any]) -> dict[str, Any]:
+    """Outfit transfer with Segformer garment mask + Flux Fill inpaint."""
+    image_filename = str(args["image"])
+    toggles = dict(args.get("segformer_toggles") or {})
+    g: dict[str, Any] = {}
+    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": str(args["ckpt_name"])})
+    g[str(n)] = _node("LoadImage", {"image": image_filename, "upload": "image"})
+    pixels_link: list[str | int] = [str(n), 0]
+    n += 1
+    segformer_inputs: dict[str, Any] = {
+        "image": pixels_link,
+        "detail_method": str(args.get("segformer_detail_method", "GuidedFilter")),
+        "detail_erode": int(args.get("segformer_detail_erode", 8)),
+        "detail_dilate": int(args.get("segformer_detail_dilate", 6)),
+        "black_point": float(args.get("segformer_black_point", 0.15)),
+        "white_point": float(args.get("segformer_white_point", 0.99)),
+        "process_detail": bool(args.get("segformer_process_detail", True)),
+        "device": str(args.get("segformer_device", "cuda")),
+        "max_megapixels": float(args.get("segformer_max_megapixels", 2.0)),
+    }
+    for key, default in (
+        ("face", False),
+        ("hair", False),
+        ("hat", False),
+        ("sunglass", False),
+        ("left_arm", False),
+        ("right_arm", False),
+        ("left_leg", False),
+        ("right_leg", False),
+        ("upper_clothes", False),
+        ("skirt", False),
+        ("pants", False),
+        ("dress", False),
+        ("belt", False),
+        ("shoe", False),
+        ("bag", False),
+        ("scarf", False),
+    ):
+        segformer_inputs[key] = bool(toggles.get(key, default))
+    g[str(n)] = _node("LayerMask: SegformerB2ClothesUltra", segformer_inputs)
+    mask_link: list[str | int] = [str(n), 1]
+    n += 1
+    return comfy_flux_fill_inpaint(
+        {
+            **args,
+            "base_graph": g,
+            "pixels_link": pixels_link,
+            "mask_link": mask_link,
+            "model_out": model_out,
+            "clip_out": clip_out,
+            "vae_out": vae_out,
+            "node_start": n,
+        }
+    )
 
 
 def comfy_inpaint_basic(args: dict[str, Any]) -> dict[str, Any]:
@@ -3313,7 +3401,7 @@ def comfy_photo_restore(args: dict[str, Any]) -> dict[str, Any]:
     # Apply Lineart
     g[str(n)] = _node("SetUnionControlNetType", {
         "control_net": [cn_model_node, 0],
-        "type": "lineart",
+        "type": "canny/lineart/anime_lineart/mlsd",
     })
     lineart_cn = [str(n), 0]
     n += 1
@@ -3433,3 +3521,161 @@ def comfy_photo_restore(args: dict[str, Any]) -> dict[str, Any]:
         {"images": decoded_image, "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
     )
     return g
+
+
+def comfy_portrait_master(args: dict[str, Any]) -> dict[str, Any]:
+    """Portrait Master: SDXL img2img with OpenPose + depth ControlNet from the reference portrait."""
+    ckpt = str(args["ckpt_name"])
+    prompt = str(args.get("prompt", ""))
+    negative = str(args.get("negative", ""))
+    image_filename = args.get("image") or args.get("input_image") or ""
+    if not image_filename:
+        raise ValueError("image is required for portrait_master workflow")
+    controlnet_model = str(args.get("controlnet_model") or args.get("cn_model") or "")
+    if not controlnet_model:
+        raise ValueError("controlnet_model is required for portrait_master workflow")
+
+    width = int(args.get("width", 1024))
+    height = int(args.get("height", 1024))
+    steps = int(args.get("steps", 20))
+    cfg = float(args.get("cfg", 5.5))
+    sampler = str(args.get("sampler_name", "dpmpp_2m"))
+    scheduler = str(args.get("scheduler", "karras"))
+    seed = int(args.get("seed", 0))
+    denoise = float(args.get("denoise", args.get("edit_strength", 0.55)))
+
+    pose_strength = float(args.get("portrait_pose_strength", 0.65))
+    depth_strength = float(args.get("portrait_depth_strength", 0.55))
+    portrait_megapixels = float(args.get("portrait_megapixels", 2.0))
+
+    g: dict[str, Any] = {}
+    g["1"] = _node("LoadImage", {"image": str(image_filename), "upload": "image"})
+    g["2"] = _node(
+        "ImageScaleToTotalPixels",
+        {
+            "image": ["1", 0],
+            "upscale_method": str(args.get("portrait_scale_method", "nearest-exact")),
+            "megapixels": portrait_megapixels,
+            "resolution_steps": int(args.get("portrait_resolution_steps", 1)),
+        },
+    )
+    scaled_image = ["2", 0]
+
+    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+
+    g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
+    pos = [str(n), 0]
+    n += 1
+
+    g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
+    neg = [str(n), 0]
+    n += 1
+
+    g[str(n)] = _node(
+        "OpenposePreprocessor",
+        {
+            "image": scaled_image,
+            "detect_hand": "enable",
+            "detect_body": "enable",
+            "detect_face": "enable",
+            "resolution": 1024,
+        },
+    )
+    pose_preprocessed = [str(n), 0]
+    n += 1
+
+    g[str(n)] = _node(
+        "DepthAnythingV2Preprocessor",
+        {
+            "image": scaled_image,
+            "ckpt_name": "depth_anything_v2_vitl.pth",
+            "resolution": 1024,
+        },
+    )
+    depth_preprocessed = [str(n), 0]
+    n += 1
+
+    g[str(n)] = _node("ControlNetLoader", {"control_net_name": controlnet_model})
+    cn_model_node = str(n)
+    n += 1
+
+    g[str(n)] = _node(
+        "SetUnionControlNetType",
+        {"control_net": [cn_model_node, 0], "type": "openpose"},
+    )
+    pose_cn = [str(n), 0]
+    n += 1
+
+    g[str(n)] = _node(
+        "ControlNetApplyAdvanced",
+        {
+            "positive": pos,
+            "negative": neg,
+            "control_net": pose_cn,
+            "image": pose_preprocessed,
+            "strength": pose_strength,
+            "start_percent": 0.0,
+            "end_percent": 1.0,
+        },
+    )
+    pos_pose, neg_pose = [str(n), 0], [str(n), 1]
+    n += 1
+
+    g[str(n)] = _node(
+        "SetUnionControlNetType",
+        {"control_net": [cn_model_node, 0], "type": "depth"},
+    )
+    depth_cn = [str(n), 0]
+    n += 1
+
+    g[str(n)] = _node(
+        "ControlNetApplyAdvanced",
+        {
+            "positive": pos_pose,
+            "negative": neg_pose,
+            "control_net": depth_cn,
+            "image": depth_preprocessed,
+            "strength": depth_strength,
+            "start_percent": 0.0,
+            "end_percent": 0.9,
+        },
+    )
+    pos_final, neg_final = [str(n), 0], [str(n), 1]
+    n += 1
+
+    g[str(n)] = _node("VAEEncode", {"pixels": scaled_image, "vae": vae_out})
+    latent = [str(n), 0]
+    n += 1
+
+    g[str(n)] = _node(
+        "KSampler",
+        _sampler_inputs(
+            model_out=model_out,
+            positive=pos_final,
+            negative=neg_final,
+            latent=latent,
+            seed=seed,
+            steps=steps,
+            cfg=cfg,
+            sampler=sampler,
+            scheduler=scheduler,
+            denoise=denoise,
+        ),
+    )
+    samp = str(n)
+    n += 1
+
+    g[str(n)] = _vae_decode_node(args, [samp, 0], vae_out)
+    dec = str(n)
+    g[str(n + 1)] = _node(
+        "SaveImage",
+        {"images": [dec, 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+    )
+    return g
+
+
+def build_custom_tool_prompt_graph(*_args, **_kwargs):
+    """Registry symbol for feature-surface audit; runtime graphs live in dreamforge_custom_tools."""
+    raise RuntimeError(
+        "Custom tool graphs are built through dreamforge_custom_tools.build_custom_tool_prompt_graph"
+    )

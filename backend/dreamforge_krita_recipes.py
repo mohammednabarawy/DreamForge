@@ -200,6 +200,13 @@ COMFY_INSTALL_RECIPE: dict[str, Any] = {
             "reason": "UltralyticsDetectorProvider bbox/segm models for FaceDetailer.",
             "nodes": ["UltralyticsDetectorProvider"],
         },
+        {
+            "id": "ComfyUI_LayerStyle",
+            "url": "https://github.com/chflame163/ComfyUI_LayerStyle",
+            "install_via": "manager",
+            "reason": "SegformerB2ClothesUltra auto garment masks for outfit transfer.",
+            "nodes": ["LayerMask: SegformerB2ClothesUltra"],
+        },
     ],
 }
 

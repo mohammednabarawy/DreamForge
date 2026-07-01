@@ -1,6 +1,5 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use futures_util::StreamExt;
-use image::imageops::FilterType;
 use image::GenericImageView;
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
@@ -2897,6 +2896,42 @@ fn pick_text_file() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
+fn pick_json_file() -> Result<Option<String>, String> {
+    let picked = rfd::FileDialog::new()
+        .add_filter("JSON", &["json"])
+        .pick_file();
+    Ok(picked.map(|path| path.to_string_lossy().into_owned()))
+}
+
+#[tauri::command]
+fn read_text_file(path: String) -> Result<String, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("path is required".to_string());
+    }
+    let file = Path::new(trimmed);
+    if !file.is_file() {
+        return Err(format!("File not found: {trimmed}"));
+    }
+    fs::read_to_string(file).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn write_text_file(path: String, content: String) -> Result<(), String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("path is required".to_string());
+    }
+    let file = Path::new(trimmed);
+    if let Some(parent) = file.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+    }
+    fs::write(file, content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn pick_folder() -> Result<Option<String>, String> {
     let picked = rfd::FileDialog::new().pick_folder();
     Ok(picked.map(|path| path.to_string_lossy().into_owned()))
@@ -3803,8 +3838,11 @@ pub fn run() {
             bridge_invoke,
             write_temp_png,
             read_image_preview,
+            read_text_file,
+            write_text_file,
             pick_image_file,
             pick_text_file,
+            pick_json_file,
             pick_folder,
             read_live_preview,
             invoke_generation,

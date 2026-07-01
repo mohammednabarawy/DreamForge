@@ -72,6 +72,7 @@ type Props = {
   modelDependencies?: { missing: Array<{ id?: string; relative?: string; note?: string }>; ready: boolean };
   companionDownloadBusy?: boolean;
   onDownloadCompanions?: () => void;
+  onInstallCompanionItems?: (items: import("../lib/tauri-api").ModelDependencyItem[]) => void;
   onRefreshModelDependencies?: () => void;
   studioSettings?: StudioSettings | null;
   onSaveStudioSettings?: (patch: StudioSettings) => void | Promise<void>;
@@ -112,6 +113,7 @@ export function InspectorPanel({
   modelDependencies,
   companionDownloadBusy,
   onDownloadCompanions,
+  onInstallCompanionItems,
   onRefreshModelDependencies,
   studioSettings,
   onSaveStudioSettings,
@@ -639,6 +641,7 @@ export function InspectorPanel({
               activeModelLabel={activeModelLabel}
               advancedMode={advancedMode}
               modelGallery={modelGallery}
+              onInstallCompanionItems={onInstallCompanionItems}
             />
           </div>
         )}

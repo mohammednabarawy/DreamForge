@@ -1,5 +1,5 @@
 import type { GenerationSettings } from "./tauri-api";
-import type { AgentPlanSnapshot, WorkflowReadiness } from "./studioBridge";
+import type { AgentPlanResult, AgentPlanSnapshot, WorkflowReadiness } from "./studioBridge";
 import {
   isEditFamilyMode,
   modelBasename,
@@ -164,8 +164,8 @@ export function buildPlanSnapshotFromDryRun(args: {
   const mergedForSnapshot: GenerationSettings = { ...args.baseSettings, ...proposed };
   const mode =
     typeof args.planPayload.mode === "string"
-      ? (args.planPayload.mode as StudioMode)
-      : args.studioMode;
+      ? (args.planPayload.mode as AgentPlanResult["mode"])
+      : (args.studioMode === "toolbox" ? "edit" : args.studioMode) as AgentPlanResult["mode"];
 
   return {
     source: "dry-run",

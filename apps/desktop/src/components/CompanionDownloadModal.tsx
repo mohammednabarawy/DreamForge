@@ -86,6 +86,19 @@ function phaseMessage(phase: CompanionDownloadPhase, pct: number): string {
   return "Ready.";
 }
 
+function installViaLabel(installVia?: string): string | null {
+  if (installVia === "manager") return "ComfyUI Manager";
+  if (installVia === "pinned") return "Pinned pack";
+  if (installVia === "direct") return "Workflow model";
+  return null;
+}
+
+function hasManagerSecurityLines(lines: CompanionDownloadLine[]): boolean {
+  return lines.some((line) =>
+    /security policy|manager_security_blocked|blocked by comfyui-manager/i.test(line.text),
+  );
+}
+
 export function CompanionDownloadModal({
   open,
   phase,
@@ -127,6 +140,10 @@ export function CompanionDownloadModal({
     "—";
   const downloadableCount = pendingMissing.filter((item) => item.url).length;
   const customNodeCount = pendingMissing.filter((item) => item.kind === "custom_node_pack").length;
+  const managerNodeCount = pendingMissing.filter(
+    (item) => item.kind === "custom_node_pack" && item.install_via === "manager",
+  ).length;
+  const pinnedNodeCount = customNodeCount - managerNodeCount;
   const canApprove = pendingMissing.length > 0 && (downloadableCount > 0 || customNodeCount > 0);
   const fileDownloaded = fileProgress?.downloaded ?? 0;
   const fileTotal = fileProgress?.total ?? 0;
@@ -224,6 +241,13 @@ export function CompanionDownloadModal({
             </div>
           </div>
 
+          {hasManagerSecurityLines(lines) && (
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] leading-snug text-amber-100">
+              ComfyUI-Manager blocked one or more installs. In ComfyUI open Manager → Settings →
+              Security, allow the repository, or retry with a pinned DreamForge pack when offered.
+            </div>
+          )}
+
           <div>
             <div className="mb-1 flex items-center justify-between gap-2">
               <p className="truncate font-mono text-[11px] text-dfui-fg" title={fileName}>
@@ -290,6 +314,11 @@ export function CompanionDownloadModal({
                       <p className="mt-0.5 truncate font-mono text-[10px] text-dfui-muted">
                         {item.relative ?? item.expected_path ?? item.category ?? "models"}
                       </p>
+                      {installViaLabel(item.install_via) && (
+                        <p className="mt-1 text-[10px] font-medium text-df-blue">
+                          {installViaLabel(item.install_via)}
+                        </p>
+                      )}
                     </div>
                     {item.url ? (
                       <a
@@ -388,7 +417,9 @@ export function CompanionDownloadModal({
                 className="rounded-lg bg-df-blue px-3 py-1.5 text-xs font-semibold text-white hover:bg-df-blue/90 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {customNodeCount > 0 && downloadableCount === 0
-                  ? `Install ${customNodeCount} node pack(s)`
+                  ? managerNodeCount > 0 && pinnedNodeCount === 0
+                    ? `Install ${managerNodeCount} pack(s) via ComfyUI Manager`
+                    : `Install ${customNodeCount} node pack(s)`
                   : customNodeCount > 0
                     ? `Install & download ${pendingMissing.length} item(s)`
                     : downloadableCount

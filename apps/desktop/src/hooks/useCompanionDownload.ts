@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
-import { downloadCompanionEntries, installCustomNodePacks, verifyCompanionEntries } from "../lib/studioBridge";
+import { appDataDir, join } from "@tauri-apps/api/path";
+import { downloadCompanionEntries, installCustomNodePacks, installWorkflowModels, verifyCompanionEntries } from "../lib/studioBridge";
 import {
   checkModelDependencies,
   downloadModel,
   onDownloadProgress,
+  readTextFile,
   type DownloadProgressPayload,
   type ModelDependencyItem,
 } from "../lib/tauri-api";
-import { isCustomNodePackItem } from "../lib/companionAssets";
+import { isCustomNodePackItem, isWorkflowModelItem } from "../lib/companionAssets";
+import { formatCompanionInstallError } from "../lib/companionInstallErrors";
 
 export type CompanionDownloadPhase = "idle" | "confirm" | "running" | "done" | "error";
 
@@ -50,6 +53,54 @@ function companionFilename(item: ModelDependencyItem): string {
   const relative = item.relative ?? "";
   const parts = relative.split("/");
   return parts[parts.length - 1] || item.id || "companion.safetensors";
+}
+
+async function companionInstallProgressPath(): Promise<string | null> {
+  if (!isTauri()) return null;
+  try {
+    return await join(await appDataDir(), "companion_install_progress.jsonl");
+  } catch {
+    return null;
+  }
+}
+
+type ProgressPollHandle = {
+  stop: () => void;
+};
+
+function startInstallProgressPolling(
+  progressPath: string,
+  onLine: (message: string) => void,
+): ProgressPollHandle {
+  let offset = 0;
+  let stopped = false;
+  const timer = window.setInterval(async () => {
+    if (stopped) return;
+    try {
+      const content = await readTextFile(progressPath);
+      if (!content || content.length <= offset) return;
+      const chunk = content.slice(offset);
+      offset = content.length;
+      for (const line of chunk.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const parsed = JSON.parse(trimmed) as { message?: string };
+          if (parsed.message) onLine(parsed.message);
+        } catch {
+          onLine(trimmed);
+        }
+      }
+    } catch {
+      /* progress file not created yet */
+    }
+  }, 450);
+  return {
+    stop: () => {
+      stopped = true;
+      window.clearInterval(timer);
+    },
+  };
 }
 
 function itemDestination(item: ModelDependencyItem): string {
@@ -176,7 +227,25 @@ export function useCompanionDownload(options?: Options) {
       }
 
       const customNodePacks = missing.filter(isCustomNodePackItem);
-      const modelAssets = missing.filter((item) => !isCustomNodePackItem(item));
+      const workflowModels = missing.filter(isWorkflowModelItem);
+      const modelAssets = missing.filter(
+        (item) => !isCustomNodePackItem(item) && !isWorkflowModelItem(item),
+      );
+
+      const progressPath = await companionInstallProgressPath();
+      let progressPoll: ProgressPollHandle | null = null;
+      const beginLiveProgress = () => {
+        if (!progressPath) return;
+        progressPoll?.stop();
+        progressPoll = startInstallProgressPolling(progressPath, (message) => {
+          if (runId !== runIdRef.current) return;
+          append("info", message);
+        });
+      };
+      const endLiveProgress = () => {
+        progressPoll?.stop();
+        progressPoll = null;
+      };
 
       let failures = 0;
       if (customNodePacks.length > 0) {
@@ -196,20 +265,34 @@ export function useCompanionDownload(options?: Options) {
           append("info", `Installing custom node pack: ${itemLabel(item)}`);
         }
         try {
-          const payload = await installCustomNodePacks(packIds);
+          const managerCount = customNodePacks.filter(
+            (item) => item.install_via === "manager",
+          ).length;
+          if (managerCount > 0) {
+            append(
+              "info",
+              `Using ComfyUI-Manager for ${managerCount} optional node pack(s)…`,
+            );
+          }
+          beginLiveProgress();
+          const payload = await installCustomNodePacks(packIds, {
+            strategy: "auto",
+            restart_comfy: true,
+            progress_file: progressPath ?? undefined,
+          });
+          endLiveProgress();
           if (runId !== runIdRef.current) return;
-          for (const message of payload.messages ?? []) {
-            append("info", message);
+          if (!progressPath) {
+            for (const message of payload.messages ?? []) {
+              append("info", message);
+            }
           }
           for (const packId of payload.installed ?? []) {
             append("ok", `Installed custom node pack: ${packId}`);
           }
           for (const err of payload.errors ?? []) {
             failures += 1;
-            append(
-              "error",
-              `Failed ${err.pack_id ?? "custom node pack"}: ${err.error ?? "unknown error"}`,
-            );
+            append("error", formatCompanionInstallError(err));
           }
           if (payload.ready) {
             append("ok", "Custom node packs are installed and registered.");
@@ -217,10 +300,49 @@ export function useCompanionDownload(options?: Options) {
             append("warn", "Custom node packs installed but ComfyUI still needs a restart.");
           }
         } catch (e) {
+          endLiveProgress();
           failures += customNodePacks.length;
           append("error", `Custom node install failed: ${String(e)}`);
         }
       }
+
+      if (workflowModels.length > 0) {
+        const catalogIds = workflowModels
+          .map((item) => item.catalog_id ?? item.id)
+          .filter((value): value is string => Boolean(value?.trim()));
+        append(
+          "info",
+          `Installing ${catalogIds.length} workflow model pack(s) (Segformer weights, etc.)…`,
+        );
+        setTotalCount(customNodePacks.length + workflowModels.length + modelAssets.length);
+        try {
+          beginLiveProgress();
+          const payload = await installWorkflowModels(catalogIds, {
+            prefer_manager: true,
+            progress_file: progressPath ?? undefined,
+          });
+          endLiveProgress();
+          if (runId !== runIdRef.current) return;
+          if (!progressPath) {
+            for (const message of payload.messages ?? []) {
+              append("info", message);
+            }
+          }
+          for (const catalogId of payload.installed ?? []) {
+            append("ok", `Installed workflow model: ${catalogId}`);
+          }
+          for (const err of payload.errors ?? []) {
+            failures += 1;
+            append("error", formatCompanionInstallError(err));
+          }
+        } catch (e) {
+          endLiveProgress();
+          failures += workflowModels.length;
+          append("error", `Workflow model install failed: ${String(e)}`);
+        }
+      }
+
+      endLiveProgress();
 
       const withoutUrl = modelAssets.filter((item) => !item.url);
       for (const item of withoutUrl) {
@@ -234,7 +356,7 @@ export function useCompanionDownload(options?: Options) {
       const downloadable = modelAssets.filter((item) => item.url);
       if (downloadable.length > 0) {
         append("info", `Downloading ${downloadable.length} asset(s) to the models folder…`);
-        setTotalCount(customNodePacks.length + downloadable.length);
+        setTotalCount(customNodePacks.length + workflowModels.length + downloadable.length);
         for (let i = 0; i < downloadable.length; i += 1) {
           if (runId !== runIdRef.current) return;
           const item = downloadable[i];

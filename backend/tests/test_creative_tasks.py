@@ -183,3 +183,23 @@ def test_enforce_on_submit_inpaint_uses_default_when_model_empty():
     )
     assert out["edit_type"] == "inpaint"
     assert "flux1-fill" in out["model"]
+
+
+def test_resolve_toolbox_cutout_compose_routes_qwen():
+    result = resolve_creative_task(
+        "toolbox",
+        {
+            "prompt": "blend subject into background",
+            "edit_task": "cutout_compose",
+            "input_image": "D:/subject.png",
+            "reference_images": ["D:/background.png"],
+        },
+        GALLERY,
+        selected_image="D:/subject.png",
+    )
+    patch = result["patch"]
+    assert result["studio_mode"] == "toolbox"
+    assert patch["edit_task"] == "cutout_compose"
+    assert patch["edit_type"] == "qwen_edit"
+    assert "qwen" in patch["model"].lower()
+    assert float(patch["edit_strength"]) <= 0.4

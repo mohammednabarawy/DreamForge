@@ -35,6 +35,7 @@ from dreamforge_comfy_workflows import (
     comfy_pid_flux_upscale,
     comfy_photo_restore,
     comfy_cutout_compose,
+    comfy_outfit_transfer,
     compute_cutout_layout,
     comfy_kandinsky5_img2img,
     comfy_flux_img2img,
@@ -103,6 +104,13 @@ def test_photo_restore_builds_depth_lineart_controlnet_nodes():
     assert "LineartStandardPreprocessor" in class_types
     assert "SetUnionControlNetType" in class_types
     assert "ControlNetApplyAdvanced" in class_types
+    union_types = [
+        node["inputs"]["type"]
+        for node in graph.values()
+        if node.get("class_type") == "SetUnionControlNetType"
+    ]
+    assert "depth" in union_types
+    assert "canny/lineart/anime_lineart/mlsd" in union_types
     assert "ImageScaleToTotalPixels" in class_types
     depth_nodes = [
         n for n in graph.values() if n.get("class_type") == "ControlNetApplyAdvanced"
@@ -447,6 +455,35 @@ def test_flux_fill_inpaint_uses_inpaint_model_conditioning():
     assert sampler["inputs"]["denoise"] == 0.9
     zero_out = next(node for node in graph.values() if node.get("class_type") == "ConditioningZeroOut")
     assert zero_out is not None
+
+
+def test_outfit_transfer_graph_uses_segformer_and_flux_fill():
+    graph = comfy_outfit_transfer(
+        {
+            "ckpt_name": "flux1-fill-dev.safetensors",
+            "relative_path": "flux1-fill-dev.safetensors",
+            "category": "diffusion_models",
+            "family": "flux_fill",
+            "image": "person.png",
+            "prompt": "transfer outfit from image 2",
+            "negative": "",
+            "cfg": 30.0,
+            "steps": 20,
+            "denoise": 0.85,
+            "segformer_toggles": {
+                "upper_clothes": True,
+                "pants": True,
+            },
+        }
+    )
+    class_types = {node.get("class_type") for node in graph.values()}
+    assert "LayerMask: SegformerB2ClothesUltra" in class_types
+    assert "InpaintModelConditioning" in class_types
+    segformer = next(
+        node for node in graph.values() if node.get("class_type") == "LayerMask: SegformerB2ClothesUltra"
+    )
+    assert segformer["inputs"]["upper_clothes"] is True
+    assert segformer["inputs"]["pants"] is True
 
 
 def test_flux_fill_inpaint_routes_from_generation_graph_builder():

@@ -80,9 +80,11 @@ DEFAULT_APP_CONFIG: dict[str, Any] = {
         "use_flufferizer": True,
         "civitai_api_key": "",
     },
+    "custom_tools": [],
 }
 
 _ALLOWED_ROOTS = {"agent", "privacy", "ui"}
+_TOP_LEVEL_KEYS = frozenset({"custom_tools"})
 _AGENT_KEYS = {
     "provider",
     "base_url",
@@ -346,6 +348,9 @@ def _merge_allowed(base: dict[str, Any], incoming: dict[str, Any]) -> dict[str, 
         for key, value in incoming[root].items():
             if key in allowed:
                 merged[root][key] = value
+    for key in _TOP_LEVEL_KEYS:
+        if key in incoming:
+            merged[key] = incoming[key]
     return merged
 
 

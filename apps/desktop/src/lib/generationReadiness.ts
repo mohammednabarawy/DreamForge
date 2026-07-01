@@ -5,6 +5,7 @@ import type { EditFamilyPlanState } from "./workflowPlanActions";
 import { isEditFamilyMode, type StudioMode } from "./model-selection";
 import { isFluxFillModel, selectFluxFillModel } from "./inpaintModel";
 import { vramProfileFromHardware } from "./vramProfiles";
+import type { CustomTool } from "./customTools";
 
 export { isEditFamilyMode, vramProfileFromHardware };
 export type { EditFamilyPlanState };
@@ -34,6 +35,7 @@ export function computeGenerateReadiness(args: {
   editPlanState?: EditFamilyPlanState;
   /** True while debounced mask export is still writing to disk. */
   inpaintMaskSyncing?: boolean;
+  customTools?: CustomTool[];
 }): GenerateReadiness {
   if (args.generating) {
     return { ok: false, reason: "Generation in progress", missingCompanions: false, companionBlockedOnly: false };
@@ -76,6 +78,118 @@ export function computeGenerateReadiness(args: {
       missingCompanions: false,
       companionBlockedOnly: false,
     };
+  }
+  if (studio === "toolbox") {
+    const customToolId = args.settings.custom_tool_id?.trim();
+    if (customToolId) {
+      const tools = args.customTools ?? [];
+      const tool = tools.find((item) => item.id === customToolId);
+      if (!tool) {
+        return {
+          ok: false,
+          reason: "Selected custom tool was removed — re-import or pick another tool",
+          missingCompanions: false,
+          companionBlockedOnly: false,
+        };
+      }
+      const imageBindings = Object.values(tool.bindings ?? {}).filter(
+        (binding) => binding.type === "image",
+      );
+      if (imageBindings.length > 0 && !hasEditImage) {
+        return {
+          ok: false,
+          reason: `${tool.name} needs an input image for its bindings`,
+          missingCompanions: false,
+          companionBlockedOnly: false,
+        };
+      }
+      const maskBindings = Object.values(tool.bindings ?? {}).filter(
+        (binding) => binding.type === "mask",
+      );
+      if (maskBindings.length > 0 && !hasInpaintMask && !hasEditImage) {
+        return {
+          ok: false,
+          reason: `${tool.name} needs an image or inpaint mask for its mask bindings`,
+          missingCompanions: false,
+          companionBlockedOnly: false,
+        };
+      }
+      return { ok: true, reason: "", missingCompanions: false, companionBlockedOnly: false };
+    }
+    const task = (args.settings.edit_task ?? "").trim().toLowerCase();
+    if (!task) {
+      return {
+        ok: false,
+        reason: "Select a native tool in the Creative Toolbox",
+        missingCompanions: false,
+        companionBlockedOnly: false,
+      };
+    }
+    if (!hasEditImage) {
+      return {
+        ok: false,
+        reason: "Attach the subject image for the selected toolbox tool",
+        missingCompanions: false,
+        companionBlockedOnly: false,
+      };
+    }
+    const inputPath = (args.settings.input_image ?? "").trim();
+    const extraRefs = (args.settings.reference_images ?? []).map((item) => item.trim()).filter(Boolean);
+    const refPath = (args.settings.reference_image ?? "").trim();
+    const hasExtraRef =
+      extraRefs.length > 0 ||
+      (Boolean(refPath) && refPath !== inputPath);
+    if (task === "cutout_compose" && !hasExtraRef) {
+      return {
+        ok: false,
+        reason: "Cutout compose needs a background image in the reference panel",
+        missingCompanions: false,
+        companionBlockedOnly: false,
+      };
+    }
+    if (task === "outfit_transfer" && !hasInpaintMask) {
+      const regions = args.settings.outfit_transfer_regions ?? [];
+      if (regions.length > 0) {
+        const modelItem = args.modelGallery.find((item) => item.engine_name === args.model);
+        if (!modelItem || !isFluxFillModel(modelItem)) {
+          const flux = selectFluxFillModel(args.modelGallery);
+          return {
+            ok: false,
+            missingCompanions: !flux,
+            companionBlockedOnly: !flux,
+            reason: flux
+              ? "Outfit transfer with garment regions requires Flux Fill — reselect the tool or pick a Fill checkpoint"
+              : "Flux Fill is missing — approve the asset download prompt before auto-mask outfit transfer",
+          };
+        }
+      }
+    }
+    if (task === "outfit_transfer" && !hasExtraRef && !hasInpaintMask) {
+      return {
+        ok: false,
+        reason: "Outfit transfer needs an outfit reference image or a garment mask",
+        missingCompanions: false,
+        companionBlockedOnly: false,
+      };
+    }
+    if (
+      task === "outfit_transfer" &&
+      hasInpaintMask &&
+      args.settings.edit_type === "inpaint"
+    ) {
+      const modelItem = args.modelGallery.find((item) => item.engine_name === args.model);
+      if (!modelItem || !isFluxFillModel(modelItem)) {
+        const flux = selectFluxFillModel(args.modelGallery);
+        return {
+          ok: false,
+          missingCompanions: !flux,
+          companionBlockedOnly: !flux,
+          reason: flux
+            ? "Outfit transfer with mask requires Flux Fill — reselect the tool or pick a Fill checkpoint"
+            : "Flux Fill is missing — approve the asset download prompt before masked outfit transfer",
+        };
+      }
+    }
   }
   if (studio === "inpaint" && !hasEditImage) {
     return {

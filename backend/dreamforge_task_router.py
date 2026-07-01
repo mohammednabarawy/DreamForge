@@ -99,6 +99,158 @@ class RouteDecision:
     warnings: list[str] = field(default_factory=list)
 
 
+def _apply_toolbox_task_routing(
+    out: dict[str, Any],
+    gallery_list: list[Any],
+) -> str:
+    """Apply toolbox-native task presets after generic edit routing."""
+    task = str(out.get("edit_task") or "").strip().lower()
+    if task == "photo_restore":
+        from dreamforge_edit_tasks import resolve_edit_task_defaults
+
+        restore_model = _pick_photo_restore_model(gallery_list)
+        if restore_model:
+            out["model"] = restore_model
+        defaults = resolve_edit_task_defaults(task, mode="edit", settings=out)
+        for key in (
+            "steps",
+            "cfg_scale",
+            "sampler",
+            "scheduler",
+            "edit_strength",
+            "depth_strength",
+            "lineart_strength",
+            "face_preservation",
+            "edit_type",
+            "cn_type",
+            "cn_selection",
+        ):
+            if defaults.get(key) is not None:
+                out[key] = defaults[key]
+        out["inpaint_mask_path"] = None
+        return "toolbox_photo_restore"
+    if task == "portrait_master":
+        from dreamforge_edit_tasks import resolve_edit_task_defaults
+
+        portrait_model = _pick_photo_restore_model(gallery_list)
+        if portrait_model:
+            out["model"] = portrait_model
+        defaults = resolve_edit_task_defaults(task, mode="edit", settings=out)
+        for key in (
+            "steps",
+            "cfg_scale",
+            "sampler",
+            "scheduler",
+            "edit_strength",
+            "portrait_pose_strength",
+            "portrait_depth_strength",
+            "portrait_shot",
+            "portrait_age",
+            "portrait_expression",
+            "portrait_lighting",
+            "portrait_skin_detail",
+            "portrait_eye_detail",
+            "edit_type",
+            "cn_type",
+            "cn_selection",
+        ):
+            if defaults.get(key) is not None:
+                out[key] = defaults[key]
+        out["inpaint_mask_path"] = None
+        return "toolbox_portrait_master"
+    if task == "outfit_transfer":
+        has_mask = bool(str(out.get("inpaint_mask_path") or "").strip())
+        regions = out.get("outfit_transfer_regions") or []
+        if isinstance(regions, str):
+            regions = [part.strip() for part in regions.split(",") if part.strip()]
+        wants_auto_mask = bool(regions) and not has_mask
+        if has_mask:
+            from dreamforge_inpaint_routing import pick_best_inpaint_model
+
+            fill = pick_best_inpaint_model(gallery_list)
+            if fill:
+                out["model"] = fill
+            out["edit_type"] = "inpaint"
+            out["cn_selection"] = "Custom..."
+            out["cn_type"] = "inpaint"
+            out["inpaint_intent"] = "modify_content"
+            return "toolbox_outfit_inpaint"
+        if wants_auto_mask:
+            from dreamforge_inpaint_routing import pick_best_inpaint_model
+
+            fill = pick_best_inpaint_model(gallery_list)
+            if fill:
+                out["model"] = fill
+            out["edit_type"] = "inpaint"
+            out["cn_selection"] = "Custom..."
+            out["cn_type"] = "inpaint"
+            out["inpaint_intent"] = "modify_content"
+            out["outfit_auto_mask"] = True
+            return "toolbox_outfit_segformer"
+        from dreamforge_cli_inventory import pick_best_qwen_edit_model
+
+        qwen = pick_best_qwen_edit_model(gallery_list)
+        if qwen:
+            out["model"] = qwen
+        out.update(
+            edit_routing_patch(
+                gallery_list,
+                out.get("model") or qwen or "",
+                preferred_edit_type="qwen_edit",
+            )
+        )
+        out["qwen_edit_mode"] = out.get("qwen_edit_mode") or "plus"
+        out["inpaint_mask_path"] = None
+        return "toolbox_outfit_qwen"
+    if task == "cutout_compose":
+        from dreamforge_cli_inventory import pick_best_qwen_edit_model
+        from dreamforge_edit_tasks import EDIT_TASK_PRESETS
+
+        qwen = pick_best_qwen_edit_model(gallery_list)
+        if qwen:
+            out["model"] = qwen
+        out.update(
+            edit_routing_patch(
+                gallery_list,
+                out.get("model") or qwen or "",
+                preferred_edit_type="qwen_edit",
+            )
+        )
+        out["qwen_edit_mode"] = out.get("qwen_edit_mode") or "plus"
+        preset_strength = EDIT_TASK_PRESETS["cutout_compose"].get("edit_strength")
+        current = out.get("edit_strength")
+        if preset_strength is not None and (
+            current is None or float(current) >= 0.9
+        ):
+            out["edit_strength"] = preset_strength
+        out["inpaint_mask_path"] = None
+        return "toolbox_cutout_compose"
+    return ""
+
+
+def _pick_photo_restore_model(gallery_list: list[Any]) -> str:
+    needles = ("epicrealism", "juggernaut", "realvis", "dreamshaper", "sd_xl", "sdxl")
+    best_name = ""
+    best_score = -1
+    for raw in gallery_list:
+        if not isinstance(raw, dict):
+            continue
+        hay = _gallery_hay(raw)
+        family = str(raw.get("family") or "").lower()
+        score = 0
+        if family == "sdxl" or "sdxl" in hay:
+            score += 100
+        for needle in needles:
+            if needle in hay:
+                score += 25
+        if "turbo" in hay or "lightning" in hay:
+            score -= 10
+        if score > best_score:
+            best_score = score
+            best_name = str(raw.get("engine_name") or raw.get("relative_path") or "")
+    return best_name
+
+
 def apply_task_routing(
     settings: dict[str, Any],
     studio_mode: str,
@@ -106,6 +258,7 @@ def apply_task_routing(
     *,
     advanced_mode: bool = False,
     user_picked_model: bool = False,
+    toolbox_studio_mode: str | None = None,
 ) -> RouteDecision:
     """Apply mode contracts; mutate and return a settings patch dict."""
     mode = (studio_mode or "generate").strip().lower()
@@ -178,6 +331,12 @@ def apply_task_routing(
         out["user_picked_model"] = bool(manual)
         out["advanced_mode"] = bool(advanced_mode)
         kind = str(out.get("edit_type") or "kontext")
+        if (toolbox_studio_mode or "").strip().lower() == "toolbox":
+            if not str(out.get("custom_tool_id") or "").strip():
+                toolbox_reason = _apply_toolbox_task_routing(out, gallery_list)
+                if toolbox_reason:
+                    reason = toolbox_reason
+                    kind = f"toolbox_{str(out.get('edit_task') or 'edit')}"
         return RouteDecision(
             patch=out,
             route_reason=reason,

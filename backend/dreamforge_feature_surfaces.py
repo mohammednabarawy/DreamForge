@@ -40,6 +40,9 @@ BACKEND_COMFY_MODES = frozenset(
         "area_composition",
         "qwen_edit",
         "cutout_compose",
+        "outfit_transfer",
+        "custom_tool",
+        "portrait_master",
     }
 )
 
@@ -55,9 +58,10 @@ UI_SURFACE_TO_COMFY_MODES: dict[str, frozenset[str]] = {
     "reference_role:inpaint": frozenset({"inpaint"}),
     "reference_role:upscale": frozenset({"upscale"}),
     "studio_mode:generate": frozenset({"txt2img", "img2img", "ipadapter", "ipadapter_controlnet", "ipadapter_faceid"}),
-    "studio_mode:edit": frozenset({"kontext", "qwen_edit", "img2img", "photo_restore"}),
+    "studio_mode:edit": frozenset({"kontext", "qwen_edit", "img2img"}),
     "studio_mode:inpaint": frozenset({"inpaint"}),
     "studio_mode:upscale": frozenset({"upscale"}),
+    "studio_mode:toolbox": frozenset({"photo_restore", "qwen_edit", "inpaint", "cutout_compose", "outfit_transfer", "custom_tool", "portrait_master"}),
     "inpaint_intent:default": frozenset({"inpaint"}),
     "inpaint_intent:improve_detail": frozenset({"inpaint"}),
     "inpaint_intent:modify_content": frozenset({"inpaint"}),
@@ -75,8 +79,9 @@ UI_SURFACE_TO_COMFY_MODES: dict[str, frozenset[str]] = {
     "identity_mode:preserve_face": frozenset({"kontext", "qwen_edit", "img2img"}),
     "identity_mode:ipadapter_faceid": frozenset({"ipadapter_faceid", "kontext", "qwen_edit"}),
     "edit_task:photo_restore": frozenset({"photo_restore"}),
-    "edit_task:outfit_transfer": frozenset({"qwen_edit", "inpaint"}),
+    "edit_task:outfit_transfer": frozenset({"qwen_edit", "inpaint", "outfit_transfer"}),
     "edit_task:cutout_compose": frozenset({"cutout_compose"}),
+    "edit_task:portrait_master": frozenset({"portrait_master"}),
 }
 
 COMFY_MODE_GRAPH_BUILDERS: dict[str, str] = {
@@ -96,6 +101,9 @@ COMFY_MODE_GRAPH_BUILDERS: dict[str, str] = {
     "txt2img": "comfy_txt2img_basic",
     "qwen_edit": "comfy_qwen_image_edit",
     "cutout_compose": "comfy_cutout_compose",
+    "outfit_transfer": "comfy_outfit_transfer",
+    "portrait_master": "comfy_portrait_master",
+    "custom_tool": "build_custom_tool_prompt_graph",
 }
 
 ASSET_GATED_FEATURES = frozenset(
@@ -153,7 +161,7 @@ def audit_comfy_mode_graph_builders() -> list[str]:
             issues.append(f"comfy mode {mode!r} maps to missing builder {builder}")
     gen_text = _read_text(REPO_ROOT / "backend" / "dreamforge_generation.py")
     for mode in BACKEND_COMFY_MODES:
-        if mode in {"txt2img", "qwen_edit"}:
+        if mode in {"txt2img", "qwen_edit", "custom_tool", "outfit_transfer", "portrait_master"}:
             continue
         if (
             f'mode == "{mode}"' not in gen_text

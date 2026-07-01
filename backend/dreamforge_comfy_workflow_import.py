@@ -12,35 +12,205 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
+
+
+def is_ui_workflow_format(data: Any) -> bool:
+    return isinstance(data, dict) and isinstance(data.get("nodes"), list)
+
+
+def _workflow_root(data: dict[str, Any]) -> dict[str, Any]:
+    prompt = data.get("prompt")
+    if isinstance(prompt, dict):
+        return prompt
+    return data
+
+
+def count_api_nodes(data: dict[str, Any]) -> tuple[int, int, int]:
+    """Return (with_class_type, missing_class_type, total_node_like)."""
+    root = _workflow_root(data)
+    valid = missing = total = 0
+    for value in root.values():
+        if not isinstance(value, dict):
+            continue
+        inputs = value.get("inputs")
+        if not isinstance(inputs, dict):
+            continue
+        total += 1
+        if value.get("class_type"):
+            valid += 1
+        else:
+            missing += 1
+    return valid, missing, total
 
 
 def _looks_like_api_prompt(data: Any) -> bool:
     if not isinstance(data, dict) or not data:
         return False
-    for value in data.values():
-        if not isinstance(value, dict):
-            return False
-        if "class_type" not in value:
-            return False
-        if "inputs" not in value or not isinstance(value["inputs"], dict):
-            return False
-    return True
+    if is_ui_workflow_format(data):
+        return False
+    root = _workflow_root(data)
+    valid, missing, total = count_api_nodes(root)
+    if valid == 0 or total == 0:
+        return False
+    if missing == 0:
+        return True
+    # Some custom nodes omit class_type in API export; still an API prompt graph.
+    return valid >= missing
 
 
-def load_api_workflow_template(path: str | Path) -> dict[str, Any]:
+def guess_ui_workflow_sibling(path: Path) -> Path | None:
+    """Guess the Comfy UI workflow JSON next to an API export."""
+    path = path.resolve()
+    parent = path.parent
+    name = path.name
+    stem = path.stem
+    candidates: list[Path] = []
+    if "-API-" in name:
+        candidates.append(parent / name.replace("-API-", " - ", 1))
+        candidates.append(parent / name.replace("-API-", "-", 1))
+    if re.search(r"(?i)[\s\-_]*api[\s\-_]*", stem):
+        relaxed = re.sub(r"(?i)[\s\-_]*api[\s\-_]*", " - ", stem).strip(" -")
+        if relaxed and relaxed != stem:
+            candidates.append(parent / f"{relaxed}{path.suffix}")
+    for candidate in candidates:
+        try:
+            if candidate.is_file() and candidate.resolve() != path:
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
+def ui_node_type_map(ui_data: dict[str, Any]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for node in ui_data.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        node_id = str(node.get("id") or "").strip()
+        class_type = str(node.get("type") or node.get("class_type") or "").strip()
+        if node_id and class_type:
+            out[node_id] = class_type
+    return out
+
+
+def repair_api_workflow_class_types(
+    graph: dict[str, Any],
+    ui_types: dict[str, str],
+) -> list[str]:
+    """Fill missing class_type fields from a UI workflow export."""
+    repaired: list[str] = []
+    for node_id, node in graph.items():
+        if not isinstance(node, dict) or node.get("class_type"):
+            continue
+        class_type = ui_types.get(str(node_id))
+        if not class_type:
+            continue
+        node["class_type"] = class_type
+        repaired.append(str(node_id))
+    return repaired
+
+
+def _missing_class_type_node_ids(graph: dict[str, Any]) -> list[str]:
+    missing: list[str] = []
+    for node_id, node in graph.items():
+        if not isinstance(node, dict):
+            continue
+        if isinstance(node.get("inputs"), dict) and not node.get("class_type"):
+            missing.append(str(node_id))
+    return missing
+
+
+def load_api_workflow_template(
+    path: str | Path,
+    *,
+    ui_path: str | Path | None = None,
+) -> dict[str, Any]:
     """Read an API-format workflow JSON file."""
-    raw = Path(path).read_text(encoding="utf-8")
+    file_path = Path(path)
+    raw = file_path.read_text(encoding="utf-8")
     data = json.loads(raw)
+    if is_ui_workflow_format(data):
+        raise ValueError(
+            f"{path} is a Comfy UI workflow JSON. Re-export with Save (API Format)."
+        )
     if isinstance(data, dict) and isinstance(data.get("prompt"), dict):
-        data = data["prompt"]
-    if not _looks_like_api_prompt(data):
+        graph = copy.deepcopy(data["prompt"])
+    else:
+        graph = copy.deepcopy(data)
+
+    missing = _missing_class_type_node_ids(graph)
+    if missing:
+        ui_file = Path(ui_path) if ui_path else guess_ui_workflow_sibling(file_path)
+        if ui_file and ui_file.is_file():
+            ui_data = json.loads(ui_file.read_text(encoding="utf-8"))
+            repair_api_workflow_class_types(graph, ui_node_type_map(ui_data))
+        missing = _missing_class_type_node_ids(graph)
+
+    if not _looks_like_api_prompt(graph):
+        if missing:
+            raise ValueError(
+                f"{path} is missing class_type on nodes {', '.join(missing)}. "
+                "Re-export with Save (API Format), or keep the UI workflow JSON "
+                "in the same folder so DreamForge can repair custom nodes."
+            )
         raise ValueError(
             f"{path} is not Comfy Save (API Format) JSON "
             "(expected node dict with class_type + inputs)."
         )
-    return copy.deepcopy(data)
+    return graph
+
+
+def inspect_comfy_workflow_file(path: str | Path) -> dict[str, Any]:
+    """Parse a workflow file for custom-tool import (with optional UI sibling repair)."""
+    file_path = Path(path)
+    raw = file_path.read_text(encoding="utf-8")
+    data = json.loads(raw)
+    ui_format = is_ui_workflow_format(data)
+    ui_sibling = guess_ui_workflow_sibling(file_path)
+    warning = ""
+    error = ""
+    graph: dict[str, Any] = {}
+    repaired_nodes: list[str] = []
+    api_format = False
+    try:
+        scratch = copy.deepcopy(_workflow_root(data)) if isinstance(data, dict) else {}
+        missing_before = _missing_class_type_node_ids(scratch)
+        graph = load_api_workflow_template(file_path)
+        api_format = True
+        if missing_before:
+            repaired_nodes = [
+                node_id
+                for node_id in missing_before
+                if isinstance(graph.get(node_id), dict) and graph[node_id].get("class_type")
+            ]
+            if repaired_nodes and ui_sibling:
+                warning = (
+                    f"Repaired {len(repaired_nodes)} custom node(s) using UI workflow "
+                    f"{ui_sibling.name}."
+                )
+            elif repaired_nodes:
+                warning = f"Repaired {len(repaired_nodes)} node(s) missing class_type in API export."
+    except ValueError as exc:
+        error = str(exc)
+        root = _workflow_root(data) if isinstance(data, dict) else {}
+        if isinstance(root, dict):
+            graph = {str(k): v for k, v in root.items() if isinstance(v, dict)}
+        valid, missing, total = count_api_nodes(data if isinstance(data, dict) else {})
+        api_format = bool(valid and not ui_format and valid >= missing)
+
+    return {
+        "api_format": api_format,
+        "ui_format": ui_format,
+        "nodes": graph,
+        "class_types": workflow_class_types(graph) if graph else [],
+        "repaired_nodes": repaired_nodes,
+        "ui_sibling": str(ui_sibling) if ui_sibling else None,
+        "warning": warning,
+        "error": error,
+    }
 
 
 def resolve_comfy_workflow_template(

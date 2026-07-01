@@ -116,6 +116,7 @@ def test_photo_restore_builds_depth_lineart_controlnet_nodes():
         n for n in graph.values() if n.get("class_type") == "ControlNetApplyAdvanced"
     ]
     assert len(depth_nodes) == 2
+    assert all("vae" in node["inputs"] for node in depth_nodes)
     strengths = sorted(n["inputs"]["strength"] for n in depth_nodes)
     assert strengths == [0.18, 0.42]
     face_nodes = [n for n in graph.values() if n.get("class_type") == "FaceDetailer"]

@@ -13,33 +13,39 @@ export function CustomToolImportModal({
     description: string;
     workflow_path: string;
     bindings: Record<string, CustomToolBinding>;
-  }) => void;
+  }) => void | Promise<void>;
 }) {
   const [filePath, setFilePath] = useState("");
   const [potentials, setPotentials] = useState<Record<string, any>>({});
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [apiFormat, setApiFormat] = useState<boolean | null>(null);
 
   const [selectedBindings, setSelectedBindings] = useState<Record<string, CustomToolBinding>>({});
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const handlePick = async () => {
     try {
       const path = await pickJsonFile();
       if (!path) return;
       setFilePath(path);
+      setWarning(null);
       
-      const { nodes, error, apiFormat: isApi } = await parseComfyWorkflowJson(path);
-      if (error) {
+      const { nodes, error, apiFormat: isApi, warning: repairWarning } = await parseComfyWorkflowJson(path);
+      if (error && !isApi) {
         setError(error);
         setApiFormat(null);
+        setPotentials({});
         return;
       }
       
       const detected = detectPotentialBindings(nodes);
       setPotentials(detected);
       setApiFormat(isApi);
+      setWarning(repairWarning ?? null);
       setError(isApi ? null : "UI workflow JSON detected — export Save (API Format) from ComfyUI before running this tool.");
     } catch (err: any) {
       setError(err.message);
@@ -56,15 +62,24 @@ export function CustomToolImportModal({
     setSelectedBindings(next);
   };
 
-  const handleSave = () => {
-    if (!name || !filePath) return;
-    onSave({
-      id: "custom_" + Date.now().toString(),
-      name,
-      description,
-      workflow_path: filePath,
-      bindings: selectedBindings,
-    });
+  const handleSave = async () => {
+    if (!name || !filePath || apiFormat !== true) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await onSave({
+        id: "custom_" + Date.now().toString(),
+        name,
+        description,
+        workflow_path: filePath,
+        bindings: selectedBindings,
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      setSaveError(message);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -84,6 +99,12 @@ export function CustomToolImportModal({
 
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {error && <div className="text-red-400 text-sm">{error}</div>}
+          {saveError && <div className="text-red-400 text-sm">{saveError}</div>}
+          {warning && (
+            <div className="rounded border border-sky-700/60 bg-sky-950/40 p-2 text-[10px] text-sky-200">
+              {warning}
+            </div>
+          )}
           {apiFormat === false && (
             <div className="rounded border border-amber-700/60 bg-amber-950/40 p-2 text-[10px] text-amber-200">
               This file looks like a UI workflow. Re-export with Save (API Format) so DreamForge can execute it.
@@ -166,10 +187,10 @@ export function CustomToolImportModal({
           </button>
           <button 
             onClick={handleSave}
-            disabled={!name || !filePath || apiFormat === false}
+            disabled={!name || !filePath || apiFormat !== true || saving}
             className="rounded bg-[#0e639c] px-4 py-1.5 text-xs text-white hover:bg-[#1177bb] disabled:opacity-50"
           >
-            Import Tool
+            {saving ? "Saving…" : "Import Tool"}
           </button>
         </div>
       </div>

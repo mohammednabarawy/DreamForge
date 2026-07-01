@@ -5,7 +5,7 @@ import os
 import shutil
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from dreamforge_cli_inventory import MODELS_ROOT, companion_file_present
 
@@ -168,7 +168,58 @@ def enrich_missing_dependency(entry: dict) -> dict:
     return enriched
 
 
-def _download_file(url: str, dest: Path, *, min_bytes: int = 1024 * 1024) -> Path:
+def companion_item_present(item: dict, *, min_bytes: int = 1024 * 1024) -> bool:
+    """True when a companion row is satisfied on disk (kind-aware)."""
+    kind = str(item.get("kind") or "").strip()
+    if kind == "custom_node_pack":
+        pack_id = str(item.get("pack_id") or item.get("id") or "").strip()
+        if not pack_id:
+            return False
+        from dreamforge_workflow_planner import _custom_node_directory_present
+
+        return _custom_node_directory_present(pack_id)
+
+    item_id = str(item.get("id") or "").strip()
+    if kind == "model_companion" or item_id.startswith("graph_model:"):
+        from dreamforge_custom_tools import KNOWN_GRAPH_MODELS, workflow_graph_model_file_present
+
+        filename = str(item.get("filename") or "").strip()
+        if not filename and item_id.startswith("graph_model:"):
+            filename = item_id[len("graph_model:") :]
+        if filename:
+            known = KNOWN_GRAPH_MODELS.get(filename, {})
+            min_b = int(item.get("min_bytes") or known.get("min_bytes") or min_bytes)
+            relative = str(item.get("relative") or known.get("relative") or "")
+            category = relative.split("/", 1)[0] if "/" in relative else ""
+            folders = (category,) if category else None
+            if workflow_graph_model_file_present(
+                filename,
+                folders=folders,
+                min_bytes=min_b,
+            ):
+                return True
+
+    return companion_file_present(item, min_bytes=min_bytes)
+
+
+def filter_unsatisfied_companion_entries(items: list[dict]) -> list[dict]:
+    """Drop companion rows that are already satisfied on disk (incl. filename aliases)."""
+    kept: list[dict] = []
+    for item in items:
+        min_bytes = int(item.get("min_bytes") or 1024 * 1024)
+        if companion_item_present(item, min_bytes=min_bytes):
+            continue
+        kept.append(item)
+    return kept
+
+
+def _download_file(
+    url: str,
+    dest: Path,
+    *,
+    min_bytes: int = 1024 * 1024,
+    progress: Callable[[str], None] | None = None,
+) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.is_file() and dest.stat().st_size >= min_bytes:
         return dest
@@ -180,9 +231,25 @@ def _download_file(url: str, dest: Path, *, min_bytes: int = 1024 * 1024) -> Pat
         headers["Authorization"] = f"Bearer {token}"
 
     request = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(request, timeout=120) as response:
+    timeout_s = max(600, int(min_bytes / (512 * 1024)) + 120)
+    with urllib.request.urlopen(request, timeout=timeout_s) as response:
+        total = int(response.headers.get("Content-Length") or 0)
+        downloaded = 0
+        last_report_pct = -1
         with partial.open("wb") as fh:
-            shutil.copyfileobj(response, fh, length=1024 * 1024)
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                fh.write(chunk)
+                downloaded += len(chunk)
+                if progress and total > 0:
+                    pct = min(100, int((downloaded * 100) / total))
+                    if pct >= last_report_pct + 5 or pct == 100:
+                        last_report_pct = pct
+                        progress(f"Downloading {dest.name}… {pct}%")
+                elif progress and downloaded > 0 and downloaded % (50 * 1024 * 1024) < len(chunk):
+                    progress(f"Downloading {dest.name}… {downloaded // (1024 * 1024)} MB")
     size = partial.stat().st_size if partial.is_file() else 0
     if size < min_bytes:
         try:
@@ -207,12 +274,19 @@ def download_companion(entry: dict) -> dict:
             "reason": "no_download_url",
         }
 
-    relative = enriched.get("relative") or ""
-    dest = Path(enriched.get("expected_path") or (MODELS_ROOT / relative))
+    from dreamforge_cli_inventory import companion_asset_path
+
+    dest = companion_asset_path(enriched)
+    if dest is None:
+        return {
+            "status": "skipped",
+            "id": enriched.get("id"),
+            "reason": "no_destination_path",
+        }
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     min_bytes = int(enriched.get("min_bytes") or 1024 * 1024)
-    if companion_file_present(enriched, min_bytes=min_bytes):
+    if companion_item_present(enriched, min_bytes=min_bytes):
         return {
             "status": "exists",
             "path": str(dest),
@@ -287,6 +361,7 @@ def _collect_task_missing(
     performance: str | None,
     template_id: str | None = None,
     edit_task: str | None = None,
+    custom_tool_id: str | None = None,
 ) -> tuple[Any | None, list[dict]]:
     from dreamforge_cli_inventory import (
         check_model_dependencies,
@@ -297,7 +372,7 @@ def _collect_task_missing(
 
     missing: list[dict] = []
     resolved_model = None
-    if model_name:
+    if model_name and not (custom_tool_id and str(studio_mode or "").strip().lower() == "toolbox"):
         resolved_model = resolve_generation_model(model_name)
         if resolved_model:
             missing.extend(
@@ -324,7 +399,13 @@ def _collect_task_missing(
         from dreamforge_comfy_manager import missing_workflow_model_entries
 
         missing.extend(missing_workflow_model_entries(edit_task=edit_task))
-    return resolved_model, tag_companion_tiers(_merge_missing_items(missing))
+    if custom_tool_id:
+        from dreamforge_custom_tools import custom_tool_dependencies_for_id
+
+        missing.extend(custom_tool_dependencies_for_id(custom_tool_id))
+    return resolved_model, tag_companion_tiers(
+        filter_unsatisfied_companion_entries(_merge_missing_items(missing))
+    )
 
 
 def _studio_prepare_label(
@@ -360,6 +441,7 @@ def ensure_creative_task_ready(
     upscale_method: str | None = None,
     performance: str | None = None,
     edit_task: str | None = None,
+    custom_tool_id: str | None = None,
     auto_download_tier_a: bool = True,
     auto_download_tier_b: bool = False,
     auto_install_nodes: bool = False,
@@ -387,6 +469,21 @@ def ensure_creative_task_ready(
         upscale_method=upscale_method,
         edit_task=edit_task,
     )
+    if custom_tool_id:
+        from dreamforge_custom_tools import (
+            custom_tool_dependencies_for_id,
+            find_custom_tool,
+        )
+
+        tool = find_custom_tool(custom_tool_id)
+        if tool:
+            node_label = str(tool.get("name") or custom_tool_id)
+        for item in custom_tool_dependencies_for_id(custom_tool_id):
+            if str(item.get("kind") or "") != "custom_node_pack":
+                continue
+            pack_id = str(item.get("pack_id") or item.get("id") or "").strip()
+            if pack_id and pack_id not in pack_ids:
+                pack_ids.append(pack_id)
     object_info_cache: dict | None = None
 
     if auto_install_nodes and pack_ids:
@@ -446,6 +543,7 @@ def ensure_creative_task_ready(
         performance=performance,
         template_id=template_id,
         edit_task=edit_task,
+        custom_tool_id=custom_tool_id,
     )
     tier_a = [item for item in missing if item.get("download_tier") == "A"]
     tier_b = [item for item in missing if item.get("download_tier") == "B"]
@@ -494,6 +592,7 @@ def ensure_creative_task_ready(
         performance=performance,
         template_id=template_id,
         edit_task=edit_task,
+        custom_tool_id=custom_tool_id,
     )
     still_a = [item for item in missing_after if item.get("download_tier") == "A"]
     still_b = [item for item in missing_after if item.get("download_tier") == "B"]

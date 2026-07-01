@@ -14,6 +14,7 @@ from dreamforge_custom_tools import (
     custom_tool_dependency_entries,
     custom_tool_preflight,
     find_custom_tool,
+    missing_workflow_graph_model_entries,
 )
 
 
@@ -220,3 +221,231 @@ def test_custom_tool_dependency_entries_unknown_nodes_use_manager_hint(tmp_path)
     assert len(entries) == 1
     assert entries[0]["install_via"] == "manager"
     assert "TotallyUnknownNode" in entries[0]["note"]
+
+
+def _carousel_like_graph() -> dict:
+    return {
+        "106": {
+            "class_type": "UNETLoader",
+            "inputs": {"unet_name": "flux-2-klein-9b-fp8.safetensors"},
+        },
+        "107": {
+            "class_type": "CLIPLoader",
+            "inputs": {"clip_name": "qwen_3_8b_fp8mixed.safetensors", "type": "flux2"},
+        },
+        "110": {
+            "class_type": "VAELoader",
+            "inputs": {"vae_name": "flux2-vae.safetensors"},
+        },
+        "187": {"class_type": "KSampler (Efficient)", "inputs": {}},
+        "190": {"class_type": "Lora Loader Stack (rgthree)", "inputs": {}},
+        "186": {"class_type": "CR Prompt List", "inputs": {}},
+        "196": {"class_type": "IdentityFeatureTransferV3", "inputs": {}},
+    }
+
+
+def test_resolve_pack_ids_for_nodes_maps_carousel_packs():
+    from dreamforge_workflow_planner import resolve_pack_ids_for_nodes
+
+    pack_ids = resolve_pack_ids_for_nodes(
+        [
+            "KSampler (Efficient)",
+            "Lora Loader Stack (rgthree)",
+            "CR Prompt List",
+            "IdentityFeatureTransferV3",
+        ]
+    )
+    assert "efficiency-nodes-comfyui" in pack_ids
+    assert "rgthree-comfy" in pack_ids
+    assert "ComfyUI_Comfyroll_CustomNodes" in pack_ids
+    assert "ComfyUI-Flux2Klein-Enhancer" in pack_ids
+
+
+def test_custom_tool_dependency_entries_include_missing_graph_models(
+    tmp_path,
+    monkeypatch,
+):
+    workflow = tmp_path / "carousel.json"
+    workflow.write_text(json.dumps(_carousel_like_graph()), encoding="utf-8")
+    tool = {
+        "id": "carousel",
+        "name": "Carousel",
+        "workflow_path": str(workflow),
+        "bindings": {},
+    }
+    object_info = {
+        "UNETLoader": {},
+        "CLIPLoader": {},
+        "VAELoader": {},
+        "KSampler (Efficient)": {},
+        "Lora Loader Stack (rgthree)": {},
+        "CR Prompt List": {},
+        "IdentityFeatureTransferV3": {},
+    }
+    monkeypatch.setattr(
+        "dreamforge_custom_tools.workflow_graph_model_file_present",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        "dreamforge_companion_download.companion_item_present",
+        lambda *_args, **_kwargs: False,
+    )
+    entries = custom_tool_dependency_entries(tool, object_info=object_info)
+    ids = {str(item.get("id") or item.get("catalog_id")) for item in entries}
+    assert "flux-2-klein-9b-fp8.safetensors" in ids or "graph_model:flux-2-klein-9b-fp8.safetensors" in ids
+    assert "vae_flux2" in ids or "flux2-vae.safetensors" in ids
+    assert "qwen_3_8b_fp8mixed.safetensors" in ids or "graph_model:qwen_3_8b_fp8mixed.safetensors" in ids
+    assert all(item.get("kind") == "model_companion" for item in entries)
+
+
+def test_custom_tool_dependency_entries_skip_satisfied_assets(monkeypatch):
+    from dreamforge_custom_tools import custom_tool_dependency_entries
+
+    tool = {
+        "id": "carousel",
+        "name": "Carousel",
+        "workflow_path": r"C:\Users\moham\Desktop\Carousel Maker v2 -API- LoRAtech.json",
+        "bindings": {},
+    }
+    if not Path(tool["workflow_path"]).is_file():
+        pytest.skip("Carousel workflow not on disk")
+    object_info = {
+        "UNETLoader": {},
+        "CLIPLoader": {},
+        "VAELoader": {},
+        "KSampler (Efficient)": {},
+        "Lora Loader Stack (rgthree)": {},
+        "CR Prompt List": {},
+        "IdentityFeatureTransferV3": {},
+    }
+    entries = custom_tool_dependency_entries(tool, object_info=object_info)
+    ids = {str(item.get("id") or item.get("pack_id")) for item in entries}
+    assert "rgthree-comfy" not in ids
+    assert "graph_model:flux-2-klein-9b-fp8.safetensors" not in ids
+    assert "graph_model:qwen_3_8b_fp8mixed.safetensors" not in ids
+
+
+def test_workflow_graph_model_file_present_accepts_qwen3vl_8b(tmp_path, monkeypatch):
+    from dreamforge_custom_tools import workflow_graph_model_file_present
+
+    models_root = tmp_path / "models"
+    target = models_root / "text_encoders" / "qwen3vl_8b_fp8_scaled.safetensors"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"x" * 200)
+    monkeypatch.setattr("_paths.MODELS_ROOT", models_root, raising=False)
+
+    assert workflow_graph_model_file_present(
+        "qwen_3_8b_fp8mixed.safetensors",
+        folders=("text_encoders",),
+        min_bytes=100,
+    )
+
+
+def test_apply_custom_tool_model_overrides_patches_loader(tmp_path):
+    from dreamforge_custom_tools import (
+        WORKFLOW_MODEL_DEFAULT,
+        apply_custom_tool_model_overrides,
+        workflow_model_ref_key,
+    )
+
+    graph = {
+        "106": {
+            "class_type": "UNETLoader",
+            "inputs": {"unet_name": "flux-2-klein-9b-fp8.safetensors"},
+        }
+    }
+    key = workflow_model_ref_key("106", "unet_name")
+    tool = {
+        "model_overrides": {
+            key: "flux-2-klein-9b-kv-fp8.safetensors",
+        }
+    }
+    patched = apply_custom_tool_model_overrides(graph, tool)
+    assert patched["106"]["inputs"]["unet_name"] == "flux-2-klein-9b-kv-fp8.safetensors"
+
+    tool_default = {"model_overrides": {key: WORKFLOW_MODEL_DEFAULT}}
+    patched_default = apply_custom_tool_model_overrides(graph, tool_default)
+    assert patched_default["106"]["inputs"]["unet_name"] == "flux-2-klein-9b-fp8.safetensors"
+
+
+def test_missing_workflow_graph_model_entries_respects_override(tmp_path, monkeypatch):
+    from dreamforge_custom_tools import (
+        missing_workflow_graph_model_entries,
+        workflow_model_ref_key,
+    )
+
+    models_root = tmp_path / "models"
+    target = models_root / "diffusion_models" / "my-custom-unet.safetensors"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"x" * (2 * 1024 * 1024))
+    monkeypatch.setattr("_paths.MODELS_ROOT", models_root, raising=False)
+
+    graph = {
+        "106": {
+            "class_type": "UNETLoader",
+            "inputs": {"unet_name": "flux-2-klein-9b-fp8.safetensors"},
+        }
+    }
+    key = workflow_model_ref_key("106", "unet_name")
+    tool = {"model_overrides": {key: "my-custom-unet.safetensors"}}
+    assert missing_workflow_graph_model_entries(graph, tool=tool) == []
+
+    assert missing_workflow_graph_model_entries(graph, tool={"model_overrides": {}}) != []
+
+
+def test_list_custom_tool_workflow_models(tmp_path):
+    from dreamforge_custom_tools import WORKFLOW_MODEL_DEFAULT, list_custom_tool_workflow_models
+
+    workflow = tmp_path / "tool.json"
+    workflow.write_text(
+        json.dumps(
+            {
+                "106": {
+                    "class_type": "UNETLoader",
+                    "inputs": {"unet_name": "flux-2-klein-9b-fp8.safetensors"},
+                },
+                "107": {
+                    "class_type": "CLIPLoader",
+                    "inputs": {"clip_name": "qwen_3_8b_fp8mixed.safetensors"},
+                },
+                "110": {
+                    "class_type": "VAELoader",
+                    "inputs": {"vae_name": "flux2-vae.safetensors"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    tool = {
+        "workflow_path": str(workflow),
+        "model_overrides": {},
+    }
+    slots = list_custom_tool_workflow_models(tool)
+    assert len(slots) == 3
+    assert slots[0]["workflow_filename"] == "flux-2-klein-9b-fp8.safetensors"
+    assert slots[0]["selection"] == WORKFLOW_MODEL_DEFAULT
+    clip_slot = next(item for item in slots if item["class_type"] == "CLIPLoader")
+    vae_slot = next(item for item in slots if item["class_type"] == "VAELoader")
+    assert clip_slot["library_options"]
+    assert vae_slot["library_options"]
+    assert all(
+        item.get("category") in {"text_encoders", "clip"}
+        for item in clip_slot["library_options"]
+    )
+    assert all(item.get("category") == "vae" for item in vae_slot["library_options"])
+
+
+def test_workflow_graph_model_file_present_accepts_klein_kv_variant(tmp_path, monkeypatch):
+    from dreamforge_custom_tools import workflow_graph_model_file_present
+
+    models_root = tmp_path / "models"
+    target = models_root / "diffusion_models" / "flux-2-klein-9b-kv-fp8.safetensors"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"x" * 200)
+    monkeypatch.setattr("_paths.MODELS_ROOT", models_root, raising=False)
+
+    assert workflow_graph_model_file_present(
+        "flux-2-klein-9b-fp8.safetensors",
+        folders=("diffusion_models",),
+        min_bytes=100,
+    )

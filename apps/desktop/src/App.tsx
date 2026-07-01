@@ -106,6 +106,8 @@ function DreamForgeStudio() {
       <TitleBar
         engineState={mc.engineState}
         bootMessage={mc.bootMessage}
+        workerReady={mc.workerReady}
+        restarting={mc.restarting}
         gpuName={mc.gpuName}
         vramGb={mc.vramGb}
         mpsAvailable={mc.mpsAvailable}
@@ -118,6 +120,7 @@ function DreamForgeStudio() {
           })
         }
         onOpenAppSettings={() => setAppSettingsOpen(true)}
+        onRestartEngine={() => void mc.runRestartEngine()}
       />
       <AnimatePresence mode="wait">
         {mc.status && !hideGlobalStatus && (

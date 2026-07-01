@@ -108,9 +108,24 @@ def _apply_toolbox_task_routing(
     if task == "photo_restore":
         from dreamforge_edit_tasks import resolve_edit_task_defaults
 
-        restore_model = _pick_photo_restore_model(gallery_list)
-        if restore_model:
+        from dreamforge_edit_routing import (
+            model_supports_sdxl_union_toolbox,
+            pick_best_sdxl_toolbox_model,
+            pick_sdxl_union_controlnet,
+        )
+
+        restore_model = pick_best_sdxl_toolbox_model(gallery_list)
+        current = str(out.get("model") or "").strip()
+        current_item = find_gallery_item(gallery_list, current) if current else {}
+        if restore_model and not model_supports_sdxl_union_toolbox(
+            current_item, gallery_family(gallery_list, current)
+        ):
             out["model"] = restore_model
+        elif restore_model and not current:
+            out["model"] = restore_model
+        cn_model = pick_sdxl_union_controlnet()
+        if cn_model:
+            out["controlnet_model"] = cn_model
         defaults = resolve_edit_task_defaults(task, mode="edit", settings=out)
         for key in (
             "steps",
@@ -132,9 +147,24 @@ def _apply_toolbox_task_routing(
     if task == "portrait_master":
         from dreamforge_edit_tasks import resolve_edit_task_defaults
 
-        portrait_model = _pick_photo_restore_model(gallery_list)
-        if portrait_model:
+        from dreamforge_edit_routing import (
+            model_supports_sdxl_union_toolbox,
+            pick_best_sdxl_toolbox_model,
+            pick_sdxl_union_controlnet,
+        )
+
+        portrait_model = pick_best_sdxl_toolbox_model(gallery_list)
+        current = str(out.get("model") or "").strip()
+        current_item = find_gallery_item(gallery_list, current) if current else {}
+        if portrait_model and not model_supports_sdxl_union_toolbox(
+            current_item, gallery_family(gallery_list, current)
+        ):
             out["model"] = portrait_model
+        elif portrait_model and not current:
+            out["model"] = portrait_model
+        cn_model = pick_sdxl_union_controlnet()
+        if cn_model:
+            out["controlnet_model"] = cn_model
         defaults = resolve_edit_task_defaults(task, mode="edit", settings=out)
         for key in (
             "steps",
@@ -226,29 +256,6 @@ def _apply_toolbox_task_routing(
         out["inpaint_mask_path"] = None
         return "toolbox_cutout_compose"
     return ""
-
-
-def _pick_photo_restore_model(gallery_list: list[Any]) -> str:
-    needles = ("epicrealism", "juggernaut", "realvis", "dreamshaper", "sd_xl", "sdxl")
-    best_name = ""
-    best_score = -1
-    for raw in gallery_list:
-        if not isinstance(raw, dict):
-            continue
-        hay = _gallery_hay(raw)
-        family = str(raw.get("family") or "").lower()
-        score = 0
-        if family == "sdxl" or "sdxl" in hay:
-            score += 100
-        for needle in needles:
-            if needle in hay:
-                score += 25
-        if "turbo" in hay or "lightning" in hay:
-            score -= 10
-        if score > best_score:
-            best_score = score
-            best_name = str(raw.get("engine_name") or raw.get("relative_path") or "")
-    return best_name
 
 
 def apply_task_routing(

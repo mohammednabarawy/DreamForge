@@ -1002,21 +1002,47 @@ def _models_root_hint() -> Path:
     return MODELS_ROOT
 
 
-def resolve_pack_id_for_nodes(nodes: Iterable[str] | None) -> str | None:
-    """Map missing Comfy node class names to a pinned custom-node pack id."""
+def resolve_pack_ids_for_nodes(nodes: Iterable[str] | None) -> list[str]:
+    """Map missing Comfy node class names to pinned custom-node pack ids."""
     wanted = {str(node).strip() for node in (nodes or []) if str(node).strip()}
     if not wanted:
-        return None
+        return []
+    pack_ids: list[str] = []
     try:
         from dreamforge_krita_recipes import COMFY_INSTALL_RECIPE
     except Exception:
-        return None
+        COMFY_INSTALL_RECIPE = {}
     for section in ("required_custom_nodes", "optional_custom_nodes"):
         for entry in COMFY_INSTALL_RECIPE.get(section) or []:
-            entry_nodes = {str(node).strip() for node in (entry.get("nodes") or []) if str(node).strip()}
+            entry_nodes = {
+                str(node).strip()
+                for node in (entry.get("nodes") or [])
+                if str(node).strip()
+            }
             if wanted & entry_nodes:
-                return str(entry["id"])
-    return None
+                pack_id = str(entry.get("id") or "").strip()
+                if pack_id and pack_id not in pack_ids:
+                    pack_ids.append(pack_id)
+    for node in sorted(wanted):
+        pack_id = str(EXTRA_NODE_TO_PACK.get(node) or "").strip()
+        if pack_id and pack_id not in pack_ids:
+            pack_ids.append(pack_id)
+    return pack_ids
+
+
+def resolve_pack_id_for_nodes(nodes: Iterable[str] | None) -> str | None:
+    """Return the first pinned pack id for missing nodes (legacy single-pack callers)."""
+    pack_ids = resolve_pack_ids_for_nodes(nodes)
+    return pack_ids[0] if pack_ids else None
+
+
+# Node class names not listed on COMFY_INSTALL_RECIPE pack entries.
+EXTRA_NODE_TO_PACK: dict[str, str] = {
+    "IdentityFeatureTransferV3": "ComfyUI-Flux2Klein-Enhancer",
+    "KSampler (Efficient)": "efficiency-nodes-comfyui",
+    "KSampler Adv. (Efficient)": "efficiency-nodes-comfyui",
+    "KSampler SDXL (Eff.)": "efficiency-nodes-comfyui",
+}
 
 
 def required_custom_node_pack_ids(

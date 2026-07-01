@@ -233,6 +233,37 @@ def test_from_exception_maps_depth_anything_hub_failure_to_missing_model_depende
     assert any(action["action"] == "download_model_companions" for action in report["repair_actions"])
 
 
+def test_from_exception_maps_controlnet_missing_vae_to_workflow_validation():
+    class ComfyExecutionError(RuntimeError):
+        pass
+
+    payload = from_exception(
+        ComfyExecutionError(
+            "KSampler: This Controlnet needs a VAE but none was provided, "
+            "please use a ControlNetApply node with a VAE input and connect it."
+        )
+    )
+    _is_error(payload, "comfy_workflow_validation")
+    assert payload["code"] != "comfy_server_crashed"
+    assert "VAE" in payload["message"]
+
+
+def test_from_exception_maps_ksampler_clip_mismatch_to_unsupported_model_for_workflow():
+    class ComfyExecutionError(RuntimeError):
+        pass
+
+    payload = from_exception(
+        ComfyExecutionError(
+            "KSampler: mat1 and mat2 shapes cannot be multiplied (16562x16 and 64x3072)\n\n"
+            'TIPS: If you have any "Load CLIP" or "*CLIP Loader" nodes in your workflow '
+            "connected to this sampler node make sure the correct file(s) and type is selected."
+        )
+    )
+    _is_error(payload, "unsupported_model_for_workflow")
+    assert payload["code"] != "comfy_server_crashed"
+    assert "ControlNet" in payload["message"]
+
+
 def test_from_exception_maps_enospc_to_disk_full():
     err = OSError(28, "No space left on device", "C:/outputs/x.png")
     payload = from_exception(err)

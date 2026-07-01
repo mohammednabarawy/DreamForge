@@ -74,6 +74,7 @@ export type DreamForgeAppConfig = {
     description: string;
     workflow_path: string;
     bindings: Record<string, any>;
+    model_overrides?: Record<string, string>;
   }>;
 };
 
@@ -596,6 +597,16 @@ export async function getManagerQueueStatus() {
   }>("get_manager_queue_status", {});
 }
 
+export async function checkWorkflowTaskDependencies(editTask?: string | null) {
+  return bridgeInvoke<{
+    ok?: boolean;
+    ready?: boolean;
+    missing?: ModelDependencyItem[];
+  }>("check_workflow_task_dependencies", {
+    edit_task: editTask ?? null,
+  });
+}
+
 export async function installWorkflowModels(
   catalogIds: string[],
   options?: { prefer_manager?: boolean; progress_file?: string },
@@ -627,12 +638,39 @@ export async function fetchCustomToolDependencies(toolId: string, useObjectInfo 
   });
 }
 
+export async function fetchCustomToolWorkflowModels(toolId: string) {
+  return bridgeInvoke<{
+    ok?: boolean;
+    tool_id?: string;
+    tool_name?: string;
+    models?: Array<Record<string, unknown>>;
+    error?: string;
+  }>("custom_tool_workflow_models", {
+    tool_id: toolId,
+  });
+}
+
+export async function parseComfyWorkflowFile(path: string) {
+  return bridgeInvoke<{
+    ok?: boolean;
+    api_format?: boolean;
+    ui_format?: boolean;
+    nodes?: Record<string, unknown>;
+    class_types?: string[];
+    repaired_nodes?: string[];
+    ui_sibling?: string | null;
+    warning?: string;
+    error?: string;
+  }>("parse_comfy_workflow", { path });
+}
+
 export async function ensureCreativeTaskReady(args: {
   model?: string;
   studio_mode?: string;
   upscale_method?: string | null;
   performance?: string | null;
   edit_task?: string | null;
+  custom_tool_id?: string | null;
   auto_download_tier_a?: boolean;
   auto_download_tier_b?: boolean;
   auto_install_nodes?: boolean;
@@ -644,6 +682,7 @@ export async function ensureCreativeTaskReady(args: {
     upscale_method: args.upscale_method ?? null,
     performance: args.performance ?? null,
     edit_task: args.edit_task ?? null,
+    custom_tool_id: args.custom_tool_id ?? null,
     auto_download_tier_a: args.auto_download_tier_a ?? true,
     auto_download_tier_b: args.auto_download_tier_b ?? false,
     auto_install_nodes: args.auto_install_nodes ?? false,

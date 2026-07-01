@@ -29,6 +29,8 @@ export function computeGenerateReadiness(args: {
   missingCompanionCount: number;
   /** Upscalers, inpaint bundles, FLUX Kontext checkpoints (studio bridge). */
   studioMissingAssetCount?: number;
+  /** Custom toolbox workflow nodes and graph weights. */
+  customToolMissingCount?: number;
   settings: GenerationSettings;
   modelGallery: ModelGalleryItem[];
   studioMode?: StudioMode;
@@ -114,13 +116,31 @@ export function computeGenerateReadiness(args: {
           companionBlockedOnly: false,
         };
       }
+      const customMissing = args.customToolMissingCount ?? 0;
+      if (customMissing > 0) {
+        return {
+          ok: false,
+          missingCompanions: true,
+          companionBlockedOnly: true,
+          reason: `${tool.name} is missing ${customMissing} workflow asset(s) — Download first`,
+        };
+      }
       return { ok: true, reason: "", missingCompanions: false, companionBlockedOnly: false };
     }
     const task = (args.settings.edit_task ?? "").trim().toLowerCase();
     if (!task) {
+      const tools = args.customTools ?? [];
+      if (tools.length > 0) {
+        return {
+          ok: false,
+          reason: `Select a custom tool under Custom Tools (e.g. "${tools[0].name}") or pick a native tool above`,
+          missingCompanions: false,
+          companionBlockedOnly: false,
+        };
+      }
       return {
         ok: false,
-        reason: "Select a native tool in the Creative Toolbox",
+        reason: "Select a native or custom tool in the Creative Toolbox",
         missingCompanions: false,
         companionBlockedOnly: false,
       };

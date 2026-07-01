@@ -821,14 +821,20 @@ def _build_comfy_prompt_graph(
             }
         )
     elif mode == "portrait_master":
+        from dreamforge_edit_routing import resolve_sdxl_union_controlnet
         from dreamforge_portrait_master import build_portrait_master_negative
 
+        cn_model = resolve_sdxl_union_controlnet(getattr(job, "controlnet_model", None))
+        if not cn_model:
+            raise ValueError(
+                "Portrait Master requires SDXL ControlNet Union under models/controlnet/ "
+                "(for example xinsir-controlnet-union-sdxl-1.0-promax.safetensors)."
+            )
         graph = comfy_portrait_master(
             {
                 **common,
                 "image": input_filename,
-                "controlnet_model": getattr(job, "controlnet_model", None)
-                or _first_inventory_model("controlnet", ("union",)),
+                "controlnet_model": cn_model,
                 "portrait_pose_strength": float(getattr(job, "portrait_pose_strength", 0.65)),
                 "portrait_depth_strength": float(getattr(job, "portrait_depth_strength", 0.55)),
                 "denoise": edit_strength,
@@ -836,18 +842,25 @@ def _build_comfy_prompt_graph(
             }
         )
     elif mode == "photo_restore":
+        from dreamforge_edit_routing import resolve_sdxl_union_controlnet
+
         control_image = (
             getattr(job, "control_image", None)
             or getattr(job, "reference_image", None)
             or input_filename
         )
+        cn_model = resolve_sdxl_union_controlnet(getattr(job, "controlnet_model", None))
+        if not cn_model:
+            raise ValueError(
+                "Photo Restore requires SDXL ControlNet Union under models/controlnet/ "
+                "(for example xinsir-controlnet-union-sdxl-1.0-promax.safetensors)."
+            )
         graph = comfy_photo_restore(
             {
                 **common,
                 "image": input_filename,
                 "control_image": control_image,
-                "controlnet_model": getattr(job, "controlnet_model", None)
-                or _first_inventory_model("controlnet", ("union",)),
+                "controlnet_model": cn_model,
                 "depth_strength": float(getattr(job, "depth_strength", 0.15)),
                 "lineart_strength": float(getattr(job, "lineart_strength", 0.35)),
                 "face_preservation": bool(getattr(job, "face_preservation", False)),
@@ -1763,6 +1776,49 @@ def run_generation(
                     ]
                     emit_event(stream_sink, err)
                     return {"status": "error", **err}
+            elif task_name in {"portrait_master", "photo_restore"}:
+                from dreamforge_edit_routing import (
+                    model_supports_sdxl_union_toolbox,
+                    resolve_sdxl_union_controlnet,
+                )
+                from dreamforge_errors import invalid_request
+
+                if not model_supports_sdxl_union_toolbox(model, model_family):
+                    task_label = (
+                        "Portrait Master" if task_name == "portrait_master" else "Photo Restore"
+                    )
+                    model_label = (
+                        model.get("name") or model.get("engine_name") or model_family or "unknown"
+                    )
+                    err = invalid_request(
+                        f"{task_label} requires an SDXL checkpoint with ControlNet Union; "
+                        f"the selected model ({model_label}) is not compatible.",
+                        job_id=job_id,
+                    )
+                    err["suggestions"] = [
+                        "Pick an SDXL checkpoint such as EpicRealism XL or Juggernaut XL.",
+                        "Flux, Qwen, and split UNet loaders cannot be used with this toolbox workflow.",
+                        "Remove LoRAs trained for a different architecture if you already use SDXL.",
+                    ]
+                    emit_event(stream_sink, err)
+                    return {"status": "error", **err}
+                cn_model = resolve_sdxl_union_controlnet(getattr(job, "controlnet_model", None))
+                if not cn_model:
+                    task_label = (
+                        "Portrait Master" if task_name == "portrait_master" else "Photo Restore"
+                    )
+                    err = invalid_request(
+                        f"{task_label} requires an SDXL ControlNet Union model in models/controlnet/.",
+                        job_id=job_id,
+                    )
+                    err["suggestions"] = [
+                        "Download SDXL ControlNet Union (xinsir promax) via companion assets or the model catalog.",
+                        "Do not use SD 1.5 ControlNet files (control_v11p_sd15_*) with SDXL checkpoints.",
+                        "Restart the GPU engine after installing the ControlNet file.",
+                    ]
+                    emit_event(stream_sink, err)
+                    return {"status": "error", **err}
+                setattr(job, "controlnet_model", cn_model)
 
         custom_tool_id = str(getattr(job, "custom_tool_id", None) or "").strip()
         if custom_tool_id:
@@ -2109,8 +2165,6 @@ def run_generation(
             upscale_workflow = str(upscale_info.get("workflow") or "ultimate_sd")
             if upscale_workflow == "ultimate_sd":
                 if not custom_node_pack_present("ComfyUI_UltimateSDUpscale"):
-                    from dreamforge_errors import missing_custom_node_pack
-
                     err = missing_custom_node_pack(
                         "ComfyUI_UltimateSDUpscale",
                         job_id=job_id,
@@ -2528,8 +2582,6 @@ def run_generation(
                     input_filename=input_filename,
                 )
             elif not custom_node_pack_present("ComfyUI_IPAdapter_plus"):
-                from dreamforge_errors import missing_custom_node_pack
-
                 err = missing_custom_node_pack(
                     "ComfyUI_IPAdapter_plus",
                     job_id=job_id,
@@ -2573,8 +2625,6 @@ def run_generation(
                 if not custom_node_pack_present(pack)
             ]
             if missing_packs:
-                from dreamforge_errors import missing_custom_node_pack
-
                 err = missing_custom_node_pack(
                     missing_packs[0],
                     job_id=job_id,
@@ -2864,6 +2914,89 @@ def run_generation(
                         server = restart_managed_comfy_server(
                             timeout_s=90.0,
                             reason="cutout_essentials_nodes",
+                        )
+                        client = ComfyClient(server.base_url)
+                        object_info = client.object_info(timeout_s=30.0)
+                        missing_workflow_nodes = sorted(
+                            node_type
+                            for node_type in comfy_workflow_class_types
+                            if node_type not in object_info
+                        )
+                    except Exception:
+                        pass
+            if missing_workflow_nodes and comfy_mode == "custom_tool":
+                from dreamforge_workflow_planner import (
+                    resolve_pack_ids_for_nodes,
+                    _custom_node_directory_present,
+                )
+
+                pack_ids = resolve_pack_ids_for_nodes(missing_workflow_nodes)
+                needs_install = [
+                    pack_id
+                    for pack_id in pack_ids
+                    if not _custom_node_directory_present(pack_id)
+                ]
+                needs_restart = bool(pack_ids) and (
+                    bool(needs_install)
+                    or any(_custom_node_directory_present(p) for p in pack_ids)
+                )
+                if needs_restart:
+                    try:
+                        from dreamforge_comfy_install import ensure_custom_node_pack
+                        from dreamforge_comfy_manager import (
+                            fix_packs_via_manager,
+                            install_packs_via_manager,
+                            resolve_pack_install_strategy,
+                        )
+                        from dreamforge_comfy_server import restart_managed_comfy_server
+                        from dreamforge_workflow_planner import _recipe_entry_for_pack
+
+                        if needs_install:
+                            emit_event(
+                                stream_sink,
+                                {
+                                    "type": "progress",
+                                    "job_id": job_id,
+                                    "phase": "preflight",
+                                    "progress": 3,
+                                    "message": (
+                                        f"Installing {len(needs_install)} custom node pack(s) "
+                                        "for this workflow…"
+                                    ),
+                                },
+                            )
+                            manager_ids = [
+                                pack_id
+                                for pack_id in needs_install
+                                if resolve_pack_install_strategy(
+                                    _recipe_entry_for_pack(pack_id),
+                                    pack_id,
+                                )
+                                == "manager"
+                            ]
+                            pinned_ids = [
+                                pack_id for pack_id in needs_install if pack_id not in manager_ids
+                            ]
+                            if manager_ids:
+                                install_packs_via_manager(manager_ids)
+                                fix_packs_via_manager(manager_ids)
+                            for pack_id in pinned_ids:
+                                entry = _recipe_entry_for_pack(pack_id)
+                                if entry:
+                                    ensure_custom_node_pack(entry)
+                        emit_event(
+                            stream_sink,
+                            {
+                                "type": "progress",
+                                "job_id": job_id,
+                                "phase": "preflight",
+                                "progress": 4,
+                                "message": "Restarting ComfyUI to register custom nodes…",
+                            },
+                        )
+                        server = restart_managed_comfy_server(
+                            timeout_s=90.0,
+                            reason="custom_tool_nodes",
                         )
                         client = ComfyClient(server.base_url)
                         object_info = client.object_info(timeout_s=30.0)

@@ -740,6 +740,19 @@ _COMFY_DEPENDENCY_HINTS = (
 )
 
 
+def _is_clip_checkpoint_mismatch(msg_lower: str) -> bool:
+    """KSampler matmul / CLIP-loader tips mean wrong text encoder for the UNet."""
+    if "mat1 and mat2 shapes cannot be multiplied" in msg_lower:
+        return True
+    if "shapes cannot be multiplied" in msg_lower and "ksampler" in msg_lower:
+        return True
+    if "make sure the correct file(s) and type is selected" in msg_lower:
+        return True
+    if "clip loader" in msg_lower and "ksampler" in msg_lower:
+        return True
+    return False
+
+
 def _try_missing_annotator_weights(msg: str, *, job_id: str | None = None) -> dict | None:
     """Map missing preprocessor weights (HF hub / cache failures) to companion downloads."""
     msg_lower = msg.lower()
@@ -898,6 +911,44 @@ def from_exception(exc: BaseException, *, job_id: str | None = None) -> dict:
     if annotator_payload is not None:
         return annotator_payload
 
+    if "controlnet" in msg_lower and "needs a vae" in msg_lower:
+        return comfy_workflow_validation(
+            "ControlNet Union needs the checkpoint VAE connected on the ControlNet apply nodes.",
+            suggestions=[
+                "Restart the GPU engine so DreamForge loads the updated Portrait Master / Photo Restore graph.",
+                "Use an SDXL checkpoint with a bundled VAE (EpicRealism XL, Juggernaut XL, etc.).",
+                "Confirm the ControlNet Union model is installed under models/controlnet/.",
+            ],
+            details={
+                "exception": f"{name}: {msg}",
+                "node_issues": [
+                    {
+                        "node": "ControlNetApplyAdvanced",
+                        "issue": "Missing required VAE input for ControlNet Union",
+                    }
+                ],
+            },
+            job_id=job_id,
+        )
+
+    if _is_clip_checkpoint_mismatch(msg_lower):
+        return error(
+            "unsupported_model_for_workflow",
+            "The SDXL checkpoint and ControlNet model do not match for this workflow.",
+            suggestions=[
+                "Portrait Master and Photo Restore need SDXL ControlNet Union (not SD 1.5 ControlNet).",
+                "Install xinsir-controlnet-union-sdxl-1.0-promax.safetensors under models/controlnet/.",
+                "Keep EpicRealism XL or another SDXL checkpoint selected in the model picker.",
+                "Remove SD 1.5 LoRAs; restart the GPU engine after changing ControlNet or checkpoint.",
+            ],
+            details={
+                "exception": f"{name}: {msg}",
+                "issue": "sdxl_controlnet_checkpoint_mismatch",
+            },
+            recoverable=True,
+            job_id=job_id,
+        )
+
     _comfy_crash_hints = (
         "connection could be made because the target machine actively refused",
         "comfyui server became unreachable",
@@ -906,12 +957,7 @@ def from_exception(exc: BaseException, *, job_id: str | None = None) -> dict:
         "connection refused",
         "[errno 111]",
     )
-    if any(hint in msg_lower for hint in _comfy_crash_hints) or (
-        name == "ComfyExecutionError"
-        and "paging file" not in msg_lower
-        and "1455" not in msg_lower
-        and not any(hint in msg_lower for hint in _COMFY_DEPENDENCY_HINTS)
-    ):
+    if any(hint in msg_lower for hint in _comfy_crash_hints):
         return error(
             "comfy_server_crashed",
             _COMFY_CRASH_MESSAGE,

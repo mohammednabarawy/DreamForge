@@ -37,6 +37,33 @@ def _node(class_type: str, inputs: dict[str, Any]) -> dict[str, Any]:
     return {"class_type": class_type, "inputs": inputs}
 
 
+def _controlnet_apply_advanced(
+    *,
+    positive: list[Any],
+    negative: list[Any],
+    control_net: list[Any],
+    image: list[Any],
+    strength: float,
+    start_percent: float,
+    end_percent: float,
+    vae: list[Any],
+) -> dict[str, Any]:
+    """ControlNet Union apply nodes require the checkpoint VAE on recent ComfyUI builds."""
+    return _node(
+        "ControlNetApplyAdvanced",
+        {
+            "positive": positive,
+            "negative": negative,
+            "control_net": control_net,
+            "image": image,
+            "strength": strength,
+            "start_percent": start_percent,
+            "end_percent": end_percent,
+            "vae": vae,
+        },
+    )
+
+
 def _vae_decode_node(args: dict[str, Any], samples: list[str | int] | list[Any], vae: list[str | int] | list[Any]) -> dict[str, Any]:
     width = int(args.get("width", 1024))
     height = int(args.get("height", 1024))
@@ -140,7 +167,9 @@ def comfy_z_image_txt2img(args: dict[str, Any]) -> dict[str, Any]:
     seed = int(args.get("seed", 0))
 
     g: dict[str, Any] = {}
-    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_out, clip_out, vae_out, n = _add_model_loader(
+        g, {**args, "ckpt_name": ckpt}
+    )
     model_sampled, n = _apply_z_image_model_sampling(model_out, g, n, args)
     g["2"] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
     g["3"] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
@@ -182,7 +211,9 @@ def comfy_z_image_img2img(args: dict[str, Any]) -> dict[str, Any]:
     denoise = float(args.get("denoise", args.get("edit_strength", 0.35)))
 
     g: dict[str, Any] = {}
-    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_out, clip_out, vae_out, n = _add_model_loader(
+        g, {**args, "ckpt_name": ckpt}
+    )
     model_sampled, n = _apply_z_image_model_sampling(model_out, g, n, args)
     pixels = _img2img_source_pixels(g, args, image_filename, load_id="2", scale_id="20")
     g["3"] = _node("VAEEncode", {"pixels": pixels, "vae": vae_out})
@@ -244,7 +275,9 @@ def comfy_krea2_txt2img(args: dict[str, Any]) -> dict[str, Any]:
     seed = int(args.get("seed", 0))
 
     g: dict[str, Any] = {}
-    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_out, clip_out, vae_out, n = _add_model_loader(
+        g, {**args, "ckpt_name": ckpt}
+    )
     model_sampled, n = _apply_krea2_model_sampling(model_out, g, n, args)
     g["2"] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
     g["3"] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
@@ -286,7 +319,9 @@ def comfy_krea2_img2img(args: dict[str, Any]) -> dict[str, Any]:
     denoise = float(args.get("denoise", args.get("edit_strength", 0.6)))
 
     g: dict[str, Any] = {}
-    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_out, clip_out, vae_out, n = _add_model_loader(
+        g, {**args, "ckpt_name": ckpt}
+    )
     model_sampled, n = _apply_krea2_model_sampling(model_out, g, n, args)
     pixels = _img2img_source_pixels(g, args, image_filename, load_id="2", scale_id="20")
     g["3"] = _node("VAEEncode", {"pixels": pixels, "vae": vae_out})
@@ -329,7 +364,9 @@ def comfy_kandinsky5_txt2img(args: dict[str, Any]) -> dict[str, Any]:
     seed = int(args.get("seed", 0))
 
     g: dict[str, Any] = {}
-    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_out, clip_out, vae_out, n = _add_model_loader(
+        g, {**args, "ckpt_name": ckpt}
+    )
     g["2"] = _node("CLIPTextEncodeKandinsky5", {"clip": clip_out, "text": prompt})
     g["3"] = _node("CLIPTextEncodeKandinsky5", {"clip": clip_out, "text": negative})
     g["4"] = _node("EmptyLatentImage", {"width": width, "height": height, "batch_size": 1})
@@ -370,7 +407,9 @@ def comfy_kandinsky5_img2img(args: dict[str, Any]) -> dict[str, Any]:
     denoise = float(args.get("denoise", args.get("edit_strength", 0.75)))
 
     g: dict[str, Any] = {}
-    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_out, clip_out, vae_out, n = _add_model_loader(
+        g, {**args, "ckpt_name": ckpt}
+    )
     pixels = _img2img_source_pixels(g, args, image_filename, load_id="2", scale_id="20")
     g["3"] = _node("VAEEncode", {"pixels": pixels, "vae": vae_out})
     g["4"] = _node("CLIPTextEncodeKandinsky5", {"clip": clip_out, "text": prompt})
@@ -482,6 +521,7 @@ def _add_model_loader(g: dict[str, Any], args: dict[str, Any], *, start_id: int 
     weights and loads CLIP/VAE separately; only checkpoints use
     CheckpointLoaderSimple.
     """
+    user_lora_clip = bool(args.get("user_lora_clip", True))
     category = _model_category(args)
     family = str(args.get("family") or "").lower()
     model_name = _comfy_model_name(args)
@@ -650,7 +690,7 @@ def _add_model_loader(g: dict[str, Any], args: dict[str, Any], *, start_id: int 
     vae_out = [str(i), 2]
     i += 1
     model_out, clip_out, i = _apply_user_lora_stack(
-        g, model_out, clip_out, args.get("loras"), i, clip_lora=True
+        g, model_out, clip_out, args.get("loras"), i, clip_lora=user_lora_clip
     )
     model_out, i = _apply_easy_cache(g, model_out, args, i)
     return model_out, clip_out, vae_out, i
@@ -1539,7 +1579,9 @@ def comfy_cutout_compose(args: dict[str, Any]) -> dict[str, Any]:
     denoise = float(args.get("denoise", args.get("edit_strength", 1.0)))
 
     g: dict[str, Any] = {}
-    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_out, clip_out, vae_out, n = _add_model_loader(
+        g, {**args, "ckpt_name": ckpt}
+    )
     model_out, n = _apply_qwen_lightning_lora(model_out, g, n, args)
     model_sampled = _apply_qwen_model_sampling(model_out, g, n, args)
     n += 2
@@ -1643,7 +1685,9 @@ def comfy_qwen_image_edit(args: dict[str, Any]) -> dict[str, Any]:
     denoise = float(args.get("denoise", args.get("edit_strength", 1.0)))
 
     g: dict[str, Any] = {}
-    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_out, clip_out, vae_out, n = _add_model_loader(
+        g, {**args, "ckpt_name": ckpt}
+    )
     model_out, n = _apply_qwen_lightning_lora(model_out, g, n, args)
     model_sampled = _apply_qwen_model_sampling(model_out, g, n, args)
     n += 2
@@ -1698,7 +1742,9 @@ def comfy_qwen_image_edit_plus(args: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("comfy_qwen_image_edit_plus requires at least one image")
 
     g: dict[str, Any] = {}
-    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_out, clip_out, vae_out, n = _add_model_loader(
+        g, {**args, "ckpt_name": ckpt}
+    )
     model_out, n = _apply_qwen_lightning_lora(model_out, g, n, args)
     model_sampled = _apply_qwen_model_sampling(model_out, g, n, args)
     n += 2
@@ -1796,7 +1842,9 @@ def comfy_qwen_image_txt2img(args: dict[str, Any]) -> dict[str, Any]:
     seed = int(args.get("seed", 0))
 
     g: dict[str, Any] = {}
-    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_out, clip_out, vae_out, n = _add_model_loader(
+        g, {**args, "ckpt_name": ckpt}
+    )
     model_out, n = _apply_qwen_lightning_lora(model_out, g, n, args)
     model_sampled = _apply_qwen_model_sampling(model_out, g, n, args)
     n += 2
@@ -2525,7 +2573,9 @@ def comfy_controlnet_basic(args: dict[str, Any]) -> dict[str, Any]:
     image_filename = args.get("image")
 
     g: dict[str, Any] = {}
-    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_out, clip_out, vae_out, n = _add_model_loader(
+        g, {**args, "ckpt_name": ckpt}
+    )
     g["2"] = _node("LoadImage", {"image": control_image, "upload": "image"})
     g[str(n)] = _node("ControlNetLoader", {"control_net_name": controlnet_model})
     cn_out = [str(n), 0]
@@ -2619,7 +2669,9 @@ def comfy_outpaint_basic(args: dict[str, Any]) -> dict[str, Any]:
     grow_mask_by = int(args.get("grow_mask_by", args.get("inpaint_mask_grow_by", 0)))
 
     g: dict[str, Any] = {}
-    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_out, clip_out, vae_out, n = _add_model_loader(
+        g, {**args, "ckpt_name": ckpt}
+    )
     g["2"] = _node("LoadImage", {"image": image_filename, "upload": "image"})
     g["3"] = _node(
         "ImagePadForOutpaint",
@@ -2695,7 +2747,9 @@ def comfy_hires_two_pass(args: dict[str, Any]) -> dict[str, Any]:
     upscale_method = str(args.get("hires_latent_upscale_method", "nearest-exact"))
 
     g: dict[str, Any] = {}
-    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_out, clip_out, vae_out, n = _add_model_loader(
+        g, {**args, "ckpt_name": ckpt}
+    )
     g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
     pos = [str(n), 0]
     n += 1
@@ -2815,7 +2869,9 @@ def _comfy_ipadapter_from_slots(args: dict[str, Any], slots: list[dict[str, Any]
     seed = int(args.get("seed", 0))
 
     g: dict[str, Any] = {}
-    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_out, clip_out, vae_out, n = _add_model_loader(
+        g, {**args, "ckpt_name": ckpt}
+    )
     g[str(n)] = _node("CLIPVisionLoader", {"clip_name": clip_vision})
     clip_vis = [str(n), 0]
     n += 1
@@ -2922,7 +2978,9 @@ def comfy_ipadapter_controlnet_hybrid(args: dict[str, Any]) -> dict[str, Any]:
     )
 
     g: dict[str, Any] = {}
-    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_out, clip_out, vae_out, n = _add_model_loader(
+        g, {**args, "ckpt_name": ckpt}
+    )
     g[str(n)] = _node("CLIPVisionLoader", {"clip_name": clip_vision})
     clip_vis = [str(n), 0]
     n += 1
@@ -3035,7 +3093,9 @@ def comfy_ipadapter_faceid_reference(args: dict[str, Any]) -> dict[str, Any]:
     weight = float(args.get("ipadapter_weight", args.get("reference_weight", 0.75)))
 
     g: dict[str, Any] = {}
-    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_out, clip_out, vae_out, n = _add_model_loader(
+        g, {**args, "ckpt_name": ckpt}
+    )
     g[str(n)] = _node(
         "IPAdapterUnifiedLoaderFaceID",
         {
@@ -3138,7 +3198,9 @@ def comfy_face_detail_basic(args: dict[str, Any]) -> dict[str, Any]:
 
     g: dict[str, Any] = {}
     g["1"] = _node("LoadImage", {"image": image, "upload": "image"})
-    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_out, clip_out, vae_out, n = _add_model_loader(
+        g, {**args, "ckpt_name": ckpt}
+    )
     g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
     pos = [str(n), 0]
     n += 1
@@ -3245,7 +3307,9 @@ def comfy_area_composition(args: dict[str, Any]) -> dict[str, Any]:
     regions = _parse_region_specs(args)
 
     g: dict[str, Any] = {}
-    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_out, clip_out, vae_out, n = _add_model_loader(
+        g, {**args, "ckpt_name": ckpt}
+    )
     g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
     negative_cond = [str(n), 0]
     n += 1
@@ -3343,7 +3407,9 @@ def comfy_photo_restore(args: dict[str, Any]) -> dict[str, Any]:
     )
     scaled_image = ["2", 0]
 
-    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_out, clip_out, vae_out, n = _add_model_loader(
+        g, {**args, "ckpt_name": ckpt, "user_lora_clip": False}
+    )
 
     g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
     pos = [str(n), 0]
@@ -3386,15 +3452,16 @@ def comfy_photo_restore(args: dict[str, Any]) -> dict[str, Any]:
     depth_cn = [str(n), 0]
     n += 1
 
-    g[str(n)] = _node("ControlNetApplyAdvanced", {
-        "positive": pos,
-        "negative": neg,
-        "control_net": depth_cn,
-        "image": depth_preprocessed,
-        "strength": depth_strength,
-        "start_percent": 0.0,
-        "end_percent": 0.8,
-    })
+    g[str(n)] = _controlnet_apply_advanced(
+        positive=pos,
+        negative=neg,
+        control_net=depth_cn,
+        image=depth_preprocessed,
+        strength=depth_strength,
+        start_percent=0.0,
+        end_percent=0.8,
+        vae=vae_out,
+    )
     pos_depth, neg_depth = [str(n), 0], [str(n), 1]
     n += 1
 
@@ -3406,15 +3473,16 @@ def comfy_photo_restore(args: dict[str, Any]) -> dict[str, Any]:
     lineart_cn = [str(n), 0]
     n += 1
 
-    g[str(n)] = _node("ControlNetApplyAdvanced", {
-        "positive": pos_depth,
-        "negative": neg_depth,
-        "control_net": lineart_cn,
-        "image": lineart_preprocessed,
-        "strength": lineart_strength,
-        "start_percent": 0.0,
-        "end_percent": 0.8,
-    })
+    g[str(n)] = _controlnet_apply_advanced(
+        positive=pos_depth,
+        negative=neg_depth,
+        control_net=lineart_cn,
+        image=lineart_preprocessed,
+        strength=lineart_strength,
+        start_percent=0.0,
+        end_percent=0.8,
+        vae=vae_out,
+    )
     pos_final, neg_final = [str(n), 0], [str(n), 1]
     n += 1
 
@@ -3561,7 +3629,9 @@ def comfy_portrait_master(args: dict[str, Any]) -> dict[str, Any]:
     )
     scaled_image = ["2", 0]
 
-    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_out, clip_out, vae_out, n = _add_model_loader(
+        g, {**args, "ckpt_name": ckpt, "user_lora_clip": False}
+    )
 
     g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
     pos = [str(n), 0]
@@ -3606,17 +3676,15 @@ def comfy_portrait_master(args: dict[str, Any]) -> dict[str, Any]:
     pose_cn = [str(n), 0]
     n += 1
 
-    g[str(n)] = _node(
-        "ControlNetApplyAdvanced",
-        {
-            "positive": pos,
-            "negative": neg,
-            "control_net": pose_cn,
-            "image": pose_preprocessed,
-            "strength": pose_strength,
-            "start_percent": 0.0,
-            "end_percent": 1.0,
-        },
+    g[str(n)] = _controlnet_apply_advanced(
+        positive=pos,
+        negative=neg,
+        control_net=pose_cn,
+        image=pose_preprocessed,
+        strength=pose_strength,
+        start_percent=0.0,
+        end_percent=1.0,
+        vae=vae_out,
     )
     pos_pose, neg_pose = [str(n), 0], [str(n), 1]
     n += 1
@@ -3628,17 +3696,15 @@ def comfy_portrait_master(args: dict[str, Any]) -> dict[str, Any]:
     depth_cn = [str(n), 0]
     n += 1
 
-    g[str(n)] = _node(
-        "ControlNetApplyAdvanced",
-        {
-            "positive": pos_pose,
-            "negative": neg_pose,
-            "control_net": depth_cn,
-            "image": depth_preprocessed,
-            "strength": depth_strength,
-            "start_percent": 0.0,
-            "end_percent": 0.9,
-        },
+    g[str(n)] = _controlnet_apply_advanced(
+        positive=pos_pose,
+        negative=neg_pose,
+        control_net=depth_cn,
+        image=depth_preprocessed,
+        strength=depth_strength,
+        start_percent=0.0,
+        end_percent=0.9,
+        vae=vae_out,
     )
     pos_final, neg_final = [str(n), 0], [str(n), 1]
     n += 1

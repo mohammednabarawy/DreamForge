@@ -820,8 +820,7 @@ def cmd_download_companion_entries(params: dict) -> dict:
 
 def cmd_verify_companion_entries(params: dict) -> dict:
     """Verify an explicit list of companion/studio assets by canonical path."""
-    from dreamforge_cli_inventory import companion_file_present
-    from dreamforge_companion_download import enrich_missing_dependency
+    from dreamforge_companion_download import companion_item_present, enrich_missing_dependency
 
     raw = params.get("items") or []
     if not isinstance(raw, list):
@@ -835,7 +834,7 @@ def cmd_verify_companion_entries(params: dict) -> dict:
     present = []
     for item in enriched:
         min_bytes = int(item.get("min_bytes") or 1024 * 1024)
-        if companion_file_present(item, min_bytes=min_bytes):
+        if companion_item_present(item, min_bytes=min_bytes):
             present.append(item)
         else:
             missing.append(item)
@@ -878,7 +877,9 @@ def cmd_ensure_creative_task_ready(params: dict) -> dict:
 
     model_name = params.get("model") or params.get("engine_name")
     studio_mode = params.get("studio_mode") or params.get("mode")
-    if not model_name and not studio_mode:
+    edit_task = params.get("edit_task")
+    custom_tool_id = params.get("custom_tool_id") or params.get("tool_id")
+    if not model_name and not studio_mode and not edit_task and not custom_tool_id:
         return _error("missing_model_or_studio_mode")
     payload = ensure_creative_task_ready(
         model_name=str(model_name) if model_name else None,
@@ -886,6 +887,7 @@ def cmd_ensure_creative_task_ready(params: dict) -> dict:
         upscale_method=params.get("upscale_method"),
         performance=params.get("performance"),
         edit_task=params.get("edit_task"),
+        custom_tool_id=str(custom_tool_id) if custom_tool_id else None,
         auto_download_tier_a=bool(params.get("auto_download_tier_a", True)),
         auto_download_tier_b=bool(params.get("auto_download_tier_b", False)),
         auto_install_nodes=bool(params.get("auto_install_nodes", False)),
@@ -1134,6 +1136,27 @@ def cmd_install_custom_node_packs(params: dict) -> dict:
             messages.extend(fix_result.messages)
             errors.extend(fix_result.errors)
 
+        manager_failed = {
+            str(item.get("pack_id") or "").strip()
+            for item in errors
+            if str(item.get("pack_id") or "").strip() in manager_ids
+        } - set(installed)
+        for pack_id in sorted(manager_failed):
+            entry = _recipe_entry_for_pack(pack_id)
+            if not entry or not str(entry.get("url") or "").strip():
+                continue
+            try:
+                _progress(f"Manager install failed for {pack_id}; cloning pinned repository…")
+                ensure_custom_node_pack(entry, progress=_progress)
+                installed.append(pack_id)
+                errors = [
+                    item
+                    for item in errors
+                    if str(item.get("pack_id") or "").strip() != pack_id
+                ]
+            except Exception as exc:
+                errors.append({"pack_id": pack_id, "error": str(exc)})
+
     for pack_id in pinned_ids:
         entry = _recipe_entry_for_pack(pack_id)
         if not entry:
@@ -1167,7 +1190,7 @@ def cmd_install_custom_node_packs(params: dict) -> dict:
     packs = [assess_custom_node_pack(pack_id, object_info=object_info) for pack_id in installed]
     ready = bool(installed) and not errors and all(item.get("ready") for item in packs)
     return {
-        "ok": ready,
+        "ok": True,
         "ready": ready,
         "installed": installed,
         "packs": packs,
@@ -1178,7 +1201,12 @@ def cmd_install_custom_node_packs(params: dict) -> dict:
 
 
 def cmd_install_workflow_models(params: dict) -> dict:
-    from dreamforge_comfy_manager import install_workflow_models, make_progress_sink, workflow_model_ready
+    from dreamforge_comfy_manager import (
+        install_workflow_models,
+        make_progress_sink,
+        workflow_model_catalog_entry,
+        workflow_model_ready,
+    )
 
     catalog_ids = params.get("catalog_ids") or params.get("models") or []
     if isinstance(catalog_ids, str):
@@ -1193,9 +1221,13 @@ def cmd_install_workflow_models(params: dict) -> dict:
     )
     ready = bool(result.installed) and not result.errors
     if catalog_ids:
-        ready = all(workflow_model_ready(str(item)) for item in catalog_ids) and not result.errors
+        ready = all(
+            workflow_model_ready(str(item))
+            for item in catalog_ids
+            if workflow_model_catalog_entry(str(item))
+        ) and not result.errors
     return {
-        "ok": ready,
+        "ok": True,
         "ready": ready,
         "installed": result.installed,
         "errors": result.errors,
@@ -1203,10 +1235,43 @@ def cmd_install_workflow_models(params: dict) -> dict:
     }
 
 
+def cmd_check_workflow_task_dependencies(params: dict) -> dict:
+    from dreamforge_companion_download import tag_companion_tiers
+    from dreamforge_comfy_manager import missing_workflow_model_entries
+
+    edit_task = str(params.get("edit_task") or "").strip() or None
+    missing_nodes = params.get("missing_nodes")
+    node_list = (
+        [str(node).strip() for node in missing_nodes if str(node).strip()]
+        if isinstance(missing_nodes, list)
+        else None
+    )
+    missing = missing_workflow_model_entries(edit_task=edit_task, missing_nodes=node_list)
+    missing = tag_companion_tiers(missing)
+    return {
+        "ok": True,
+        "ready": len(missing) == 0,
+        "missing": missing,
+    }
+
+
 def cmd_get_manager_queue_status(_params: dict) -> dict:
     from dreamforge_comfy_manager import get_manager_queue_status
 
     return get_manager_queue_status()
+
+
+def cmd_parse_comfy_workflow(params: dict) -> dict:
+    from dreamforge_comfy_workflow_import import inspect_comfy_workflow_file
+
+    path = str(params.get("path") or params.get("workflow_path") or "").strip()
+    if not path:
+        return {"ok": False, "error": "workflow path is required"}
+    try:
+        payload = inspect_comfy_workflow_file(path)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        return {"ok": False, "error": str(exc), "api_format": False, "ui_format": False, "nodes": {}}
+    return {"ok": True, **payload}
 
 
 def cmd_custom_tool_dependencies(params: dict) -> dict:
@@ -1225,12 +1290,30 @@ def cmd_custom_tool_dependencies(params: dict) -> dict:
         except Exception as exc:
             return {"ok": False, "error": str(exc), "missing": []}
     missing = custom_tool_dependency_entries(tool, object_info=object_info)
+    from dreamforge_companion_download import filter_unsatisfied_companion_entries
+
+    missing = filter_unsatisfied_companion_entries(missing)
     return {
         "ok": True,
         "ready": not missing,
         "missing": missing,
         "tool_id": tool_id,
         "tool_name": tool.get("name") or tool_id,
+    }
+
+
+def cmd_custom_tool_workflow_models(params: dict) -> dict:
+    from dreamforge_custom_tools import find_custom_tool, list_custom_tool_workflow_models
+
+    tool_id = str(params.get("tool_id") or params.get("custom_tool_id") or "").strip()
+    tool = find_custom_tool(tool_id)
+    if not tool:
+        return {"ok": False, "error": f"custom tool not found: {tool_id}", "models": []}
+    return {
+        "ok": True,
+        "tool_id": tool_id,
+        "tool_name": tool.get("name") or tool_id,
+        "models": list_custom_tool_workflow_models(tool),
     }
 
 
@@ -1493,8 +1576,11 @@ HANDLERS = {
     "check_custom_node_packs": cmd_check_custom_node_packs,
     "install_custom_node_packs": cmd_install_custom_node_packs,
     "install_workflow_models": cmd_install_workflow_models,
+    "check_workflow_task_dependencies": cmd_check_workflow_task_dependencies,
     "get_manager_queue_status": cmd_get_manager_queue_status,
     "custom_tool_dependencies": cmd_custom_tool_dependencies,
+    "custom_tool_workflow_models": cmd_custom_tool_workflow_models,
+    "parse_comfy_workflow": cmd_parse_comfy_workflow,
     "check_comfy_backend": cmd_check_comfy_backend,
     "install_comfy_backend": cmd_install_comfy_backend,
     **STUDIO_HANDLERS,

@@ -155,7 +155,7 @@ def test_install_workflow_models_direct_download(monkeypatch, tmp_path):
         lambda **kwargs: (_ for _ in ()).throw(RuntimeError("offline")),
     )
 
-    def fake_download(url, dest, *, min_bytes=1024):
+    def fake_download(url, dest, *, min_bytes=1024, progress=None):
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(b"x" * max(min_bytes, 1024))
 

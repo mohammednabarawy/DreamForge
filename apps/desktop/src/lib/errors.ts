@@ -114,6 +114,18 @@ const COPY: Record<DreamForgeErrorCode, CopyEntry> = {
     ],
     recoverable: false,
   },
+  unsupported_model_for_workflow: {
+    title: "Model doesn't match this workflow",
+    message:
+      "The checkpoint and ControlNet (or text encoder) don't match what this toolbox workflow expects. " +
+      "This is not a ComfyUI crash — installing the right SDXL ControlNet Union usually fixes it.",
+    suggestions: [
+      "Install SDXL ControlNet Union under models/controlnet/ (xinsir promax).",
+      "Do not use SD 1.5 ControlNet (control_v11p_sd15_*) with SDXL checkpoints.",
+      "Keep an SDXL checkpoint such as EpicRealism XL selected.",
+    ],
+    recoverable: true,
+  },
   disk_full: {
     title: "Disk is full",
     message:
@@ -186,11 +198,12 @@ const COPY: Record<DreamForgeErrorCode, CopyEntry> = {
   worker_boot_failed: {
     title: "GPU engine failed to start",
     message:
-      "First launch loads PyTorch and the generation pipeline. This usually takes 20–90 seconds.",
+      "The local GPU worker stopped before ComfyUI finished loading. DreamForge will retry once automatically when possible.",
     suggestions: [
-      "Click Restart GPU engine and wait until the status shows Engine ready.",
+      "Click Restart GPU engine once and wait until the title bar shows Engine ready.",
+      "If ComfyUI is already running on port 8188, DreamForge reconnects instead of stopping it.",
       "First launch can take 20–90 seconds while PyTorch and ComfyUI load.",
-      "Open the worker log if startup keeps failing.",
+      "Open the worker log if startup keeps failing after a restart.",
     ],
     recoverable: true,
   },
@@ -664,7 +677,57 @@ export function describeError(
 }
 
 const ENGINE_BOOT_DEFAULT_MESSAGE =
-  "First launch loads PyTorch and the generation pipeline. This usually takes 20–90 seconds.";
+  "The GPU worker stopped before ComfyUI finished loading. DreamForge will retry once automatically when possible.";
+
+/** Boot failures that usually clear after a single engine restart. */
+export function isRecoverableBootFailure(
+  bootMessage?: string,
+  workerLogTail?: string,
+): boolean {
+  const text = `${bootMessage ?? ""}\n${workerLogTail ?? ""}`;
+  return (
+    /stdin closed|shutting down|worker exited before/i.test(text) ||
+    /Stopped .* existing local ComfyUI/i.test(text) ||
+    /did not become ready in time/i.test(text) ||
+    /Managed ComfyUI stopped responding/i.test(text)
+  );
+}
+
+function bootFailureMessage(bootMessage?: string, workerLogTail?: string): string {
+  const trimmedBoot = bootMessage?.trim();
+  const tail = workerLogTail?.trim();
+  if (tail) {
+    const lastLine = tail.split("\n").filter(Boolean).pop()?.trim() ?? "";
+    if (/Using existing ComfyUI|Connected to existing ComfyUI/i.test(tail)) {
+      return (
+        "DreamForge found a healthy ComfyUI instance but the GPU worker exited before " +
+        "handoff finished. DreamForge will retry startup once — or click Restart GPU engine."
+      );
+    }
+    if (
+      /Stopped .* existing local ComfyUI/i.test(tail) &&
+      /stdin closed|shutting down/i.test(tail)
+    ) {
+      return (
+        "DreamForge restarted ComfyUI during startup, then the GPU worker exited early. " +
+        "Click Restart GPU engine once and wait — an existing ComfyUI on port 8188 is reused when possible."
+      );
+    }
+    if (/stdin closed|shutting down/i.test(tail)) {
+      return (
+        "The GPU worker stopped during startup — often from a second Restart click or closing " +
+        "the app while ComfyUI was still loading. DreamForge retries once automatically, or click Restart."
+      );
+    }
+    if (/ComfyUI server exited early|did not open port|Timed out waiting for Comfy/i.test(tail)) {
+      return lastLine || trimmedBoot || ENGINE_BOOT_DEFAULT_MESSAGE;
+    }
+    if (lastLine && lastLine.length > 24 && !lastLine.startsWith("{")) {
+      return lastLine;
+    }
+  }
+  return trimmedBoot || ENGINE_BOOT_DEFAULT_MESSAGE;
+}
 
 /** Structured error when the GPU worker fails during startup (no generation error payload). */
 export function engineBootFailureError(
@@ -672,7 +735,7 @@ export function engineBootFailureError(
   workerLogTail?: string,
 ): FriendlyError {
   const base = describeError({ code: "worker_boot_failed" });
-  const message = bootMessage?.trim() || ENGINE_BOOT_DEFAULT_MESSAGE;
+  const message = bootFailureMessage(bootMessage, workerLogTail);
   const tail = workerLogTail?.trim();
   return {
     ...base,

@@ -14,6 +14,7 @@ import { studioPrepareFallbackLabel } from "../lib/loadingMessages";
 import {
   describeError,
   describeWarning,
+  isRecoverableBootFailure,
   plainErrorLine,
   shortErrorLine,
   type FriendlyError,
@@ -149,7 +150,9 @@ import {
   checkImagePromptResources,
   clearUserStyleProfile,
   downloadCompanionEntries,
+  checkWorkflowTaskDependencies,
   ensureCreativeTaskReady,
+  fetchCustomToolDependencies,
   exportUserStyleProfile,
   getUserStyleProfile,
   getAppConfig,
@@ -257,13 +260,16 @@ function mergeAllCompanionMissing(args: {
   modelMissing: ModelDependencyItem[];
   studioMissing: ModelDependencyItem[];
   taskWorkflowMissing: ModelDependencyItem[];
+  customToolWorkflowMissing?: ModelDependencyItem[];
   agentPlan?: { readiness?: { recommended_actions?: RepairAction[] } } | null;
   lastError?: FriendlyError | null;
+  skipBaseModelCompanions?: boolean;
 }): ModelDependencyItem[] {
   return mergeDependencyItems(
-    args.modelMissing,
+    args.skipBaseModelCompanions ? [] : args.modelMissing,
     args.studioMissing,
     args.taskWorkflowMissing,
+    args.customToolWorkflowMissing ?? [],
     companionItemsFromActions(args.agentPlan?.readiness?.recommended_actions),
     companionItemsFromErrorDetails(args.lastError?.details),
     companionItemsFromActions(args.lastError?.failureReport?.repair_actions),
@@ -477,6 +483,8 @@ export function useDreamForge() {
   const [workerReady, setWorkerReady] = useState(false);
   const [workerLogTail, setWorkerLogTail] = useState("");
   const [restarting, setRestarting] = useState(false);
+  const restartingRef = useRef(false);
+  const bootAutoRetryCountRef = useRef(0);
   const [uiDefaults, setUiDefaults] = useState<UiDefaults | null>(null);
   const [modelGalleryAll, setModelGalleryAll] = useState<ModelGalleryItem[]>(
     () => readModelLibrarySnapshot()?.modelGallery ?? [],
@@ -547,6 +555,10 @@ export function useDreamForge() {
     ready: boolean;
   }>({ missing: [], ready: true });
   const [taskWorkflowDependencies, setTaskWorkflowDependencies] = useState<{
+    missing: ModelDependencyItem[];
+    ready: boolean;
+  }>({ missing: [], ready: true });
+  const [customToolDependencies, setCustomToolDependencies] = useState<{
     missing: ModelDependencyItem[];
     ready: boolean;
   }>({ missing: [], ready: true });
@@ -1066,7 +1078,12 @@ export function useDreamForge() {
             studio.auto_negative_prompt ?? prev.auto_negative_prompt,
         }));
       }
-      if (app) setAppConfig(app);
+      if (app) {
+        setAppConfig({
+          ...app,
+          custom_tools: Array.isArray(app.custom_tools) ? app.custom_tools : [],
+        });
+      }
       setAgentProviders(providers);
       if (styleProfile?.profile) {
         setUserStyleProfile(styleProfile.profile);
@@ -2072,7 +2089,15 @@ export function useDreamForge() {
       } as DreamForgeAppConfigPatch;
       const saved = await saveAppConfig(merged);
       setAppConfig(saved);
-      setStatus("Agent settings saved");
+      if (patch.custom_tools) {
+        setStatus(
+          patch.custom_tools.length === 1
+            ? `Saved custom tool “${patch.custom_tools[0]?.name ?? "tool"}”`
+            : `Saved ${patch.custom_tools.length} custom tools`,
+        );
+      } else {
+        setStatus("Agent settings saved");
+      }
       return saved;
     },
     [appConfig],
@@ -2270,8 +2295,11 @@ export function useDreamForge() {
         modelMissing: modelDependencies.missing,
         studioMissing: studioResources.missing,
         taskWorkflowMissing: taskWorkflowDependencies.missing,
+        customToolWorkflowMissing: customToolDependencies.missing,
         agentPlan: agentPlanRef.current,
         lastError,
+        skipBaseModelCompanions:
+          studioMode === "toolbox" && Boolean(sanitized.custom_tool_id?.trim()),
       }).length;
       const readiness = computeGenerateReadiness({
         workerReady,
@@ -3042,6 +3070,8 @@ export function useDreamForge() {
   ]);
 
   const runRestartEngine = useCallback(async () => {
+    if (restartingRef.current) return;
+    restartingRef.current = true;
     setRestarting(true);
     setEngineState("restarting");
     setWorkerReady(false);
@@ -3062,10 +3092,39 @@ export function useDreamForge() {
       setBootMessage(String(e));
       setStatus(`Restart failed: ${plainErrorLine(String(e))}`);
     } finally {
+      restartingRef.current = false;
       setRestarting(false);
     }
   }, [refreshWorkerLog, loadStudioCatalog, applyEngineStatus]);
   runRestartEngineRef.current = () => runRestartEngine();
+
+  useEffect(() => {
+    if (workerReady) {
+      bootAutoRetryCountRef.current = 0;
+    }
+  }, [workerReady]);
+
+  useEffect(() => {
+    if (engineState !== "failed") return;
+    if (workerReady || generatingRef.current || restartingRef.current) return;
+    if (bootAutoRetryCountRef.current >= 1) return;
+    if (!isRecoverableBootFailure(bootMessage, workerLogTail)) return;
+
+    bootAutoRetryCountRef.current += 1;
+    const timer = window.setTimeout(() => {
+      if (
+        engineStateRef.current !== "failed" ||
+        workerReadyRef.current ||
+        restartingRef.current ||
+        generatingRef.current
+      ) {
+        return;
+      }
+      setStatus("Retrying GPU engine startup automatically…");
+      void runRestartEngineRef.current?.();
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, [engineState, workerReady, bootMessage, workerLogTail]);
 
   useEffect(() => {
     if (!workerReady || restarting || generatingRef.current) return;
@@ -3150,19 +3209,12 @@ export function useDreamForge() {
       return;
     }
     let cancelled = false;
-    void ensureCreativeTaskReady({
-      edit_task: task,
-      auto_download_tier_a: false,
-      auto_download_tier_b: false,
-      auto_install_nodes: false,
-    })
+    void checkWorkflowTaskDependencies(task)
       .then((result) => {
         if (cancelled) return;
-        const missing = (result.missing ?? []).filter((item) =>
-          isWorkflowModelItem(item as ModelDependencyItem),
-        ) as ModelDependencyItem[];
+        const missing = (result.missing ?? []) as ModelDependencyItem[];
         setTaskWorkflowDependencies({
-          ready: missing.length === 0,
+          ready: Boolean(result.ready) || missing.length === 0,
           missing,
         });
       })
@@ -3177,6 +3229,39 @@ export function useDreamForge() {
   }, [
     appConfig?.ui.studio_mode,
     settings.edit_task,
+    workerReady,
+    companionDownloadPhase,
+  ]);
+
+  useEffect(() => {
+    const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+    const customToolId = settings.custom_tool_id?.trim();
+    if (!workerReady || studioMode !== "toolbox" || !customToolId) {
+      setCustomToolDependencies({ ready: true, missing: [] });
+      return;
+    }
+    let cancelled = false;
+    void fetchCustomToolDependencies(customToolId, true)
+      .then((result) => {
+        if (cancelled) return;
+        const missing = (result.missing ?? []) as ModelDependencyItem[];
+        setCustomToolDependencies({
+          ready: Boolean(result.ready) || missing.length === 0,
+          missing,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCustomToolDependencies({ ready: true, missing: [] });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    appConfig?.ui.studio_mode,
+    appConfig?.custom_tools,
+    settings.custom_tool_id,
     workerReady,
     companionDownloadPhase,
   ]);
@@ -3199,14 +3284,18 @@ export function useDreamForge() {
       }),
     [settings, selected, previewUrl, studioMode],
   );
+  const skipBaseModelCompanions =
+    studioMode === "toolbox" && Boolean(settings.custom_tool_id?.trim());
   const generateReadiness = useMemo(
     () => {
       const mergedMissingCount = mergeAllCompanionMissing({
         modelMissing: modelDependencies.missing,
         studioMissing: studioResources.missing,
         taskWorkflowMissing: taskWorkflowDependencies.missing,
+        customToolWorkflowMissing: customToolDependencies.missing,
         agentPlan,
         lastError,
+        skipBaseModelCompanions,
       }).length;
       return computeGenerateReadiness({
         workerReady,
@@ -3218,9 +3307,11 @@ export function useDreamForge() {
         modelDependenciesReady:
           modelDependencies.ready &&
           studioResources.ready &&
+          customToolDependencies.ready &&
           mergedMissingCount === 0,
         missingCompanionCount: mergedMissingCount,
         studioMissingAssetCount: studioResources.missing.length,
+        customToolMissingCount: customToolDependencies.missing.length,
         settings,
         modelGallery: modelGalleryAll,
         studioMode,
@@ -3238,6 +3329,7 @@ export function useDreamForge() {
       modelDependencies,
       studioResources,
       taskWorkflowDependencies,
+      customToolDependencies,
       agentPlan,
       lastError,
       modelGalleryAll,
@@ -3245,6 +3337,7 @@ export function useDreamForge() {
       editPlanState,
       inpaintMaskSyncing,
       appConfig?.custom_tools,
+      skipBaseModelCompanions,
     ],
   );
   const effectiveGenerateReadiness = useMemo(() => generateReadiness, [generateReadiness]);
@@ -3254,8 +3347,10 @@ export function useDreamForge() {
         modelMissing: modelDependencies.missing,
         studioMissing: studioResources.missing,
         taskWorkflowMissing: taskWorkflowDependencies.missing,
+        customToolWorkflowMissing: customToolDependencies.missing,
         agentPlan,
         lastError,
+        skipBaseModelCompanions,
       }),
     [
       agentPlan,
@@ -3263,6 +3358,8 @@ export function useDreamForge() {
       modelDependencies.missing,
       studioResources.missing,
       taskWorkflowDependencies.missing,
+      customToolDependencies.missing,
+      skipBaseModelCompanions,
     ],
   );
   const missingDownloadCount = mergedMissingDependencies.length;
@@ -3875,8 +3972,13 @@ export function useDreamForge() {
     const plannedModel =
       typeof plan?.proposed?.model === "string" ? plan.proposed.model : "";
     const model = ((settingsRef.current.model ?? "") || plannedModel).trim();
+    const studioMode =
+      opts?.studioMode ??
+      ((appConfig?.ui.studio_mode ?? "generate") as StudioMode);
+    const skipBaseModelCompanions =
+      studioMode === "toolbox" && Boolean(settingsRef.current.custom_tool_id?.trim());
     let fromModel = modelDependencies.missing;
-    if (model) {
+    if (model && !skipBaseModelCompanions) {
       try {
         const res = await checkModelDependencies(
           model,
@@ -3892,9 +3994,6 @@ export function useDreamForge() {
       }
     }
     let studioMissing = opts?.studioMissing ?? studioResources.missing;
-    const studioMode =
-      opts?.studioMode ??
-      ((appConfig?.ui.studio_mode ?? "generate") as StudioMode);
     if (
       !opts?.studioMissing &&
       (studioMode === "inpaint" || studioMode === "edit" || studioMode === "upscale")
@@ -3919,10 +4018,12 @@ export function useDreamForge() {
       modelMissing: fromModel,
       studioMissing,
       taskWorkflowMissing: taskWorkflowDependencies.missing,
+      customToolWorkflowMissing: customToolDependencies.missing,
       agentPlan: plan,
       lastError,
+      skipBaseModelCompanions,
     });
-    return { model: model || "workflow-assets", merged };
+    return { model: skipBaseModelCompanions ? "workflow-assets" : model || "workflow-assets", merged };
   },
     [
       appConfig?.ui.studio_mode,
@@ -3930,6 +4031,7 @@ export function useDreamForge() {
       modelDependencies.missing,
       studioResources.missing,
       taskWorkflowDependencies.missing,
+      customToolDependencies.missing,
     ],
   );
 
@@ -3954,6 +4056,8 @@ export function useDreamForge() {
         ((appConfig?.ui.studio_mode ?? "generate") as StudioMode);
       const needsStudio =
         studioMode === "inpaint" || studioMode === "edit" || studioMode === "upscale";
+      const prepStudioMode =
+        needsStudio || studioMode === "toolbox" ? studioMode : undefined;
       const prepareLabel = studioPrepareFallbackLabel(studioMode);
 
       const currentSettings = settingsRef.current;
@@ -3976,6 +4080,7 @@ export function useDreamForge() {
         currentSettings.performance ?? "",
         upscaleForPrep,
         currentSettings.edit_task ?? "",
+        currentSettings.custom_tool_id ?? "",
       ].join("|");
       const prepCached = assetPrepReadyRef.current;
       if (
@@ -3992,7 +4097,7 @@ export function useDreamForge() {
       try {
         const result = await ensureCreativeTaskReady({
           model: model || undefined,
-          studio_mode: needsStudio ? studioMode : undefined,
+          studio_mode: prepStudioMode,
           upscale_method:
             studioMode === "upscale"
               ? currentSettings.upscale_method ?? undefined
@@ -4001,6 +4106,7 @@ export function useDreamForge() {
                 : undefined,
           performance: currentSettings.performance ?? null,
           edit_task: currentSettings.edit_task?.trim() || null,
+          custom_tool_id: currentSettings.custom_tool_id?.trim() || null,
           auto_download_tier_a: true,
           auto_download_tier_b: false,
           auto_install_nodes: true,
@@ -4013,6 +4119,19 @@ export function useDreamForge() {
           ready: taskMissing.length === 0,
           missing: taskMissing,
         });
+        const customToolId = currentSettings.custom_tool_id?.trim();
+        if (customToolId) {
+          try {
+            const customRes = await fetchCustomToolDependencies(customToolId, true);
+            const customMissing = (customRes.missing ?? []) as ModelDependencyItem[];
+            setCustomToolDependencies({
+              ready: Boolean(customRes.ready) || customMissing.length === 0,
+              missing: customMissing,
+            });
+          } catch {
+            /* keep prior custom tool dependency snapshot */
+          }
+        }
         const lastSetup = result.node_setup?.[result.node_setup.length - 1];
         if (lastSetup) {
           setCompanionBootstrapMessage(lastSetup);
@@ -4101,7 +4220,7 @@ export function useDreamForge() {
             }
             const recheck = await ensureCreativeTaskReady({
               model: model || undefined,
-              studio_mode: needsStudio ? studioMode : undefined,
+              studio_mode: prepStudioMode,
               upscale_method:
                 studioMode === "upscale"
                   ? settingsRef.current.upscale_method ?? undefined
@@ -4110,6 +4229,7 @@ export function useDreamForge() {
                     : undefined,
               performance: settingsRef.current.performance ?? null,
               edit_task: settingsRef.current.edit_task?.trim() || null,
+              custom_tool_id: settingsRef.current.custom_tool_id?.trim() || null,
               auto_download_tier_a: true,
               auto_download_tier_b: true,
               auto_install_nodes: true,
@@ -4261,6 +4381,17 @@ export function useDreamForge() {
           });
         } catch {
           /* keep cached studio state */
+        }
+      }
+      if (mode === "toolbox" && settingsRef.current.edit_task?.trim()) {
+        try {
+          const taskRes = await checkWorkflowTaskDependencies(settingsRef.current.edit_task);
+          setTaskWorkflowDependencies({
+            ready: Boolean(taskRes.ready) || (taskRes.missing?.length ?? 0) === 0,
+            missing: (taskRes.missing ?? []) as ModelDependencyItem[],
+          });
+        } catch {
+          /* keep cached task workflow state */
         }
       }
       const { merged } = await resolveMergedMissingDependencies();

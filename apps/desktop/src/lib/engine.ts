@@ -82,6 +82,91 @@ export function generationPhaseLabel(
   return GEN_PHASE_LABELS[phase] ?? phase;
 }
 
+export type EngineStatusTone = "ready" | "busy" | "warn" | "error";
+
+/** Human-readable engine chip for the title bar. */
+export function engineStatusDisplay(options: {
+  engineState: EngineState;
+  bootMessage?: string;
+  workerReady?: boolean;
+  restarting?: boolean;
+  gpuName?: string | null;
+  vramGb?: number | null;
+  mpsAvailable?: boolean | null;
+}): { label: string; title: string; tone: EngineStatusTone } {
+  const boot = options.bootMessage?.trim() ?? "";
+  const { engineState, workerReady, gpuName, vramGb, mpsAvailable } = options;
+
+  if (engineState === "ready" && gpuName) {
+    const detail = mpsAvailable
+      ? `${gpuName} · unified memory`
+      : vramGb != null
+        ? `${gpuName} · ${vramGb} GB VRAM`
+        : gpuName;
+    return { label: "Engine ready", title: detail, tone: "ready" };
+  }
+  if (engineState === "generating") {
+    return { label: "Rendering", title: "GPU generation in progress", tone: "busy" };
+  }
+  if (engineState === "failed") {
+    return {
+      label: "Engine failed",
+      title: boot || "Restart GPU engine from the title bar",
+      tone: "error",
+    };
+  }
+  if (engineState === "restarting" || options.restarting) {
+    return {
+      label: "Restarting…",
+      title: boot || "Restarting GPU engine and ComfyUI",
+      tone: "warn",
+    };
+  }
+  if (!workerReady) {
+    const label = bootPhaseLabel(undefined, boot);
+    return {
+      label: label.length > 36 ? `${label.slice(0, 33)}…` : label,
+      title: boot || "First launch can take 20–90 seconds",
+      tone: "warn",
+    };
+  }
+  return {
+    label: engineLabel(engineState, boot),
+    title: boot,
+    tone: engineState === "ready" ? "ready" : "warn",
+  };
+}
+
+/** Inline title-bar restart control (failed, stuck booting, or restart in progress). */
+export function engineRestartControlState(options: {
+  engineState: EngineState;
+  workerReady: boolean;
+  restarting?: boolean;
+}): { visible: boolean; disabled: boolean } {
+  if (options.engineState === "generating") {
+    return { visible: false, disabled: false };
+  }
+  if (options.restarting || options.engineState === "restarting") {
+    return { visible: true, disabled: true };
+  }
+  if (options.engineState === "failed") {
+    return { visible: true, disabled: false };
+  }
+  if (!options.workerReady && options.engineState !== "ready") {
+    return { visible: true, disabled: false };
+  }
+  return { visible: false, disabled: false };
+}
+
+/** @deprecated Use engineRestartControlState */
+export function showEngineRestartControl(options: {
+  engineState: EngineState;
+  workerReady: boolean;
+  restarting?: boolean;
+}): boolean {
+  return engineRestartControlState(options).visible;
+}
+
 export function engineLabel(state: EngineState, bootMessage: string): string {
   switch (state) {
     case "booting":

@@ -8,6 +8,7 @@ import { defaultPromptPatchForEditTask } from "../lib/editTaskPrompts";
 import { selectInpaintModelForIntent } from "../lib/inpaintIntent";
 import { buildPortraitMasterPrompt, PORTRAIT_EXPRESSIONS, PORTRAIT_LIGHTING, PORTRAIT_SHOTS } from "../lib/portraitMaster";
 import { fetchCustomToolDependencies } from "../lib/studioBridge";
+import { CustomToolModelOverrides } from "./CustomToolModelOverrides";
 
 type Props = {
   settings: GenerationSettings;
@@ -32,10 +33,20 @@ export function CreativeToolboxPanel({
   const activeCustomToolId = settings.custom_tool_id;
   const nativeTasks = EDIT_TASKS.filter((item) => item.toolboxOnly);
   const customTools = appConfig?.custom_tools || [];
+  const activeTool = customTools.find((tool) => tool.id === activeCustomToolId);
 
-  const handleSaveCustomTool = (tool: CustomTool) => {
-    saveAppConfig({
-      custom_tools: [...customTools, tool],
+  const handleSaveCustomTool = async (tool: CustomTool) => {
+    const nextTools = [...customTools, tool];
+    await saveAppConfig({
+      custom_tools: nextTools,
+      ...(appConfig?.ui?.studio_mode !== "toolbox"
+        ? { ui: { studio_mode: "toolbox" } }
+        : {}),
+    });
+    onChange({
+      custom_tool_id: tool.id,
+      edit_task: undefined,
+      inpaint_intent: undefined,
     });
     setIsImportModalOpen(false);
   };
@@ -47,6 +58,14 @@ export function CreativeToolboxPanel({
     if (activeCustomToolId === toolId) {
       onChange({ custom_tool_id: undefined });
     }
+  };
+
+  const handleModelOverridesChange = (toolId: string, overrides: Record<string, string>) => {
+    saveAppConfig({
+      custom_tools: customTools.map((tool) =>
+        tool.id === toolId ? { ...tool, model_overrides: overrides } : tool,
+      ),
+    });
   };
 
   const applyTask = (task: EditTask) => {
@@ -106,7 +125,7 @@ export function CreativeToolboxPanel({
     return () => {
       cancelled = true;
     };
-  }, [activeCustomToolId]);
+  }, [activeCustomToolId, JSON.stringify(activeTool?.model_overrides ?? {})]);
 
   const outfitRegions = settings.outfit_transfer_regions ?? [];
   const toggleOutfitRegion = (
@@ -413,6 +432,13 @@ export function CreativeToolboxPanel({
                       <p className="mt-1 text-[10px] text-[#d7ba7d]">
                         Needs {customToolMissing.length} ComfyUI pack(s) or model(s).
                       </p>
+                    )}
+                    {active && (
+                      <CustomToolModelOverrides
+                        tool={tool}
+                        modelGallery={modelGallery}
+                        onChangeOverrides={handleModelOverridesChange}
+                      />
                     )}
                   </div>
                 );

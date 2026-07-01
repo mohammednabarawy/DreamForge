@@ -75,7 +75,10 @@ export function isCustomNodePackItem(item: ModelDependencyItem): boolean {
 }
 
 export function isWorkflowModelItem(item: ModelDependencyItem): boolean {
-  return item.kind === "workflow_model" || Boolean(item.catalog_id?.trim());
+  if (item.kind !== "workflow_model") return false;
+  const catalogId = String(item.catalog_id ?? item.id ?? "").trim();
+  if (!catalogId || catalogId.startsWith("graph_model:")) return false;
+  return true;
 }
 
 export function workflowModelItemFromCatalogId(catalogId: string): ModelDependencyItem {

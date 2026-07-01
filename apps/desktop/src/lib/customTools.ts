@@ -13,24 +13,51 @@ export interface CustomTool {
   description: string;
   workflow_path: string;
   bindings: Record<string, CustomToolBinding>;
+  /** node_id:field -> library filename, or omit for workflow default / download */
+  model_overrides?: Record<string, string>;
 }
 
 export interface ParsedComfyWorkflow {
   nodes: Record<string, any>;
   apiFormat: boolean;
   error?: string;
+  warning?: string;
+  repairedNodes?: string[];
+}
+
+function isUiWorkflow(data: Record<string, unknown>): boolean {
+  return Array.isArray(data.nodes);
+}
+
+function workflowRoot(data: Record<string, unknown>): Record<string, unknown> {
+  if (data.prompt && typeof data.prompt === "object" && !Array.isArray(data.prompt)) {
+    return data.prompt as Record<string, unknown>;
+  }
+  return data;
+}
+
+function countApiNodes(data: Record<string, unknown>): { valid: number; missing: number; total: number } {
+  const root = workflowRoot(data);
+  let valid = 0;
+  let missing = 0;
+  let total = 0;
+  for (const value of Object.values(root)) {
+    if (!value || typeof value !== "object") continue;
+    const node = value as Record<string, unknown>;
+    if (!node.inputs || typeof node.inputs !== "object") continue;
+    total += 1;
+    if (node.class_type) valid += 1;
+    else missing += 1;
+  }
+  return { valid, missing, total };
 }
 
 function looksLikeApiPrompt(data: Record<string, unknown>): boolean {
-  const values = Object.values(data);
-  if (!values.length) return false;
-  return values.every(
-    (value) =>
-      value &&
-      typeof value === "object" &&
-      "class_type" in (value as Record<string, unknown>) &&
-      "inputs" in (value as Record<string, unknown>),
-  );
+  if (isUiWorkflow(data)) return false;
+  const { valid, missing, total } = countApiNodes(data);
+  if (!valid || !total) return false;
+  if (!missing) return true;
+  return valid >= missing;
 }
 
 function normalizeWorkflowNodes(json: Record<string, unknown>): Record<string, any> {
@@ -67,14 +94,27 @@ function normalizeWorkflowNodes(json: Record<string, unknown>): Record<string, a
 
 export async function parseComfyWorkflowJson(path: string): Promise<ParsedComfyWorkflow> {
   try {
+    const { parseComfyWorkflowFile } = await import("./studioBridge");
+    const remote = await parseComfyWorkflowFile(path);
+    if (remote?.ok) {
+      const nodes = (remote.nodes ?? {}) as Record<string, any>;
+      return {
+        nodes,
+        apiFormat: Boolean(remote.api_format),
+        error: remote.api_format ? undefined : remote.error || remote.warning || undefined,
+        warning: remote.warning || undefined,
+        repairedNodes: remote.repaired_nodes ?? [],
+      };
+    }
+  } catch {
+    // Fall back to local parse when the worker bridge is unavailable.
+  }
+
+  try {
     const content = await readTextFile(path);
     if (!content) throw new Error("File could not be read");
     const json = JSON.parse(content) as Record<string, unknown>;
-    const prompt =
-      json.prompt && typeof json.prompt === "object" && !Array.isArray(json.prompt)
-        ? (json.prompt as Record<string, unknown>)
-        : null;
-    const apiFormat = looksLikeApiPrompt(prompt ?? json);
+    const apiFormat = looksLikeApiPrompt(json);
     const nodes = normalizeWorkflowNodes(json);
     if (!Object.keys(nodes).length) {
       throw new Error("Invalid ComfyUI workflow format");

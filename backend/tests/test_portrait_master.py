@@ -62,3 +62,8 @@ def test_comfy_portrait_master_graph_uses_openpose_and_depth():
     assert class_types.count("ControlNetApplyAdvanced") if False else sum(
         1 for node in graph.values() if node.get("class_type") == "ControlNetApplyAdvanced"
     ) == 2
+    cn_apply_nodes = [
+        node for node in graph.values() if node.get("class_type") == "ControlNetApplyAdvanced"
+    ]
+    assert len(cn_apply_nodes) == 2
+    assert all("vae" in node.get("inputs", {}) for node in cn_apply_nodes)

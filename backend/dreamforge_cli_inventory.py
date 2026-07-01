@@ -665,6 +665,25 @@ def _dependency_path(relative: str) -> Path:
     return MODELS_ROOT / folder / name if folder else MODELS_ROOT / name
 
 
+def companion_asset_path(req: dict) -> Path | None:
+    """Resolve the on-disk path for a companion or workflow-model dependency row."""
+    expected = str(req.get("expected_path") or "").strip()
+    if expected:
+        return Path(expected)
+    relative = str(req.get("relative") or "").replace("\\", "/").strip()
+    if not relative:
+        return None
+    if relative.startswith("../custom_nodes/") or relative.startswith("custom_nodes/"):
+        from _paths import COMFY_ROOT
+
+        return Path(COMFY_ROOT) / relative.removeprefix("../")
+    if relative.startswith("../"):
+        from _paths import COMFY_ROOT
+
+        return Path(COMFY_ROOT) / relative.removeprefix("../")
+    return _dependency_path(relative)
+
+
 # Same weights often live under clip/ or alternate filenames from older installs.
 COMPANION_ALTERNATE_PATHS: dict[str, list[str]] = {
     "clip_t5_flux_fp8": [
@@ -708,8 +727,24 @@ COMPANION_ALTERNATE_PATHS: dict[str, list[str]] = {
 
 def companion_file_present(req: dict, *, min_bytes: int = 1024 * 1024) -> bool:
     """True if a companion file exists at the canonical or known alternate path."""
+    catalog_id = str(req.get("catalog_id") or "").strip()
+    if req.get("kind") == "workflow_model" and catalog_id:
+        try:
+            from dreamforge_comfy_manager import workflow_model_ready
+
+            if workflow_model_ready(catalog_id):
+                return True
+        except Exception:
+            pass
+
+    direct = companion_asset_path(req)
+    if direct is not None and direct.is_file() and direct.stat().st_size >= min_bytes:
+        return True
+
     relative = req.get("relative") or ""
     if not relative:
+        return False
+    if str(relative).replace("\\", "/").startswith(("../", "custom_nodes/")):
         return False
     basename = Path(relative).name
     candidates: list[str] = [

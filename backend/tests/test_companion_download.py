@@ -176,6 +176,110 @@ def test_verify_companion_entries_bridge_checks_exact_workflow_asset(tmp_path, m
     assert payload["present"][0]["id"] == "ipadapter_sdxl_vith"
 
 
+def test_verify_companion_entries_finds_workflow_model_under_comfy_root(tmp_path, monkeypatch):
+    from dreamforge_cli_inventory import companion_file_present
+    from dreamforge_desktop_bridge import cmd_verify_companion_entries
+
+    comfy_root = tmp_path / "engines" / "comfyui"
+    target = (
+        comfy_root
+        / "custom_nodes/comfyui_controlnet_aux/ckpts/depth-anything/Depth-Anything-V2-Large/depth_anything_v2_vitl.pth"
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"x" * (2 * 1024 * 1024))
+
+    monkeypatch.setattr("dreamforge_comfy_manager._comfy_root", lambda: comfy_root)
+    monkeypatch.setattr(
+        "dreamforge_comfy_manager.workflow_model_ready",
+        lambda catalog_id: catalog_id == "depth_anything_v2_vitl",
+    )
+
+    item = {
+        "kind": "workflow_model",
+        "catalog_id": "depth_anything_v2_vitl",
+        "id": "depth_anything_v2_vitl",
+        "relative": "../custom_nodes/comfyui_controlnet_aux/ckpts/depth-anything/Depth-Anything-V2-Large/depth_anything_v2_vitl.pth",
+        "expected_path": str(target),
+        "min_bytes": 1024 * 1024,
+        "url": "https://example.com/depth_anything_v2_vitl.pth",
+    }
+    assert companion_file_present(item, min_bytes=1024 * 1024) is True
+
+    payload = cmd_verify_companion_entries({"items": [item]})
+    assert payload["ok"] is True
+    assert payload["ready"] is True
+    assert payload["missing"] == []
+
+
+def test_verify_companion_entries_custom_node_pack_directory(tmp_path, monkeypatch):
+    from dreamforge_desktop_bridge import cmd_verify_companion_entries
+
+    comfy_root = tmp_path / "engines" / "comfyui"
+    pack_dir = comfy_root / "custom_nodes" / "rgthree-comfy"
+    pack_dir.mkdir(parents=True)
+    (pack_dir / "__init__.py").write_text("", encoding="utf-8")
+    monkeypatch.setattr("dreamforge_workflow_planner.COMFY_ROOT", str(comfy_root), raising=False)
+    monkeypatch.setattr(
+        "_paths.COMFY_ROOT",
+        str(comfy_root),
+        raising=False,
+    )
+
+    item = {
+        "kind": "custom_node_pack",
+        "pack_id": "rgthree-comfy",
+        "id": "rgthree-comfy",
+        "relative": "engines/comfyui/custom_nodes/rgthree-comfy",
+    }
+    payload = cmd_verify_companion_entries({"items": [item]})
+    assert payload["ready"] is True
+    assert payload["missing"] == []
+
+
+def test_verify_companion_entries_graph_model_alias(tmp_path, monkeypatch):
+    from dreamforge_desktop_bridge import cmd_verify_companion_entries
+
+    models_root = tmp_path / "models"
+    target = models_root / "diffusion_models" / "flux-2-klein-9b-kv-fp8.safetensors"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"x" * 200)
+    monkeypatch.setattr("dreamforge_cli_inventory.MODELS_ROOT", models_root)
+    monkeypatch.setattr("_paths.MODELS_ROOT", models_root, raising=False)
+
+    item = {
+        "kind": "model_companion",
+        "id": "graph_model:flux-2-klein-9b-fp8.safetensors",
+        "filename": "flux-2-klein-9b-fp8.safetensors",
+        "relative": "diffusion_models/flux-2-klein-9b-fp8.safetensors",
+        "min_bytes": 100,
+    }
+    payload = cmd_verify_companion_entries({"items": [item]})
+    assert payload["ready"] is True
+    assert payload["missing"] == []
+
+
+def test_check_workflow_task_dependencies_bridge(monkeypatch):
+    from dreamforge_desktop_bridge import cmd_check_workflow_task_dependencies
+
+    monkeypatch.setattr(
+        "dreamforge_comfy_manager.missing_workflow_model_entries",
+        lambda **kwargs: [
+            {
+                "kind": "workflow_model",
+                "catalog_id": "depth_anything_v2_vitl",
+                "id": "depth_anything_v2_vitl",
+                "filename": "depth_anything_v2_vitl.pth",
+                "url": "https://example.com/depth_anything_v2_vitl.pth",
+                "min_bytes": 1024 * 1024,
+            }
+        ],
+    )
+    payload = cmd_check_workflow_task_dependencies({"edit_task": "portrait_master"})
+    assert payload["ok"] is True
+    assert payload["ready"] is False
+    assert payload["missing"][0]["catalog_id"] == "depth_anything_v2_vitl"
+
+
 def test_companion_download_tier_omnisr_is_a():
     out = enrich_missing_dependency(
         {

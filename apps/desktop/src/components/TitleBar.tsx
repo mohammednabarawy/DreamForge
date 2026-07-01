@@ -1,21 +1,34 @@
-import { Minus, Settings, Square, User, X } from "lucide-react";
+import { Minus, RefreshCw, Settings, Square, User, X } from "lucide-react";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { BRAND } from "../lib/brand";
-import type { EngineState } from "../lib/engine";
+import {
+  engineRestartControlState,
+  engineStatusDisplay,
+  type EngineState,
+  type EngineStatusTone,
+} from "../lib/engine";
 import type { UiExperience } from "../lib/experienceUi";
 
-const ENGINE_DOT: Record<EngineState, string> = {
-  booting: "bg-amber-400 animate-pulse",
+const ENGINE_TONE_DOT: Record<EngineStatusTone, string> = {
   ready: "bg-emerald-400",
-  generating: "bg-dfui-forge animate-pulse",
-  failed: "bg-red-400",
-  restarting: "bg-amber-400 animate-pulse",
+  busy: "bg-dfui-forge animate-pulse",
+  warn: "bg-amber-400 animate-pulse",
+  error: "bg-red-400",
+};
+
+const ENGINE_TONE_PILL: Record<EngineStatusTone, string> = {
+  ready: "border-emerald-500/25 bg-emerald-500/10 text-emerald-100",
+  busy: "border-dfui-forge/30 bg-dfui-forge/10 text-dfui-fg",
+  warn: "border-amber-500/25 bg-amber-500/10 text-amber-100",
+  error: "border-rose-500/30 bg-rose-500/10 text-rose-100",
 };
 
 type Props = {
   engineState?: EngineState;
   bootMessage?: string;
+  workerReady?: boolean;
+  restarting?: boolean;
   gpuName?: string | null;
   vramGb?: number | null;
   mpsAvailable?: boolean | null;
@@ -24,6 +37,7 @@ type Props = {
   experience?: UiExperience;
   onExperienceChange?: (experience: UiExperience) => void;
   onOpenAppSettings?: () => void;
+  onRestartEngine?: () => void;
 };
 
 function ExperienceToggle({
@@ -74,6 +88,8 @@ function ExperienceToggle({
 export function TitleBar({
   engineState = "booting",
   bootMessage,
+  workerReady = false,
+  restarting = false,
   gpuName,
   vramGb,
   mpsAvailable,
@@ -82,15 +98,23 @@ export function TitleBar({
   experience = "pro",
   onExperienceChange,
   onOpenAppSettings,
+  onRestartEngine,
 }: Props) {
-  const readyDetail =
-    engineState === "ready" && gpuName
-      ? mpsAvailable
-        ? `${gpuName} · unified memory`
-        : vramGb != null
-          ? `${gpuName} · ${vramGb} GB`
-          : gpuName
-      : null;
+  const status = engineStatusDisplay({
+    engineState,
+    bootMessage,
+    workerReady,
+    restarting,
+    gpuName,
+    vramGb,
+    mpsAvailable,
+  });
+  const restartControl = engineRestartControlState({
+    engineState,
+    workerReady,
+    restarting,
+  });
+  const showRestart = Boolean(onRestartEngine) && restartControl.visible;
 
   const runWindowAction = (action: (win: ReturnType<typeof getCurrentWindow>) => void) => {
     if (!isTauri()) return;
@@ -127,20 +151,48 @@ export function TitleBar({
       </div>
 
       <div className="flex min-w-0 items-center justify-end gap-1">
-        <div className="mr-1 flex min-w-0 items-center gap-2">
-          <span
-            className={`h-2 w-2 shrink-0 rounded-full ${ENGINE_DOT[engineState]}`}
-            title={`Engine: ${engineState}`}
-            aria-hidden
-          />
-          <span
-            className="hidden max-w-[140px] truncate font-mono text-[10px] uppercase tracking-wider text-dfui-muted lg:inline"
-            title={bootMessage}
+        <div className="mr-1 flex min-w-0 items-center gap-1.5">
+          <div
+            className={`hidden min-w-0 items-center gap-1.5 rounded-md border px-2 py-1 sm:inline-flex ${ENGINE_TONE_PILL[status.tone]}`}
+            title={status.title}
           >
-            {engineState === "booting" || engineState === "restarting"
-              ? bootMessage || engineState
-              : readyDetail || engineState}
-          </span>
+            <span
+              className={`h-1.5 w-1.5 shrink-0 rounded-full ${ENGINE_TONE_DOT[status.tone]}`}
+              aria-hidden
+            />
+            <span className="max-w-[min(160px,24vw)] truncate font-mono text-[10px] uppercase tracking-wide">
+              {status.label}
+            </span>
+          </div>
+          {showRestart ? (
+            <button
+              type="button"
+              data-tauri-drag-region={false}
+              onClick={onRestartEngine}
+              disabled={restartControl.disabled}
+              className={`inline-flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-1 text-[10px] font-medium transition disabled:cursor-not-allowed disabled:opacity-70 ${
+                status.tone === "error"
+                  ? "border-rose-400/40 bg-rose-500/15 text-rose-100 hover:bg-rose-500/25"
+                  : "border-amber-400/35 bg-amber-500/10 text-amber-100 hover:bg-amber-500/20"
+              }`}
+              title={
+                restartControl.disabled
+                  ? "Restarting GPU engine…"
+                  : engineState === "failed"
+                    ? "Restart GPU engine"
+                    : "GPU engine is not ready — restart"
+              }
+              aria-label="Restart GPU engine"
+            >
+              <RefreshCw
+                size={11}
+                className={restartControl.disabled ? "animate-spin" : undefined}
+              />
+              <span className="hidden md:inline">
+                {restartControl.disabled ? "Restarting" : "Restart"}
+              </span>
+            </button>
+          ) : null}
           <div className="hidden items-center gap-1.5 border-l border-dfui-border/50 pl-2 sm:flex">
             <span
               className="inline-flex max-w-[120px] items-center gap-1.5 truncate rounded-md border border-dfui-border/50 bg-dfui-bg/40 px-2 py-1 text-[10px] text-dfui-secondary"

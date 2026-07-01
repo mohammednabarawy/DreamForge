@@ -172,7 +172,12 @@ COMFY_INSTALL_RECIPE: dict[str, Any] = {
             "id": "ComfyUI_essentials",
             "url": "https://github.com/cubiq/ComfyUI_essentials",
             "version": "9d9f4bedfc9f0321c19faf71855e228c93bd0dc9",
-            "nodes": ["RemBGSession+", "ImageRemoveBackground+"],
+            "nodes": [
+                "RemBGSession+",
+                "ImageRemoveBackground+",
+                "GetImageSize+",
+                "ResizeImagesByLongerEdge",
+            ],
         },
     ],
     "optional_custom_nodes": [
@@ -206,6 +211,38 @@ COMFY_INSTALL_RECIPE: dict[str, Any] = {
             "install_via": "manager",
             "reason": "SegformerB2ClothesUltra auto garment masks for outfit transfer.",
             "nodes": ["LayerMask: SegformerB2ClothesUltra"],
+        },
+        {
+            "id": "rgthree-comfy",
+            "url": "https://github.com/rgthree/rgthree-comfy",
+            "install_via": "manager",
+            "reason": "rgthree LoRA stack and utility nodes for advanced workflows.",
+            "nodes": ["Lora Loader Stack (rgthree)"],
+        },
+        {
+            "id": "efficiency-nodes-comfyui",
+            "url": "https://github.com/jags111/efficiency-nodes-comfyui",
+            "install_via": "manager",
+            "reason": "Efficient KSampler nodes that combine sampling, preview, and VAE decode.",
+            "nodes": [
+                "KSampler (Efficient)",
+                "KSampler Adv. (Efficient)",
+                "KSampler SDXL (Eff.)",
+            ],
+        },
+        {
+            "id": "ComfyUI_Comfyroll_CustomNodes",
+            "url": "https://github.com/Suzie1/ComfyUI_Comfyroll_CustomNodes",
+            "install_via": "manager",
+            "reason": "ComfyRoll CR Prompt List and batch prompt utilities.",
+            "nodes": ["CR Prompt List"],
+        },
+        {
+            "id": "ComfyUI-Flux2Klein-Enhancer",
+            "url": "https://github.com/capitan01R/ComfyUI-Flux2Klein-Enhancer",
+            "install_via": "manager",
+            "reason": "FLUX.2 Klein identity feature transfer and enhancer nodes.",
+            "nodes": ["IdentityFeatureTransferV3"],
         },
     ],
 }

@@ -442,12 +442,19 @@ def install_workflow_model_files(
             continue
         _report(progress, f"Downloading {filename} for {catalog_id}…")
         try:
-            _download_file(url, dest, min_bytes=min_bytes)
+            _download_file(url, dest, min_bytes=min_bytes, progress=progress)
             result.messages.append(f"Downloaded {filename}.")
         except Exception as exc:
             result.errors.append({"pack_id": catalog_id, "error": f"{filename}: {exc}"})
-    if not result.errors:
+    if not result.errors and workflow_model_ready(catalog_id):
         result.installed.append(catalog_id)
+    elif not result.errors:
+        result.errors.append(
+            {
+                "pack_id": catalog_id,
+                "error": f"{catalog_id} download finished but the file is missing or too small on disk",
+            }
+        )
     return result
 
 

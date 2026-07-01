@@ -467,7 +467,7 @@ def cleanup_all_foreign_comfy_servers(
     _clear_comfy_pidfile()
     _wait_for_ports_closed(
         range(_COMFY_DEFAULT_PORT, _COMFY_DEFAULT_PORT + _COMFY_PORT_SCAN_RANGE),
-        timeout_s=8.0 if killed else 1.0,
+        timeout_s=12.0 if killed else 1.0,
     )
     return killed
 
@@ -504,6 +504,7 @@ class ManagedComfyServer:
         self.proc: subprocess.Popen | None = None
         self.pid: int | None = None
         self.started_at: float | None = None
+        self._attached_external: bool = False
 
     @property
     def base_url(self) -> str:
@@ -513,19 +514,73 @@ class ManagedComfyServer:
         """True only when this manager spawned Comfy and the process is still alive."""
         return self.proc is not None and self.proc.poll() is None
 
+    def is_serving(self) -> bool:
+        """True when DreamForge can reach ComfyUI (spawned or attached)."""
+        if self.is_running():
+            return True
+        if self._attached_external and _is_comfy_http_server(
+            int(self.config.port),
+            host=self.config.listen,
+        ):
+            return True
+        return False
+
     def discard_dead_process(self) -> None:
         """Drop handles for a Comfy subprocess that already exited."""
         proc = self.proc
         if proc is not None and proc.poll() is not None:
             self.proc = None
             self.pid = None
+            self._attached_external = False
             _clear_comfy_pidfile()
+        elif self._attached_external and not _is_comfy_http_server(
+            int(self.config.port),
+            host=self.config.listen,
+        ):
+            self.proc = None
+            self.pid = None
+            self._attached_external = False
+            _clear_comfy_pidfile()
+
+    def _try_attach_existing_comfy(self) -> tuple[bool, str]:
+        """Reuse a healthy ComfyUI already listening on the configured port."""
+        port = int(self.config.port)
+        host = self.config.listen
+        if not _is_comfy_http_server(port, host=host):
+            return False, ""
+        dreamforge_pids = set(_pids_running_comfy_main(COMFY_ROOT))
+        listeners = {pid for pid in _localhost_listening_pids(port) if int(pid) > 0}
+        attach_pids = sorted(dreamforge_pids & listeners)
+        if not attach_pids:
+            pidfile = _comfy_pidfile_path()
+            if pidfile.is_file():
+                try:
+                    pid = int(pidfile.read_text(encoding="utf-8").strip())
+                except (OSError, ValueError):
+                    pid = 0
+                if pid > 0 and pid in listeners and _process_alive(pid):
+                    attach_pids = [pid]
+        if not attach_pids:
+            return False, ""
+        pid = int(attach_pids[0])
+        self.proc = None
+        self.pid = pid
+        self._attached_external = True
+        self.started_at = time.time()
+        _write_comfy_pidfile(pid)
+        message = f"Connected to existing ComfyUI at http://{host}:{port}"
+        print(f"[DreamForge] {message} (PID {pid})", file=sys.stderr)
+        return True, message
 
     def start(self, timeout_s: float = 30.0) -> None:
         with _managed_comfy_start_lock:
             if self.is_running():
                 return
             self.discard_dead_process()
+            attached, _attach_msg = self._try_attach_existing_comfy()
+            if attached:
+                return
+            self._attached_external = False
 
             exclude: set[int] = {os.getpid()}
             if self.pid and _process_alive(self.pid):
@@ -644,11 +699,17 @@ class ManagedComfyServer:
                 time.sleep(0.25)
             raise TimeoutError(f"ComfyUI server did not open port {self.config.port} within {timeout_s}s")
 
-    def stop(self, timeout_s: float = 10.0) -> None:
+    def stop(self, timeout_s: float = 10.0, *, force: bool = False) -> None:
+        if self._attached_external and not force:
+            self._attached_external = False
+            self.proc = None
+            self.pid = None
+            return
         proc = self.proc
         pid = self.pid or (proc.pid if proc else None)
         self.proc = None
         self.pid = None
+        self._attached_external = False
         if not proc and not pid:
             _clear_comfy_pidfile()
             return
@@ -743,6 +804,11 @@ def boot_managed_comfy_server(
         _emit(comfy_launch_summary() + " (restart GPU engine after updates)", phase="starting_comfy")
     server = get_default_comfy_server()
     server.start(timeout_s=float(timeout_s))
+    if server._attached_external:
+        _emit(
+            f"Connected to existing ComfyUI at {server.base_url}",
+            phase="starting_comfy",
+        )
     from dreamforge_comfy_client import ComfyClient
     from dreamforge_comfy_models import verify_comfy_model_paths_loaded
 
@@ -769,7 +835,7 @@ def ensure_comfy_running(*, timeout_s: float = 60.0) -> ManagedComfyServer:
     """Ensure the default managed Comfy server is up (idempotent)."""
     server = get_default_comfy_server()
     server.discard_dead_process()
-    if not server.is_running():
+    if not server.is_serving():
         ensure_dreamforge_extra_model_paths(COMFY_ROOT)
         server.start(timeout_s=float(timeout_s))
     return server
@@ -784,7 +850,7 @@ def recover_managed_comfy_server(*, timeout_s: float = 90.0, reason: str = "") -
             f"[DreamForge] Recovering managed ComfyUI ({reason})",
             file=sys.stderr,
         )
-    if server.is_running():
+    if server.is_serving():
         return server
     ensure_dreamforge_extra_model_paths(COMFY_ROOT)
     server.start(timeout_s=float(timeout_s))
@@ -799,7 +865,7 @@ def restart_managed_comfy_server(*, timeout_s: float = 90.0, reason: str = "") -
             f"[DreamForge] Restarting managed ComfyUI ({reason})",
             file=sys.stderr,
         )
-    server.stop(timeout_s=10.0)
+    server.stop(timeout_s=10.0, force=True)
     server.discard_dead_process()
     ensure_dreamforge_extra_model_paths(COMFY_ROOT)
     server.start(timeout_s=float(timeout_s))

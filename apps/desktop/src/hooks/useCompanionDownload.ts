@@ -209,7 +209,30 @@ export function useCompanionDownload(options?: Options) {
         "Large model files can take several minutes. You can keep DreamForge open while this runs.",
       );
 
-      if (missing.length === 0) {
+      let queue = missing;
+      if (queue.length > 0) {
+        append("info", "Checking which assets are already installed…");
+        try {
+          const pre = await verifyDownloads(model, queue);
+          if (pre.ready) {
+            append("ok", "All required assets are already present.");
+            setPhase("done");
+            return;
+          }
+          if (pre.stillMissing.length < queue.length) {
+            const skipped = queue.length - pre.stillMissing.length;
+            append("ok", `Found ${skipped} asset(s) already on disk — skipping download.`);
+            queue = pre.stillMissing;
+            setTotalCount(queue.length);
+          } else {
+            queue = pre.stillMissing;
+          }
+        } catch (e) {
+          append("warn", `Could not pre-check assets: ${String(e)}`);
+        }
+      }
+
+      if (queue.length === 0) {
         append("info", "Rechecking dependencies…");
         try {
           const verify = await verifyDownloads(model, missing);
@@ -226,10 +249,12 @@ export function useCompanionDownload(options?: Options) {
         return;
       }
 
-      const customNodePacks = missing.filter(isCustomNodePackItem);
-      const workflowModels = missing.filter(isWorkflowModelItem);
-      const modelAssets = missing.filter(
-        (item) => !isCustomNodePackItem(item) && !isWorkflowModelItem(item),
+      const customNodePacks = queue.filter(isCustomNodePackItem);
+      const workflowModels = queue.filter(isWorkflowModelItem);
+      const modelAssets = queue.filter(
+        (item) =>
+          !isCustomNodePackItem(item) &&
+          !isWorkflowModelItem(item),
       );
 
       const progressPath = await companionInstallProgressPath();
@@ -312,9 +337,22 @@ export function useCompanionDownload(options?: Options) {
           .filter((value): value is string => Boolean(value?.trim()));
         append(
           "info",
-          `Installing ${catalogIds.length} workflow model pack(s) (Segformer weights, etc.)…`,
+          `Installing ${catalogIds.length} workflow model pack(s) (annotator weights, Segformer, etc.)…`,
         );
         setTotalCount(customNodePacks.length + workflowModels.length + modelAssets.length);
+        for (let i = 0; i < workflowModels.length; i += 1) {
+          const item = workflowModels[i];
+          setCurrentIndex(customNodePacks.length + i + 1);
+          setCurrentItem(item);
+          setFileProgress({
+            filename: item.filename ?? item.catalog_id ?? item.id ?? "workflow-model",
+            percentage: 0,
+            downloaded: 0,
+            total: 0,
+            status: "downloading",
+            path: item.expected_path ?? item.relative,
+          });
+        }
         try {
           beginLiveProgress();
           const payload = await installWorkflowModels(catalogIds, {
@@ -328,12 +366,45 @@ export function useCompanionDownload(options?: Options) {
               append("info", message);
             }
           }
-          for (const catalogId of payload.installed ?? []) {
-            append("ok", `Installed workflow model: ${catalogId}`);
+          const pctMatch = (payload.messages ?? [])
+            .map((message) => message.match(/(\d+)%/))
+            .filter(Boolean)
+            .map((match) => Number(match?.[1] ?? 0));
+          const lastPct = pctMatch.length > 0 ? pctMatch[pctMatch.length - 1] : payload.ready ? 100 : 0;
+          if (workflowModels[0]) {
+            setFileProgress({
+              filename:
+                workflowModels[0].filename ??
+                workflowModels[0].catalog_id ??
+                workflowModels[0].id ??
+                "workflow-model",
+              percentage: lastPct,
+              downloaded: 0,
+              total: 0,
+              status: payload.ready ? "complete" : "downloading",
+              path: workflowModels[0].expected_path ?? workflowModels[0].relative,
+            });
+          }
+          if (payload.ready) {
+            for (const catalogId of payload.installed ?? []) {
+              append("ok", `Installed workflow model: ${catalogId}`);
+            }
+          } else {
+            for (const catalogId of payload.installed ?? []) {
+              append("warn", `Workflow model reported installed but verification failed: ${catalogId}`);
+              failures += 1;
+            }
           }
           for (const err of payload.errors ?? []) {
             failures += 1;
             append("error", formatCompanionInstallError(err));
+          }
+          if (!payload.ready && (payload.errors?.length ?? 0) === 0) {
+            failures += workflowModels.length;
+            append(
+              "error",
+              "Workflow model download finished but DreamForge could not verify the files on disk.",
+            );
           }
         } catch (e) {
           endLiveProgress();
@@ -353,7 +424,20 @@ export function useCompanionDownload(options?: Options) {
         failures += 1;
       }
 
-      const downloadable = modelAssets.filter((item) => item.url);
+      const downloadableCandidates = modelAssets.filter((item) => item.url);
+      const downloadable: ModelDependencyItem[] = [];
+      for (const item of downloadableCandidates) {
+        try {
+          const recheck = await verifyCompanionEntries([item]);
+          if (recheck.ready || (recheck.missing ?? []).length === 0) {
+            append("ok", `Already on disk (including variants): ${itemLabel(item)}`);
+            continue;
+          }
+        } catch {
+          /* proceed with download attempt */
+        }
+        downloadable.push(item);
+      }
       if (downloadable.length > 0) {
         append("info", `Downloading ${downloadable.length} asset(s) to the models folder…`);
         setTotalCount(customNodePacks.length + workflowModels.length + downloadable.length);

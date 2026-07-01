@@ -124,11 +124,11 @@ def test_restart_managed_comfy_server_stops_then_starts(monkeypatch):
     server = mod.ManagedComfyServer(mod.ComfyServerConfig())
     monkeypatch.setattr(mod, "_DEFAULT_SERVER", server)
     monkeypatch.setattr(mod, "ensure_dreamforge_extra_model_paths", lambda *_args, **_kwargs: None)
-    stops: list[float] = []
+    stops: list[tuple[float, bool]] = []
     starts: list[float] = []
 
-    def _fake_stop(self, timeout_s: float = 10.0):
-        stops.append(float(timeout_s))
+    def _fake_stop(self, timeout_s: float = 10.0, *, force: bool = False):
+        stops.append((float(timeout_s), bool(force)))
 
     def _fake_start(self, timeout_s: float = 30.0):
         starts.append(float(timeout_s))
@@ -138,5 +138,53 @@ def test_restart_managed_comfy_server_stops_then_starts(monkeypatch):
 
     restarted = mod.restart_managed_comfy_server(timeout_s=55.0, reason="hung_prompt")
     assert restarted is server
-    assert stops == [10.0]
+    assert stops == [(10.0, True)]
     assert starts == [55.0]
+
+
+def test_managed_comfy_attaches_to_existing_dreamforge_server(monkeypatch):
+    import dreamforge_comfy_server as mod
+
+    server = mod.ManagedComfyServer(mod.ComfyServerConfig())
+    monkeypatch.setattr(mod, "_is_comfy_http_server", lambda port, host="127.0.0.1": port == 8188)
+    monkeypatch.setattr(mod, "_pids_running_comfy_main", lambda _root=None: [4242])
+    monkeypatch.setattr(mod, "_localhost_listening_pids", lambda port: [4242] if port == 8188 else [])
+    monkeypatch.setattr(mod, "_write_comfy_pidfile", lambda pid: None)
+    cleanup_calls: list[str] = []
+
+    def _fail_cleanup(*_args, **_kwargs):
+        cleanup_calls.append("cleanup")
+        return []
+
+    monkeypatch.setattr(mod, "cleanup_all_foreign_comfy_servers", _fail_cleanup)
+
+    server.start(timeout_s=5.0)
+
+    assert server._attached_external is True
+    assert server.pid == 4242
+    assert cleanup_calls == []
+    assert server.is_serving() is True
+
+    server.stop()
+    assert server._attached_external is False
+    assert server.pid is None
+
+
+def test_managed_comfy_attaches_via_pidfile_when_main_py_scan_misses(monkeypatch, tmp_path):
+    import dreamforge_comfy_server as mod
+
+    pidfile = tmp_path / "comfy.server.pid"
+    monkeypatch.setattr(mod, "_COMFY_PIDFILE", pidfile)
+    pidfile.write_text("5151", encoding="utf-8")
+
+    server = mod.ManagedComfyServer(mod.ComfyServerConfig())
+    monkeypatch.setattr(mod, "_is_comfy_http_server", lambda port, host="127.0.0.1": port == 8188)
+    monkeypatch.setattr(mod, "_pids_running_comfy_main", lambda _root=None: [])
+    monkeypatch.setattr(mod, "_localhost_listening_pids", lambda port: [5151] if port == 8188 else [])
+    monkeypatch.setattr(mod, "_process_alive", lambda pid: pid == 5151)
+    monkeypatch.setattr(mod, "_write_comfy_pidfile", lambda pid: None)
+
+    attached, message = server._try_attach_existing_comfy()
+    assert attached is True
+    assert server.pid == 5151
+    assert "8188" in message

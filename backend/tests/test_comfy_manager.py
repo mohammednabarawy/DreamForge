@@ -100,18 +100,20 @@ def test_missing_workflow_model_entries_for_outfit_transfer(monkeypatch, tmp_pat
 
     monkeypatch.setattr("dreamforge_comfy_manager._models_root", lambda: tmp_path)
     entries = missing_workflow_model_entries(edit_task="outfit_transfer")
-    assert len(entries) == 1
-    assert entries[0]["catalog_id"] == "segformer_b2_clothes"
-    assert entries[0]["kind"] == "workflow_model"
+    
+    segformer = next((e for e in entries if e["catalog_id"] == "segformer_b2_clothes"), None)
+    assert segformer is not None
+    assert segformer["kind"] == "workflow_model"
+    assert segformer["expected_path"] == str(tmp_path / "segformer_b2_clothes/model.safetensors")
 
     model_dir = tmp_path / "segformer_b2_clothes"
-    model_dir.mkdir(parents=True)
+    model_dir.mkdir(parents=True, exist_ok=True)
     (model_dir / "config.json").write_bytes(b"x" * 200)
     (model_dir / "preprocessor_config.json").write_bytes(b"x" * 200)
-    (model_dir / "model.safetensors").write_bytes(b"x" * (101 * 1024 * 1024))
-
+    (model_dir / "model.safetensors").write_bytes(b"0" * (100 * 1024 * 1024 + 1))
     assert workflow_model_ready("segformer_b2_clothes") is True
-    assert missing_workflow_model_entries(edit_task="outfit_transfer") == []
+    missing_now = [e["catalog_id"] for e in missing_workflow_model_entries(edit_task="outfit_transfer")]
+    assert "segformer_b2_clothes" not in missing_now
 
 
 def test_install_workflow_models_direct_download(monkeypatch, tmp_path):

@@ -55,6 +55,47 @@ WORKFLOW_MODEL_CATALOG: dict[str, dict[str, Any]] = {
             "filename": "model.safetensors",
         },
     },
+    "depth_anything_v2_vitl": {
+        "id": "depth_anything_v2_vitl",
+        "name": "Depth Anything V2 Large",
+        "relative": "../custom_nodes/comfyui_controlnet_aux/ckpts/depth-anything/Depth-Anything-V2-Large",
+        "save_path": "../custom_nodes/comfyui_controlnet_aux/ckpts/depth-anything/Depth-Anything-V2-Large",
+        "type": "annotator",
+        "edit_tasks": ["photo_restore", "cutout_compose", "outfit_transfer"],
+        "required_nodes": ["DepthAnythingV2Preprocessor"],
+        "min_bytes": 100 * 1024 * 1024,
+        "note": "Depth Anything V2 weights for structure-preserving controls.",
+        "files": [
+            {
+                "filename": "depth_anything_v2_vitl.pth",
+                "url": "https://huggingface.co/depth-anything/Depth-Anything-V2-Large/resolve/main/depth_anything_v2_vitl.pth",
+                "min_bytes": 1 * 1024 * 1024 * 1024,
+            },
+        ],
+    },
+    "lineart_standard": {
+        "id": "lineart_standard",
+        "name": "Lineart Standard Annotator",
+        "relative": "../custom_nodes/comfyui_controlnet_aux/ckpts/lllyasviel/Annotators",
+        "save_path": "../custom_nodes/comfyui_controlnet_aux/ckpts/lllyasviel/Annotators",
+        "type": "annotator",
+        "edit_tasks": ["photo_restore", "cutout_compose", "outfit_transfer"],
+        "required_nodes": ["LineartStandardPreprocessor"],
+        "min_bytes": 10 * 1024 * 1024,
+        "note": "Lineart Standard Annotator weights for edge-preserving controls.",
+        "files": [
+            {
+                "filename": "sk_model.pth",
+                "url": "https://huggingface.co/lllyasviel/Annotators/resolve/main/sk_model.pth",
+                "min_bytes": 10 * 1024 * 1024,
+            },
+            {
+                "filename": "sk_model2.pth",
+                "url": "https://huggingface.co/lllyasviel/Annotators/resolve/main/sk_model2.pth",
+                "min_bytes": 10 * 1024 * 1024,
+            },
+        ],
+    },
 }
 
 
@@ -352,7 +393,7 @@ def missing_workflow_model_entries(
                 "url": str((primary or {}).get("url") or ""),
                 "min_bytes": int(entry.get("min_bytes") or 1024 * 1024),
                 "download_tier": "A",
-                "note": "Segformer clothing segmentation weights for auto garment masks.",
+                "note": str(entry.get("note") or f"{catalog_id} required weights for {task or 'ComfyUI'}"),
             }
         )
     return missing

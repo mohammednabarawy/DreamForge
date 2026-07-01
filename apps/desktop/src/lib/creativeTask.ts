@@ -137,6 +137,26 @@ export function enforceEditJobSettings(
       inpaint_mask_path: undefined,
     };
   }
+  if ((settings.edit_task ?? "").toLowerCase() === "cutout_compose") {
+    const qwenPatch = qwenEdit2511LightningPatch();
+    const requestedQwenMode = (settings.qwen_edit_mode ?? "").trim().toLowerCase();
+    return {
+      ...settings,
+      ...qwenPatch,
+      edit_strength:
+        settings.edit_strength == null || settings.edit_strength >= 0.9
+          ? 0.35
+          : settings.edit_strength,
+      model: selectQwenEditModel(gallery) || DEFAULT_QWEN_EDIT_MODEL,
+      qwen_edit_mode:
+        requestedQwenMode && requestedQwenMode !== "auto"
+          ? settings.qwen_edit_mode
+          : "plus",
+      upscale_image: undefined,
+      upscale_method: undefined,
+      inpaint_mask_path: undefined,
+    };
+  }
   const current = gallery.find((item) => item.engine_name === settings.model);
   const defaultModel =
     selectFluxKontextEditModel(gallery) || DEFAULT_FLUX_KONTEXT_EDIT_MODEL;

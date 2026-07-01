@@ -3,8 +3,10 @@ from types import SimpleNamespace
 from dreamforge_edit_tasks import (
     apply_edit_task_defaults_to_job,
     EDIT_TASK_PRESETS,
+    cutout_compose_has_background,
     merge_outfit_transfer_prompt,
     outfit_transfer_has_reference,
+    resolve_edit_task_default_prompt,
     resolve_edit_task_defaults,
     normalize_edit_task,
 )
@@ -165,3 +167,35 @@ def test_outfit_transfer_has_reference():
     assert not outfit_transfer_has_reference(
         SimpleNamespace(input_image="/tmp/person.png", references=[{"path": "/tmp/person.png"}])
     )
+
+
+def test_cutout_compose_has_background():
+    assert cutout_compose_has_background(
+        SimpleNamespace(input_image="/tmp/subject.png", reference_images=["/tmp/bg.png"])
+    )
+    assert not cutout_compose_has_background(
+        SimpleNamespace(input_image="/tmp/subject.png", reference_image="/tmp/subject.png")
+    )
+
+
+def test_resolve_edit_task_default_prompt():
+    job = SimpleNamespace(edit_task="cutout_compose")
+    assert "image 1" in resolve_edit_task_default_prompt("", job)
+    assert resolve_edit_task_default_prompt("custom prompt", job) == "custom prompt"
+
+
+def test_resolve_edit_task_defaults_cutout_compose():
+    defaults = resolve_edit_task_defaults("cutout_compose", mode="edit")
+    assert defaults["edit_task"] == "cutout_compose"
+    assert defaults["edit_strength"] == 0.35
+    assert defaults["default_prompt"]
+
+
+def test_apply_cutout_compose_defaults_replace_lightning_strength():
+    job = SimpleNamespace(
+        edit_task="cutout_compose",
+        edit_type="auto",
+        edit_strength=1.0,
+    )
+    apply_edit_task_defaults_to_job(job, mode="edit")
+    assert job.edit_strength == 0.35

@@ -160,6 +160,13 @@ export const EDIT_TASKS: Array<{
     hint: "Use the source person plus an outfit reference; add a mask for Flux Fill fallback.",
     inpaintIntent: "modify_content",
   },
+  {
+    id: "cutout_compose",
+    label: "Cutout compose",
+    short: "Cutout",
+    hint: "Remove background from subject and harmonize lighting with a new background canvas.",
+    inpaintIntent: "modify_content",
+  },
 ];
 
 export function normalizeEditTask(value: string | undefined | null): EditTask | undefined {
@@ -229,6 +236,19 @@ export function patchForEditTask(
       patch.reference_role = "source_edit";
       patch.inpaint_mask_path = undefined;
     }
+  } else if (task === "cutout_compose") {
+    patch.outpaint_direction = undefined;
+    patch.outpaint_amount = undefined;
+    patch.outpaint_feathering = undefined;
+    patch.edit_type = undefined;
+    patch.cn_type = undefined;
+    patch.cn_selection = undefined;
+    Object.assign(patch, qwenEdit2511LightningPatch());
+    patch.edit_strength = 0.35;
+    patch.model = selectQwenEditModel(gallery) || DEFAULT_QWEN_EDIT_MODEL;
+    patch.qwen_edit_mode = "plus";
+    patch.reference_role = "source_edit";
+    patch.inpaint_mask_path = undefined;
   } else if (task !== "global_edit") {
     patch.edit_type = "inpaint";
     patch.cn_type = "inpaint";

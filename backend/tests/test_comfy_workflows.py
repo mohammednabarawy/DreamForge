@@ -34,6 +34,8 @@ from dreamforge_comfy_workflows import (
     comfy_outpaint_basic,
     comfy_pid_flux_upscale,
     comfy_photo_restore,
+    comfy_cutout_compose,
+    compute_cutout_layout,
     comfy_kandinsky5_img2img,
     comfy_flux_img2img,
     comfy_qwen_image_edit,
@@ -110,6 +112,41 @@ def test_photo_restore_builds_depth_lineart_controlnet_nodes():
     assert strengths == [0.18, 0.42]
     face_nodes = [n for n in graph.values() if n.get("class_type") == "FaceDetailer"]
     assert len(face_nodes) == 1
+
+
+def test_cutout_compose_builds_rmbg_composite_and_qwen_edit():
+    graph = comfy_cutout_compose(
+        {
+            "ckpt_name": "qwen_image_edit_2511-Q4_K_M.gguf",
+            "image": "subject.png",
+            "reference_image": "background.png",
+            "prompt": "harmonize subject into scene",
+            "negative": "",
+            "cutout_placement": "center",
+            "cutout_layout": {"x": 10, "y": 20, "target_w": 400, "target_h": 600},
+            "denoise": 0.35,
+        }
+    )
+    class_types = {node["class_type"] for node in graph.values()}
+    assert "RemBGSession+" in class_types
+    assert "ImageRemoveBackground+" in class_types
+    assert "ImageCompositeMasked" in class_types
+    assert "TextEncodeQwenImageEdit" in class_types
+    rembg_nodes = [
+        n for n in graph.values() if n.get("class_type") == "ImageRemoveBackground+"
+    ]
+    assert rembg_nodes
+    assert "rembg_session" in rembg_nodes[0]["inputs"]
+    session_nodes = [n for n in graph.values() if n.get("class_type") == "RemBGSession+"]
+    assert session_nodes
+    assert session_nodes[0]["inputs"]["model"] == "u2net_human_seg: human segmentation"
+
+
+def test_compute_cutout_layout_foreground_is_larger_than_background():
+    _, _, fg_w, fg_h = compute_cutout_layout(1024, 1024, 512, 512, "foreground")
+    _, _, bg_w, bg_h = compute_cutout_layout(1024, 1024, 512, 512, "background")
+    assert fg_w > bg_w
+    assert fg_h > bg_h
 
 
 def test_qwen_edit_split_loaders_and_text_encode():

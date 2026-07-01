@@ -302,6 +302,8 @@ def resolve_input_routing(
         label = "Restoring photo"
     elif _norm(getattr(job, "edit_task", None)) == "outfit_transfer":
         label = "Transferring outfit"
+    elif _norm(getattr(job, "edit_task", None)) == "cutout_compose":
+        label = "Composing cutout"
 
     return WorkflowRoute(
         plan_mode=plan_mode,
@@ -378,6 +380,8 @@ def resolve_comfy_workflow_mode(
 ) -> str:
     if getattr(route, "edit_task", None) == "photo_restore":
         return "photo_restore"
+    if getattr(route, "edit_task", None) == "cutout_compose":
+        return "cutout_compose"
 
     from dreamforge_comfy_workflow_import import comfy_workflow_mode
 

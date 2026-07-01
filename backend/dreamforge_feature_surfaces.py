@@ -39,6 +39,7 @@ BACKEND_COMFY_MODES = frozenset(
         "hires",
         "area_composition",
         "qwen_edit",
+        "cutout_compose",
     }
 )
 
@@ -75,6 +76,7 @@ UI_SURFACE_TO_COMFY_MODES: dict[str, frozenset[str]] = {
     "identity_mode:ipadapter_faceid": frozenset({"ipadapter_faceid", "kontext", "qwen_edit"}),
     "edit_task:photo_restore": frozenset({"photo_restore"}),
     "edit_task:outfit_transfer": frozenset({"qwen_edit", "inpaint"}),
+    "edit_task:cutout_compose": frozenset({"cutout_compose"}),
 }
 
 COMFY_MODE_GRAPH_BUILDERS: dict[str, str] = {
@@ -93,6 +95,7 @@ COMFY_MODE_GRAPH_BUILDERS: dict[str, str] = {
     "img2img": "comfy_img2img_basic",
     "txt2img": "comfy_txt2img_basic",
     "qwen_edit": "comfy_qwen_image_edit",
+    "cutout_compose": "comfy_cutout_compose",
 }
 
 ASSET_GATED_FEATURES = frozenset(

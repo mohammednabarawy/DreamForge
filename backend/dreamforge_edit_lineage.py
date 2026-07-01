@@ -38,6 +38,7 @@ def build_edit_lineage(
     data: dict[str, Any] | None = None,
     input_image: str | None = None,
     upscale_image: str | None = None,
+    background_reference_image: str | None = None,
     inpaint_mask: str | None = None,
     edit_type: str | None = None,
     output_images: list[str] | None = None,
@@ -49,6 +50,8 @@ def build_edit_lineage(
     if not workflow_plan and isinstance(data, dict):
         workflow_plan = data.get("workflow_plan")
     sources = [path for path in (input_image, upscale_image) if path]
+    if background_reference_image and background_reference_image not in sources:
+        sources.append(background_reference_image)
     lineage: dict[str, Any] = {
         "plan_hash": compute_plan_hash(data, job),
         "edit_type": edit_type,
@@ -57,6 +60,8 @@ def build_edit_lineage(
         "workflow_plan": workflow_plan,
         "output_images": list(output_images or []),
     }
+    if background_reference_image:
+        lineage["background_reference_image"] = background_reference_image
     if template_id:
         lineage["template_id"] = template_id
     if post_upscale:

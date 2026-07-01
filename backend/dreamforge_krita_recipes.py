@@ -168,6 +168,12 @@ COMFY_INSTALL_RECIPE: dict[str, Any] = {
             "version": "c48d60df1ee24b47c4e6acacaf1038aff2698cf3",
             "nodes": ["UltimateSDUpscale"],
         },
+        {
+            "id": "ComfyUI_essentials",
+            "url": "https://github.com/cubiq/ComfyUI_essentials",
+            "version": "9d9f4bedfc9f0321c19faf71855e228c93bd0dc9",
+            "nodes": ["RemBGSession+", "ImageRemoveBackground+"],
+        },
     ],
     "optional_custom_nodes": [
         {

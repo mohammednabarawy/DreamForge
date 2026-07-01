@@ -999,6 +999,8 @@ def required_custom_node_pack_ids(
                 "ComfyUI-Impact-Subpack",
             ]
         )
+    if mode == "edit" and task == "cutout_compose":
+        pack_ids.append("ComfyUI_essentials")
     return list(dict.fromkeys(pack_ids))
 
 

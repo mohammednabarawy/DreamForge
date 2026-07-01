@@ -1373,6 +1373,7 @@ def test_krita_recipe_catalog_exposes_comfy_install_requirements():
     required_ids = {node["id"] for node in COMFY_INSTALL_RECIPE["required_custom_nodes"]}
     assert "comfyui-inpaint-nodes" in required_ids
     assert "comfyui-tooling-nodes" in required_ids
+    assert "ComfyUI_essentials" in required_ids
     assert COMFY_INSTALL_RECIPE.get("comfy_version")
     assert all(node.get("version") for node in COMFY_INSTALL_RECIPE["required_custom_nodes"])
 

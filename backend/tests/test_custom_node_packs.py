@@ -20,6 +20,13 @@ def test_resolve_pack_id_for_ultimate_sd_upscale_node():
     assert resolve_pack_id_for_nodes(["UltimateSDUpscale"]) == "ComfyUI_UltimateSDUpscale"
 
 
+def test_resolve_pack_id_for_cutout_background_removal_nodes():
+    assert (
+        resolve_pack_id_for_nodes(["RemBGSession+", "ImageRemoveBackground+"])
+        == "ComfyUI_essentials"
+    )
+
+
 def test_required_custom_node_pack_ids_for_upscale_mode():
     assert required_custom_node_pack_ids(studio_mode="upscale") == [
         "ComfyUI_UltimateSDUpscale"
@@ -34,6 +41,15 @@ def test_required_custom_node_pack_ids_for_photo_restore():
         "comfyui_controlnet_aux",
         "ComfyUI-Impact-Pack",
         "ComfyUI-Impact-Subpack",
+    ]
+
+
+def test_required_custom_node_pack_ids_for_cutout_compose():
+    assert required_custom_node_pack_ids(
+        studio_mode="edit",
+        edit_task="cutout_compose",
+    ) == [
+        "ComfyUI_essentials",
     ]
 
 

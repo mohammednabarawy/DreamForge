@@ -19,6 +19,7 @@ VALID_EDIT_TASKS = frozenset(
         "global_edit",
         "photo_restore",
         "outfit_transfer",
+        "cutout_compose",
     }
 )
 
@@ -35,6 +36,7 @@ EDIT_TASK_LABELS: dict[str, str] = {
     "global_edit": "Global edit",
     "photo_restore": "Restore photo",
     "outfit_transfer": "Outfit transfer",
+    "cutout_compose": "Cutout compose",
 }
 
 # Maps high-level tasks onto existing inpaint intent presets where applicable.
@@ -48,6 +50,21 @@ EDIT_TASK_INPAINT_INTENT: dict[str, str] = {
     "relight": "default",
     "restyle": "default",
     "outfit_transfer": "modify_content",
+    "cutout_compose": "modify_content",
+}
+
+EDIT_TASK_DEFAULT_PROMPTS: dict[str, str] = {
+    "photo_restore": (
+        "restore this old photo, high quality, detailed, photorealistic, sharp focus"
+    ),
+    "outfit_transfer": (
+        "transfer the outfit from image 2 onto the person in image 1, "
+        "preserve the face, pose, body shape, background, and lighting"
+    ),
+    "cutout_compose": (
+        "remove the background from the subject in image 1 and place them naturally "
+        "into the scene in image 2, matching lighting, shadows, perspective, and color grading"
+    ),
 }
 
 EDIT_TASK_PRESETS: dict[str, dict[str, Any]] = {
@@ -126,6 +143,7 @@ EDIT_TASK_PRESETS: dict[str, dict[str, Any]] = {
         "requires_mask": False,
         "scope": "source_image",
         "hint": "Restore and enhance old, damaged, or low-quality photos.",
+        "default_prompt": EDIT_TASK_DEFAULT_PROMPTS["photo_restore"],
         "steps": 6,
         "cfg": 1.5,
         "sampler_name": "dpmpp_2s_ancestral_cfg_pp",
@@ -141,6 +159,16 @@ EDIT_TASK_PRESETS: dict[str, dict[str, Any]] = {
         "requires_mask": False,
         "scope": "source_image",
         "hint": "Transfer clothing from a reference image while preserving the person, pose, and scene.",
+        "default_prompt": EDIT_TASK_DEFAULT_PROMPTS["outfit_transfer"],
+    },
+    "cutout_compose": {
+        "inpaint_intent": "modify_content",
+        "edit_type": "qwen_edit",
+        "edit_strength": 0.35,
+        "requires_mask": False,
+        "scope": "source_image",
+        "hint": "Remove background from subject and harmonize lighting with a new background canvas.",
+        "default_prompt": EDIT_TASK_DEFAULT_PROMPTS["cutout_compose"],
     },
 }
 
@@ -150,6 +178,17 @@ OUTFIT_TRANSFER_REGION_LABELS = {
     "full_outfit": "full outfit",
     "shoes_accessories": "shoes and accessories",
 }
+
+
+def resolve_edit_task_default_prompt(prompt: str, job: Any) -> str:
+    """Fill an empty user prompt with the canonical default for special edit tasks."""
+    text = str(prompt or "").strip()
+    if text:
+        return text
+    task = normalize_edit_task(getattr(job, "edit_task", None))
+    if not task:
+        return text
+    return EDIT_TASK_DEFAULT_PROMPTS.get(task, text)
 
 
 def outfit_transfer_has_reference(job: Any) -> bool:
@@ -186,6 +225,32 @@ def outfit_transfer_has_reference(job: Any) -> bool:
     return False
 
 
+def cutout_compose_has_background(job: Any) -> bool:
+    """True when a second image is attached as the background canvas."""
+    return outfit_transfer_has_reference(job)
+
+
+def resolve_cutout_background_path(job: Any) -> str | None:
+    """Resolved local path for the cutout background reference (first extra ref)."""
+    if normalize_edit_task(getattr(job, "edit_task", None)) != "cutout_compose":
+        return None
+    stored = getattr(job, "_cutout_background_path", None)
+    if stored:
+        return str(stored)
+    from dreamforge_comfy_workflow_import import coerce_reference_image_paths
+
+    refs = coerce_reference_image_paths(job)
+    if not refs:
+        return None
+    try:
+        from dreamforge_paths import resolve_image_path_or_raise
+
+        return str(resolve_image_path_or_raise(str(refs[0])))
+    except Exception:
+        path = str(refs[0]).strip()
+        return path or None
+
+
 def _normalize_reference_path(value: Any) -> str:
     path = str(value or "").strip()
     if not path:
@@ -208,7 +273,16 @@ def merge_outfit_transfer_prompt(prompt: str, job: Any) -> str:
     guidance = "Preserve the face, pose, body shape, background, and lighting; only change clothing."
     if labels:
         guidance = f"Target garments: {', '.join(labels)}. {guidance}"
-    return f"{prompt.strip()} {guidance}".strip()
+    return f"{guidance} {prompt}".strip()
+
+
+def merge_cutout_compose_prompt(prompt: str, job: Any) -> str:
+    """Add placement guidance for the cutout-compose task."""
+    if normalize_edit_task(getattr(job, "edit_task", None)) != "cutout_compose":
+        return prompt
+    placement = getattr(job, "cutout_placement", "center") or "center"
+    guidance = f"The main subject is placed in the {placement}. Harmonize the lighting, perspective, and shadows so the subject looks naturally integrated into the environment."
+    return f"{guidance} {prompt}".strip()
 
 
 def merge_photo_restore_task_settings(
@@ -282,6 +356,8 @@ def resolve_edit_task_defaults(
         "scope": preset.pop("scope", "masked_region" if mode == "inpaint" else "source_image"),
         "requires_mask": bool(preset.pop("requires_mask", mode == "inpaint")),
     }
+    if "default_prompt" in preset:
+        out["default_prompt"] = preset.pop("default_prompt")
     for key, default in preset.items():
         value = data.get(key)
         if normalized == "global_edit" and key == "edit_type":
@@ -359,4 +435,14 @@ def apply_edit_task_defaults_to_job(
             setattr(job, "edit_type", "qwen_edit")
             setattr(job, "cn_type", None)
             setattr(job, "cn_selection", None)
+    elif defaults.get("edit_task") == "cutout_compose":
+        if str(getattr(job, "edit_type", "") or "").lower() in {"", "auto", "kontext", "img2img"}:
+            setattr(job, "edit_type", "qwen_edit")
+            setattr(job, "cn_type", None)
+            setattr(job, "cn_selection", None)
+        preset_strength = EDIT_TASK_PRESETS["cutout_compose"].get("edit_strength")
+        if preset_strength is not None:
+            current = getattr(job, "edit_strength", None)
+            if current is None or float(current) >= 0.9:
+                setattr(job, "edit_strength", preset_strength)
     return defaults

@@ -12,6 +12,7 @@ import {
   selectInpaintModelForIntent,
   showInpaintAdditionalPrompt,
 } from "../lib/inpaintIntent";
+import { defaultPromptPatchForEditTask } from "../lib/editTaskPrompts";
 
 type Props = {
   settings: GenerationSettings;
@@ -93,15 +94,7 @@ export function EditFamilySettingsPanel({
     });
     onChange({
       ...patch,
-      ...(task === "photo_restore" && !(settings.prompt ?? "").trim()
-        ? { prompt: "restore this old photo, high quality, detailed, photorealistic, sharp focus" }
-        : {}),
-      ...(task === "outfit_transfer" && !(settings.prompt ?? "").trim()
-        ? {
-            prompt:
-              "transfer the outfit from image 2 onto the person in image 1, preserve the face, pose, body shape, background, and lighting",
-          }
-        : {}),
+      ...(defaultPromptPatchForEditTask(task, settings) ?? {}),
       ...(isInpaint && item?.inpaintIntent
         ? {
             model: selectInpaintModelForIntent(
@@ -171,7 +164,7 @@ export function EditFamilySettingsPanel({
             <p className="mb-1.5 text-[10px] font-medium text-[#aaaaaa]">
               {isInpaint ? "Edit task" : "Edit mode"}
             </p>
-            <div className="grid grid-cols-3 gap-1 rounded-md border border-[#4a4a4a]/70 bg-[#2a2a2a]/60 p-0.5">
+            <div className="grid grid-cols-4 gap-1 rounded-md border border-[#4a4a4a]/70 bg-[#2a2a2a]/60 p-0.5">
               {visibleEditTasks.map((item) => {
                 const active =
                   activeTask === item.id ||
@@ -231,6 +224,33 @@ export function EditFamilySettingsPanel({
                 </label>
               ))}
             </div>
+          </div>
+        )}
+
+        {activeTask === "cutout_compose" && (
+          <div className="space-y-1.5 rounded-md border border-[#4a4a4a]/70 bg-[#2a2a2a]/50 p-2">
+            <p className="text-[10px] font-medium text-[#aaaaaa]">Cutout compose</p>
+            <p className="text-[9px] leading-snug text-[#777777]">
+              Image 1 is the subject (background removed). Add the background scene as a second reference.
+            </p>
+            <label className="block mt-1.5">
+              <span className="mb-0.5 block text-[10px] text-[#aaaaaa]">Placement</span>
+              <select
+                className="w-full rounded border border-[#444444] bg-[#2d2d2d] px-1 py-1 text-[10px] text-[#cccccc] focus:border-[#007fd4] focus:outline-none"
+                value={settings.cutout_placement || "center"}
+                onChange={(e) =>
+                  onChange({
+                    cutout_placement: e.target.value as NonNullable<GenerationSettings["cutout_placement"]>,
+                  })
+                }
+              >
+                <option value="center">Center</option>
+                <option value="left">Left</option>
+                <option value="right">Right</option>
+                <option value="foreground">Foreground</option>
+                <option value="background">Background</option>
+              </select>
+            </label>
           </div>
         )}
 

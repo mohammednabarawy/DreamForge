@@ -1,4 +1,5 @@
 import type { GenerationSettings, ModelGalleryItem } from "./tauri-api";
+import { PHOTO_RESTORE_DEFAULT_PROMPT } from "./editTaskPrompts";
 
 /** Matches backend photo_restore workflow defaults (restore photo.json). */
 export const PHOTO_RESTORE_SAMPLING = {
@@ -11,8 +12,7 @@ export const PHOTO_RESTORE_SAMPLING = {
   lineart_strength: 0.35,
 } as const;
 
-export const PHOTO_RESTORE_DEFAULT_PROMPT =
-  "restore this old photo, high quality, detailed, photorealistic, sharp focus";
+export { PHOTO_RESTORE_DEFAULT_PROMPT };
 
 const SDXL_RESTORE_NEEDLES = [
   "epicrealism",

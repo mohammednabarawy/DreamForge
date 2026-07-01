@@ -132,6 +132,21 @@ ROUTE_MATRIX = [
         "expected": "qwen_edit",
     },
     {
+        "id": "edit_cutout_compose",
+        "studio_mode": "edit",
+        "job": {
+            "edit_task": "cutout_compose",
+            "input_image": "/tmp/subject.png",
+            "reference_images": ["/tmp/background.png"],
+            "reference_role": "source_edit",
+            "edit_type": "qwen_edit",
+        },
+        "model": {"name": "qwen-image-edit-2511-Q4_K_M.gguf"},
+        "family": "qwen_image_edit",
+        "input": "/tmp/subject.png",
+        "expected": "cutout_compose",
+    },
+    {
         "id": "inpaint_fill",
         "studio_mode": "inpaint",
         "job": {

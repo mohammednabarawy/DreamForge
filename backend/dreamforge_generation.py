@@ -543,6 +543,7 @@ def _build_comfy_prompt_graph(
         comfy_kandinsky5_img2img,
         comfy_kandinsky5_txt2img,
         comfy_photo_restore,
+        comfy_cutout_compose,
     )
 
     explicit = getattr(job, "comfy_workflow_api", None) or getattr(
@@ -573,6 +574,7 @@ def _build_comfy_prompt_graph(
         "height": settings["height"],
         "filename_prefix": "DreamForge",
         "upscale_model": cn_upscale,
+        "cutout_placement": getattr(job, "cutout_placement", "center"),
         **{
             k: v
             for k, v in upscale_field_defaults(
@@ -819,6 +821,40 @@ def _build_comfy_prompt_graph(
                 "denoise": edit_strength,
             }
         )
+    elif mode == "cutout_compose" and input_filename:
+        bg_filename = (qwen_reference_filenames or [None])[0]
+        if not bg_filename:
+            raise ValueError("cutout compose requires a background reference image")
+        cutout_args: dict[str, Any] = {
+            **loader_args,
+            "prompt": prompt,
+            "negative": negative,
+            "steps": settings["steps"],
+            "cfg": settings["cfg"],
+            "sampler_name": settings["sampler_name"],
+            "scheduler": settings["scheduler"],
+            "seed": seed,
+            "denoise": edit_strength,
+            "filename_prefix": "DreamForge",
+            "image": input_filename,
+            "reference_image": bg_filename,
+            "cutout_placement": getattr(job, "cutout_placement", "center"),
+        }
+        layout = getattr(job, "_cutout_layout", None)
+        if isinstance(layout, dict) and layout:
+            cutout_args["cutout_layout"] = layout
+        for key in (
+            "qwen_image_shift",
+            "qwen_scale_megapixels",
+            "qwen_preserve_resolution",
+            "qwen_preserve_megapixels",
+            "use_qwen_lightning_lora",
+            "qwen_lightning_lora",
+            "qwen_lightning_strength",
+        ):
+            if settings.get(key) is not None:
+                cutout_args[key] = settings[key]
+        graph = comfy_cutout_compose(cutout_args)
     elif mode == "outpaint" and input_filename:
         graph = comfy_outpaint_basic(
             {
@@ -1489,15 +1525,19 @@ def run_generation(
 
         from dreamforge_prompt import prepare_generation_prompts
 
+        from dreamforge_edit_tasks import resolve_edit_task_default_prompt
+
+        prompt = resolve_edit_task_default_prompt(prompt, job)
         user_instruction = str(prompt or "")
         prepared = prepare_generation_prompts(job, model, prompt, negative, settings)
         prompt = prepared["prompt"]
         from dreamforge_inpaint_intent import merge_inpaint_additional_prompt
 
         prompt = merge_inpaint_additional_prompt(prompt, job)
-        from dreamforge_edit_tasks import merge_outfit_transfer_prompt
+        from dreamforge_edit_tasks import merge_outfit_transfer_prompt, merge_cutout_compose_prompt
 
         prompt = merge_outfit_transfer_prompt(prompt, job)
+        prompt = merge_cutout_compose_prompt(prompt, job)
         negative = prepared["negative"]
         settings = dict(settings)
         settings["negative"] = negative
@@ -1618,7 +1658,7 @@ def run_generation(
             edit_task_defaults = apply_edit_task_defaults_to_job(
                 job,
                 mode="edit"
-                if task_name in {"global_edit", "photo_restore", "outfit_transfer"}
+                if task_name in {"global_edit", "photo_restore", "outfit_transfer", "cutout_compose"}
                 else "inpaint",
             )
             if task_name == "photo_restore":
@@ -1637,6 +1677,21 @@ def run_generation(
                     )
                     err["suggestions"] = [
                         "Attach the outfit photo as a reference image before generating."
+                    ]
+                    emit_event(stream_sink, err)
+                    return {"status": "error", **err}
+            elif task_name == "cutout_compose":
+                from dreamforge_edit_tasks import cutout_compose_has_background
+
+                if not cutout_compose_has_background(job):
+                    from dreamforge_errors import invalid_request
+
+                    err = invalid_request(
+                        "Cutout compose requires a background image in the reference panel.",
+                        job_id=job_id,
+                    )
+                    err["suggestions"] = [
+                        "Attach the subject as the primary image, then add the background scene as a second reference."
                     ]
                     emit_event(stream_sink, err)
                     return {"status": "error", **err}
@@ -1857,8 +1912,18 @@ def run_generation(
             default_edit_strength = float(
                 inpaint_intent_params.get("edit_strength", default_edit_strength)
             )
-        if is_inpaint_job and edit_task_defaults.get("edit_strength") is not None:
-            default_edit_strength = float(edit_task_defaults["edit_strength"])
+        if edit_task_defaults.get("edit_strength") is not None and (
+            is_inpaint_job
+            or edit_task_defaults.get("edit_task") == "cutout_compose"
+        ):
+            if edit_task_defaults.get("edit_task") == "cutout_compose":
+                from dreamforge_edit_tasks import EDIT_TASK_PRESETS
+
+                default_edit_strength = float(
+                    EDIT_TASK_PRESETS["cutout_compose"]["edit_strength"]
+                )
+            else:
+                default_edit_strength = float(edit_task_defaults["edit_strength"])
         edit_strength = _clamp_float(
             getattr(job, "edit_strength", None),
             default_edit_strength,
@@ -2020,6 +2085,30 @@ def run_generation(
         qwen_reference_filenames: list[str] = []
         kontext_reference_filenames: list[str] = []
         extra_reference_paths = _coerce_reference_image_paths(job)
+        if (
+            str(getattr(job, "edit_task", "") or "").strip().lower() == "cutout_compose"
+            and input_path
+            and extra_reference_paths
+        ):
+            try:
+                from PIL import Image
+                from dreamforge_paths import resolve_image_path_or_raise
+                from dreamforge_comfy_workflows import compute_cutout_layout
+
+                bg_path = resolve_image_path_or_raise(str(extra_reference_paths[0]))
+                job._cutout_background_path = str(bg_path)
+                subj_path = resolve_image_path_or_raise(str(input_path))
+                with Image.open(bg_path) as bg_img, Image.open(subj_path) as subj_img:
+                    x, y, tw, th = compute_cutout_layout(
+                        bg_img.width,
+                        bg_img.height,
+                        subj_img.width,
+                        subj_img.height,
+                        getattr(job, "cutout_placement", "center"),
+                    )
+                job._cutout_layout = {"x": x, "y": y, "target_w": tw, "target_h": th}
+            except Exception:
+                pass
         if extra_reference_paths and input_path:
             if model_family == "qwen_image_edit":
                 try:
@@ -2572,6 +2661,40 @@ def run_generation(
                 for node_type in comfy_workflow_class_types
                 if node_type not in object_info
             )
+            if missing_workflow_nodes and comfy_mode == "cutout_compose":
+                essentials_nodes = {"RemBGSession+", "ImageRemoveBackground+"}
+                if essentials_nodes & set(missing_workflow_nodes):
+                    try:
+                        from dreamforge_comfy_install import ensure_dreamforge_comfy_backend
+                        from dreamforge_comfy_server import restart_managed_comfy_server
+
+                        emit_event(
+                            stream_sink,
+                            {
+                                "type": "progress",
+                                "job_id": job_id,
+                                "phase": "preflight",
+                                "progress": 3,
+                                "message": (
+                                    "Installing background removal nodes (ComfyUI_essentials) "
+                                    "and restarting ComfyUI…"
+                                ),
+                            },
+                        )
+                        ensure_dreamforge_comfy_backend()
+                        server = restart_managed_comfy_server(
+                            timeout_s=90.0,
+                            reason="cutout_essentials_nodes",
+                        )
+                        client = ComfyClient(server.base_url)
+                        object_info = client.object_info(timeout_s=30.0)
+                        missing_workflow_nodes = sorted(
+                            node_type
+                            for node_type in comfy_workflow_class_types
+                            if node_type not in object_info
+                        )
+                    except Exception:
+                        pass
             if missing_workflow_nodes:
                 err = missing_custom_node_pack(
                     str(comfy_workflow_builder or "ComfyUI workflow"),
@@ -2819,7 +2942,7 @@ def run_generation(
             if not Path(manifest_path).is_absolute():
                 manifest_path = str(PROJECT_ROOT / manifest_path)
             from dreamforge_edit_lineage import build_edit_lineage
-            from dreamforge_edit_tasks import resolve_edit_task_defaults
+            from dreamforge_edit_tasks import resolve_cutout_background_path, resolve_edit_task_defaults
             from dreamforge_mode_contract import build_final_edit_request
             from dreamforge_workflow_routing import plan_mode_for_job
 
@@ -2855,6 +2978,9 @@ def run_generation(
                 "cn_type": cn_type,
                 "edit_strength": edit_strength,
             }
+            background_reference_path = resolve_cutout_background_path(job)
+            if background_reference_path:
+                routing["background_image"] = background_reference_path
             if post_upscale_method:
                 routing["post_upscale"] = str(post_upscale_method)
                 routing["chain"] = ["primary", "upscale"]
@@ -2874,6 +3000,7 @@ def run_generation(
                     data=job_data,
                     input_image=str(input_path) if input_path else None,
                     upscale_image=str(upscale_input_path) if is_upscale_job else None,
+                    background_reference_image=background_reference_path,
                     inpaint_mask=str(mask_path) if mask_path else None,
                     edit_type=edit_type,
                     output_images=images,

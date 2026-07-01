@@ -1471,6 +1471,164 @@ def _qwen_edit_sampler_nodes(
     return start_id + 3
 
 
+def compute_cutout_layout(
+    bg_w: int,
+    bg_h: int,
+    subj_w: int,
+    subj_h: int,
+    placement: str,
+) -> tuple[int, int, int, int]:
+    """Return x, y, target_w, target_h for compositing subject onto background."""
+    placement_key = str(placement or "center").strip().lower()
+    scale_factor = 0.8
+    if placement_key == "foreground":
+        scale_factor = 0.92
+    elif placement_key == "background":
+        scale_factor = 0.55
+    scale = min(bg_w * scale_factor / max(1, subj_w), bg_h * scale_factor / max(1, subj_h))
+    target_w = max(1, int(subj_w * scale))
+    target_h = max(1, int(subj_h * scale))
+    y = (bg_h - target_h) // 2
+    if placement_key == "left":
+        x = int(bg_w * 0.05)
+    elif placement_key == "right":
+        x = int(bg_w * 0.95) - target_w
+    else:
+        x = (bg_w - target_w) // 2
+    return x, y, target_w, target_h
+
+
+def comfy_cutout_compose(args: dict[str, Any]) -> dict[str, Any]:
+    """Cutout Compose: Removes background from subject, composites onto background, harmonizes with Qwen Edit."""
+    ckpt = str(args["ckpt_name"])
+    prompt = str(args.get("prompt", ""))
+    negative = str(args.get("negative", ""))
+    bg_image = str(args.get("reference_image", ""))
+    subject_image = str(args.get("image", ""))
+    if not bg_image:
+        raise ValueError("reference_image (background) is required for cutout compose")
+    if not subject_image:
+        raise ValueError("image (subject) is required for cutout compose")
+
+    placement = str(args.get("cutout_placement", "center")).strip().lower()
+
+    layout = args.get("cutout_layout") or {}
+    target_w = int(layout.get("target_w") or 0)
+    target_h = int(layout.get("target_h") or 0)
+    x = int(layout.get("x") or 0)
+    y = int(layout.get("y") or 0)
+    if target_w <= 0 or target_h <= 0:
+        try:
+            from PIL import Image
+            from dreamforge_paths import resolve_image_path_or_raise
+
+            bg_w, bg_h = Image.open(resolve_image_path_or_raise(bg_image)).size
+            subj_w, subj_h = Image.open(resolve_image_path_or_raise(subject_image)).size
+            x, y, target_w, target_h = compute_cutout_layout(
+                bg_w, bg_h, subj_w, subj_h, placement
+            )
+        except Exception:
+            target_w, target_h = 512, 512
+            x, y = 0, 0
+
+    steps = int(args.get("steps", 20))
+    cfg = float(args.get("cfg", 2.5))
+    sampler = str(args.get("sampler_name", "euler"))
+    scheduler = str(args.get("scheduler", "beta"))
+    seed = int(args.get("seed", 0))
+    denoise = float(args.get("denoise", args.get("edit_strength", 1.0)))
+
+    g: dict[str, Any] = {}
+    model_out, clip_out, vae_out, n = _add_model_loader(g, {**args, "ckpt_name": ckpt})
+    model_out, n = _apply_qwen_lightning_lora(model_out, g, n, args)
+    model_sampled = _apply_qwen_model_sampling(model_out, g, n, args)
+    n += 2
+
+    g[str(n)] = _node("LoadImage", {"image": bg_image, "upload": "image"})
+    bg_out = [str(n), 0]
+    n += 1
+
+    g[str(n)] = _node("LoadImage", {"image": subject_image, "upload": "image"})
+    subject_raw = [str(n), 0]
+    n += 1
+
+    g[str(n)] = _node("ImageScale", {
+        "image": subject_raw,
+        "upscale_method": "bicubic",
+        "width": target_w,
+        "height": target_h,
+        "crop": "disabled"
+    })
+    subject_scaled = [str(n), 0]
+    n += 1
+
+    g[str(n)] = _node(
+        "RemBGSession+",
+        {"model": "u2net_human_seg: human segmentation", "providers": "CPU"},
+    )
+    rembg_session = [str(n), 0]
+    n += 1
+
+    g[str(n)] = _node(
+        "ImageRemoveBackground+",
+        {"rembg_session": rembg_session, "image": subject_scaled},
+    )
+    subject_rgba = [str(n), 0]
+    subject_mask = [str(n), 1]
+    n += 1
+
+    g[str(n)] = _node(
+        "ImageCompositeMasked",
+        {
+            "destination": bg_out,
+            "source": subject_rgba,
+            "x": x,
+            "y": y,
+            "resize_source": False,
+            "mask": subject_mask,
+        }
+    )
+    composite_out = [str(n), 0]
+    n += 1
+
+    # Harmonize at the composite's native resolution — do not rescale before VAEEncode.
+    g[str(n)] = _node(
+        "TextEncodeQwenImageEdit",
+        {"clip": clip_out, "image": composite_out, "prompt": prompt},
+    )
+    pos = [str(n), 0]
+    n += 1
+    g[str(n)] = _node(
+        "TextEncodeQwenImageEdit",
+        {"clip": clip_out, "image": composite_out, "prompt": negative},
+    )
+    neg = [str(n), 0]
+    n += 1
+    g[str(n)] = _node("VAEEncode", {"pixels": composite_out, "vae": vae_out})
+    latent = [str(n), 0]
+    n += 1
+
+    args_with_vae = {**args, "_vae_out": vae_out}
+    _qwen_edit_sampler_nodes(
+        g,
+        start_id=n,
+        model_sampled=model_sampled,
+        pos=pos,
+        neg=neg,
+        latent=latent,
+        args={
+            **args_with_vae,
+            "steps": steps,
+            "cfg": cfg,
+            "sampler_name": sampler,
+            "scheduler": scheduler,
+            "seed": seed,
+            "denoise": denoise,
+        },
+    )
+    return g
+
+
 def comfy_qwen_image_edit(args: dict[str, Any]) -> dict[str, Any]:
     """Qwen-Image-Edit via TextEncodeQwenImageEdit (Comfy native / Krita qwen_e)."""
     ckpt = str(args["ckpt_name"])

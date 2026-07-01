@@ -167,7 +167,9 @@ export type GenerationSettings = {
     | "extend"
     | "global_edit"
     | "photo_restore"
-    | "outfit_transfer";
+    | "outfit_transfer"
+    | "cutout_compose";
+  cutout_placement?: "center" | "left" | "right" | "foreground" | "background";
   outfit_transfer_regions?: Array<
     "upper_body" | "lower_body" | "full_outfit" | "shoes_accessories"
   >;

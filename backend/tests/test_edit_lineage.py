@@ -41,6 +41,19 @@ def test_build_edit_lineage_includes_sources_and_outputs():
     assert lineage["output_images"] == ["/tmp/out.png"]
 
 
+def test_build_edit_lineage_includes_cutout_background_reference():
+    job = SimpleNamespace(workflow_plan=[{"operation": "cutout_compose"}])
+    lineage = build_edit_lineage(
+        job=job,
+        input_image="/tmp/subject.png",
+        background_reference_image="/tmp/background.png",
+        edit_type="cutout_compose",
+        output_images=["/tmp/out.png"],
+    )
+    assert lineage["source_images"] == ["/tmp/subject.png", "/tmp/background.png"]
+    assert lineage["background_reference_image"] == "/tmp/background.png"
+
+
 def test_user_style_profile_bridge_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "dreamforge_user_style_profile.PROFILE_PATH",

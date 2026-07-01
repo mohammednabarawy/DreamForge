@@ -277,6 +277,30 @@ def test_resolve_comfy_workflow_mode_photo_restore():
     assert mode == "photo_restore"
 
 
+def test_resolve_comfy_workflow_mode_cutout_compose():
+    job = SimpleNamespace(
+        edit_task="cutout_compose",
+        input_image="/tmp/subject.png",
+        reference_images=["/tmp/background.png"],
+        reference_role="source_edit",
+        edit_type="qwen_edit",
+    )
+    route = resolve_input_routing(
+        job,
+        model={"engine_name": "qwen-image-edit-2511-Q4_K_M.gguf"},
+        model_family="qwen_image_edit",
+        studio_mode="edit",
+    )
+    assert route.route_label == "Composing cutout"
+    mode = resolve_comfy_workflow_mode(
+        route,
+        model={"engine_name": "qwen-image-edit-2511-Q4_K_M.gguf"},
+        model_family="qwen_image_edit",
+        input_filename="subject.png",
+    )
+    assert mode == "cutout_compose"
+
+
 def test_resolve_input_routing_outfit_transfer_qwen():
     job = SimpleNamespace(
         edit_task="outfit_transfer",

@@ -1,4 +1,0 @@
-src/lib/inpaintIntent.ts(276,28): error TS2304: Cannot find name 'qwenEdit2511LightningPatch'.
-src/lib/inpaintIntent.ts(289,26): error TS2304: Cannot find name 'qwenEdit2511LightningPatch'.
-src/lib/workflowPlanActions.ts(177,5): error TS2322: Type 'StudioMode' is not assignable to type '"inpaint" | "upscale" | "edit" | "generate" | "agent" | undefined'.
-  Type '"toolbox"' is not assignable to type '"inpaint" | "upscale" | "edit" | "generate" | "agent" | undefined'.

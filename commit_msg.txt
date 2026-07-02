@@ -1,7 +1,0 @@
-feat: support importing native ComfyUI workflows and stabilize custom tool IDs
-
-- Enhanced `CustomToolImportModal` to accept standard ComfyUI UI workflows without requiring the API format export.
-- Added `resolveCustomTool` and `upsertCustomTool` in `customTools.ts` to prevent custom tool IDs from drifting when re-importing identical workflow paths.
-- Added persistence for the selected custom tool in `studioBridge.ts` via `selected_custom_tool_id`.
-- Updated `useDreamForge` and `CreativeToolboxPanel` to leverage the new resolution logic for stable active tool selection.
-- Refactored `parseComfyWorkflowJson` to detect `ui_format` and determine if a workflow is `importable`.

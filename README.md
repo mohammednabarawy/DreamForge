@@ -102,7 +102,7 @@ chmod +x setup.sh DreamForge.command dreamforge.sh
 ./setup.sh
 ```
 
-On **Apple Silicon**, use **native arm64 Node** for the desktop app (`node -p process.arch` should print `arm64`). If setup fails on `txtai` / `torch` versions, remove `venv/` and run `./setup.sh` again so setup picks `/opt/homebrew/bin/python3` or arm64 `/usr/local/bin/python3` instead of Rosetta x86_64 Python.
+On **Apple Silicon**, use **native arm64 Node** for the desktop app (`node -p process.arch` should print `arm64`). Setup requires Python 3.10+ and automatically preserves an incompatible Rosetta environment as `venv.incompatible/` before rebuilding a native arm64 `venv/`. The macOS launchers also repair missing Tauri/Rollup native bindings when npm skips optional platform packages.
 
 `./setup.sh` clones **ComfyUI** into `engines/comfyui/` (with legacy fallbacks under `backend/repositories/ComfyUI`).
 

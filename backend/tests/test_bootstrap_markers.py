@@ -42,3 +42,9 @@ def test_node_deps_marker_token_includes_version(tmp_path):
 def test_python_stack_marker_token():
     token = python_stack_marker_token()
     assert token.startswith("v")
+
+
+def test_python_stack_marker_token_is_runtime_specific():
+    assert python_stack_marker_token("darwin:arm64:cpython:cpython-312") != (
+        python_stack_marker_token("windows:amd64:cpython:cpython-310")
+    )

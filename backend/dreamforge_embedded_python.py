@@ -35,6 +35,11 @@ from dreamforge_bootstrap_markers import (  # noqa: E402
 )
 
 
+def preserve_executable_path(python: Path) -> Path:
+    """Return an absolute interpreter path without dereferencing venv symlinks."""
+    return Path(os.path.abspath(os.path.expanduser(str(python))))
+
+
 def _report(progress: ProgressCallback, message: str) -> None:
     if progress:
         progress(message)
@@ -154,6 +159,22 @@ def _run(cmd: list[str], *, cwd: Path | None = None, progress: ProgressCallback 
     )
 
 
+def runtime_identity_for_python(python: Path) -> str:
+    return subprocess.check_output(
+        [
+            str(python),
+            "-c",
+            (
+                "import platform,sys; print(':'.join((platform.system().lower(),"
+                "platform.machine().lower(),sys.implementation.name,"
+                "sys.implementation.cache_tag or 'unknown')))"
+            ),
+        ],
+        text=True,
+        **_subprocess_kwargs(),
+    ).strip()
+
+
 def _install_pip_into_embed(
     python_exe: Path,
     embed_dir: Path,
@@ -239,9 +260,14 @@ def install_dreamforge_python_stack(
     skip_torch_bootstrap: bool = False,
 ) -> None:
     """Install DreamForge pip requirements and optional torch/Comfy bootstrap."""
-    python = Path(python).resolve()
-    if python_stack_marker_valid():
+    python = preserve_executable_path(python)
+    runtime_identity = runtime_identity_for_python(python)
+    if python_stack_marker_valid(runtime_identity):
         _report(progress, "DreamForge Python stack already installed.")
+        if not skip_torch_bootstrap:
+            from dreamforge_comfy_install import ensure_comfyui_python_deps
+
+            ensure_comfyui_python_deps(progress=progress)
         return
 
     _report(progress, "Upgrading pip in python_embeded…")
@@ -274,7 +300,11 @@ def install_dreamforge_python_stack(
         _report(progress, "Bootstrapping PyTorch and ComfyUI prerequisites (may take several minutes)…")
         _run([str(python), "launch.py", "--setup-only"], cwd=BACKEND_ROOT, progress=progress)
 
-    write_python_stack_marker()
+    from dreamforge_comfy_install import ensure_comfyui_python_deps
+
+    ensure_comfyui_python_deps(progress=progress)
+
+    write_python_stack_marker(runtime_identity)
 
 
 def embedded_python_status(install_root: Path | None = None) -> dict[str, str | bool]:

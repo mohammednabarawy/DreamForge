@@ -3,6 +3,8 @@ import sys
 import zipfile
 from pathlib import Path
 
+import pytest
+
 BACKEND_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if BACKEND_ROOT not in sys.path:
     sys.path.insert(0, BACKEND_ROOT)
@@ -18,11 +20,22 @@ from dreamforge_embedded_python import (  # noqa: E402
 from dreamforge_bootstrap import extract_github_zip  # noqa: E402
 from dreamforge_runtime_paths import (  # noqa: E402
     RuntimeConfig,
+    default_managed_models_root,
     ensure_model_subdirs,
     load_runtime_config,
     save_runtime_config,
     validate_models_folder,
 )
+
+
+def test_default_models_root_falls_back_to_legacy_backend(tmp_path, monkeypatch):
+    legacy = tmp_path / "backend" / "models"
+    legacy.mkdir(parents=True)
+    monkeypatch.delenv("DREAMFORGE_MODELS_ROOT", raising=False)
+    monkeypatch.setattr("dreamforge_runtime_paths.REPO_ROOT", tmp_path)
+    monkeypatch.setattr("dreamforge_runtime_paths.is_packaged_runtime", lambda: False)
+
+    assert default_managed_models_root(tmp_path) == legacy
 
 
 def test_validate_models_folder_writable(tmp_path):
@@ -71,7 +84,8 @@ def test_embedded_python_uses_python_embeded_dir_name(tmp_path, monkeypatch):
     monkeypatch.setenv("DREAMFORGE_INSTALL_ROOT", str(tmp_path))
     assert EMBED_DIR_NAME == "python_embeded"
     assert embedded_python_dir() == tmp_path / "python_embeded"
-    assert embedded_python_exe() == tmp_path / "python_embeded" / "python.exe"
+    executable = "python.exe" if os.name == "nt" else "python"
+    assert embedded_python_exe() == tmp_path / "python_embeded" / executable
 
 
 def test_resolve_install_root_from_backend_env(monkeypatch):
@@ -80,6 +94,7 @@ def test_resolve_install_root_from_backend_env(monkeypatch):
     assert str(root).endswith("DreamForge") or root.name == "DreamForge"
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows embedded Python layout")
 def test_python_exe_prefers_install_root_embedded(monkeypatch, tmp_path):
     install = tmp_path / "DreamForge"
     backend = install / "backend"
@@ -132,4 +147,3 @@ def test_resolve_install_root_ignores_tauri_debug_target(monkeypatch, tmp_path):
         raising=False,
     )
     assert resolve_install_root() == install.resolve()
-

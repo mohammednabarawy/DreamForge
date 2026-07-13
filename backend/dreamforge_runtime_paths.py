@@ -242,6 +242,9 @@ def default_managed_models_root(data_root: Path) -> Path:
     legacy = REPO_ROOT / "models"
     if not is_packaged_runtime() and legacy.is_dir():
         return legacy.resolve()
+    legacy_backend = REPO_ROOT / "backend" / "models"
+    if not is_packaged_runtime() and legacy_backend.is_dir():
+        return legacy_backend.resolve()
     return (data_root / "models").resolve()
 
 

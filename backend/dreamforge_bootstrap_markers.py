@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import platform
+import sys
 from pathlib import Path
 
 from dreamforge_krita_recipes import COMFY_INSTALL_RECIPE
@@ -35,43 +37,67 @@ def bootstrap_recipe_fingerprint() -> str:
     return hashlib.sha256(":".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
-def python_stack_marker_token() -> str:
+def python_runtime_identity() -> str:
+    return ":".join(
+        (
+            platform.system().lower(),
+            platform.machine().lower(),
+            sys.implementation.name,
+            sys.implementation.cache_tag or "unknown",
+        )
+    )
+
+
+def python_stack_marker_token(runtime_identity: str | None = None) -> str:
     req = BACKEND_ROOT / "requirements_versions.txt"
-    return f"v{SETUP_RECIPE_VERSION}:{file_fingerprint(req)}"
+    identity = runtime_identity or python_runtime_identity()
+    return f"v{SETUP_RECIPE_VERSION}:{file_fingerprint(req)}:{identity}"
 
 
-def python_stack_marker_valid() -> bool:
+def python_stack_marker_valid(runtime_identity: str | None = None) -> bool:
     if not PYTHON_STACK_MARKER.is_file():
         return False
     text = PYTHON_STACK_MARKER.read_text(encoding="utf-8").strip()
-    return text == f"ok:{python_stack_marker_token()}"
+    return text == f"ok:{python_stack_marker_token(runtime_identity)}"
 
 
-def write_python_stack_marker() -> None:
-    PYTHON_STACK_MARKER.write_text(f"ok:{python_stack_marker_token()}\n", encoding="utf-8")
+def write_python_stack_marker(runtime_identity: str | None = None) -> None:
+    PYTHON_STACK_MARKER.write_text(
+        f"ok:{python_stack_marker_token(runtime_identity)}\n", encoding="utf-8"
+    )
 
 
-def comfy_deps_marker_token(comfy_dir: Path) -> str:
+def comfy_deps_marker_token(
+    comfy_dir: Path, runtime_identity: str | None = None
+) -> str:
     req = comfy_dir / "requirements.txt"
     return (
         f"v{SETUP_RECIPE_VERSION}:"
         f"{comfy_dir.resolve()}:"
-        f"{file_fingerprint(req)}"
+        f"{file_fingerprint(req)}:"
+        f"{runtime_identity or python_runtime_identity()}"
     )
 
 
-def comfy_deps_marker_valid(comfy_dir: Path) -> bool:
+def comfy_deps_marker_valid(
+    comfy_dir: Path, runtime_identity: str | None = None
+) -> bool:
     if not COMFY_DEPS_MARKER.is_file():
         return False
     try:
         recorded = COMFY_DEPS_MARKER.read_text(encoding="utf-8").strip()
     except OSError:
         return False
-    return recorded == comfy_deps_marker_token(comfy_dir)
+    return recorded == comfy_deps_marker_token(comfy_dir, runtime_identity)
 
 
-def write_comfy_deps_marker(comfy_dir: Path) -> None:
-    COMFY_DEPS_MARKER.write_text(f"{comfy_deps_marker_token(comfy_dir)}\n", encoding="utf-8")
+def write_comfy_deps_marker(
+    comfy_dir: Path, runtime_identity: str | None = None
+) -> None:
+    COMFY_DEPS_MARKER.write_text(
+        f"{comfy_deps_marker_token(comfy_dir, runtime_identity)}\n",
+        encoding="utf-8",
+    )
 
 
 def node_deps_marker_path(pack_dir: Path) -> Path:

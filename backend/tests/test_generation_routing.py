@@ -1161,6 +1161,39 @@ def test_performance_presets_do_not_override_explicit_sampling(monkeypatch):
     assert out["performance_selection"] == "Custom..."
 
 
+def test_cli_runtime_marks_explicit_sampling_custom(monkeypatch):
+    monkeypatch.chdir(_BACKEND)
+    import dreamforge_cli_direct
+
+    captured = {}
+    monkeypatch.setattr(
+        "dreamforge_comfy_server.boot_managed_comfy_server",
+        lambda: None,
+    )
+
+    class FakeEngine:
+        @staticmethod
+        def execute_job(params, stream_sink=None):
+            captured.update(params)
+            return {"status": "ok"}
+
+    monkeypatch.setattr("dreamforge_engine.DreamForgeEngine", FakeEngine)
+    args = SimpleNamespace(
+        workflow_plan=None,
+        execute_workflow_plan=False,
+        steps=8,
+        cfg_scale=None,
+        sampler=None,
+        scheduler=None,
+        performance="Lightning",
+        stream_file=None,
+    )
+
+    assert dreamforge_cli_direct.process_single(args) == {"status": "ok"}
+    assert captured["steps"] == 8
+    assert captured["performance"] == "Custom..."
+
+
 def test_o1_dev_quality_preset_ignores_stale_ui_sampling(monkeypatch):
     monkeypatch.chdir(_BACKEND)
     from dreamforge_generation import _apply_job_performance

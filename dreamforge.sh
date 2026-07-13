@@ -4,8 +4,15 @@ set -e
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "${SCRIPT_DIR}"
 
+if [ "$(uname -m)" = "arm64" ] && [ -x "${HOME}/.cargo/bin/cargo" ]; then
+    export PATH="${HOME}/.cargo/bin:${PATH}"
+fi
+
 # ComfyUI subprocesses on macOS (same as DreamForge.command).
 export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
+if [ "$(uname -s)" = "Darwin" ]; then
+    export PYTORCH_ENABLE_MPS_FALLBACK="${PYTORCH_ENABLE_MPS_FALLBACK:-1}"
+fi
 
 if [ ! -f "${SCRIPT_DIR}/.dreamforge_setup_ok" ] && [ ! -d "${SCRIPT_DIR}/venv" ]; then
   if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
@@ -33,6 +40,13 @@ fi
 
 DESKTOP_DIR="${SCRIPT_DIR}/apps/desktop"
 
+if [ -x "${SCRIPT_DIR}/venv/bin/python" ]; then
+    if ! "${SCRIPT_DIR}/venv/bin/python" -c 'import platform,sys; ok=sys.version_info >= (3,10); ok=ok and not (platform.system()=="Darwin" and platform.machine()!=__import__("subprocess").check_output(["uname","-m"],text=True).strip()); raise SystemExit(0 if ok else 1)' 2>/dev/null; then
+        echo "Repairing incompatible Python environment..."
+        "${SCRIPT_DIR}/setup.sh" --skip-npm
+    fi
+fi
+
 # Apple Silicon: Tauri native bindings must match Node arch (arm64, not Rosetta x64).
 if [ "$(uname -m)" = "arm64" ] && [ "$(node -p 'process.arch')" = "x64" ]; then
     for node_bin in "${HOME}/.nvm/versions/node"/*/bin/node /opt/homebrew/bin/node; do
@@ -59,14 +73,30 @@ tauri_binding_dir() {
     esac
 }
 
+ensure_rollup_native() {
+    (cd "${DESKTOP_DIR}" && node -e "require('rollup/dist/native.js')" 2>/dev/null) && return 0
+    if [ "$(uname -s)" = "Darwin" ]; then
+        local node_arch rollup_version
+        node_arch="$(node -p 'process.arch')"
+        rollup_version="$(cd "${DESKTOP_DIR}" && node -p "require('rollup/package.json').version")"
+        echo "Installing Rollup native binding for macOS ${node_arch}..."
+        (cd "${DESKTOP_DIR}" && npm install --no-save --package-lock=false "@rollup/rollup-darwin-${node_arch}@${rollup_version}")
+    fi
+    (cd "${DESKTOP_DIR}" && node -e "require('rollup/dist/native.js')" 2>/dev/null)
+}
+
 ensure_desktop_node_modules() {
     local binding_dir
     binding_dir="$(tauri_binding_dir)"
-    if [ -n "${binding_dir}" ] && [ -d "${binding_dir}" ] && ls "${binding_dir}"/*.node &>/dev/null; then
+    if [ -n "${binding_dir}" ] \
+        && [ -d "${binding_dir}" ] \
+        && ls "${binding_dir}"/*.node &>/dev/null \
+        && ensure_rollup_native; then
         return 0
     fi
-    echo "Installing DreamForge desktop dependencies (Tauri native binding)..."
-    (cd "${DESKTOP_DIR}" && rm -rf node_modules package-lock.json && npm install)
+    echo "Installing DreamForge desktop dependencies (native bindings)..."
+    (cd "${DESKTOP_DIR}" && npm install)
+    ensure_rollup_native
 }
 
 ensure_desktop_node_modules

@@ -18,6 +18,7 @@ EMBED_DIR = PROJECT_ROOT / "python_embeded"
 VENV_DIR = PROJECT_ROOT / "venv"
 DESKTOP_DIR = PROJECT_ROOT / "apps" / "desktop"
 PTH_TEMPLATE = Path(__file__).resolve().parent / "python310._pth.template"
+MIN_PYTHON = (3, 10)
 
 # Match the embedded runtime used by existing Windows bundles (3.10.x).
 PYTHON_EMBED_URL = "https://www.python.org/ftp/python/3.10.11/python-3.10.11-embed-amd64.zip"
@@ -70,6 +71,27 @@ def _python_machine(python: Path) -> str:
         return ""
 
 
+def _python_version(python: Path) -> tuple[int, int] | None:
+    try:
+        out = subprocess.check_output(
+            [str(python), "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"],
+            text=True,
+        ).strip()
+        major, minor = out.split(".", 1)
+        return int(major), int(minor)
+    except (subprocess.CalledProcessError, FileNotFoundError, ValueError):
+        return None
+
+
+def _python_is_compatible(python: Path) -> bool:
+    version = _python_version(python)
+    if version is None or version < MIN_PYTHON:
+        return False
+    return not (
+        _macos_host_arch() == "arm64" and _python_machine(python) != "arm64"
+    )
+
+
 def _macos_arm64_python_candidates() -> list[Path]:
     return [
         Path("/opt/homebrew/bin/python3"),
@@ -83,7 +105,7 @@ def resolve_python_for_setup() -> Path | None:
     if _macos_host_arch() != "arm64":
         return None
     for candidate in _macos_arm64_python_candidates():
-        if candidate.is_file() and _python_machine(candidate) == "arm64":
+        if candidate.is_file() and _python_is_compatible(candidate):
             return candidate
     return None
 
@@ -97,13 +119,27 @@ def find_python() -> Path | None:
     else:
         venv_py = VENV_DIR / "bin" / "python"
     if venv_py.is_file():
-        if _macos_host_arch() == "arm64" and _python_machine(venv_py) == "x86_64":
+        if not _python_is_compatible(venv_py):
             log(
-                "Existing venv uses x86_64 Python under Rosetta; remove venv/ and re-run "
-                "./setup.sh for native arm64 (torch 2.4+ and MPS)."
+                "Existing venv is incompatible with this machine (Python 3.10+ and native "
+                "arm64 are required on Apple Silicon). It will be preserved and rebuilt."
             )
+            return None
         return venv_py
     return None
+
+
+def _preserve_incompatible_venv() -> Path | None:
+    if not VENV_DIR.exists() or find_python() is not None:
+        return None
+    backup = VENV_DIR.with_name(f"{VENV_DIR.name}.incompatible")
+    suffix = 1
+    while backup.exists():
+        backup = VENV_DIR.with_name(f"{VENV_DIR.name}.incompatible.{suffix}")
+        suffix += 1
+    VENV_DIR.rename(backup)
+    log(f"Preserved incompatible environment at {backup.name}/")
+    return backup
 
 
 def configure_embedded_pth() -> None:
@@ -141,6 +177,8 @@ def bootstrap_venv() -> Path:
         log(f"Using existing venv at {VENV_DIR}")
         return find_python()  # type: ignore[return-value]
 
+    _preserve_incompatible_venv()
+
     candidates: list[list[str]] = []
     if os.name == "nt":
         candidates.extend(
@@ -150,10 +188,11 @@ def bootstrap_venv() -> Path:
             ]
         )
     native_mac = resolve_python_for_setup()
-    if native_mac is not None and _python_machine(Path(sys.executable)) == "x86_64":
+    if native_mac is not None and not _python_is_compatible(Path(sys.executable)):
         log(f"Using native arm64 Python for venv: {native_mac}")
         candidates.append([str(native_mac), "-m", "venv", str(VENV_DIR)])
-    candidates.append([sys.executable, "-m", "venv", str(VENV_DIR)])
+    if _python_is_compatible(Path(sys.executable)):
+        candidates.append([sys.executable, "-m", "venv", str(VENV_DIR)])
 
     last_error: Exception | None = None
     for cmd in candidates:
@@ -174,13 +213,16 @@ def bootstrap_venv() -> Path:
 
 
 def ensure_directories() -> None:
+    from dreamforge_runtime_paths import build_runtime_layout
+
+    models_root = build_runtime_layout().models_root
     for name in MODEL_DIRS:
-        (PROJECT_ROOT / "models" / name).mkdir(parents=True, exist_ok=True)
+        (models_root / name).mkdir(parents=True, exist_ok=True)
     (PROJECT_ROOT / "outputs").mkdir(parents=True, exist_ok=True)
     (BACKEND_ROOT / "cache").mkdir(parents=True, exist_ok=True)
     (BACKEND_ROOT / "repositories").mkdir(parents=True, exist_ok=True)
     (BACKEND_ROOT / "settings").mkdir(parents=True, exist_ok=True)
-    log("Created model, output, and cache directories.")
+    log(f"Created model, output, and cache directories (models: {models_root}).")
 
 
 def install_python_stack(python: Path, *, skip_torch: bool = False) -> None:

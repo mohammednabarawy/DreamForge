@@ -223,7 +223,9 @@ fn setup_complete_from_config(data_root: &Path, backend_root: &Path) -> bool {
     let python_ok = install.join("python_embeded").join("python.exe").is_file()
         || repo_root.join("python_embeded").join("python.exe").is_file()
         || data_root.join("python_embeded").join("python.exe").is_file()
-        || install.join("venv").join("Scripts").join("python.exe").is_file();
+        || install.join("venv").join("Scripts").join("python.exe").is_file()
+        || install.join("venv").join("bin").join("python").is_file()
+        || repo_root.join("venv").join("bin").join("python").is_file();
     comfy_ok && models_ok && python_ok
 }
 
@@ -236,7 +238,15 @@ fn configured_models_root(data_root: &Path) -> PathBuf {
             }
         }
     }
-    data_root.join("models")
+    let managed = data_root.join("models");
+    if managed.is_dir() {
+        return managed;
+    }
+    let legacy_backend = data_root.join("backend").join("models");
+    if legacy_backend.is_dir() {
+        return legacy_backend;
+    }
+    managed
 }
 
 fn apply_runtime_env(cmd: &mut Command, roots: &RuntimeRoots) {
@@ -261,6 +271,13 @@ fn apply_runtime_env(cmd: &mut Command, roots: &RuntimeRoots) {
     }
     if !cfg!(debug_assertions) {
         cmd.env("DREAMFORGE_PACKAGED", "1");
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // Some PyTorch/Comfy operations do not yet have MPS kernels. CPU fallback
+        // keeps those workflows functional instead of crashing the whole worker.
+        cmd.env("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES");
+        cmd.env("PYTORCH_ENABLE_MPS_FALLBACK", "1");
     }
 }
 
@@ -768,11 +785,7 @@ fn python_exe(root: &Path) -> PathBuf {
     }
     #[cfg(not(windows))]
     {
-        // Prefer conda env (Apple Silicon PyTorch) over venv
-        let conda_python = Path::new("/opt/anaconda3/envs/dreamforge/bin/python");
-        if conda_python.is_file() {
-            return conda_python.to_path_buf();
-        }
+        // The setup-managed venv is architecture-checked and owns app dependencies.
         let venv_python = parent.join("venv").join("bin").join("python");
         if venv_python.is_file() {
             venv_python

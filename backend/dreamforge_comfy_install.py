@@ -89,12 +89,15 @@ def ensure_comfyui_python_deps(*, progress: ProgressCallback = None) -> None:
 
     comfy_dir = Path(_paths.COMFY_ROOT)
     req_file = comfy_dir / "requirements.txt"
-    if comfy_deps_marker_valid(comfy_dir):
+    python = Path(_paths.PYTHON_EXE)
+    from dreamforge_embedded_python import runtime_identity_for_python
+
+    runtime_identity = runtime_identity_for_python(python)
+    if comfy_deps_marker_valid(comfy_dir, runtime_identity):
         return
     if not req_file.is_file():
         return
     _report(progress, "Installing ComfyUI Python dependencies…")
-    python = Path(_paths.PYTHON_EXE)
     kwargs: dict = {}
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -102,7 +105,7 @@ def ensure_comfyui_python_deps(*, progress: ProgressCallback = None) -> None:
         [str(python), "-m", "pip", "install", "--quiet", "-r", str(req_file)],
         **kwargs,
     )
-    write_comfy_deps_marker(comfy_dir)
+    write_comfy_deps_marker(comfy_dir, runtime_identity)
 
 
 def _git_repo_is_at_commit(dest: Path, commit: str) -> bool:

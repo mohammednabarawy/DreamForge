@@ -273,6 +273,7 @@ export type DreamForgeErrorCode =
   | "model_not_found"
   | "model_file_unreadable"
   | "unsupported_model_format"
+  | "unsupported_model_for_workflow"
   | "unsupported_workflow_class"
   | "disk_full"
   | "virtual_memory_low"
@@ -955,7 +956,7 @@ export type ModelDependencyItem = {
   download_tier?: "A" | "B";
   min_bytes?: number;
   requires_hf_token?: boolean;
-  kind?: "model" | "custom_node_pack" | "workflow_model";
+  kind?: "model" | "custom_node_pack" | "workflow_model" | "custom_tool";
   pack_id?: string;
   catalog_id?: string;
   missing_nodes?: string[];

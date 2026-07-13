@@ -2,9 +2,10 @@ import re
 try:
     import xllamacpp as xlc
     Llama = "xlc"
-except Exception as e:
-    print("ERROR: Could not load Llama.")
-    print(e)
+except Exception:
+    # xllamacpp is an optional prompt-assistant backend and is intentionally
+    # unavailable on macOS.  Importing image-generation modules must stay
+    # quiet unless a Llama action is actually requested.
     Llama = None
 from txtai import Embeddings
 from modules.util import TimeIt

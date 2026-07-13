@@ -199,7 +199,8 @@ export function detectPotentialBindings(nodes: Record<string, any>): Record<stri
     } else if (type === "LoadImageMask") {
       potentials[id] = { type: "mask", node_id: id, field: "image", label: `LoadImageMask (${id})` };
     } else if (TEXT_NODE_TYPES.has(type)) {
-      const textValue = (node as Record<string, unknown>).inputs?.text;
+      const inputs = (node as Record<string, unknown>).inputs as Record<string, unknown> | undefined;
+      const textValue = inputs?.text;
       if (Array.isArray(textValue) && textValue.length === 2) {
         continue;
       }

@@ -13,6 +13,8 @@ TEMP_ROOT = PROJECT_ROOT / "temp"
 PREVIEWS_DIR = TEMP_ROOT / "previews"
 COMFY_STAGING_DIR = TEMP_ROOT / "comfy-staging"
 MODELS_ROOT = PROJECT_ROOT / "models"
+if not MODELS_ROOT.is_dir() and (BACKEND_ROOT / "models").is_dir():
+    MODELS_ROOT = BACKEND_ROOT / "models"
 
 
 def resolve_install_root() -> Path:
@@ -68,6 +70,9 @@ def resolve_models_root() -> Path:
     legacy = PROJECT_ROOT / "models"
     if legacy.is_dir():
         return legacy
+    legacy_backend = BACKEND_ROOT / "models"
+    if legacy_backend.is_dir():
+        return legacy_backend
     if data_root:
         return Path(data_root) / "models"
     return legacy
@@ -117,8 +122,8 @@ def resolve_python_exe() -> Path:
         )
     else:
         candidates = (
-            Path("/opt/anaconda3/envs/dreamforge/bin/python"),
             install / "venv" / "bin" / "python",
+            Path("/opt/anaconda3/envs/dreamforge/bin/python"),
         )
     for candidate in candidates:
         if candidate.is_file():

@@ -12,7 +12,7 @@ const baseTool: CustomTool = {
 
 describe("resolveCustomTool", () => {
   it("falls back to the only tool when the saved id is stale", () => {
-    expect(resolveCustomTool([baseTool], "custom_old"))?.id).toBe("custom_123");
+    expect(resolveCustomTool([baseTool], "custom_old")?.id).toBe("custom_123");
   });
 
   it("returns undefined when multiple tools and id is stale", () => {

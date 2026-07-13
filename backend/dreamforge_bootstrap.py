@@ -356,16 +356,19 @@ def step_install_comfyui(*, progress: ProgressCallback = None) -> None:
 def step_install_comfy_deps(*, progress: ProgressCallback = None) -> None:
     layout = init_runtime_paths()
     req_file = layout.comfy_root / "requirements.txt"
-    if comfy_deps_marker_valid(layout.comfy_root):
+    python = _bootstrap_python(layout)
+    from dreamforge_embedded_python import runtime_identity_for_python
+
+    runtime_identity = runtime_identity_for_python(python)
+    if comfy_deps_marker_valid(layout.comfy_root, runtime_identity):
         _report(progress, "ComfyUI Python dependencies already installed.")
         return
     if not req_file.is_file():
         _report(progress, "No ComfyUI requirements.txt — skipping.")
         return
     _report(progress, "Installing ComfyUI Python dependencies…")
-    python = _bootstrap_python(layout)
     _pip_install(python, ["-r", str(req_file)], progress=progress)
-    write_comfy_deps_marker(layout.comfy_root)
+    write_comfy_deps_marker(layout.comfy_root, runtime_identity)
 
 
 def step_install_custom_nodes(*, progress: ProgressCallback = None) -> None:

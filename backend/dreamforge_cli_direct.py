@@ -1081,6 +1081,15 @@ def process_single(base_args, data=None):
     params = vars(base_args).copy()
     params.update(payload)
 
+    # CLI sampling flags are deliberate overrides.  The parser's default
+    # performance preset must not replace values such as ``--steps 8`` later
+    # in the shared generation engine.
+    if any(
+        params.get(key) is not None
+        for key in ("steps", "cfg_scale", "sampler", "scheduler")
+    ):
+        params["performance"] = "Custom..."
+
     raw_plan = params.get("workflow_plan")
     if raw_plan:
         if isinstance(raw_plan, str):

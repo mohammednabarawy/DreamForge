@@ -121,10 +121,22 @@ export function TitleBar({
     action(getCurrentWindow());
   };
 
+  const handleTitleBarPointerDown = (event: React.PointerEvent<HTMLElement>) => {
+    if (!isTauri() || event.button !== 0) return;
+    const target = event.target as HTMLElement | null;
+    // Keep controls clickable. The title bar itself, branding, status, and
+    // other empty areas should start a native window drag on pointer-down.
+    if (target?.closest("button, input, textarea, select, [data-tauri-drag-region='false']")) {
+      return;
+    }
+    void getCurrentWindow().startDragging();
+  };
+
   return (
     <header
       data-tauri-drag-region
-      className="grid h-12 shrink-0 grid-cols-[1fr_auto_1fr] items-center border-b border-dfui-border/60 bg-dfui-panel/80 px-3 backdrop-blur-glass select-none"
+      onPointerDown={handleTitleBarPointerDown}
+      className="grid h-12 shrink-0 cursor-move grid-cols-[1fr_auto_1fr] items-center border-b border-dfui-border/60 bg-dfui-panel/80 px-3 backdrop-blur-glass select-none"
     >
       <div className="flex min-w-0 cursor-default items-center gap-2.5">
         <img

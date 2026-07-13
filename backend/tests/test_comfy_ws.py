@@ -68,6 +68,31 @@ def test_progress_tracker_weighted_value():
     assert tracker._samples == 5
 
 
+def test_progress_tracker_deduplicates_executing_nodes():
+    tracker = ComfyProgressTracker(sample_count=30, node_count=6)
+    message = {"type": "executing", "data": {"prompt_id": "job-1", "node": "3"}}
+    for _ in range(100):
+        tracker.handle(message, prompt_id="job-1")
+
+    assert tracker._nodes == 1
+    assert tracker.value < 0.1
+
+
+def test_progress_tracker_never_exceeds_99_percent():
+    tracker = ComfyProgressTracker(sample_count=1, node_count=1)
+    for index in range(20):
+        tracker.handle(
+            {"type": "executing", "data": {"prompt_id": "job-1", "node": str(index)}},
+            prompt_id="job-1",
+        )
+        tracker.handle(
+            {"type": "progress", "data": {"prompt_id": "job-1"}},
+            prompt_id="job-1",
+        )
+
+    assert tracker.value == 0.99
+
+
 def test_wait_until_done_accepts_history_poll_done():
     session = ComfyPromptStreamSession("http://127.0.0.1:8188", "client-1", timeout_s=5.0)
     session.set_prompt_id("prompt-1")

@@ -75,6 +75,7 @@ class ComfyProgressTracker:
         self.sample_count = max(int(sample_count), 1)
         self.node_count = max(int(node_count), 1)
         self._nodes = 0
+        self._executed_nodes: set[str] = set()
         self._samples = 0
         self._state_ratio = 0.0
 
@@ -84,10 +85,15 @@ class ComfyProgressTracker:
             return
         msg_type = msg.get("type")
         if msg_type == "executing":
-            self._nodes += 1
+            node = data.get("node")
+            if node is not None:
+                self._executed_nodes.add(str(node))
+                self._nodes = len(self._executed_nodes)
         elif msg_type == "execution_cached":
             nodes = data.get("nodes") or []
-            self._nodes += len(nodes) if isinstance(nodes, list) else 1
+            if isinstance(nodes, list):
+                self._executed_nodes.update(str(node) for node in nodes)
+                self._nodes = len(self._executed_nodes)
         elif msg_type == "progress":
             self._samples += 1
 
@@ -108,10 +114,13 @@ class ComfyProgressTracker:
 
     @property
     def value(self) -> float:
-        node_part = self._nodes / (self.node_count + 1)
-        sample_part = self._samples / self.sample_count
+        # Comfy may emit ``executing`` repeatedly for the same node. Counting
+        # messages made the desktop UI jump straight to 99% while the first
+        # sampler step was still running, especially on slower MPS jobs.
+        node_part = min(1.0, self._nodes / (self.node_count + 1))
+        sample_part = min(1.0, self._samples / self.sample_count)
         legacy = 0.2 * node_part + 0.8 * sample_part
-        return max(legacy, self._state_ratio)
+        return min(0.99, max(legacy, self._state_ratio))
 
 
 def _sanitize_job_id(job_id: str) -> str:

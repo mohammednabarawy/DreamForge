@@ -214,9 +214,12 @@ def test_from_exception_maps_comfy_execution_paging_file_to_virtual_memory_low()
     _is_error(payload, "virtual_memory_low")
 
 
-def test_from_exception_maps_depth_anything_hub_failure_to_missing_model_dependencies():
+def test_from_exception_maps_depth_anything_hub_failure_to_missing_model_dependencies(monkeypatch):
     class ComfyExecutionError(RuntimeError):
         pass
+
+    import dreamforge_comfy_manager
+    monkeypatch.setattr(dreamforge_comfy_manager, "workflow_model_ready", lambda _: False)
 
     payload = from_exception(
         ComfyExecutionError(

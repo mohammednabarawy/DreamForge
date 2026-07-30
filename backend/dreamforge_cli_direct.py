@@ -101,6 +101,17 @@ def build_parser():
         default=None,
         help="Additional Kontext/control reference images (Krita-style multi-reference)",
     )
+    parser.add_argument(
+        "--style-reference",
+        default=None,
+        help="Image path for advanced IP-Adapter style transfer",
+    )
+    parser.add_argument(
+        "--style-strength",
+        default="medium",
+        choices=["low", "medium", "high"],
+        help="Strength of style transfer (low, medium, high)",
+    )
     parser.add_argument("--identity-mode", default=None, help="Identity intent: preserve_face, ipadapter_faceid, kontext, qwen_edit, auto")
     parser.add_argument("--face-preservation", action="store_true", help="Require local face identity preservation dependencies")
     parser.add_argument(
@@ -1080,6 +1091,9 @@ def process_single(base_args, data=None):
     payload = dict(data or {})
     params = vars(base_args).copy()
     params.update(payload)
+
+    if params.get("style_reference"):
+        params["workflow_mode"] = "ipadapter_style"
 
     # CLI sampling flags are deliberate overrides.  The parser's default
     # performance preset must not replace values such as ``--steps 8`` later

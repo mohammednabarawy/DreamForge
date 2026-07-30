@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -619,3 +620,65 @@ def repair_installation(*, clear_markers: bool = False) -> dict[str, Any]:
     """Re-run all bootstrap steps (optionally clearing pip/checkout skip markers)."""
     reset_setup_state(clear_markers=clear_markers)
     return run_full_bootstrap()
+
+
+SETUP_MARKER_PATH = Path(__file__).resolve().parents[1] / ".dreamforge_setup_ok"
+
+
+def check_first_run_setup() -> dict[str, Any]:
+    """Interactive / automated first-run setup wizard triggered when setup marker is absent."""
+    if SETUP_MARKER_PATH.exists():
+        try:
+            with open(SETUP_MARKER_PATH, "r", encoding="utf-8") as f:
+                return {"is_first_run": False, **json.load(f)}
+        except Exception:
+            pass
+
+    from dreamforge_gpu_detect import detect_gpu
+
+    gpu_info = detect_gpu()
+    recommended_profile = gpu_info.get("recommended_profile", "16gb")
+    os.environ.setdefault("DREAMFORGE_VRAM_PROFILE", recommended_profile)
+
+    layout = init_runtime_paths()
+
+    setup_info = {
+        "is_first_run": True,
+        "gpu": gpu_info,
+        "vram_profile": recommended_profile,
+        "models_root": str(layout.models_root),
+        "comfy_root": str(layout.comfy_root),
+        "setup_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+    try:
+        SETUP_MARKER_PATH.write_text(json.dumps(setup_info, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+    return setup_info
+
+
+def check_github_updates(current_version: str = "2.0.0") -> dict[str, Any]:
+    """Check for latest release on GitHub asynchronously / without blocking."""
+    try:
+        req = urllib.request.Request(
+            "https://api.github.com/repos/mohammednabarawy/DreamForge/releases/latest",
+            headers={"User-Agent": "DreamForge-UpdateCheck/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            tag_name = data.get("tag_name", "").lstrip("v")
+            return {
+                "update_available": tag_name != "" and tag_name != current_version,
+                "latest_version": tag_name,
+                "current_version": current_version,
+                "release_url": data.get("html_url", ""),
+            }
+    except Exception:
+        return {
+            "update_available": False,
+            "latest_version": current_version,
+            "current_version": current_version,
+        }
+

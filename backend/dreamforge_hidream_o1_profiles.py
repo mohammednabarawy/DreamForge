@@ -90,11 +90,23 @@ def hidream_o1_dev_resolution(
     aspect_ratio: str | None = None,
     width: int | None = None,
     height: int | None = None,
+    vram_profile: str = "auto",
 ) -> tuple[int, int]:
+    from dreamforge_vram_profiles import profile_tier
+
     perf = performance if performance in _HIDREAM_O1_DEV_PROFILES else "Speed"
     orient = classify_aspect_orientation(aspect_ratio, width, height)
     profile = _HIDREAM_O1_DEV_PROFILES[perf]
-    return profile[orient]
+    w, h = profile[orient]
+
+    tier = profile_tier(vram_profile)
+    max_dim = 1024 if tier == "5gb" else (1344 if tier == "8gb" else 1536)
+    if w > max_dim or h > max_dim:
+        scale = max_dim / max(w, h)
+        w = max(64, int(round(w * scale / 64) * 64))
+        h = max(64, int(round(h * scale / 64) * 64))
+
+    return (w, h)
 
 
 def hidream_o1_dev_family_options(performance: str) -> dict:

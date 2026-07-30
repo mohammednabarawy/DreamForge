@@ -67,25 +67,56 @@ LIKELY_ARABIC_FONT_HINTS = (
 )
 
 
-def _file_info(path, root):
+def detect_model_family(name: str, size_mb: float = 0, category: str | None = None) -> str | None:
+    text = name.lower()
+    if "kontext" in text:
+        return "kontext"
+    if "qwen" in text:
+        return "qwen"
+    if "hidream" in text:
+        return "hidream"
+    if "flux" in text or "schnell" in text or "nunchaku" in text:
+        return "flux"
+    if "sd3" in text or "sd3.5" in text:
+        return "sd3"
+    if "sdxl" in text or "sd_xl" in text or "sd-xl" in text:
+        return "sdxl"
+    if "sd15" in text or "sd_15" in text or "v1-5" in text or "v1.5" in text or "sd1.5" in text:
+        return "sd15"
+
+    if category in ("checkpoints", "diffusion_models", "unet"):
+        if size_mb >= 10000:
+            return "flux"
+        if size_mb >= 2500 and "refiner" not in text and "inpaint" not in text:
+            return "sdxl"
+        if 1500 <= size_mb < 2500 and "refiner" not in text:
+            return "sd15"
+
+    return None
+
+
+def _file_info(path, root, category=None):
     stat = path.stat()
     rel = path.relative_to(root).as_posix()
+    size_mb = round(stat.st_size / (1024 * 1024), 2)
     return {
         "name": path.name,
         "stem": path.stem,
         "relative_path": rel,
         "path": str(path),
-        "size_mb": round(stat.st_size / (1024 * 1024), 2),
+        "size_mb": size_mb,
+        "family": detect_model_family(path.name, size_mb, category),
+        "category": category,
     }
 
 
-def _scan_files(root, extensions):
+def _scan_files(root, extensions, category=None):
     if not root.exists():
         return []
     results = []
     for path in root.rglob("*"):
         if path.is_file() and path.suffix.lower() in extensions:
-            results.append(_file_info(path, root))
+            results.append(_file_info(path, root, category=category))
     return sorted(results, key=lambda item: item["relative_path"].lower())
 
 
@@ -102,7 +133,7 @@ def clear_model_inventory_cache() -> None:
 def _list_model_inventory_cached():
     categories = {}
     for label, folder in MODEL_CATEGORIES.items():
-        categories[label] = _scan_files(MODELS_ROOT / folder, MODEL_EXTENSIONS)
+        categories[label] = _scan_files(MODELS_ROOT / folder, MODEL_EXTENSIONS, category=label)
 
     presets = []
     presets_root = BACKEND_ROOT / "presets"
@@ -1145,6 +1176,14 @@ def add_inventory_arguments(parser):
                         help="Check companion files required by a model name or path")
     parser.add_argument("--classify-models", action="store_true",
                         help="Classify every file under the models directory by architecture/role")
+    parser.add_argument("--model-health", action="store_true",
+                        help="Scan installed models for corruption, missing companions, or incomplete downloads")
+    parser.add_argument("--download-model", metavar="URL", default=None,
+                        help="Download a model file from HuggingFace, CivitAI, or direct URL")
+    parser.add_argument("--download-category", default="checkpoints",
+                        help="Destination category folder for --download-model (default: checkpoints)")
+    parser.add_argument("--install-starter-pack", action="store_true",
+                        help="Download curated starter pack models (SDXL base, VAE, FaceID stack, Upscaler)")
     parser.add_argument("--profile", default="16gb",
                         help="VRAM profile for --recommend-models (16gb, 8gb, 5gb, mps_24gb, mps_16gb, mps_8gb, mps_4gb, auto)")
 
@@ -1154,6 +1193,66 @@ def _inventory_wants_json(args) -> bool:
 
 
 def handle_inventory_arguments(args):
+    if getattr(args, "model_health", False):
+        from dreamforge_model_health import check_model_health
+
+        report = check_model_health()
+        if _inventory_wants_json(args):
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+        else:
+            print(f"Model Health Status: {report['status'].upper()}")
+            print(f"Families detected: {', '.join(report['families_detected']) or 'None'}")
+            if report.get("corrupt_files"):
+                print(f"\nCorrupt files ({len(report['corrupt_files'])}):")
+                for item in report["corrupt_files"]:
+                    print(f"  ! {item['name']} ({item['reason']})")
+            if report.get("incomplete_downloads"):
+                print(f"\nIncomplete downloads ({len(report['incomplete_downloads'])}):")
+                for item in report["incomplete_downloads"]:
+                    print(f"  . {item['name']} ({item['size_mb']} MB)")
+            if report.get("missing_companions"):
+                print(f"\nMissing Companion Stack Assets ({len(report['missing_companions'])}):")
+                for item in report["missing_companions"]:
+                    print(f"  ? [{item['family']}] {item['recommendation']}")
+        return True
+
+    if getattr(args, "download_model", None):
+        from dreamforge_model_downloader import download_model
+
+        url = args.download_model
+        cat = getattr(args, "download_category", "checkpoints")
+        print(f"Downloading model from {url} to category '{cat}'...")
+        res = download_model(url, category=cat, progress_callback=lambda p: print(f"Progress: {p['percentage']}% ({p['speed_mbs']} MB/s)", end="\r"))
+        print()
+        if _inventory_wants_json(args):
+            print(json.dumps(res, ensure_ascii=False, indent=2))
+        else:
+            if res.get("ok"):
+                print(f"Successfully downloaded: {res['filename']} ({res['size_mb']} MB) to {res['path']}")
+            else:
+                print(f"Download failed: {res.get('error')}")
+        return True
+
+    if getattr(args, "install_starter_pack", False):
+        from dreamforge_model_downloader import download_model
+
+        STARTER_PACK = [
+            ("https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors", "checkpoints"),
+            ("https://huggingface.co/stabilityai/sdxl-vae/resolve/main/sdxl_vae.safetensors", "vae"),
+            ("https://huggingface.co/h94/IP-Adapter-FaceID/resolve/main/ip-adapter-faceid_sdxl.bin", "ipadapter"),
+            ("https://huggingface.co/h94/IP-Adapter-FaceID/resolve/main/ip-adapter-faceid_sdxl_lora.safetensors", "loras"),
+            ("https://huggingface.co/lokitus/4x-UltraSharp/resolve/main/4x-UltraSharp.pth", "upscale_models"),
+        ]
+        print(f"Starting download of DreamForge Starter Pack ({len(STARTER_PACK)} files)...")
+        results = []
+        for url, cat in STARTER_PACK:
+            print(f"Downloading [{cat}] {url.split('/')[-1]}...")
+            res = download_model(url, category=cat)
+            results.append(res)
+            print(f" -> {'OK' if res.get('ok') else 'FAILED'}")
+        if _inventory_wants_json(args):
+            print(json.dumps({"status": "success", "results": results}, ensure_ascii=False, indent=2))
+        return True
     if getattr(args, "recommend_models", False):
         profile = getattr(args, "profile", None) or getattr(args, "vram_profile", "16gb") or "16gb"
         models = recommended_generation_models(profile=profile)

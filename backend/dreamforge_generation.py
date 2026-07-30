@@ -774,6 +774,15 @@ def _build_comfy_prompt_graph(
             graph = comfy_ipadapter_controlnet_hybrid(graph_args)
         else:
             graph = comfy_ipadapter_reference(graph_args)
+    elif mode == "ipadapter_style":
+        from dreamforge_comfy_workflows import comfy_ipadapter_style_transfer
+        
+        graph_args = {**common}
+        graph_args["style_reference"] = getattr(job, "style_reference", None) or input_filename
+        graph_args["style_strength"] = getattr(job, "style_strength", "medium")
+        graph_args["ipadapter_model"] = getattr(job, "ipadapter_model", None) or _first_inventory_model("ipadapter")
+        graph_args["clip_vision"] = getattr(job, "clip_vision", None) or _first_inventory_model("clip_vision", ("vit", "clip-vision"))
+        graph = comfy_ipadapter_style_transfer(graph_args)
     elif mode == "ipadapter_faceid":
         from dreamforge_identity import faceid_assets_available
 

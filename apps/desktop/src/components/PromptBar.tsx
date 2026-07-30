@@ -211,6 +211,11 @@ export function PromptBar({
           : `Selected: ${activeModelLabel}`;
   const modes = studioModesForExperience(experience);
 
+  const isArabic = useMemo(
+    () => /[\u0600-\u06FF]/.test(settings.prompt ?? ""),
+    [settings.prompt]
+  );
+
   const onPromptChange = (value: string) => {
     onChange({ prompt: value });
     const at = value.lastIndexOf("@");
@@ -418,6 +423,7 @@ export function PromptBar({
               onChange={(e) => onPromptChange(e.target.value)}
               onFocus={() => onInpaintCanvasFocusChange?.(false)}
               rows={2}
+              dir={isArabic ? "rtl" : "ltr"}
               placeholder="Optional enhancement — leave empty for auto restoration prompt"
               className="df-textarea-glowing min-h-[48px] flex-1 py-1.5 text-xs leading-snug"
               data-df-prompt-input
@@ -429,6 +435,7 @@ export function PromptBar({
               onChange={(e) => onPromptChange(e.target.value)}
               onFocus={() => onInpaintCanvasFocusChange?.(false)}
               rows={2}
+              dir={isArabic ? "rtl" : "ltr"}
               placeholder={promptPlaceholder}
               className="df-textarea-glowing min-h-[48px] flex-1 py-1.5 text-xs leading-snug"
               data-df-prompt-input

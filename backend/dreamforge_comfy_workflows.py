@@ -2940,6 +2940,103 @@ def _comfy_ipadapter_from_slots(args: dict[str, Any], slots: list[dict[str, Any]
     return g
 
 
+def comfy_ipadapter_style_transfer(args: dict[str, Any]) -> dict[str, Any]:
+    """Apply IP-Adapter exclusively for style transfer with specific weights/ends."""
+    style_ref = str(args.get("style_reference") or "")
+    if not style_ref:
+        raise ValueError("style_reference is required for style transfer workflows")
+    
+    strength = str(args.get("style_strength") or "medium").lower()
+    if strength == "low":
+        weight, end_at = 0.5, 0.4
+    elif strength == "high":
+        weight, end_at = 0.9, 1.0
+    else:
+        weight, end_at = 0.75, 0.7
+
+    ckpt = str(args["ckpt_name"])
+    prompt = str(args.get("prompt", ""))
+    negative = str(args.get("negative", ""))
+    ipadapter_model = str(args.get("ipadapter_model") or "")
+    clip_vision = str(args.get("clip_vision") or "")
+    if not ipadapter_model or not clip_vision:
+        raise ValueError("ipadapter_model and clip_vision are required for style transfer")
+    
+    width = int(args.get("width", 1024))
+    height = int(args.get("height", 1024))
+    steps = int(args.get("steps", 30))
+    cfg = float(args.get("cfg", 7.0))
+    sampler = str(args.get("sampler_name", "euler"))
+    scheduler = str(args.get("scheduler", "normal"))
+    seed = int(args.get("seed", 0))
+
+    g: dict[str, Any] = {}
+    model_out, clip_out, vae_out, n = _add_model_loader(
+        g, {**args, "ckpt_name": ckpt}
+    )
+    g[str(n)] = _node("CLIPVisionLoader", {"clip_name": clip_vision})
+    clip_vis = [str(n), 0]
+    n += 1
+    g[str(n)] = _node("IPAdapterModelLoader", {"ipadapter_file": ipadapter_model})
+    ipa = [str(n), 0]
+    n += 1
+    g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
+    pos = [str(n), 0]
+    n += 1
+    g[str(n)] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
+    neg = [str(n), 0]
+    n += 1
+
+    g[str(n)] = _node("LoadImage", {"image": style_ref, "upload": "image"})
+    image_ref = [str(n), 0]
+    n += 1
+    g[str(n)] = _node(
+        "IPAdapterAdvanced",
+        {
+            "model": model_out,
+            "ipadapter": ipa,
+            "clip_vision": clip_vis,
+            "image": image_ref,
+            "weight": weight,
+            "weight_type": "style transfer",
+            "combine_embeds": "concat",
+            "start_at": 0.0,
+            "end_at": end_at,
+            "embeds_scaling": "V only",
+        },
+    )
+    model_ipa = [str(n), 0]
+    n += 1
+
+    g[str(n)] = _node("EmptyLatentImage", {"width": width, "height": height, "batch_size": 1})
+    latent = [str(n), 0]
+    n += 1
+    g[str(n)] = _node(
+        "KSampler",
+        _sampler_inputs(
+            model_out=model_ipa,
+            positive=pos,
+            negative=neg,
+            latent=latent,
+            seed=seed,
+            steps=steps,
+            cfg=cfg,
+            sampler=sampler,
+            scheduler=scheduler,
+            denoise=1.0,
+        ),
+    )
+    samp = str(n)
+    n += 1
+    g[str(n)] = _vae_decode_node(args, [samp, 0], vae_out)
+    dec = str(n)
+    g[str(n + 1)] = _node(
+        "SaveImage",
+        {"images": [dec, 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+    )
+    return g
+
+
 def comfy_ipadapter_controlnet_hybrid(args: dict[str, Any]) -> dict[str, Any]:
     """Image-prompt slots + structure ControlNet in one txt2img graph."""
     ipa_slots = _normalize_ipadapter_slots(args)
@@ -3128,6 +3225,7 @@ def comfy_ipadapter_faceid_reference(args: dict[str, Any]) -> dict[str, Any]:
             "weight_faceidv2": 1.0,
             "weight_type": "linear",
             "combine_embeds": "concat",
+            "embeds_scaling": "V only",
             "start_at": 0.0,
             "end_at": 1.0,
         },

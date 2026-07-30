@@ -175,14 +175,38 @@ def verify_identity_outputs(job, images: list[str]) -> dict[str, Any]:
         import numpy as np
 
         reference_faces = _face_embeddings(reference)
-        if not reference_faces:
-            return {"status": "unavailable", "reason": "no face found in the reference image"}
-        selected_index = _selected_face_index(job)
-        if selected_index is None:
-            reference_face = max(reference_faces, key=lambda item: item["area"])
+        # Check for multi-reference blending
+        refs_list = getattr(job, "references", None) or []
+        if len(refs_list) > 1:
+            multi_embeddings = []
+            for ref_item in refs_list:
+                ref_path = ref_item.get("path") if isinstance(ref_item, dict) else str(ref_item)
+                if ref_path:
+                    faces = _face_embeddings(ref_path)
+                    if faces:
+                        idx = ref_item.get("face_index") if isinstance(ref_item, dict) else None
+                        face_obj = faces[min(idx, len(faces) - 1)] if idx is not None else max(faces, key=lambda i: i["area"])
+                        multi_embeddings.append(face_obj["embedding"])
+            if multi_embeddings:
+                avg_emb = np.mean(multi_embeddings, axis=0)
+                norm = float(np.linalg.norm(avg_emb))
+                if norm > 0:
+                    reference_embedding = avg_emb / norm
+                else:
+                    reference_embedding = reference_faces[0]["embedding"] if reference_faces else np.zeros(512)
+            else:
+                reference_face = max(reference_faces, key=lambda item: item["area"]) if reference_faces else None
+                reference_embedding = reference_face["embedding"] if reference_face else None
         else:
-            reference_face = reference_faces[min(selected_index, len(reference_faces) - 1)]
-        reference_embedding = reference_face["embedding"]
+            if not reference_faces:
+                return {"status": "unavailable", "reason": "no face found in the reference image"}
+            selected_index = _selected_face_index(job)
+            if selected_index is None:
+                reference_face = max(reference_faces, key=lambda item: item["area"])
+            else:
+                reference_face = reference_faces[min(selected_index, len(reference_faces) - 1)]
+            reference_embedding = reference_face["embedding"]
+
         best_score = -1.0
         best_output = None
         for output in images:
@@ -207,14 +231,18 @@ def verify_identity_outputs(job, images: list[str]) -> dict[str, Any]:
                 "score": None,
                 "threshold": threshold,
                 "reason": "no face found in generated output",
+                "suggestion": "No face was detected in output. Try adding 'close-up portrait of face' to prompt.",
             }
         passed = best_score >= threshold
+        rounded_score = round(best_score, 4)
         return {
             "status": "passed" if passed else "failed",
-            "score": round(best_score, 4),
+            "score": rounded_score,
             "threshold": threshold,
             "output": best_output,
-            "reason": "likeness threshold met" if passed else "likeness below threshold",
+            "reference": reference,
+            "reason": "likeness threshold met" if passed else f"likeness score ({rounded_score}) below threshold ({threshold})",
+            "suggestion": "Likeness score met" if passed else f"Likeness score ({rounded_score}) fell below threshold ({threshold}). Try increasing FaceID weight or using a clearer frontal reference photo.",
         }
     except (ImportError, RuntimeError) as exc:
         return {
@@ -390,22 +418,54 @@ def _pick_qwen_edit_checkpoint() -> str | None:
 
 
 def _pick_faceid_checkpoint() -> str | None:
-    """Pick an installed SDXL checkpoint compatible with the bundled FaceID model."""
+    """Pick an installed SDXL checkpoint compatible with the bundled FaceID model.
+
+    The model inventory items have keys: name, stem, relative_path, path, size_mb.
+    There is no ``family`` or ``category`` metadata, so we match by filename
+    heuristics.  SDXL checkpoints are typically ≥3 GB; we also look for 'sdxl'
+    in the name.  Refiners and inpainting-specific variants are excluded.
+    """
+    SDXL_HINTS = ("sdxl", "sd_xl", "sd-xl")
+    EXCLUDE = ("refiner", "inpaint")
+    # Minimum plausible size for a full SDXL checkpoint (~3.5 GB fp16).
+    MIN_SIZE_MB = 2500
+
     try:
         from dreamforge_cli_inventory import list_model_inventory
 
         inventory = list_model_inventory()
-        items = list(inventory.get("gallery", []) or [])
+        items = list(inventory.get("categories", {}).get("checkpoints", []) or [])
         if not items:
-            items = list(inventory.get("categories", {}).get("checkpoints", []) or [])
+            return None
+
+        # First pass: prefer an explicitly-named SDXL checkpoint.
         for item in items:
-            family = str(item.get("family") or "").strip().lower()
-            category = str(item.get("category") or "checkpoints").strip().lower()
             text = " ".join(
                 str(item.get(key, ""))
-                for key in ("name", "engine_name", "relative_path", "stem")
+                for key in ("name", "relative_path", "stem")
             ).lower()
-            if family == "sdxl" and category == "checkpoints" and "refiner" not in text:
+            if any(h in text for h in EXCLUDE):
+                continue
+            # Check for explicit family metadata (future-proof) or name hint.
+            family = str(item.get("family") or "").strip().lower()
+            if family == "sdxl" or any(h in text for h in SDXL_HINTS):
+                return str(
+                    item.get("engine_name")
+                    or item.get("name")
+                    or item.get("relative_path")
+                    or ""
+                ).replace("\\", "/")
+
+        # Second pass: fall back to any large-enough checkpoint (likely SDXL).
+        for item in items:
+            text = " ".join(
+                str(item.get(key, ""))
+                for key in ("name", "relative_path", "stem")
+            ).lower()
+            if any(h in text for h in EXCLUDE):
+                continue
+            size = float(item.get("size_mb") or 0)
+            if size >= MIN_SIZE_MB:
                 return str(
                     item.get("engine_name")
                     or item.get("name")

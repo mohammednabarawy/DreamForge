@@ -624,3 +624,51 @@ def fix_packs_via_manager(
         for pack_id in targets:
             result.errors.append(manager_install_error(pack_id, detail))
     return result
+
+
+def check_custom_node_updates() -> dict[str, Any]:
+    """Check git HEAD hashes for installed custom node repositories."""
+    from _paths import COMFY_ROOT
+
+    custom_nodes_dir = COMFY_ROOT / "custom_nodes"
+    if not custom_nodes_dir.exists():
+        return {"ok": False, "nodes": []}
+
+    node_updates: list[dict[str, Any]] = []
+    for item in custom_nodes_dir.iterdir():
+        if item.is_dir() and (item / ".git").exists():
+            try:
+                commit = subprocess.check_output(
+                    ["git", "rev-parse", "--short", "HEAD"],
+                    cwd=str(item),
+                    encoding="utf-8",
+                    errors="ignore",
+                    timeout=3,
+                ).strip()
+                branch = subprocess.check_output(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                    cwd=str(item),
+                    encoding="utf-8",
+                    errors="ignore",
+                    timeout=3,
+                ).strip()
+                node_updates.append({
+                    "name": item.name,
+                    "path": str(item),
+                    "commit": commit,
+                    "branch": branch,
+                })
+            except Exception:
+                node_updates.append({
+                    "name": item.name,
+                    "path": str(item),
+                    "commit": "unknown",
+                    "branch": "unknown",
+                })
+
+    return {
+        "ok": True,
+        "nodes": node_updates,
+        "count": len(node_updates),
+    }
+

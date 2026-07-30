@@ -25,6 +25,7 @@ from dreamforge_agent_tools import (
     write_manifest,
 )
 from dreamforge_cli_inventory import (
+    detect_model_family,
     infer_model_family,
     list_model_inventory,
     list_system_fonts,
@@ -251,10 +252,21 @@ def test_different_system_fonts_render_advanced_images():
     assert manifest.exists()
 
 
+def test_detect_model_family_heuristics():
+    assert detect_model_family("haveallsdxlInSFW.safetensors") == "sdxl"
+    assert detect_model_family("flux1-dev-fp8.safetensors") == "flux"
+    assert detect_model_family("flux1-dev-kontext_fp8_scaled.safetensors") == "kontext"
+    assert detect_model_family("Qwen_Image_Edit-Q3_K_M.gguf") == "qwen"
+    assert detect_model_family("hidream_o1_image_dev_mxfp8.safetensors") == "hidream"
+    assert detect_model_family("custom_ckpt.safetensors", size_mb=6500.0, category="checkpoints") == "sdxl"
+    assert detect_model_family("custom_sd15.safetensors", size_mb=2000.0, category="checkpoints") == "sd15"
+
+
 if __name__ == "__main__":
     test_inventory_has_models_and_fonts()
     test_prompt_presets_compile()
     test_modern_model_inventory_and_resolution()
     test_hidream_o1_family_and_dependencies()
     test_different_system_fonts_render_advanced_images()
+    test_detect_model_family_heuristics()
     print("CLI inventory/font/preset smoke tests passed.")

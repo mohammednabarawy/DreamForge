@@ -1004,3 +1004,42 @@ def from_exception(exc: BaseException, *, job_id: str | None = None) -> dict:
         recoverable=True,
         job_id=job_id,
     )
+
+
+def model_corrupt(
+    model_name: str,
+    path: str | Path | None = None,
+    details: Mapping[str, Any] | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    return error(
+        "model_corrupt",
+        f"Model file '{model_name}' is corrupt or unreadable.",
+        suggestions=[
+            f"Run 'dreamforge models health' or 'dreamforge repair' to purge damaged files.",
+            f"Re-download {model_name} using the Model Downloader.",
+        ],
+        details={"model_name": model_name, "path": str(path) if path else None, **dict(details or {})},
+        recoverable=True,
+        job_id=job_id,
+    )
+
+
+def download_failed(
+    url: str,
+    reason: str,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    return error(
+        "download_failed",
+        f"Failed to download model from {url}: {reason}",
+        suggestions=[
+            "Verify your internet connection.",
+            "If downloading from CivitAI, check if a CIVITAI_API_KEY is required for gated assets.",
+            "Retry the download from the Model Downloader UI or CLI.",
+        ],
+        details={"url": url, "reason": reason},
+        recoverable=True,
+        job_id=job_id,
+    )
+

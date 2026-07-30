@@ -207,3 +207,108 @@ def test_identity_retry_is_single_and_uses_sdxl_faceid(monkeypatch):
     params, plan = build_identity_retry_params(job, {}, {"status": "failed"})
     assert params is None
     assert plan["reason"] == "retry already attempted"
+
+
+def test_pick_faceid_checkpoint_matches_sdxl_by_name(monkeypatch):
+    """_pick_faceid_checkpoint must find an SDXL checkpoint from the real inventory
+    shape (no 'family' or 'gallery' keys)."""
+    from dreamforge_identity import _pick_faceid_checkpoint
+
+    fake_inventory = {
+        "models_root": "/models",
+        "categories": {
+            "checkpoints": [
+                {
+                    "name": "haveallsdxlInSFW_v40DMD2.safetensors",
+                    "stem": "haveallsdxlInSFW_v40DMD2",
+                    "relative_path": "haveallsdxlInSFW_v40DMD2.safetensors",
+                    "path": "/models/checkpoints/haveallsdxlInSFW_v40DMD2.safetensors",
+                    "size_mb": 6600.0,
+                },
+            ],
+        },
+    }
+    import dreamforge_cli_inventory
+    monkeypatch.setattr(
+        "dreamforge_cli_inventory.list_model_inventory",
+        lambda: fake_inventory,
+    )
+    result = _pick_faceid_checkpoint()
+    assert result is not None
+    assert "sdxl" in result.lower() or "haveall" in result.lower()
+
+
+def test_pick_faceid_checkpoint_fallback_by_size(monkeypatch):
+    """When no checkpoint has 'sdxl' in the name, the size-based fallback
+    should pick a large-enough checkpoint."""
+    from dreamforge_identity import _pick_faceid_checkpoint
+
+    fake_inventory = {
+        "models_root": "/models",
+        "categories": {
+            "checkpoints": [
+                {
+                    "name": "myCustomModel_v2.safetensors",
+                    "stem": "myCustomModel_v2",
+                    "relative_path": "myCustomModel_v2.safetensors",
+                    "path": "/models/checkpoints/myCustomModel_v2.safetensors",
+                    "size_mb": 6600.0,
+                },
+                {
+                    "name": "tinyModel.safetensors",
+                    "stem": "tinyModel",
+                    "relative_path": "tinyModel.safetensors",
+                    "path": "/models/checkpoints/tinyModel.safetensors",
+                    "size_mb": 500.0,
+                },
+            ],
+        },
+    }
+    monkeypatch.setattr(
+        "dreamforge_cli_inventory.list_model_inventory",
+        lambda: fake_inventory,
+    )
+    result = _pick_faceid_checkpoint()
+    assert result == "myCustomModel_v2.safetensors"
+
+
+def test_pick_faceid_checkpoint_excludes_refiner(monkeypatch):
+    """Refiner checkpoints must be skipped even if named 'sdxl'."""
+    from dreamforge_identity import _pick_faceid_checkpoint
+
+    fake_inventory = {
+        "models_root": "/models",
+        "categories": {
+            "checkpoints": [
+                {
+                    "name": "sdxl_refiner_1.0.safetensors",
+                    "stem": "sdxl_refiner_1.0",
+                    "relative_path": "sdxl_refiner_1.0.safetensors",
+                    "path": "/models/checkpoints/sdxl_refiner_1.0.safetensors",
+                    "size_mb": 6000.0,
+                },
+            ],
+        },
+    }
+    monkeypatch.setattr(
+        "dreamforge_cli_inventory.list_model_inventory",
+        lambda: fake_inventory,
+    )
+    result = _pick_faceid_checkpoint()
+    assert result is None
+
+
+def test_pick_faceid_checkpoint_returns_none_when_empty(monkeypatch):
+    """No checkpoints at all should return None."""
+    from dreamforge_identity import _pick_faceid_checkpoint
+
+    fake_inventory = {
+        "models_root": "/models",
+        "categories": {"checkpoints": []},
+    }
+    monkeypatch.setattr(
+        "dreamforge_cli_inventory.list_model_inventory",
+        lambda: fake_inventory,
+    )
+    assert _pick_faceid_checkpoint() is None
+

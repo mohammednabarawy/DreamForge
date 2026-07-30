@@ -304,10 +304,11 @@ def family_performance_settings(
     distilled_hidream = fast_hidream or dev_hidream
 
     if family.startswith("flux"):
+        schnell = "schnell" in name
         table = {
-            "Lightning": (8, 2.0, "euler", "beta"),
-            "Speed": (20, 3.0, "euler", "beta"),
-            "Quality": (28, 3.5, "euler", "beta"),
+            "Lightning": (4 if schnell else 8, 1.0 if schnell else 2.0, "euler", "beta"),
+            "Speed": (8 if schnell else 20, 1.0 if schnell else 3.0, "euler", "beta"),
+            "Quality": (8 if schnell else 28, 1.0 if schnell else 3.5, "euler", "beta"),
         }
     elif family in ("hidream", "hidream_o1"):
         try:
@@ -329,10 +330,11 @@ def family_performance_settings(
             "Quality": (50, HIDREAM_FULL_CFG, "euler", "normal"),
         }
     elif family.startswith("qwen"):
+        is_lightning = "lightning" in name or "edit" in name
         table = {
-            "Lightning": (8, 1.5, "euler", "sgm_uniform"),
-            "Speed": (20 if "lightning" not in name else 8, 2.5, "euler", "beta"),
-            "Quality": (28, 2.5, "euler", "beta"),
+            "Lightning": (8, 1.0 if is_lightning else 1.5, "euler", "beta"),
+            "Speed": (12 if is_lightning else 20, 1.0 if is_lightning else 2.5, "euler", "beta"),
+            "Quality": (16 if is_lightning else 28, 1.0 if is_lightning else 2.5, "euler", "beta"),
         }
     elif family == "ideogram4":
         table = {
@@ -578,7 +580,9 @@ def auto_generation_settings(
     negative = negative_prompt
 
     if family.startswith("flux"):
-        cfg, steps = 3.0, 20
+        is_schnell = "schnell" in model_name.lower()
+        cfg = 1.0 if is_schnell else 3.0
+        steps = 4 if is_schnell else 20
         sampler_name, scheduler, clip_skip = "euler", "beta", 1
         styles = []
     elif family in ("hidream", "hidream_o1"):
@@ -592,7 +596,9 @@ def auto_generation_settings(
         if distilled:
             negative = ""
     elif family.startswith("qwen"):
-        cfg, steps = 2.5, (20 if "lightning" in model_name.lower() else 20)
+        is_lightning = "lightning" in model_name.lower() or "edit" in model_name.lower()
+        cfg = 1.0 if is_lightning else 2.5
+        steps = 8 if is_lightning else 20
         sampler_name, scheduler, clip_skip = "euler", "beta", 1
         styles = []
     elif family == "sd3":

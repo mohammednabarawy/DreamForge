@@ -849,6 +849,8 @@ def comfy_workflow_mode(
         return "hidream_reference"
     if mode_key == "ipadapter":
         return "ipadapter"
+    if mode_key == "ipadapter_style":
+        return "ipadapter_style"
     if mode_key == "ipadapter_faceid":
         return "ipadapter_faceid"
     if mode_key == "ipadapter_controlnet":

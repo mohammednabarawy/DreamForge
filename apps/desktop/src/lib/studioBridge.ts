@@ -250,6 +250,25 @@ export async function bridgeInvoke<T>(
   return res as T;
 }
 
+export type IdentityFaceAnalysis = {
+  ok: boolean;
+  count: number;
+  detector?: string;
+  error?: string;
+  faces: Array<{
+    index: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    recommended?: boolean;
+  }>;
+};
+
+export function analyzeIdentityFaces(path: string): Promise<IdentityFaceAnalysis> {
+  return bridgeInvoke<IdentityFaceAnalysis>("analyze_identity_faces", { path });
+}
+
 export type ModelOrganizationPlan = {
   ok: boolean;
   applied: boolean;

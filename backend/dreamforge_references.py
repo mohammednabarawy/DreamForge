@@ -15,6 +15,7 @@ VALID_REFERENCE_ROLES = frozenset(
         "structure",
     }
 )
+VALID_CHARACTER_REGIONS = frozenset({"auto", "left", "center", "right"})
 
 MAX_REFERENCE_SLOTS = 4
 DEFAULT_SLOT_WEIGHT = 0.75
@@ -49,7 +50,40 @@ def normalize_reference_slot(raw: Any) -> dict[str, Any] | None:
     }
     if role == "structure" and structure_type:
         slot["structure_type"] = structure_type
+    character_id = str(raw.get("character_id") or "").strip()[:40]
+    if character_id:
+        slot["character_id"] = character_id
+        region = str(raw.get("character_region") or "auto").strip().lower()
+        slot["character_region"] = region if region in VALID_CHARACTER_REGIONS else "auto"
+        try:
+            face_index = int(raw.get("face_index"))
+        except (TypeError, ValueError):
+            face_index = -1
+        if face_index >= 0:
+            slot["face_index"] = face_index
     return slot
+
+
+def character_binding_prompt(slots: list[dict[str, Any]]) -> str:
+    """Translate explicit character labels into image-index instructions.
+
+    Native multi-image editors understand image-number references well. This
+    keeps spatial binding in the shared prompt path without inventing a second
+    masking system.
+    """
+    bindings: list[str] = []
+    for index, slot in enumerate(slots, start=1):
+        character_id = str(slot.get("character_id") or "").strip()
+        if not character_id:
+            continue
+        label = character_id.replace("_", " ").title()
+        region = str(slot.get("character_region") or "auto").strip().lower()
+        position = "" if region == "auto" else f" in the {region} region"
+        bindings.append(
+            f"image {index} is {label}{position}; preserve this character's face, "
+            "hair, and distinguishing features"
+        )
+    return "Reference identity map: " + "; ".join(bindings) + "." if bindings else ""
 
 
 def coerce_reference_slots(job) -> list[dict[str, Any]]:
@@ -249,10 +283,31 @@ def apply_reference_slots_to_job(job) -> dict[str, Any]:
         return {"references": slots, "reference_composition_error": composition.get("reason")}
 
     job.references = slots
+    binding_prompt = character_binding_prompt(slots)
+    if binding_prompt:
+        current_prompt = str(getattr(job, "prompt", None) or "").strip()
+        if binding_prompt.lower() not in current_prompt.lower():
+            out_prompt = f"{current_prompt}\n\n{binding_prompt}" if current_prompt else binding_prompt
+            job.prompt = out_prompt
+        else:
+            out_prompt = current_prompt
+        job.preserve_character = True
+        job.face_preservation = True
+    else:
+        out_prompt = ""
     primary = slots[0]
     role = str(primary.get("role") or "restyle")
     path = str(primary.get("path") or "")
     out: dict[str, Any] = {"references": slots, "reference_role": role}
+    if binding_prompt:
+        out.update(
+            {
+                "prompt": out_prompt,
+                "preserve_character": True,
+                "face_preservation": True,
+                "character_binding_prompt": binding_prompt,
+            }
+        )
 
     if role == "image_prompt":
         out.update(

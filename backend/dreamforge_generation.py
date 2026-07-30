@@ -1544,6 +1544,9 @@ def run_generation(
             )
             emit_event(stream_sink, err)
             return {"status": "error", **err}
+        binding_prompt = str(ref_patch.get("character_binding_prompt") or "").strip()
+        if binding_prompt and binding_prompt.lower() not in prompt.lower():
+            prompt = f"{prompt}\n\n{binding_prompt}" if prompt.strip() else binding_prompt
         from dreamforge_auto_enhance import apply_auto_enhance_to_job
 
         auto_patch = apply_auto_enhance_to_job(job)
@@ -2364,8 +2367,20 @@ def run_generation(
                 resolved_ref_path = resolve_image_path_or_raise(str(ref_only_path))
                 ref_local_name = Path(resolved_ref_path).name
                 if not reference_filename or str(ref_only_path) != str(input_path or ""):
+                    reference_bytes = Path(resolved_ref_path).read_bytes()
+                    if str(getattr(job, "workflow_mode", "") or "").lower() == "ipadapter_faceid":
+                        from dreamforge_identity import (
+                            _selected_face_index,
+                            identity_reference_image_bytes,
+                        )
+
+                        reference_bytes = identity_reference_image_bytes(
+                            str(resolved_ref_path),
+                            _selected_face_index(job),
+                        )
+                        ref_local_name = f"{Path(ref_local_name).stem}_selected_face.png"
                     ref_upload = client.upload_image(
-                        image_bytes=Path(resolved_ref_path).read_bytes(),
+                        image_bytes=reference_bytes,
                         filename=ref_local_name,
                         folder_type="input",
                         overwrite=True,
@@ -3192,7 +3207,124 @@ def run_generation(
                 pass
 
         raw_images = comfy_images
-        if streaming and images:
+        identity_verification = None
+        identity_retry = None
+        if images and bool(getattr(job, "identity_verify", False)):
+            from dreamforge_identity import (
+                build_identity_retry_params,
+                verify_identity_outputs,
+            )
+
+            identity_verification = verify_identity_outputs(job, images)
+            verification_status = str(identity_verification.get("status") or "")
+            if verification_status == "passed":
+                emit_event(
+                    stream_sink,
+                    {
+                        "type": "progress",
+                        "job_id": job_id,
+                        "phase": "identity",
+                        "progress": 100,
+                        "message": (
+                            "Face likeness verified "
+                            f"({float(identity_verification.get('score') or 0):.2f})."
+                        ),
+                    },
+                )
+            elif verification_status == "unavailable":
+                emit_event(
+                    stream_sink,
+                    {
+                        "type": "warning",
+                        "job_id": job_id,
+                        "message": str(identity_verification.get("reason") or "Face verification unavailable."),
+                    },
+                )
+            elif verification_status == "failed":
+                retry_params, identity_retry = build_identity_retry_params(
+                    job,
+                    data if isinstance(data, dict) else None,
+                    identity_verification,
+                )
+                if retry_params:
+                    emit_event(
+                        stream_sink,
+                        {
+                            "type": "progress",
+                            "job_id": job_id,
+                            "phase": "identity_retry",
+                            "progress": 0,
+                            "message": "Likeness was low; retrying once with FaceID…",
+                        },
+                    )
+                    try:
+                        client.free_memory(unload_models=True, free_memory=True)
+                    except Exception:
+                        pass
+                    retry_result = run_generation(
+                        base_args,
+                        retry_params,
+                        stream_sink=stream_sink,
+                        job_id=job_id,
+                    )
+                    if retry_result.get("status") == "success":
+                        retry_verification = retry_result.get("identity_verification") or {}
+                        original_score = float(identity_verification.get("score") or -1.0)
+                        retry_score = float(retry_verification.get("score") or -1.0)
+                        if retry_verification.get("status") == "passed" or retry_score >= original_score:
+                            retry_result["identity_retry"] = {
+                                **identity_retry,
+                                "attempted": True,
+                                "selected": "retry",
+                                "original_candidates": images,
+                            }
+                            if streaming:
+                                emit_event(
+                                    stream_sink,
+                                    {
+                                        "type": "results",
+                                        "job_id": job_id,
+                                        "paths": [
+                                            item.get("path")
+                                            for item in retry_result.get("images", [])
+                                            if isinstance(item, dict) and item.get("path")
+                                        ],
+                                        "raw_paths": retry_result.get("raw_images") or [],
+                                    },
+                                )
+                            return retry_result
+                        identity_retry.update(
+                            {
+                                "attempted": True,
+                                "selected": "original",
+                                "retry_candidates": [
+                                    item.get("path")
+                                    for item in retry_result.get("images", [])
+                                    if isinstance(item, dict) and item.get("path")
+                                ],
+                            }
+                        )
+                    else:
+                        identity_retry.update(
+                            {
+                                "attempted": True,
+                                "selected": "original",
+                                "retry_error": retry_result.get("message") or "FaceID retry failed",
+                            }
+                        )
+                if not retry_params:
+                    emit_event(
+                        stream_sink,
+                        {
+                            "type": "warning",
+                            "job_id": job_id,
+                            "message": (
+                                "Face likeness was below the target, but automatic FaceID retry "
+                                f"was unavailable: {identity_retry.get('reason', 'unknown reason')}."
+                            ),
+                        },
+                    )
+        if streaming and images and not bool(getattr(job, "_identity_retry_internal", False)):
             emit_event(
                 stream_sink,
                 {
@@ -3235,6 +3367,10 @@ def run_generation(
                 "class_types": comfy_workflow_class_types,
             },
         }
+        if identity_verification:
+            primary_result["identity_verification"] = identity_verification
+        if identity_retry:
+            primary_result["identity_retry"] = identity_retry
 
         chain_steps = None
         from dreamforge_pipeline_chain import (
@@ -3349,6 +3485,10 @@ def run_generation(
             }
             if primary_result.get("comfy_workflow"):
                 manifest_payload["comfy_workflow"] = primary_result["comfy_workflow"]
+            if primary_result.get("identity_verification"):
+                manifest_payload["identity_verification"] = primary_result["identity_verification"]
+            if primary_result.get("identity_retry"):
+                manifest_payload["identity_retry"] = primary_result["identity_retry"]
             if job_data and job_data.get("automation_id"):
                 manifest_payload["automation"] = {
                     "automation_id": job_data.get("automation_id"),

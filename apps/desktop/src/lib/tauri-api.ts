@@ -140,6 +140,9 @@ export type GenerationSettings = {
     weight?: number;
     stop_at?: number;
     structure_type?: string;
+    character_id?: string;
+    character_region?: "auto" | "left" | "center" | "right";
+    face_index?: number;
   }>;
   reference_weight?: number;
   cn_strength?: number;
@@ -148,6 +151,10 @@ export type GenerationSettings = {
   /** Identity preservation intent: preserve_face (Kontext/Qwen) or ipadapter_faceid when assets exist. */
   identity_mode?: "preserve_face" | "kontext" | "qwen_edit" | "ipadapter_faceid" | "auto" | string;
   face_preservation?: boolean;
+  /** Locally compare output/reference face embeddings; embeddings are never saved. */
+  identity_verify?: boolean;
+  identity_retry?: boolean;
+  identity_similarity_threshold?: number;
   /** Inpaint mask preprocessing (Krita grow/feather). */
   inpaint_grow?: number;
   inpaint_feather?: number;

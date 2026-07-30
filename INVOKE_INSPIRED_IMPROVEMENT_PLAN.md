@@ -57,6 +57,15 @@ DreamForge keeps its Tauri desktop shell, Python bridge, workflow policy, model 
 - [x] Full relevant backend test slice and `git diff --check`.
 - [x] Review the final diff without overwriting pre-existing custom-tool changes.
 
+### 6. Identity Reliability v2 follow-up
+
+- [x] Bind each reference to Character A-D and an optional left/center/right region.
+- [x] Detect multiple faces locally and let the user choose the intended face.
+- [x] Crop the selected face automatically for FaceID conditioning.
+- [x] Optionally compare local InsightFace embeddings after generation without saving them.
+- [x] Retry once with an installed SDXL + FaceID stack when likeness is below the chosen threshold.
+- [x] Keep both candidates and select the higher-scoring result; record verification and retry metadata in manifests.
+
 ## Verification record
 
 - Focused backend slice: 22 passed.
@@ -64,7 +73,9 @@ DreamForge keeps its Tauri desktop shell, Python bridge, workflow policy, model 
 - Desktop production build: passed (existing bundle-size and mixed-import warnings remain).
 - Visual smoke checks: first-run setup, settings, models, and styles at 1440x900 and 900x700; no page errors in the mocked desktop bridge views.
 - `git diff --check`: passed (Git only reported the repository's existing LF-to-CRLF notices).
-- Extra full backend run: 820 passed, 3 skipped, 2 failed in unchanged `dreamforge_errors.py` / `dreamforge_preflight.py` behavior. The failures are recorded rather than folded into this feature diff: DepthAnything Hub errors map to `generation_failed`, and the Flux VRAM fixture now reports a preflight error.
+- Identity Reliability v2 focused regression: 111 passed; desktop production build passed.
+- Identity controls visually checked at 1440x900 and 900x700 with a mocked desktop bridge; no layout overlap was found.
+- Extra full backend run after Identity Reliability v2: 825 passed, 3 skipped, 1 failed in unchanged `dreamforge_errors.py` behavior. The remaining baseline failure is recorded rather than folded into this feature diff: DepthAnything Hub errors map to `generation_failed` instead of `missing_model_dependencies`.
 
 ## Deliberately not ported
 

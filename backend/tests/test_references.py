@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from dreamforge_references import (
     apply_reference_slots_to_job,
     coerce_reference_slots,
+    character_binding_prompt,
     family_reference_mechanism,
     reconcile_slot_roles,
     resolve_reference_composition,
@@ -127,3 +128,33 @@ def test_invalid_two_restyle_slots():
     ]
     comp = resolve_reference_composition(slots)
     assert comp["mode"] == "invalid"
+
+
+def test_character_binding_preserves_metadata_and_prompt():
+    job = SimpleNamespace(
+        prompt="Two friends at a cafe",
+        references=[
+            {
+                "path": "/a.png",
+                "role": "image_prompt",
+                "character_id": "character_a",
+                "character_region": "left",
+                "face_index": 1,
+            },
+            {
+                "path": "/b.png",
+                "role": "image_prompt",
+                "character_id": "character_b",
+                "character_region": "right",
+            },
+        ],
+    )
+    patch = apply_reference_slots_to_job(job)
+    assert patch["references"][0]["face_index"] == 1
+    assert "image 1 is Character A in the left region" in patch["character_binding_prompt"]
+    assert "image 2 is Character B in the right region" in job.prompt
+    assert job.preserve_character is True
+
+
+def test_character_binding_prompt_ignores_unassigned_slots():
+    assert character_binding_prompt([{"path": "/style.png", "role": "image_prompt"}]) == ""

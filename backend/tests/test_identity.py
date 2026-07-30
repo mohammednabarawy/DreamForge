@@ -6,11 +6,13 @@ import pytest
 
 from dreamforge_identity import (
     apply_identity_to_job,
+    build_identity_retry_params,
     faceid_assets_available,
     identity_intent_from_prompt,
     is_identity_preservation_job,
     normalize_identity_mode,
     resolve_identity_route,
+    verify_identity_outputs,
 )
 
 
@@ -57,15 +59,12 @@ def test_resolve_identity_kontext_when_available(monkeypatch):
 
 def test_faceid_assets_gated(monkeypatch):
     monkeypatch.setattr(
-        "dreamforge_identity.custom_node_pack_present",
+        "dreamforge_workflow_planner.custom_node_pack_present",
         lambda _pack: False,
-        raising=False,
     )
-    from dreamforge_workflow_planner import custom_node_pack_present
-
     monkeypatch.setattr(
-        "dreamforge_identity._inventory_model",
-        lambda category, hints=(): None,
+        "dreamforge_identity._pick_faceid_model",
+        lambda: None,
     )
     assets = faceid_assets_available()
     assert assets["ok"] is False
@@ -159,3 +158,52 @@ def test_apply_identity_faceid_route(monkeypatch):
     assert job.workflow_mode == "ipadapter_faceid"
     assert job.identity_mode == "ipadapter_faceid"
     assert job.reference_role == "image_prompt"
+
+
+def test_verify_identity_uses_selected_reference_face(monkeypatch):
+    import numpy as np
+
+    faces = {
+        "/ref.png": [
+            {"embedding": np.array([1.0, 0.0]), "area": 100.0},
+            {"embedding": np.array([0.0, 1.0]), "area": 80.0},
+        ],
+        "/out.png": [{"embedding": np.array([0.0, 1.0]), "area": 100.0}],
+    }
+    monkeypatch.setattr("dreamforge_identity._face_embeddings", lambda path: faces[path])
+    job = SimpleNamespace(
+        identity_verify=True,
+        _identity_reference_path="/ref.png",
+        references=[{"path": "/ref.png", "face_index": 1}],
+        identity_similarity_threshold=0.35,
+    )
+    result = verify_identity_outputs(job, ["/out.png"])
+    assert result["status"] == "passed"
+    assert result["score"] == 1.0
+
+
+def test_identity_retry_is_single_and_uses_sdxl_faceid(monkeypatch):
+    monkeypatch.setattr(
+        "dreamforge_identity.faceid_assets_available",
+        lambda: {"ok": True, "missing": [], "ipadapter_faceid_model": "faceid.bin"},
+    )
+    monkeypatch.setattr("dreamforge_identity._pick_faceid_checkpoint", lambda: "sdxl.safetensors")
+    job = SimpleNamespace(
+        identity_retry=True,
+        identity_mode="preserve_face",
+        _identity_reference_path="/ref.png",
+    )
+    params, plan = build_identity_retry_params(
+        job,
+        {"prompt": "same person"},
+        {"status": "failed", "score": 0.2},
+    )
+    assert plan["eligible"] is True
+    assert params["model"] == "sdxl.safetensors"
+    assert params["identity_retry_attempted"] is True
+    assert params["_identity_retry_internal"] is True
+
+    job.identity_retry_attempted = True
+    params, plan = build_identity_retry_params(job, {}, {"status": "failed"})
+    assert params is None
+    assert plan["reason"] == "retry already attempted"

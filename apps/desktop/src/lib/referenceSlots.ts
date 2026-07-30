@@ -9,6 +9,9 @@ export type ReferenceSlot = {
   weight?: number;
   stop_at?: number;
   structure_type?: string;
+  character_id?: string;
+  character_region?: "auto" | "left" | "center" | "right";
+  face_index?: number;
 };
 
 export const MAX_REFERENCE_SLOTS = 4;
@@ -29,12 +32,20 @@ export function normalizeReferenceSlot(raw: Partial<ReferenceSlot>): ReferenceSl
   const path = (raw.path ?? "").trim();
   if (!path) return null;
   const role = (raw.role ?? "image_prompt") as ReferenceRole;
+  const faceIndex = Number(raw.face_index);
   return {
     path,
     role,
     weight: clamp(raw.weight ?? DEFAULT_SLOT_WEIGHT, 0, 2, DEFAULT_SLOT_WEIGHT),
     stop_at: clamp(raw.stop_at ?? DEFAULT_SLOT_STOP_AT, 0, 1, DEFAULT_SLOT_STOP_AT),
     structure_type: raw.structure_type?.trim() || undefined,
+    character_id: raw.character_id?.trim().slice(0, 40) || undefined,
+    character_region: raw.character_id
+      ? (["auto", "left", "center", "right"].includes(raw.character_region ?? "auto")
+          ? raw.character_region ?? "auto"
+          : "auto")
+      : undefined,
+    face_index: Number.isInteger(faceIndex) && faceIndex >= 0 ? faceIndex : undefined,
   };
 }
 

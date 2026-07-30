@@ -228,11 +228,16 @@ export function patchForKeepFace(
       preserve_character: false,
       face_preservation: false,
       identity_mode: undefined,
+      identity_verify: false,
+      identity_retry: false,
     };
   }
   return {
     preserve_character: true,
     face_preservation: true,
+    identity_verify: true,
+    identity_retry: true,
+    identity_similarity_threshold: settings.identity_similarity_threshold ?? 0.35,
     identity_mode: settings.identity_mode === "ipadapter_faceid"
       ? "ipadapter_faceid"
       : "preserve_face",

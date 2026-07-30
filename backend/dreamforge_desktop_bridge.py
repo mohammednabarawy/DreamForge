@@ -1529,6 +1529,15 @@ def cmd_build_cli_argv(params: dict) -> dict:
     }
 
 
+def cmd_analyze_identity_faces(params: dict) -> dict:
+    from dreamforge_identity import analyze_reference_faces
+
+    path = str(params.get("path") or "").strip()
+    if not path:
+        return _error("path is required")
+    return analyze_reference_faces(path)
+
+
 from dreamforge_studio_bridge import STUDIO_HANDLERS  # noqa: E402
 
 
@@ -1560,6 +1569,7 @@ HANDLERS = {
     "dry_run": cmd_dry_run,
     "brain_plan": cmd_brain_plan,
     "build_cli_argv": cmd_build_cli_argv,
+    "analyze_identity_faces": cmd_analyze_identity_faces,
     "list_styles": cmd_list_styles,
     "get_ui_defaults": cmd_get_ui_defaults,
     "classify_models": cmd_classify_models,

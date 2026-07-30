@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
+from io import BytesIO
+from pathlib import Path
 from typing import Any
 
 VALID_IDENTITY_MODES = frozenset(
@@ -12,6 +15,214 @@ LEGACY_IDENTITY_ALIASES = frozenset({"face", "faceid", "face_id", "preserve_face
 KONTEXT_IDENTITY_STRENGTH = 0.92
 QWEN_IDENTITY_STRENGTH = 1.0
 FACEID_DEFAULT_WEIGHT = 0.75
+IDENTITY_SIMILARITY_THRESHOLD = 0.35
+
+
+def analyze_reference_faces(path: str) -> dict[str, Any]:
+    """Detect selectable faces locally; no pixels or embeddings are retained."""
+    try:
+        import cv2
+
+        from dreamforge_paths import resolve_image_path_or_raise
+
+        resolved = resolve_image_path_or_raise(path)
+        image = cv2.imread(str(resolved))
+        if image is None:
+            raise ValueError("image could not be decoded")
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        cascade = cv2.CascadeClassifier(
+            str(Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml")
+        )
+        detected = cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.1,
+            minNeighbors=5,
+            minSize=(40, 40),
+        )
+        boxes = sorted(
+            ((int(x), int(y), int(w), int(h)) for x, y, w, h in detected),
+            key=lambda item: item[0],
+        )
+        largest = max(range(len(boxes)), key=lambda i: boxes[i][2] * boxes[i][3]) if boxes else None
+        return {
+            "ok": True,
+            "count": len(boxes),
+            "detector": "opencv",
+            "faces": [
+                {
+                    "index": index,
+                    "x": x,
+                    "y": y,
+                    "width": width,
+                    "height": height,
+                    "recommended": index == largest,
+                }
+                for index, (x, y, width, height) in enumerate(boxes)
+            ],
+        }
+    except Exception as exc:
+        return {"ok": False, "count": 0, "faces": [], "error": str(exc)}
+
+
+def _selected_face_index(job) -> int | None:
+    explicit = getattr(job, "identity_face_index", None)
+    references = getattr(job, "references", None)
+    if explicit is None and isinstance(references, list):
+        for slot in references:
+            if isinstance(slot, dict) and slot.get("face_index") is not None:
+                explicit = slot.get("face_index")
+                break
+    try:
+        index = int(explicit)
+    except (TypeError, ValueError):
+        return None
+    return index if index >= 0 else None
+
+
+def identity_reference_image_bytes(path: str, face_index: int | None = None) -> bytes:
+    """Crop the chosen face for FaceID; return original bytes if detection fails."""
+    from PIL import Image
+    from dreamforge_paths import resolve_image_path_or_raise
+
+    resolved = resolve_image_path_or_raise(path)
+    analysis = analyze_reference_faces(str(resolved))
+    faces = analysis.get("faces") or []
+    if not faces:
+        return Path(resolved).read_bytes()
+    selected = next(
+        (face for face in faces if face.get("index") == face_index),
+        next((face for face in faces if face.get("recommended")), faces[0]),
+    )
+    with Image.open(resolved) as source:
+        image = source.convert("RGB")
+        x = int(selected["x"])
+        y = int(selected["y"])
+        width = int(selected["width"])
+        height = int(selected["height"])
+        side = int(max(width, height) * 2.1)
+        cx = x + width // 2
+        cy = y + height // 2
+        left = max(0, cx - side // 2)
+        top = max(0, cy - side // 2)
+        right = min(image.width, left + side)
+        bottom = min(image.height, top + side)
+        crop = image.crop((left, top, right, bottom))
+        buffer = BytesIO()
+        crop.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+
+@lru_cache(maxsize=1)
+def _face_analyzer():
+    """Load the existing InsightFace install only when verification is requested."""
+    import onnxruntime
+    from insightface.app import FaceAnalysis
+    from _paths import MODELS_ROOT
+
+    pack = _insightface_pack_present()
+    if not pack:
+        raise RuntimeError("InsightFace model pack is not installed")
+    available = set(onnxruntime.get_available_providers())
+    providers = (
+        ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        if "CUDAExecutionProvider" in available
+        else ["CPUExecutionProvider"]
+    )
+    analyzer = FaceAnalysis(
+        name=pack,
+        root=str(MODELS_ROOT / "insightface"),
+        providers=providers,
+    )
+    analyzer.prepare(ctx_id=0 if "CUDAExecutionProvider" in available else -1, det_size=(640, 640))
+    return analyzer
+
+
+def _face_embeddings(path: str) -> list[Any]:
+    import cv2
+    import numpy as np
+
+    from dreamforge_paths import resolve_image_path_or_raise
+
+    image = cv2.imread(str(resolve_image_path_or_raise(path)))
+    if image is None:
+        return []
+    faces = sorted(_face_analyzer().get(image), key=lambda face: float(face.bbox[0]))
+    embeddings: list[Any] = []
+    for face in faces:
+        embedding = np.asarray(face.embedding, dtype=np.float32)
+        norm = float(np.linalg.norm(embedding))
+        if norm > 0:
+            x0, y0, x1, y1 = (float(value) for value in face.bbox)
+            embeddings.append(
+                {
+                    "embedding": embedding / norm,
+                    "area": max(0.0, x1 - x0) * max(0.0, y1 - y0),
+                }
+            )
+    return embeddings
+
+
+def verify_identity_outputs(job, images: list[str]) -> dict[str, Any]:
+    """Compare the selected reference face with outputs using local embeddings."""
+    if not bool(getattr(job, "identity_verify", False)):
+        return {"status": "disabled"}
+    reference = str(
+        getattr(job, "_identity_reference_path", None) or _reference_path(job)
+    ).strip()
+    if not reference or not images:
+        return {"status": "unavailable", "reason": "reference or output image missing"}
+    try:
+        import numpy as np
+
+        reference_faces = _face_embeddings(reference)
+        if not reference_faces:
+            return {"status": "unavailable", "reason": "no face found in the reference image"}
+        selected_index = _selected_face_index(job)
+        if selected_index is None:
+            reference_face = max(reference_faces, key=lambda item: item["area"])
+        else:
+            reference_face = reference_faces[min(selected_index, len(reference_faces) - 1)]
+        reference_embedding = reference_face["embedding"]
+        best_score = -1.0
+        best_output = None
+        for output in images:
+            for face in _face_embeddings(output):
+                score = float(np.dot(reference_embedding, face["embedding"]))
+                if score > best_score:
+                    best_score = score
+                    best_output = output
+        threshold = max(
+            0.1,
+            min(
+                0.9,
+                float(
+                    getattr(job, "identity_similarity_threshold", None)
+                    or IDENTITY_SIMILARITY_THRESHOLD
+                ),
+            ),
+        )
+        if best_output is None:
+            return {
+                "status": "failed",
+                "score": None,
+                "threshold": threshold,
+                "reason": "no face found in generated output",
+            }
+        passed = best_score >= threshold
+        return {
+            "status": "passed" if passed else "failed",
+            "score": round(best_score, 4),
+            "threshold": threshold,
+            "output": best_output,
+            "reason": "likeness threshold met" if passed else "likeness below threshold",
+        }
+    except (ImportError, RuntimeError) as exc:
+        return {
+            "status": "unavailable",
+            "reason": f"local InsightFace verification unavailable: {exc}",
+        }
+    except Exception as exc:
+        return {"status": "unavailable", "reason": f"face verification failed: {exc}"}
 
 
 def _inventory_model(category: str, hints: tuple[str, ...] = ()) -> str | None:
@@ -34,6 +245,27 @@ def _inventory_model(category: str, hints: tuple[str, ...] = ()) -> str | None:
     except Exception:
         return None
     return None
+
+
+def _pick_faceid_model() -> str | None:
+    try:
+        from dreamforge_cli_inventory import list_model_inventory
+
+        items = list_model_inventory().get("categories", {}).get("ipadapter", [])
+        fallback = None
+        for item in items:
+            text = " ".join(
+                str(item.get(key, "")) for key in ("name", "relative_path", "stem")
+            ).lower()
+            if "faceid" not in text and "face-id" not in text and "face_id" not in text:
+                continue
+            name = str(item.get("name") or item.get("relative_path") or "").replace("\\", "/")
+            fallback = fallback or name
+            if "sdxl" in text:
+                return name
+        return fallback
+    except Exception:
+        return None
 
 
 def normalize_identity_mode(value: Any) -> str | None:
@@ -95,7 +327,7 @@ def faceid_assets_available() -> dict[str, Any]:
     missing: list[str] = []
     if not custom_node_pack_present("ComfyUI_IPAdapter_plus"):
         missing.append("ComfyUI_IPAdapter_plus")
-    faceid_model = _inventory_model("ipadapter", ("faceid", "face-id", "face_id"))
+    faceid_model = _pick_faceid_model()
     if not faceid_model:
         missing.append("ipadapter_faceid_model")
     insightface_pack = _insightface_pack_present()
@@ -155,6 +387,80 @@ def _pick_qwen_edit_checkpoint() -> str | None:
     except Exception:
         return None
     return None
+
+
+def _pick_faceid_checkpoint() -> str | None:
+    """Pick an installed SDXL checkpoint compatible with the bundled FaceID model."""
+    try:
+        from dreamforge_cli_inventory import list_model_inventory
+
+        inventory = list_model_inventory()
+        items = list(inventory.get("gallery", []) or [])
+        if not items:
+            items = list(inventory.get("categories", {}).get("checkpoints", []) or [])
+        for item in items:
+            family = str(item.get("family") or "").strip().lower()
+            category = str(item.get("category") or "checkpoints").strip().lower()
+            text = " ".join(
+                str(item.get(key, ""))
+                for key in ("name", "engine_name", "relative_path", "stem")
+            ).lower()
+            if family == "sdxl" and category == "checkpoints" and "refiner" not in text:
+                return str(
+                    item.get("engine_name")
+                    or item.get("name")
+                    or item.get("relative_path")
+                    or ""
+                ).replace("\\", "/")
+    except Exception:
+        return None
+    return None
+
+
+def build_identity_retry_params(
+    job,
+    data: dict[str, Any] | None,
+    verification: dict[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Build one FaceID retry when the first native edit misses the likeness target."""
+    if verification.get("status") != "failed":
+        return None, {"eligible": False, "reason": "verification did not fail"}
+    if not bool(getattr(job, "identity_retry", False)):
+        return None, {"eligible": False, "reason": "automatic retry disabled"}
+    if bool(getattr(job, "identity_retry_attempted", False)):
+        return None, {"eligible": False, "reason": "retry already attempted"}
+    if normalize_identity_mode(getattr(job, "identity_mode", None)) == "ipadapter_faceid":
+        return None, {"eligible": False, "reason": "FaceID was already used"}
+    assets = faceid_assets_available()
+    checkpoint = _pick_faceid_checkpoint()
+    if not assets.get("ok") or not checkpoint:
+        missing = list(assets.get("missing") or [])
+        if not checkpoint:
+            missing.append("sdxl_checkpoint")
+        return None, {"eligible": False, "reason": "FaceID fallback assets missing", "missing": missing}
+
+    reference = str(
+        getattr(job, "_identity_reference_path", None) or _reference_path(job)
+    ).strip()
+    if not reference:
+        return None, {"eligible": False, "reason": "reference image missing"}
+    params = dict(data or vars(job))
+    params.update(
+        {
+            "model": checkpoint,
+            "reference_image": reference,
+            "input_image": None,
+            "workflow_mode": "ipadapter_faceid",
+            "identity_mode": "ipadapter_faceid",
+            "preserve_character": True,
+            "face_preservation": True,
+            "identity_verify": True,
+            "identity_retry_attempted": True,
+            "_identity_retry_internal": True,
+            "ipadapter_model": assets.get("ipadapter_faceid_model"),
+        }
+    )
+    return params, {"eligible": True, "route": "ipadapter_faceid", "model": checkpoint}
 
 
 def resolve_identity_route(job, *, model_family: str | None = None) -> dict[str, Any]:
@@ -319,6 +625,7 @@ def apply_identity_to_job(job) -> dict[str, Any]:
 
     route = plan["route"]
     ref = plan["reference_image"]
+    job._identity_reference_path = ref
     studio = _studio_mode(job)
     out: dict[str, Any] = {}
 

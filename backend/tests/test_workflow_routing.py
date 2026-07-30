@@ -255,6 +255,12 @@ def test_resolve_comfy_workflow_mode_img2img():
     assert mode == "img2img"
 
 
+def test_custom_tool_route_is_scoped_to_toolbox_mode():
+    job = SimpleNamespace(custom_tool_id="custom_1")
+    assert resolve_input_routing(job, studio_mode="generate").custom_tool_id is None
+    assert resolve_input_routing(job, studio_mode="toolbox").custom_tool_id == "custom_1"
+
+
 def test_resolve_comfy_workflow_mode_photo_restore():
     job = SimpleNamespace(
         edit_task="photo_restore",

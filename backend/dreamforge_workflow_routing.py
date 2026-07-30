@@ -299,6 +299,9 @@ def resolve_input_routing(
             cn_type = edit_type
 
     plan_mode = plan_mode_for_job(job, studio_mode=studio_mode)
+    custom_tool_id = str(getattr(job, "custom_tool_id", None) or "").strip()
+    if studio_mode and _norm(studio_mode) != "toolbox":
+        custom_tool_id = ""
     label = route_label(reference_role, model_family) or route_label(plan_mode, model_family)
     if _norm(getattr(job, "edit_task", None)) == "photo_restore":
         label = "Restoring photo"
@@ -322,7 +325,7 @@ def resolve_input_routing(
         route_label=label,
         warnings=warnings,
         edit_task=_norm(getattr(job, "edit_task", None)) or None,
-        custom_tool_id=str(getattr(job, "custom_tool_id", None) or "").strip() or None,
+        custom_tool_id=custom_tool_id or None,
         outfit_auto_mask=bool(getattr(job, "outfit_auto_mask", False)),
     )
 

@@ -2314,7 +2314,9 @@ export function useDreamForge() {
         modelMissing: modelDependencies.missing,
         studioMissing: studioResources.missing,
         taskWorkflowMissing: taskWorkflowDependencies.missing,
-        customToolWorkflowMissing: customToolDependencies.missing,
+        customToolWorkflowMissing: sanitized.custom_tool_id?.trim()
+          ? customToolDependencies.missing
+          : [],
         agentPlan: agentPlanRef.current,
         lastError,
         skipBaseModelCompanions: Boolean(sanitized.custom_tool_id?.trim()),
@@ -2370,6 +2372,7 @@ export function useDreamForge() {
         output,
         validate_output: true,
         use_comfy_server: true,
+        studio_mode: studioMode,
         workflow_mode:
           sanitized.workflow_mode ??
           (studioMode === "generate"
@@ -4008,7 +4011,8 @@ export function useDreamForge() {
     const studioMode =
       opts?.studioMode ??
       ((appConfig?.ui.studio_mode ?? "generate") as StudioMode);
-    const skipBaseModelCompanions = Boolean(settingsRef.current.custom_tool_id?.trim());
+    const skipBaseModelCompanions =
+      studioMode === "toolbox" && Boolean(settingsRef.current.custom_tool_id?.trim());
     let fromModel = modelDependencies.missing;
     if (model && !skipBaseModelCompanions) {
       try {
@@ -4050,7 +4054,8 @@ export function useDreamForge() {
       modelMissing: fromModel,
       studioMissing,
       taskWorkflowMissing: taskWorkflowDependencies.missing,
-      customToolWorkflowMissing: customToolDependencies.missing,
+      customToolWorkflowMissing:
+        studioMode === "toolbox" ? customToolDependencies.missing : [],
       agentPlan: plan,
       lastError,
       skipBaseModelCompanions,
@@ -4092,7 +4097,7 @@ export function useDreamForge() {
         needsStudio || studioMode === "toolbox" ? studioMode : undefined;
       const prepareLabel = studioPrepareFallbackLabel(studioMode);
 
-      const currentSettings = settingsRef.current;
+      const currentSettings = sanitizeSettingsForStudioMode(studioMode, settingsRef.current);
       const templateId =
         currentSettings.template_id ??
         defaultTemplateIdForMode(
@@ -4261,7 +4266,7 @@ export function useDreamForge() {
                     : undefined,
               performance: settingsRef.current.performance ?? null,
               edit_task: settingsRef.current.edit_task?.trim() || null,
-              custom_tool_id: settingsRef.current.custom_tool_id?.trim() || null,
+              custom_tool_id: currentSettings.custom_tool_id?.trim() || null,
               auto_download_tier_a: true,
               auto_download_tier_b: true,
               auto_install_nodes: true,

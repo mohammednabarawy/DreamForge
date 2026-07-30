@@ -230,6 +230,7 @@ export type GenerationSettings = {
   output?: string;
   validate_output?: boolean;
   civitai_api_key?: string;
+  studio_mode?: "generate" | "edit" | "inpaint" | "upscale" | "toolbox" | "agent";
   workflow_mode?: string;
   arabic_text?: string;
   execute_workflow_plan?: boolean;

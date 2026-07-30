@@ -15,7 +15,21 @@ from dreamforge_progress import (
     GEN_SAMPLING,
     generation_phase_from_preview,
 )
-from dreamforge_generation import _build_comfy_prompt_graph, _pid_upscale_target_size
+from dreamforge_generation import (
+    _active_custom_tool_id,
+    _build_comfy_prompt_graph,
+    _pid_upscale_target_size,
+)
+
+
+def test_custom_tool_only_active_in_toolbox_mode():
+    assert _active_custom_tool_id(
+        SimpleNamespace(studio_mode="toolbox", custom_tool_id="custom_1")
+    ) == "custom_1"
+    assert not _active_custom_tool_id(
+        SimpleNamespace(studio_mode="generate", custom_tool_id="custom_1")
+    )
+    assert _active_custom_tool_id(SimpleNamespace(custom_tool_id="custom_1")) == "custom_1"
 
 
 def _route_input(

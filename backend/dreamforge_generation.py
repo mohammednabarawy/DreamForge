@@ -366,6 +366,12 @@ def _coerce_reference_image_paths(job) -> list[str]:
     return coerce_reference_image_paths(job)
 
 
+def _active_custom_tool_id(job) -> str:
+    tool_id = str(getattr(job, "custom_tool_id", None) or "").strip()
+    studio_mode = str(getattr(job, "studio_mode", None) or "").strip().lower()
+    return tool_id if not studio_mode or studio_mode == "toolbox" else ""
+
+
 def _comfy_workflow_mode(
     *,
     input_filename: str | None,
@@ -1820,7 +1826,7 @@ def run_generation(
                     return {"status": "error", **err}
                 setattr(job, "controlnet_model", cn_model)
 
-        custom_tool_id = str(getattr(job, "custom_tool_id", None) or "").strip()
+        custom_tool_id = _active_custom_tool_id(job)
         if custom_tool_id:
             from dreamforge_comfy_workflow_import import load_api_workflow_template
             from dreamforge_custom_tools import _sorted_bindings, find_custom_tool
@@ -2506,7 +2512,7 @@ def run_generation(
             model_family=model_family,
             input_filename=input_filename,
         )
-        if str(getattr(job, "custom_tool_id", None) or "").strip():
+        if _active_custom_tool_id(job):
             comfy_mode = "custom_tool"
         if (
             str(getattr(job, "edit_task", "") or "").strip().lower() == "outfit_transfer"
@@ -3299,7 +3305,7 @@ def run_generation(
             background_reference_path = resolve_cutout_background_path(job)
             if background_reference_path:
                 routing["background_image"] = background_reference_path
-            custom_tool_id = str(getattr(job, "custom_tool_id", None) or "").strip()
+            custom_tool_id = _active_custom_tool_id(job)
             if custom_tool_id:
                 from dreamforge_custom_tools import find_custom_tool
 

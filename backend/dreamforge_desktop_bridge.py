@@ -1274,6 +1274,17 @@ def cmd_parse_comfy_workflow(params: dict) -> dict:
     return {"ok": True, **payload}
 
 
+def cmd_import_custom_tool_workflow(params: dict) -> dict:
+    from dreamforge_custom_tools import CustomToolError, import_custom_tool_workflow
+
+    path = str(params.get("path") or params.get("workflow_path") or "").strip()
+    tool_id = str(params.get("tool_id") or "").strip()
+    try:
+        return {"ok": True, **import_custom_tool_workflow(path, tool_id)}
+    except (CustomToolError, OSError) as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 def cmd_custom_tool_dependencies(params: dict) -> dict:
     from dreamforge_custom_tools import custom_tool_dependency_entries, find_custom_tool
 
@@ -1581,6 +1592,7 @@ HANDLERS = {
     "custom_tool_dependencies": cmd_custom_tool_dependencies,
     "custom_tool_workflow_models": cmd_custom_tool_workflow_models,
     "parse_comfy_workflow": cmd_parse_comfy_workflow,
+    "import_custom_tool_workflow": cmd_import_custom_tool_workflow,
     "check_comfy_backend": cmd_check_comfy_backend,
     "install_comfy_backend": cmd_install_comfy_backend,
     **STUDIO_HANDLERS,

@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import logging
+import os
+import re
+import tempfile
 from pathlib import Path
 from typing import Any
 
 from dreamforge_comfy_workflow_import import (
+    guess_api_workflow_sibling,
+    guess_ui_workflow_sibling,
+    inspect_comfy_workflow_file,
     load_api_workflow_template,
     patch_node_field,
     workflow_class_types,
@@ -20,6 +27,75 @@ class CustomToolError(ValueError):
 
 
 logger = logging.getLogger(__name__)
+
+
+def import_custom_tool_workflow(source_path: str, tool_id: str) -> dict[str, Any]:
+    """Validate and copy a custom workflow bundle into DreamForge-owned storage."""
+    source = Path(str(source_path or "").strip()).resolve()
+    if not source.is_file():
+        raise CustomToolError(f"Workflow file not found: {source}")
+    if source.suffix.lower() != ".json":
+        raise CustomToolError("Custom tool workflows must be ComfyUI JSON files.")
+
+    try:
+        inspection = inspect_comfy_workflow_file(source)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        raise CustomToolError(f"Workflow could not be imported. {exc}") from exc
+    nodes = inspection.get("nodes")
+    if (
+        not (inspection.get("api_format") or inspection.get("ui_format"))
+        or not isinstance(nodes, dict)
+        or not nodes
+    ):
+        detail = str(inspection.get("error") or "Invalid ComfyUI workflow format.")
+        raise CustomToolError(f"Workflow could not be imported. {detail}")
+
+    companions = [source]
+    for sibling in (guess_api_workflow_sibling(source), guess_ui_workflow_sibling(source)):
+        if sibling and sibling.is_file() and sibling.resolve() not in companions:
+            companions.append(sibling.resolve())
+
+    bundle: list[tuple[Path, bytes]] = []
+    digest = hashlib.sha256()
+    for path in sorted(companions, key=lambda item: item.name.lower()):
+        data = path.read_bytes()
+        bundle.append((path, data))
+        digest.update(path.name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(data)
+    bundle_sha256 = digest.hexdigest()
+
+    from dreamforge_app_config import config_path
+
+    raw_id = str(tool_id or "").strip()
+    if not raw_id:
+        raise CustomToolError("Custom tool id is required.")
+    safe_id = re.sub(r"[^A-Za-z0-9._-]+", "_", raw_id).strip("._-")[:64] or "custom_tool"
+    safe_id = f"{safe_id}-{hashlib.sha256(raw_id.encode('utf-8')).hexdigest()[:8]}"
+    target_dir = config_path().parent / "workflows" / safe_id / bundle_sha256[:16]
+    for path, data in bundle:
+        _atomic_write_bytes(target_dir / path.name, data)
+
+    managed_path = target_dir / source.name
+    return {
+        "workflow_path": str(managed_path),
+        "source_workflow_path": str(source),
+        "workflow_sha256": bundle_sha256,
+        "workflow_format": "ui" if inspection.get("ui_format") else "api",
+        "managed_workflow_version": 1,
+        "warning": str(inspection.get("warning") or ""),
+    }
+
+
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        os.replace(temp_name, path)
+    finally:
+        Path(temp_name).unlink(missing_ok=True)
 
 
 # Loader nodes -> list of (input field, preferred models subfolders).

@@ -87,7 +87,7 @@ def compute_library_fingerprint() -> dict[str, Any]:
 
     models_root = Path(MODELS_ROOT).resolve()
     fingerprint: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "models_root": str(models_root),
         "categories": {},
         "thumbnails": {},
@@ -176,6 +176,7 @@ def _resolve_cached_thumbnail(cache_subdir: str, model_filename: str, fallback: 
 
 
 def build_model_gallery_items() -> list[dict[str, Any]]:
+    from dreamforge_cli_inventory import MODELS_ROOT
     from modules.model_ui_defaults import (
         GALLERY_CATEGORIES,
         engine_name_for_category,
@@ -188,6 +189,14 @@ def build_model_gallery_items() -> list[dict[str, Any]]:
     for category in GALLERY_CATEGORIES:
         for relative_name in scan_model_category(category):
             filename = Path(relative_name).name
+            model_path = Path(MODELS_ROOT) / category / relative_name
+            try:
+                stat = model_path.stat()
+                size_bytes = stat.st_size
+                modified_at = stat.st_mtime
+            except OSError:
+                size_bytes = 0
+                modified_at = 0.0
             if filename.endswith(".merge"):
                 fallback = BACKEND_ROOT / "html" / "merge.jpeg"
             else:
@@ -199,6 +208,8 @@ def build_model_gallery_items() -> list[dict[str, Any]]:
                     "caption": gallery_caption(category, relative_name),
                     "engine_name": engine_name_for_category(category, relative_name),
                     "family": infer_model_family(filename),
+                    "size_bytes": size_bytes,
+                    "modified_at": modified_at,
                     "thumbnail_path": _resolve_cached_thumbnail(
                         "checkpoints", filename, fallback
                     ),

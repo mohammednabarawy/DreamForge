@@ -263,6 +263,7 @@ function DreamForgeStudio() {
             onSelectModel={(item) => void mc.selectModelGallery(item)}
             onToggleLora={mc.toggleLoraGallery}
             stylesList={mc.styleRecipes}
+            styleGroups={mc.styleGroups}
             aspectPresets={mc.aspectPresets}
             uiDefaults={mc.uiDefaults}
             activeModelLabel={mc.activeModelLabel}
@@ -327,6 +328,7 @@ function DreamForgeStudio() {
         }
         onClearUserStyleMemory={() => void mc.clearUserStyleMemory()}
         onExportUserStyleMemory={() => void mc.exportUserStyleMemory()}
+        onRefreshInventory={mc.refreshStudioCatalog}
       />
       <CompanionDownloadModal
         open={mc.companionDownload.open}

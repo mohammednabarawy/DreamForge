@@ -85,9 +85,7 @@ fn resolve_runtime_roots() -> RuntimeRoots {
         let candidate = PathBuf::from(&root);
         if cfg!(debug_assertions)
             && is_tauri_build_artifact(&candidate)
-            && canonical
-                .join("dreamforge_desktop_bridge.py")
-                .is_file()
+            && canonical.join("dreamforge_desktop_bridge.py").is_file()
         {
             canonical.clone()
         } else {
@@ -221,9 +219,19 @@ fn setup_complete_from_config(data_root: &Path, backend_root: &Path) -> bool {
         || (data_root == install && install.join("models").is_dir())
         || repo_root.join("models").is_dir();
     let python_ok = install.join("python_embeded").join("python.exe").is_file()
-        || repo_root.join("python_embeded").join("python.exe").is_file()
-        || data_root.join("python_embeded").join("python.exe").is_file()
-        || install.join("venv").join("Scripts").join("python.exe").is_file()
+        || repo_root
+            .join("python_embeded")
+            .join("python.exe")
+            .is_file()
+        || data_root
+            .join("python_embeded")
+            .join("python.exe")
+            .is_file()
+        || install
+            .join("venv")
+            .join("Scripts")
+            .join("python.exe")
+            .is_file()
         || install.join("venv").join("bin").join("python").is_file()
         || repo_root.join("venv").join("bin").join("python").is_file();
     comfy_ok && models_ok && python_ok
@@ -385,7 +393,9 @@ impl PythonSidecar {
             .is_none()
     }
 
-    fn read_json_response(stdout: &mut BufReader<std::process::ChildStdout>) -> Result<Value, String> {
+    fn read_json_response(
+        stdout: &mut BufReader<std::process::ChildStdout>,
+    ) -> Result<Value, String> {
         let mut accumulated = String::new();
         for _ in 0..48 {
             let mut line = String::new();
@@ -558,7 +568,10 @@ fn generation_failure_log_tail(job_id: &str, state: &AppState, fallback_message:
     if tail.trim().is_empty() {
         tail = fallback.to_string();
     } else if !fallback.is_empty() && !tail.contains(fallback) {
-        tail = format!("{fallback}\n\n--- job log ({}) ---\n{tail}", log_path.display());
+        tail = format!(
+            "{fallback}\n\n--- job log ({}) ---\n{tail}",
+            log_path.display()
+        );
     }
     if tail.len() < 800 {
         let worker = worker_log_path(&agent_root());
@@ -880,7 +893,10 @@ fn outputs_root(_root: &Path) -> PathBuf {
 }
 
 fn previews_dir(_root: &Path) -> PathBuf {
-    resolve_runtime_roots().data_root.join("temp").join("previews")
+    resolve_runtime_roots()
+        .data_root
+        .join("temp")
+        .join("previews")
 }
 
 fn models_root(_root: &Path) -> PathBuf {
@@ -915,6 +931,109 @@ fn safe_model_filename(name: &str) -> Result<String, String> {
             }
         })
         .collect())
+}
+
+fn validate_model_download_url(raw: &str) -> Result<reqwest::Url, String> {
+    let url = reqwest::Url::parse(raw).map_err(|_| "Invalid model download URL".to_string())?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err("Model downloads require an HTTP(S) URL".to_string());
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("Model download URLs cannot contain credentials".to_string());
+    }
+    if url.host_str().is_none() {
+        return Err("Model download URL has no host".to_string());
+    }
+    Ok(url)
+}
+
+fn model_download_host_accepts_token(url: &reqwest::Url) -> bool {
+    let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+    ["civitai.com", "huggingface.co", "hf.co"]
+        .iter()
+        .any(|allowed| host == *allowed || host.ends_with(&format!(".{allowed}")))
+}
+
+fn validate_model_download_size(
+    downloaded: u64,
+    content_length: u64,
+    minimum: Option<u64>,
+) -> Result<(), String> {
+    if content_length > 0 && downloaded != content_length {
+        return Err(format!(
+            "Incomplete download: received {downloaded} of {content_length} bytes"
+        ));
+    }
+    if let Some(minimum) = minimum.filter(|value| *value > 0) {
+        if downloaded < minimum {
+            return Err(format!(
+                "Downloaded file is too small: received {downloaded} bytes, expected at least {minimum}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn release_version_key(version: &str) -> ([u64; 3], bool) {
+    let normalized = version.trim().trim_start_matches(['v', 'V']);
+    let core = normalized.split('-').next().unwrap_or_default();
+    let mut numbers = [0_u64; 3];
+    for (index, part) in core.split('.').take(3).enumerate() {
+        numbers[index] = part.parse().unwrap_or(0);
+    }
+    (numbers, normalized.contains('-'))
+}
+
+fn release_is_newer(candidate: &str, current: &str) -> bool {
+    let (candidate_numbers, candidate_prerelease) = release_version_key(candidate);
+    let (current_numbers, current_prerelease) = release_version_key(current);
+    candidate_numbers > current_numbers
+        || (candidate_numbers == current_numbers && current_prerelease && !candidate_prerelease)
+}
+
+#[cfg(test)]
+mod model_download_tests {
+    use super::{
+        model_download_host_accepts_token, release_is_newer, validate_model_download_size,
+        validate_model_download_url,
+    };
+
+    #[test]
+    fn model_download_urls_reject_non_http_and_embedded_credentials() {
+        assert!(validate_model_download_url("file:///tmp/model.safetensors").is_err());
+        assert!(
+            validate_model_download_url("https://user:secret@example.com/model.safetensors")
+                .is_err()
+        );
+        assert!(validate_model_download_url("https://example.com/model.safetensors").is_ok());
+    }
+
+    #[test]
+    fn model_tokens_are_only_attached_to_known_hosts() {
+        let civitai =
+            validate_model_download_url("https://civitai.com/api/download/models/1").unwrap();
+        let hf = validate_model_download_url("https://cdn-lfs.huggingface.co/model").unwrap();
+        let unrelated =
+            validate_model_download_url("https://example.com/model.safetensors").unwrap();
+        assert!(model_download_host_accepts_token(&civitai));
+        assert!(model_download_host_accepts_token(&hf));
+        assert!(!model_download_host_accepts_token(&unrelated));
+    }
+
+    #[test]
+    fn release_comparison_handles_tags_and_prereleases() {
+        assert!(release_is_newer("v0.3.0", "0.2.0-beta"));
+        assert!(release_is_newer("v0.2.0", "0.2.0-beta"));
+        assert!(!release_is_newer("v0.2.0-beta", "0.2.0-beta"));
+        assert!(!release_is_newer("v0.1.9", "0.2.0-beta"));
+    }
+
+    #[test]
+    fn model_download_size_rejects_truncated_or_implausibly_small_files() {
+        assert!(validate_model_download_size(90, 100, None).is_err());
+        assert!(validate_model_download_size(100, 100, Some(101)).is_err());
+        assert!(validate_model_download_size(100, 100, Some(99)).is_ok());
+    }
 }
 
 fn live_preview_candidates() -> Vec<PathBuf> {
@@ -1033,7 +1152,11 @@ fn preview_bytes_with_retry(path: &Path, attempts: u32, max_edge: u32) -> Option
 }
 
 /// Wait until the file exists and size is stable (flush complete).
-fn preview_bytes_with_retry_stable(path: &Path, max_edge: u32, max_attempts: u32) -> Option<Vec<u8>> {
+fn preview_bytes_with_retry_stable(
+    path: &Path,
+    max_edge: u32,
+    max_attempts: u32,
+) -> Option<Vec<u8>> {
     let mut last_size: u64 = 0;
     let mut stable = 0u32;
     for _ in 0..max_attempts {
@@ -1062,10 +1185,7 @@ fn preview_bytes_with_retry_stable(path: &Path, max_edge: u32, max_attempts: u32
 
 fn attach_resolved_paths(payload: &mut Value, path: &Path) {
     if let Some(obj) = payload.as_object_mut() {
-        obj.insert(
-            "preview_path".into(),
-            json!(path.to_string_lossy()),
-        );
+        obj.insert("preview_path".into(), json!(path.to_string_lossy()));
     }
 }
 
@@ -1118,9 +1238,10 @@ fn start_live_preview_watch(app: &AppHandle, state: &Arc<AppState>, job_id: &str
             let Ok(event) = res else {
                 return;
             };
-            let is_preview = event.paths.iter().any(|p| {
-                preview_file_matches_job(p, &job)
-            });
+            let is_preview = event
+                .paths
+                .iter()
+                .any(|p| preview_file_matches_job(p, &job));
             if !is_preview {
                 return;
             }
@@ -1145,15 +1266,14 @@ fn start_live_preview_watch(app: &AppHandle, state: &Arc<AppState>, job_id: &str
 }
 
 fn emit_final_preview_for_path(app: &AppHandle, path_str: &str, job_id: &str) {
-    let file = resolve_image_file(path_str)
-        .or_else(|| {
-            let p = PathBuf::from(path_str);
-            if p.is_file() {
-                Some(p)
-            } else {
-                None
-            }
-        });
+    let file = resolve_image_file(path_str).or_else(|| {
+        let p = PathBuf::from(path_str);
+        if p.is_file() {
+            Some(p)
+        } else {
+            None
+        }
+    });
     let Some(file) = file else {
         return;
     };
@@ -1245,12 +1365,7 @@ fn is_asset_prep_boot_phase(phase: &str) -> bool {
 }
 
 fn worker_process_ready(state: &Arc<AppState>) -> bool {
-    worker_child_alive(state)
-        && state
-            .worker_ready
-            .lock()
-            .map(|r| *r)
-            .unwrap_or(false)
+    worker_child_alive(state) && state.worker_ready.lock().map(|r| *r).unwrap_or(false)
 }
 
 fn engine_still_booting(state: &Arc<AppState>) -> bool {
@@ -1264,7 +1379,11 @@ fn engine_still_booting(state: &Arc<AppState>) -> bool {
     }
     if matches!(
         phase.as_str(),
-        "starting_comfy" | "booting" | "starting" | "loading_pipeline" | "loading_pytorch"
+        "starting_comfy"
+            | "booting"
+            | "starting"
+            | "loading_pipeline"
+            | "loading_pytorch"
             | "loading_settings"
     ) {
         return true;
@@ -1479,7 +1598,10 @@ fn append_generation_log(state: &AppState, value: &Value) {
     if let Some(parent) = log_path.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    let event_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("event");
+    let event_type = value
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("event");
     let message = value
         .get("message")
         .or_else(|| value.get("title"))
@@ -1618,10 +1740,7 @@ fn handle_worker_event(app: &AppHandle, state: &AppState, value: &Value, emit_bo
                                 "message": "Sampling…",
                             })
                         });
-                        let prev = snap
-                            .get("progress")
-                            .and_then(|v| v.as_i64())
-                            .unwrap_or(0);
+                        let prev = snap.get("progress").and_then(|v| v.as_i64()).unwrap_or(0);
                         if pct > prev {
                             if let Some(obj) = snap.as_object_mut() {
                                 obj.insert("progress".into(), json!(pct));
@@ -1683,7 +1802,8 @@ fn handle_worker_event(app: &AppHandle, state: &AppState, value: &Value, emit_bo
                 let fallback = if !message.is_empty() {
                     message.clone()
                 } else {
-                    code.clone().unwrap_or_else(|| "generation_failed".to_string())
+                    code.clone()
+                        .unwrap_or_else(|| "generation_failed".to_string())
                 };
                 generation_failure_log_tail(&job_id, state, &fallback)
             } else if !message.is_empty() {
@@ -1711,14 +1831,23 @@ fn handle_worker_event(app: &AppHandle, state: &AppState, value: &Value, emit_bo
             let err_field = if success {
                 Value::Null
             } else {
-                json!(code.clone().unwrap_or_else(|| "generation_failed".to_string()))
+                json!(code
+                    .clone()
+                    .unwrap_or_else(|| "generation_failed".to_string()))
             };
 
             let mut finish_preview_path: Option<String> = None;
             let mut finish_data_url: Option<String> = None;
             if success {
-                if let Some(images) = result.and_then(|r| r.get("images")).and_then(|v| v.as_array()) {
-                    if let Some(first) = images.first().and_then(|i| i.get("path")).and_then(|p| p.as_str()) {
+                if let Some(images) = result
+                    .and_then(|r| r.get("images"))
+                    .and_then(|v| v.as_array())
+                {
+                    if let Some(first) = images
+                        .first()
+                        .and_then(|i| i.get("path"))
+                        .and_then(|p| p.as_str())
+                    {
                         if !job_id.is_empty() {
                             emit_final_preview_for_path(app, first, &job_id);
                         }
@@ -1786,9 +1915,7 @@ fn handle_worker_event(app: &AppHandle, state: &AppState, value: &Value, emit_bo
                 .to_string();
             let suggestions = value.get("suggestions").cloned().unwrap_or(Value::Null);
             let details = value.get("details").cloned().unwrap_or(Value::Null);
-            let recoverable = value
-                .get("recoverable")
-                .and_then(|v| v.as_bool());
+            let recoverable = value.get("recoverable").and_then(|v| v.as_bool());
 
             if job_id.is_empty() {
                 let root = agent_root();
@@ -2293,8 +2420,7 @@ async fn ensure_gpu_backend_ready(
         {
             return Ok(());
         }
-        let message =
-            "Managed ComfyUI stopped responding; restarting ComfyUI before the next job.";
+        let message = "Managed ComfyUI stopped responding; restarting ComfyUI before the next job.";
         mark_comfy_unreachable(app, state, message);
         let _ = app.emit(
             "worker-status",
@@ -2347,7 +2473,11 @@ async fn ensure_gpu_backend_ready(
     Err(format!("comfy_server_crashed: {message}"))
 }
 
-fn start_gpu_worker_inner(app: AppHandle, root: &Path, state: &Arc<AppState>) -> Result<(), String> {
+fn start_gpu_worker_inner(
+    app: AppHandle,
+    root: &Path,
+    state: &Arc<AppState>,
+) -> Result<(), String> {
     let events_path = worker_events_path(root);
     set_engine_health(&app, state, "booting");
     {
@@ -2488,10 +2618,7 @@ fn start_gpu_worker_inner(app: AppHandle, root: &Path, state: &Arc<AppState>) ->
 }
 
 fn start_gpu_worker(app: AppHandle, root: &Path, state: &Arc<AppState>) -> Result<(), String> {
-    let _lifecycle = state
-        .worker_lifecycle
-        .lock()
-        .map_err(|e| e.to_string())?;
+    let _lifecycle = state.worker_lifecycle.lock().map_err(|e| e.to_string())?;
     start_gpu_worker_inner(app, root, state)
 }
 
@@ -2635,10 +2762,7 @@ async fn delete_output_image(
 }
 
 #[tauri::command]
-async fn delete_session(
-    state: State<'_, Arc<AppState>>,
-    session: String,
-) -> Result<Value, String> {
+async fn delete_session(state: State<'_, Arc<AppState>>, session: String) -> Result<Value, String> {
     bridge_request_async(
         state.inner(),
         "delete_session",
@@ -2815,7 +2939,6 @@ async fn start_engine_after_setup(
     start_gpu_worker(app, &roots.backend_root, state.inner())
 }
 
-
 #[tauri::command]
 async fn get_setup_gate_status() -> Result<Value, String> {
     let roots = resolve_runtime_roots();
@@ -2868,10 +2991,7 @@ fn write_temp_png(data_base64: String) -> Result<String, String> {
         .unwrap_or(&data_base64);
     let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, payload)
         .or_else(|_| {
-            base64::Engine::decode(
-                &base64::engine::general_purpose::STANDARD_NO_PAD,
-                payload,
-            )
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD_NO_PAD, payload)
         })
         .map_err(|e| format!("invalid base64: {e}"))?;
     let root = agent_root();
@@ -2990,9 +3110,7 @@ async fn read_live_preview(state: State<'_, Arc<AppState>>) -> Result<Value, Str
             if !candidate.is_file() {
                 continue;
             }
-            if let Some(bytes) =
-                preview_bytes_with_retry(&candidate, 3, PREVIEW_LIVE_MAX_EDGE)
-            {
+            if let Some(bytes) = preview_bytes_with_retry(&candidate, 3, PREVIEW_LIVE_MAX_EDGE) {
                 return Ok(json!({
                     "path": candidate.to_string_lossy(),
                     "mime": "image/png",
@@ -3260,7 +3378,11 @@ async fn invoke_automation(
     }
 
     let root = agent_root();
-    if let Some(p) = spec.get("base_settings").and_then(|b| b.get("vram_profile")).and_then(|v| v.as_str()) {
+    if let Some(p) = spec
+        .get("base_settings")
+        .and_then(|b| b.get("vram_profile"))
+        .and_then(|v| v.as_str())
+    {
         if let Ok(mut slot) = state.desktop_vram_profile.lock() {
             *slot = p.to_string();
         }
@@ -3271,7 +3393,7 @@ async fn invoke_automation(
             *slot = Some(resolved);
         }
     }
-    
+
     let state_arc = state.inner();
     ensure_gpu_backend_ready(&app, &root, state_arc).await?;
 
@@ -3383,7 +3505,11 @@ fn cancel_automation(state: State<'_, Arc<AppState>>) -> Result<Value, String> {
         if let Ok(worker_guard) = state.worker.lock() {
             if let Some(worker) = worker_guard.as_ref() {
                 if let Ok(mut stdin) = worker.stdin.lock() {
-                    let _ = writeln!(stdin, "{}", json!({ "cmd": "cancel_automation", "job_id": id }));
+                    let _ = writeln!(
+                        stdin,
+                        "{}",
+                        json!({ "cmd": "cancel_automation", "job_id": id })
+                    );
                     let _ = stdin.flush();
                 }
             }
@@ -3432,6 +3558,40 @@ fn window_drag(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn get_release_status() -> Result<Value, String> {
+    let current = env!("CARGO_PKG_VERSION");
+    let client = reqwest::Client::builder()
+        .user_agent(format!("DreamForge/{current}"))
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let response = client
+        .get("https://api.github.com/repos/mohammednabarawy/DreamForge/releases/latest")
+        .send()
+        .await
+        .map_err(|e| format!("Release check failed: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Release check failed with status {}",
+            response.status()
+        ));
+    }
+    let body = response.text().await.map_err(|e| e.to_string())?;
+    let payload: Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+    let latest = payload
+        .get("tag_name")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    Ok(json!({
+        "current": current,
+        "latest": latest,
+        "update_available": !latest.is_empty() && release_is_newer(latest, current),
+        "release_url": payload.get("html_url").and_then(Value::as_str).unwrap_or_default(),
+        "published_at": payload.get("published_at").and_then(Value::as_str).unwrap_or_default(),
+    }))
+}
+
+#[tauri::command]
 async fn download_model(
     app: AppHandle,
     state: State<'_, Arc<AppState>>,
@@ -3439,6 +3599,7 @@ async fn download_model(
     category: String,
     filename: String,
     api_key: Option<String>,
+    min_bytes: Option<u64>,
 ) -> Result<(), String> {
     let root = agent_root();
     let category = match category.as_str() {
@@ -3447,12 +3608,14 @@ async fn download_model(
         other => return Err(format!("Unsupported model category: {other}")),
     };
     let filename = safe_model_filename(&filename)?;
+    let url = validate_model_download_url(&url)?;
     let dest_dir = models_root(&root).join(&category);
     fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
     let dest_path = dest_dir.join(&filename);
     let part_path = dest_dir.join(format!("{filename}.part"));
     if dest_path.exists() {
         let size = fs::metadata(&dest_path).ok().map(|m| m.len()).unwrap_or(0);
+        validate_model_download_size(size, 0, min_bytes)?;
         let payload = json!({
             "filename": filename,
             "percentage": 100,
@@ -3470,10 +3633,22 @@ async fn download_model(
     require_comfy_server_ready(state.inner()).await?;
 
     let mut headers = HeaderMap::new();
-    let token = api_key
-        .filter(|t| !t.is_empty())
-        .or_else(|| std::env::var("HF_TOKEN").ok())
-        .or_else(|| std::env::var("HUGGING_FACE_HUB_TOKEN").ok());
+    let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+    let token = if !model_download_host_accepts_token(&url) {
+        None
+    } else if host == "civitai.com" || host.ends_with(".civitai.com") {
+        api_key.filter(|token| !token.is_empty())
+    } else if host == "huggingface.co"
+        || host.ends_with(".huggingface.co")
+        || host == "hf.co"
+        || host.ends_with(".hf.co")
+    {
+        std::env::var("HF_TOKEN")
+            .ok()
+            .or_else(|| std::env::var("HUGGING_FACE_HUB_TOKEN").ok())
+    } else {
+        None
+    };
     if let Some(token) = token {
         if let Ok(val) = HeaderValue::from_str(&format!("Bearer {}", token)) {
             headers.insert(AUTHORIZATION, val);
@@ -3486,7 +3661,7 @@ async fn download_model(
         .map_err(|e| e.to_string())?;
 
     let response = client
-        .get(&url)
+        .get(url)
         .send()
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
@@ -3516,8 +3691,19 @@ async fn download_model(
     );
 
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| e.to_string())?;
-        file.write_all(&chunk).map_err(|e| e.to_string())?;
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(err) => {
+                drop(file);
+                let _ = fs::remove_file(&part_path);
+                return Err(format!("Download interrupted: {err}"));
+            }
+        };
+        if let Err(err) = file.write_all(&chunk) {
+            drop(file);
+            let _ = fs::remove_file(&part_path);
+            return Err(err.to_string());
+        }
         downloaded += chunk.len() as u64;
 
         let percentage = if total_size > 0 {
@@ -3538,8 +3724,16 @@ async fn download_model(
             }),
         );
     }
-    file.flush().map_err(|e| e.to_string())?;
+    if let Err(err) = file.flush() {
+        drop(file);
+        let _ = fs::remove_file(&part_path);
+        return Err(err.to_string());
+    }
     drop(file);
+    if let Err(err) = validate_model_download_size(downloaded, total_size, min_bytes) {
+        let _ = fs::remove_file(&part_path);
+        return Err(err);
+    }
     fs::rename(&part_path, &dest_path).map_err(|e| e.to_string())?;
     let complete = json!({
         "filename": filename,
@@ -3603,8 +3797,7 @@ async fn get_engine_status(state: State<'_, Arc<AppState>>) -> Result<Value, Str
                 *phase = "failed".to_string();
             }
             if let Ok(mut last) = state.last_boot_message.lock() {
-                *last = "Managed ComfyUI stopped responding — click Restart GPU engine"
-                    .to_string();
+                *last = "Managed ComfyUI stopped responding — click Restart GPU engine".to_string();
             }
         }
     }
@@ -3875,6 +4068,7 @@ pub fn run() {
             restart_gpu_worker,
             sync_desktop_vram_profile,
             download_model,
+            get_release_status,
             get_setup_gate_status,
             start_engine_after_setup,
         ])
@@ -3895,7 +4089,8 @@ pub fn run() {
                 let roots = resolve_runtime_roots();
                 if setup_complete_from_config(&roots.data_root, &roots.backend_root) {
                     if let Err(err) = start_gpu_worker(boot_app.clone(), &root, &state_arc) {
-                        let _ = boot_app.emit("worker-failed", json!({ "error": err, "log_tail": "" }));
+                        let _ =
+                            boot_app.emit("worker-failed", json!({ "error": err, "log_tail": "" }));
                     }
                 }
             });

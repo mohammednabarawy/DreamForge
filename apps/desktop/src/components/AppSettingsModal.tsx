@@ -1,11 +1,12 @@
 import { Bot, CheckCircle2, KeyRound, ShieldCheck, X, XCircle, DownloadCloud, Loader2, FolderOpen } from "lucide-react";
 import { useState, useEffect } from "react";
-import { checkComfyBackend, installComfyBackend, pickFolder, type ComfyBackendStatus } from "../lib/tauri-api";
+import { checkComfyBackend, getReleaseStatus, installComfyBackend, pickFolder, revealPathInExplorer, type ComfyBackendStatus, type ReleaseStatus } from "../lib/tauri-api";
 import {
   applyRuntimePreferences,
   getRuntimeStatus,
   repairInstallation,
   type ModelsSource,
+  type RuntimeStatus,
 } from "../lib/runtimeSetup";
 import type {
   AgentProviderPreset,
@@ -14,7 +15,9 @@ import type {
   DreamForgeAppConfigPatch,
   StudioSettings,
   UserStyleProfile,
+  ModelOrganizationPlan,
 } from "../lib/studioBridge";
+import { organizeModels } from "../lib/studioBridge";
 
 type Props = {
   open: boolean;
@@ -32,6 +35,7 @@ type Props = {
   onUserStyleMemoryEnabledChange?: (enabled: boolean) => void | Promise<void>;
   onClearUserStyleMemory?: () => void | Promise<void>;
   onExportUserStyleMemory?: () => void | Promise<void>;
+  onRefreshInventory?: () => void | Promise<void>;
 };
 
 export function AppSettingsModal({
@@ -50,9 +54,8 @@ export function AppSettingsModal({
   onUserStyleMemoryEnabledChange,
   onClearUserStyleMemory,
   onExportUserStyleMemory,
+  onRefreshInventory,
 }: Props) {
-  if (!open) return null;
-
   const [civitaiKey, setCivitaiKey] = useState("");
   const [agentProvider, setAgentProvider] = useState("ollama");
   const [baseUrl, setBaseUrl] = useState("http://localhost:11434");
@@ -72,6 +75,12 @@ export function AppSettingsModal({
   const [modelsRoot, setModelsRoot] = useState("");
   const [modelsPathBusy, setModelsPathBusy] = useState(false);
   const [modelsPathMessage, setModelsPathMessage] = useState<string | null>(null);
+  const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
+  const [diagnosticsMessage, setDiagnosticsMessage] = useState<string | null>(null);
+  const [releaseStatus, setReleaseStatus] = useState<ReleaseStatus | null>(null);
+  const [releaseBusy, setReleaseBusy] = useState(false);
+  const [organizationBusy, setOrganizationBusy] = useState(false);
+  const [organizationPlan, setOrganizationPlan] = useState<ModelOrganizationPlan | null>(null);
   const [repairBusy, setRepairBusy] = useState(false);
   const [repairMessage, setRepairMessage] = useState<string | null>(null);
   const [repairLog, setRepairLog] = useState<string | null>(null);
@@ -85,10 +94,12 @@ export function AppSettingsModal({
       checkComfyBackend().then(setBackendStatus).catch(console.error);
       getRuntimeStatus()
         .then((status) => {
+          setRuntimeStatus(status);
           setModelsSource(status.config.models_source ?? "managed");
           setModelsRoot(status.paths.models_root ?? "");
         })
         .catch(console.error);
+      void getReleaseStatus().then(setReleaseStatus).catch(() => undefined);
     }
   }, [open]);
 
@@ -185,6 +196,57 @@ export function AppSettingsModal({
     }
   };
 
+  const handleOrganizeModels = async (apply: boolean) => {
+    if (apply && !window.confirm(
+      `Move ${organizationPlan?.summary.to_move ?? 0} high-confidence model file(s) to their ComfyUI folders? Low-confidence files will not be moved.`,
+    )) return;
+    setOrganizationBusy(true);
+    setDiagnosticsMessage(null);
+    try {
+      const result = await organizeModels(apply);
+      setOrganizationPlan(result);
+      if (apply) {
+        await onRefreshInventory?.();
+        setDiagnosticsMessage(
+          `Organized ${result.result?.moved.length ?? 0} file(s); ${result.result?.failed.length ?? 0} failed.`,
+        );
+      }
+    } catch (err) {
+      setDiagnosticsMessage(String(err));
+    } finally {
+      setOrganizationBusy(false);
+    }
+  };
+
+  const handleCopyDiagnostics = async () => {
+    if (!runtimeStatus) return;
+    const snapshot = {
+      generated_at: new Date().toISOString(),
+      system: runtimeStatus.system,
+      paths: runtimeStatus.paths,
+      models_validation: runtimeStatus.models_validation,
+      comfy_backend: backendStatus,
+    };
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(snapshot, null, 2));
+      setDiagnosticsMessage("Diagnostics copied (API keys and prompts are excluded). ");
+    } catch (err) {
+      setDiagnosticsMessage(`Could not copy diagnostics: ${String(err)}`);
+    }
+  };
+
+  const handleCheckRelease = async () => {
+    setReleaseBusy(true);
+    setDiagnosticsMessage(null);
+    try {
+      setReleaseStatus(await getReleaseStatus());
+    } catch (err) {
+      setDiagnosticsMessage(String(err));
+    } finally {
+      setReleaseBusy(false);
+    }
+  };
+
   const handleSaveAll = async () => {
     setSaveBusy(true);
     try {
@@ -223,6 +285,8 @@ export function AppSettingsModal({
       setSaveBusy(false);
     }
   };
+
+  if (!open) return null;
 
   return (
     <div
@@ -336,6 +400,140 @@ export function AppSettingsModal({
               </button>
               {modelsPathMessage && (
                 <p className="text-[10px] text-dfui-secondary bg-dfui-surface/40 px-2.5 py-1.5 rounded border border-dfui-border/30">{modelsPathMessage}</p>
+              )}
+            </section>
+
+            {runtimeStatus && (
+              <section className="space-y-3 rounded-lg border border-dfui-border/50 bg-dfui-bg/20 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-dfui-muted">
+                      Runtime diagnostics
+                    </p>
+                    <p className="text-[10px] text-dfui-tertiary">
+                      {runtimeStatus.system.disk_free_gb} GB free · {runtimeStatus.system.platform}
+                    </p>
+                  </div>
+                  <span className={`rounded border px-2 py-0.5 text-[9px] ${runtimeStatus.system.disk_ok && runtimeStatus.models_validation.ok ? "border-emerald-400/30 text-emerald-200" : "border-amber-400/30 text-amber-200"}`}>
+                    {runtimeStatus.system.disk_ok && runtimeStatus.models_validation.ok ? "Ready" : "Needs attention"}
+                  </span>
+                </div>
+                {runtimeStatus.models_validation.warnings.map((warning) => (
+                  <p key={warning} className="rounded border border-amber-400/20 bg-amber-400/5 px-2 py-1.5 text-[10px] text-amber-100/90">
+                    {warning}
+                  </p>
+                ))}
+                <div className="grid grid-cols-2 gap-1.5">
+                  {([
+                    ["Data", runtimeStatus.paths.data_root],
+                    ["Models", runtimeStatus.paths.models_root],
+                    ["Outputs", runtimeStatus.paths.outputs_root],
+                    ["ComfyUI", runtimeStatus.paths.comfy_root],
+                  ] as const).map(([label, path]) => (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => void revealPathInExplorer(path).catch((err) => setDiagnosticsMessage(String(err)))}
+                      className="inline-flex min-w-0 items-center gap-1.5 rounded-md border border-dfui-border/50 px-2 py-1.5 text-left text-[10px] text-dfui-secondary hover:border-dfui-accent/40"
+                      title={path}
+                    >
+                      <FolderOpen size={11} className="shrink-0" />
+                      <span className="truncate">Open {label}</span>
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void handleCopyDiagnostics()}
+                  className="df-btn df-btn-secondary w-full py-1.5 text-[10px]"
+                >
+                  Copy diagnostics
+                </button>
+              </section>
+            )}
+
+            <section className="space-y-2 rounded-lg border border-dfui-border/50 bg-dfui-bg/20 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-dfui-muted">
+                    DreamForge release
+                  </p>
+                  <p className="truncate text-[10px] text-dfui-tertiary">
+                    Current {releaseStatus?.current ?? "…"}
+                    {releaseStatus?.latest ? ` · Latest ${releaseStatus.latest}` : ""}
+                  </p>
+                </div>
+                {releaseStatus?.update_available && (
+                  <span className="shrink-0 rounded border border-dfui-accent/40 bg-dfui-accent/10 px-2 py-0.5 text-[9px] text-dfui-accent">
+                    Update available
+                  </span>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={releaseBusy}
+                  onClick={() => void handleCheckRelease()}
+                  className="df-btn df-btn-secondary flex-1 py-1.5 text-[10px] disabled:opacity-50"
+                >
+                  {releaseBusy ? "Checking…" : "Check for updates"}
+                </button>
+                {releaseStatus?.release_url && (
+                  <a
+                    href={releaseStatus.release_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="df-btn df-btn-secondary flex-1 py-1.5 text-center text-[10px]"
+                  >
+                    Open release page
+                  </a>
+                )}
+              </div>
+            </section>
+
+            <section className="space-y-3 rounded-lg border border-dfui-border/50 bg-dfui-bg/20 p-3">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-dfui-muted">
+                  Model library maintenance
+                </p>
+                <p className="mt-1 text-[10px] leading-relaxed text-dfui-tertiary">
+                  Preview safe ComfyUI folder moves. Ambiguous and low-confidence files always stay in place.
+                </p>
+              </div>
+              {organizationPlan && (
+                <div className="rounded-md border border-dfui-border/30 bg-black/10 p-2 text-[10px] text-dfui-secondary">
+                  <p>
+                    {organizationPlan.summary.to_move} safe move(s) · {organizationPlan.summary.ambiguous} ambiguous · {organizationPlan.summary.skipped} already placed/skipped
+                  </p>
+                  {organizationPlan.actions.filter((item) => item.will_move).slice(0, 5).map((item) => (
+                    <p key={item.source} className="mt-1 truncate font-mono text-[9px] text-dfui-muted" title={`${item.source} → ${item.destination}`}>
+                      {item.source.split(/[\\/]/).pop()} → {item.destination.split(/[\\/]/).slice(-2).join("/")}
+                    </p>
+                  ))}
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  disabled={organizationBusy}
+                  onClick={() => void handleOrganizeModels(false)}
+                  className="df-btn df-btn-secondary py-1.5 text-[10px] disabled:opacity-50"
+                >
+                  {organizationBusy ? "Scanning…" : "Preview organization"}
+                </button>
+                <button
+                  type="button"
+                  disabled={organizationBusy || !organizationPlan?.summary.to_move}
+                  onClick={() => void handleOrganizeModels(true)}
+                  className="df-btn df-btn-primary py-1.5 text-[10px] disabled:opacity-50"
+                >
+                  Apply safe moves
+                </button>
+              </div>
+              {diagnosticsMessage && (
+                <p className="rounded border border-dfui-border/30 bg-dfui-surface/30 px-2 py-1.5 text-[10px] text-dfui-secondary">
+                  {diagnosticsMessage}
+                </p>
               )}
             </section>
 

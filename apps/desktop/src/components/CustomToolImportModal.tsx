@@ -1,30 +1,34 @@
 import { useState } from "react";
 import { pickJsonFile } from "../lib/tauri-api";
-import { parseComfyWorkflowJson, detectPotentialBindings, type CustomToolBinding } from "../lib/customTools";
+import { importCustomToolWorkflow } from "../lib/studioBridge";
+import {
+  parseComfyWorkflowJson,
+  detectPotentialBindings,
+  type CustomTool,
+  type CustomToolBinding,
+} from "../lib/customTools";
 
 export function CustomToolImportModal({
   onClose,
   onSave,
+  existingTool,
 }: {
   onClose: () => void;
-  onSave: (tool: {
-    id: string;
-    name: string;
-    description: string;
-    workflow_path: string;
-    bindings: Record<string, CustomToolBinding>;
-  }) => void | Promise<void>;
+  onSave: (tool: CustomTool) => void | Promise<void>;
+  existingTool?: CustomTool | null;
 }) {
   const [filePath, setFilePath] = useState("");
   const [potentials, setPotentials] = useState<Record<string, any>>({});
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
+  const [name, setName] = useState(existingTool?.name ?? "");
+  const [description, setDescription] = useState(existingTool?.description ?? "");
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [importable, setImportable] = useState<boolean | null>(null);
   const [uiFormat, setUiFormat] = useState<boolean>(false);
 
-  const [selectedBindings, setSelectedBindings] = useState<Record<string, CustomToolBinding>>({});
+  const [selectedBindings, setSelectedBindings] = useState<Record<string, CustomToolBinding>>(
+    existingTool?.bindings ?? {},
+  );
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -68,12 +72,19 @@ export function CustomToolImportModal({
     setSaving(true);
     setSaveError(null);
     try {
+      const id = existingTool?.id ?? "custom_" + Date.now().toString();
+      const managed = await importCustomToolWorkflow(filePath, id);
       await onSave({
-        id: "custom_" + Date.now().toString(),
+        id,
         name,
         description,
-        workflow_path: filePath,
+        workflow_path: managed.workflow_path,
+        source_workflow_path: managed.source_workflow_path,
+        workflow_sha256: managed.workflow_sha256,
+        workflow_format: managed.workflow_format,
+        managed_workflow_version: managed.managed_workflow_version,
         bindings: selectedBindings,
+        model_overrides: existingTool?.model_overrides,
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -88,7 +99,7 @@ export function CustomToolImportModal({
       <div className="flex max-h-full w-full max-w-xl flex-col overflow-hidden rounded-md bg-[#252526] shadow-xl">
         <div className="flex items-center justify-between border-b border-[#3c3c3c] p-4">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-[#cccccc]">
-            Import Custom Tool
+            {existingTool ? "Relink Custom Tool" : "Import Custom Tool"}
           </h2>
           <button
             onClick={onClose}
@@ -190,7 +201,7 @@ export function CustomToolImportModal({
             disabled={!name || !filePath || importable !== true || saving}
             className="rounded bg-[#0e639c] px-4 py-1.5 text-xs text-white hover:bg-[#1177bb] disabled:opacity-50"
           >
-            {saving ? "Saving…" : "Import Tool"}
+            {saving ? "Saving…" : existingTool ? "Relink Tool" : "Import Tool"}
           </button>
         </div>
       </div>

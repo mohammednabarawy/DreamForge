@@ -12,6 +12,10 @@ export interface CustomTool {
   name: string;
   description: string;
   workflow_path: string;
+  source_workflow_path?: string;
+  workflow_sha256?: string;
+  workflow_format?: "ui" | "api";
+  managed_workflow_version?: number;
   bindings: Record<string, CustomToolBinding>;
   /** node_id:field -> library filename, or omit for workflow default / download */
   model_overrides?: Record<string, string>;
@@ -44,9 +48,11 @@ export function resolveCustomTool(
 
 /** Upsert a tool by workflow path so re-import keeps a stable tool id. */
 export function upsertCustomTool(list: CustomTool[], tool: CustomTool): CustomTool[] {
-  const normalized = normalizeWorkflowPath(tool.workflow_path);
+  const normalized = normalizeWorkflowPath(tool.source_workflow_path || tool.workflow_path);
   const existingIndex = list.findIndex(
-    (item) => normalizeWorkflowPath(item.workflow_path) === normalized,
+    (item) =>
+      item.id === tool.id ||
+      normalizeWorkflowPath(item.source_workflow_path || item.workflow_path) === normalized,
   );
   if (existingIndex < 0) {
     return [...list, tool];

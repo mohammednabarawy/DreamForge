@@ -379,6 +379,8 @@ export type ModelGalleryItem = {
   caption: string;
   engine_name: string;
   family: string;
+  size_bytes?: number;
+  modified_at?: number;
   thumbnail_path: string;
 };
 
@@ -1009,8 +1011,21 @@ export async function downloadModel(params: {
   category: string;
   filename: string;
   apiKey?: string | null;
+  minBytes?: number | null;
 }) {
   return invoke<void>("download_model", params);
+}
+
+export type ReleaseStatus = {
+  current: string;
+  latest: string;
+  update_available: boolean;
+  release_url: string;
+  published_at?: string;
+};
+
+export async function getReleaseStatus() {
+  return invoke<ReleaseStatus>("get_release_status");
 }
 
 export function onDownloadProgress(cb: (payload: DownloadProgressPayload) => void) {

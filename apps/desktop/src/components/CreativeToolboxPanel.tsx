@@ -27,6 +27,7 @@ export function CreativeToolboxPanel({
   const { appConfig, saveAppConfig } = useDreamForge();
 
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [toolToRelink, setToolToRelink] = useState<CustomTool | null>(null);
   const [customToolMissing, setCustomToolMissing] = useState<ModelDependencyItem[]>([]);
   const [customToolDepsReady, setCustomToolDepsReady] = useState<boolean | null>(null);
   const [customToolDepsBusy, setCustomToolDepsBusy] = useState(false);
@@ -371,7 +372,10 @@ export function CreativeToolboxPanel({
             </h2>
             <button
               type="button"
-              onClick={() => setIsImportModalOpen(true)}
+              onClick={() => {
+                setToolToRelink(null);
+                setIsImportModalOpen(true);
+              }}
               className="rounded bg-[#3c3c3c] px-2 py-1 text-[10px] text-[#cccccc] hover:bg-[#4a4a4a]"
             >
               + Import Tool...
@@ -379,7 +383,7 @@ export function CreativeToolboxPanel({
           </div>
 
           <p className="text-[10px] text-[#aaaaaa] mb-3">
-            Import ComfyUI API-format workflows and bind inputs to DreamForge prompts and images.
+            Import normal or API-format ComfyUI workflows and bind inputs to DreamForge prompts and images.
           </p>
 
           {activeCustomToolId && (
@@ -436,6 +440,16 @@ export function CreativeToolboxPanel({
                         </button>
                         <button
                           type="button"
+                          onClick={() => {
+                            setToolToRelink(tool);
+                            setIsImportModalOpen(true);
+                          }}
+                          className="text-[10px] text-[#888888] hover:text-[#cccccc]"
+                        >
+                          Relink
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => handleRemoveCustomTool(tool.id)}
                           className="text-[10px] text-[#888888] hover:text-[#cccccc]"
                         >
@@ -468,7 +482,11 @@ export function CreativeToolboxPanel({
 
       {isImportModalOpen && (
         <CustomToolImportModal
-          onClose={() => setIsImportModalOpen(false)}
+          existingTool={toolToRelink}
+          onClose={() => {
+            setIsImportModalOpen(false);
+            setToolToRelink(null);
+          }}
           onSave={handleSaveCustomTool}
         />
       )}

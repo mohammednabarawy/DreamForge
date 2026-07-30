@@ -31,19 +31,24 @@ export function SetupWizard({ onComplete }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<RuntimeStatus | null>(null);
+  const [dataRoot, setDataRoot] = useState("");
   const [modelsSource, setModelsSource] = useState<ModelsSource>("managed");
   const [externalModelsPath, setExternalModelsPath] = useState("");
   const [installLog, setInstallLog] = useState<string>("");
   const [installPct, setInstallPct] = useState(0);
 
   const defaultModelsPath = useMemo(
-    () => status?.paths.data_root ? `${status.paths.data_root}/models` : "",
-    [status],
+    () => {
+      const root = dataRoot.trim() || status?.paths.data_root || "";
+      return root ? `${root.replace(/[\\/]$/, "")}/models` : "";
+    },
+    [dataRoot, status],
   );
 
   const refreshStatus = useCallback(async () => {
     const next = await getRuntimeStatus();
     setStatus(next);
+    setDataRoot((current) => current || next.paths.data_root || "");
     if (next.config.models_source === "external" && next.config.models_root) {
       setModelsSource("external");
       setExternalModelsPath(next.config.models_root);
@@ -67,6 +72,7 @@ export function SetupWizard({ onComplete }: Props) {
         throw new Error("Choose an existing ComfyUI models folder or use the managed folder.");
       }
       const result = await applyRuntimePreferences({
+        data_root: dataRoot.trim() || undefined,
         models_source: modelsSource,
         models_root,
       });
@@ -81,7 +87,12 @@ export function SetupWizard({ onComplete }: Props) {
     } finally {
       setBusy(false);
     }
-  }, [externalModelsPath, modelsSource, refreshStatus]);
+  }, [dataRoot, externalModelsPath, modelsSource, refreshStatus]);
+
+  const browseDataRoot = useCallback(async () => {
+    const picked = await pickFolder();
+    if (picked) setDataRoot(picked);
+  }, []);
 
   const browseModelsFolder = useCallback(async () => {
     const picked = await pickFolder();
@@ -181,6 +192,31 @@ export function SetupWizard({ onComplete }: Props) {
 
         {step === "models" && (
           <div className="space-y-4">
+            <div className="space-y-2">
+              <p className="text-sm text-dfui-secondary">Where should DreamForge keep its data?</p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={dataRoot}
+                  onChange={(e) => setDataRoot(e.target.value)}
+                  placeholder="Choose a local SSD folder"
+                  className="df-input min-w-0 flex-1 text-xs"
+                />
+                <button
+                  type="button"
+                  className="df-btn df-btn-secondary shrink-0"
+                  onClick={() => void browseDataRoot()}
+                  aria-label="Choose DreamForge data folder"
+                >
+                  <FolderOpen className="h-4 w-4" />
+                </button>
+              </div>
+              <p className="text-[10px] text-dfui-muted">
+                Stores the managed engine, models, outputs, cache, and setup state. A local SSD is recommended.
+              </p>
+            </div>
+
+            <div className="border-t border-dfui-border/40" />
             <p className="text-sm text-dfui-secondary">Where should DreamForge look for models?</p>
 
             <label className="flex cursor-pointer gap-3 rounded-xl border border-dfui-border/50 p-3 hover:border-dfui-accent/40">

@@ -155,6 +155,7 @@ export function MarketplaceTab({
         category,
         filename: file.name,
         apiKey: civitaiApiKey.trim() || null,
+        minBytes: file.sizeKB ? Math.floor(file.sizeKB * 1024 * 0.99) : null,
       });
     } catch (e) {
       setDownloads((prev) => ({

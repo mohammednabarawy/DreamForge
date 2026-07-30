@@ -228,7 +228,7 @@ All development targets **`main`** (the default branch on GitHub). Open pull req
 
 ## License
 
-The generation stack under `backend/` includes third-party components; see [backend/LICENSE](backend/LICENSE) (GPLv3). Refer to repository notices for upstream attribution.
+DreamForge source is licensed under GPLv3; see [backend/LICENSE](backend/LICENSE). Third-party components keep their own licenses and attribution; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Acknowledgments
 

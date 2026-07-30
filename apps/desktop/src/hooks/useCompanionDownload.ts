@@ -474,6 +474,7 @@ export function useCompanionDownload(options?: Options) {
                   category,
                   filename,
                   apiKey: null,
+                  minBytes: item.min_bytes ?? null,
                 });
               } finally {
                 unlisten();

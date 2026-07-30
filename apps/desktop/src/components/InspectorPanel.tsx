@@ -6,6 +6,7 @@ import {
   Layers,
   LayoutGrid,
   Palette,
+  RefreshCw,
   SlidersHorizontal,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -46,8 +47,16 @@ import {
   type StudioSettings,
 } from "../lib/studioBridge";
 import { DEFAULT_MAX_LORA_STACK } from "../lib/loraStack";
+import type { StyleGroup } from "../lib/inventory";
 
 type Tab = "discover" | "models" | "loras" | "styles" | "settings" | "automation";
+type ModelSort = "recommended" | "name" | "newest" | "largest" | "family";
+
+function formatModelSize(bytes?: number): string {
+  if (!bytes) return "";
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  return `${Math.max(1, Math.round(bytes / 1024 ** 2))} MB`;
+}
 
 type Props = {
   settings: GenerationSettings;
@@ -63,6 +72,7 @@ type Props = {
   onSelectModel: (item: ModelGalleryItem) => void;
   onToggleLora: (name: string) => void;
   stylesList: StyleRecipe[];
+  styleGroups: StyleGroup[];
   aspectPresets: string[];
   uiDefaults: UiDefaults | null;
   onRefreshInventory: () => void;
@@ -104,6 +114,7 @@ export function InspectorPanel({
   onSelectModel,
   onToggleLora,
   stylesList,
+  styleGroups,
   aspectPresets,
   uiDefaults,
   onRefreshInventory,
@@ -132,6 +143,8 @@ export function InspectorPanel({
 }: Props) {
   const [tab, setTab] = useState<Tab>("models");
   const [styleFilter, setStyleFilter] = useState("");
+  const [modelFamily, setModelFamily] = useState("all");
+  const [modelSort, setModelSort] = useState<ModelSort>("recommended");
 
   const showEditStrength = Boolean(settings.input_image) || ["kontext", "inpaint", "img2img", "qwen_edit"].includes(settings.edit_type ?? "");
   const isQwenModel = (settings.model ?? activeModelLabel ?? "").toLowerCase().includes("qwen");
@@ -149,13 +162,27 @@ export function InspectorPanel({
     (powerUserInspector && (isEdit || isInpaint));
   const activeStyleId = settings.style;
   const activeLoras = settings.lora ?? [];
+  const modelFamilies = useMemo(
+    () => Array.from(new Set(modelGallery.map((item) => item.family).filter(Boolean))).sort(),
+    [modelGallery],
+  );
   const sortedModelGallery = useMemo(() => {
-    let gallery = modelGallery;
+    let gallery = modelGallery.filter((item) => modelFamily === "all" || item.family === modelFamily);
+    if (modelSort !== "recommended") {
+      gallery = [...gallery].sort((a, b) => {
+        if (modelSort === "newest") return (b.modified_at ?? 0) - (a.modified_at ?? 0);
+        if (modelSort === "largest") return (b.size_bytes ?? 0) - (a.size_bytes ?? 0);
+        if (modelSort === "family") {
+          return a.family.localeCompare(b.family) || a.caption.localeCompare(b.caption);
+        }
+        return a.caption.localeCompare(b.caption);
+      });
+    }
     gallery = sortGalleryForInpaintMode(gallery, studioMode as StudioMode);
     gallery = sortGalleryForUpscaleMode(gallery, studioMode as StudioMode);
     gallery = sortGalleryForEditMode(gallery, studioMode as StudioMode);
     return gallery;
-  }, [modelGallery, studioMode]);
+  }, [modelFamily, modelGallery, modelSort, studioMode]);
 
   const curatedUpscaleModel = useMemo(
     () =>
@@ -268,7 +295,7 @@ export function InspectorPanel({
           key: `${m.category}:${m.relative_path}`,
           value: `${m.category}:${m.relative_path}`,
           label: PathLabel(m.caption),
-          sublabel: m.family,
+          sublabel: [m.family, formatModelSize(m.size_bytes)].filter(Boolean).join(" · "),
           thumbnailPath: m.thumbnail_path,
           badge: fillBadge ?? kontextBadge ?? categoryBadge,
           selected: modelMatches(m, settings.model),
@@ -592,7 +619,41 @@ export function InspectorPanel({
                       loading…
                     </span>
                   )}
+                  <button
+                    type="button"
+                    onClick={onRefreshInventory}
+                    disabled={galleryLoading}
+                    className="rounded-md border border-dfui-border/50 p-1.5 text-dfui-muted hover:text-dfui-fg disabled:opacity-50"
+                    aria-label="Refresh model library"
+                    title="Refresh model library"
+                  >
+                    <RefreshCw size={13} className={galleryLoading ? "animate-spin" : ""} />
+                  </button>
                 </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <select
+                    value={modelFamily}
+                    onChange={(e) => setModelFamily(e.target.value)}
+                    className="df-select min-w-0 px-2 py-1.5 text-[10px]"
+                    aria-label="Filter model family"
+                  >
+                    <option value="all">All families</option>
+                    {modelFamilies.map((family) => <option key={family} value={family}>{family}</option>)}
+                  </select>
+                  <select
+                    value={modelSort}
+                    onChange={(e) => setModelSort(e.target.value as ModelSort)}
+                    className="df-select min-w-0 px-2 py-1.5 text-[10px]"
+                    aria-label="Sort models"
+                  >
+                    <option value="recommended">Recommended</option>
+                    <option value="name">Name</option>
+                    <option value="newest">Newest files</option>
+                    <option value="largest">Largest files</option>
+                    <option value="family">Family</option>
+                  </select>
+                </div>
+                <p className="text-[9px] text-dfui-tertiary">{sortedModelGallery.length} models</p>
               </>
             }
           >
@@ -614,6 +675,7 @@ export function InspectorPanel({
         {tab === "styles" && (
           <StyleThumbnailGrid
             styles={stylesList}
+            groups={styleGroups}
             filter={styleFilter}
             onFilterChange={setStyleFilter}
             onSelect={onStyleChange}

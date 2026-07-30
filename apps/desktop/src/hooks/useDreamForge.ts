@@ -1113,7 +1113,7 @@ export function useDreamForge() {
     const q = modelFilter.trim().toLowerCase();
     if (!q) return modelGalleryAll;
     return modelGalleryAll.filter((m) => {
-      const hay = `${m.category} ${m.caption} ${m.engine_name}`.toLowerCase();
+      const hay = `${m.category} ${m.caption} ${m.engine_name} ${m.family ?? ""}`.toLowerCase();
       return hay.includes(q);
     });
   }, [modelGalleryAll, modelFilter]);
@@ -4594,6 +4594,7 @@ export function useDreamForge() {
     selectModelGallery,
     toggleLoraGallery,
     styleRecipes,
+    styleGroups: inventory.styleGroups,
     aspectPresets: resolveAspectPresets(uiDefaults?.aspect_ratios),
     mentionTargets,
     resultCandidates,

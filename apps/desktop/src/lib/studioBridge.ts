@@ -75,6 +75,10 @@ export type DreamForgeAppConfig = {
     name: string;
     description: string;
     workflow_path: string;
+    source_workflow_path?: string;
+    workflow_sha256?: string;
+    workflow_format?: "ui" | "api";
+    managed_workflow_version?: number;
     bindings: Record<string, any>;
     model_overrides?: Record<string, string>;
   }>;
@@ -244,6 +248,38 @@ export async function bridgeInvoke<T>(
     throw new Error(res.error);
   }
   return res as T;
+}
+
+export type ModelOrganizationPlan = {
+  ok: boolean;
+  applied: boolean;
+  models_root: string;
+  summary: {
+    total: number;
+    to_move: number;
+    ambiguous: number;
+    skipped: number;
+    needs_review: number;
+  };
+  actions: Array<{
+    source: string;
+    destination: string;
+    will_move: boolean;
+    skip_reason?: string | null;
+  }>;
+  errors: string[];
+  result?: {
+    moved: Array<{ source: string; destination: string }>;
+    failed: Array<{ source: string; destination: string; error?: string }>;
+    skipped: Array<{ source: string; reason?: string }>;
+  };
+};
+
+export async function organizeModels(apply = false) {
+  return bridgeInvoke<ModelOrganizationPlan>("organize_models", {
+    apply,
+    include_low_confidence: false,
+  });
 }
 
 export async function getStudioSettings() {
@@ -664,6 +700,19 @@ export async function parseComfyWorkflowFile(path: string) {
     warning?: string;
     error?: string;
   }>("parse_comfy_workflow", { path });
+}
+
+export async function importCustomToolWorkflow(path: string, toolId: string) {
+  return bridgeInvoke<{
+    ok?: boolean;
+    workflow_path: string;
+    source_workflow_path: string;
+    workflow_sha256: string;
+    workflow_format: "ui" | "api";
+    managed_workflow_version: number;
+    warning?: string;
+    error?: string;
+  }>("import_custom_tool_workflow", { path, tool_id: toolId });
 }
 
 export async function ensureCreativeTaskReady(args: {

@@ -100,3 +100,30 @@ def test_force_refresh_invalidates_gallery_cache(tmp_path, monkeypatch):
     assert from_cache is False
     assert items == rebuilt
     assert not cache.MANIFEST_PATH.exists() or json.loads(cache.MANIFEST_PATH.read_text())
+
+
+def test_model_gallery_includes_sortable_file_metadata(tmp_path, monkeypatch):
+    models = tmp_path / "models"
+    checkpoint = models / "checkpoints" / "demo.safetensors"
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b"model-bytes")
+
+    monkeypatch.setattr("dreamforge_cli_inventory.MODELS_ROOT", models)
+    monkeypatch.setattr("modules.model_ui_defaults.GALLERY_CATEGORIES", ("checkpoints",))
+    monkeypatch.setattr(
+        "modules.model_ui_defaults.scan_model_category",
+        lambda _category: ["demo.safetensors"],
+    )
+    monkeypatch.setattr(
+        "modules.model_ui_defaults.gallery_caption",
+        lambda _category, name: name,
+    )
+    monkeypatch.setattr(
+        "modules.model_ui_defaults.engine_name_for_category",
+        lambda _category, name: name,
+    )
+    monkeypatch.setattr("modules.model_ui_defaults.infer_model_family", lambda _name: "sdxl")
+
+    item = cache.build_model_gallery_items()[0]
+    assert item["size_bytes"] == len(b"model-bytes")
+    assert item["modified_at"] == pytest.approx(checkpoint.stat().st_mtime)

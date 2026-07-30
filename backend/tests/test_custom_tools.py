@@ -14,6 +14,7 @@ from dreamforge_custom_tools import (
     custom_tool_dependency_entries,
     custom_tool_preflight,
     find_custom_tool,
+    import_custom_tool_workflow,
     missing_workflow_graph_model_entries,
 )
 
@@ -100,6 +101,46 @@ def test_find_custom_tool_reads_app_config(tmp_path: Path, monkeypatch):
     assert tool is not None
     assert tool["name"] == "Pixel Art"
     assert find_custom_tool("missing") is None
+
+
+def test_import_custom_tool_workflow_copies_ui_and_api_bundle(tmp_path: Path, monkeypatch):
+    source_dir = tmp_path / "desktop"
+    source_dir.mkdir()
+    ui_path = source_dir / "Carousel Maker - LoRAtech.json"
+    api_path = source_dir / "Carousel Maker -API- LoRAtech.json"
+    ui_path.write_text(
+        json.dumps({"nodes": [{"id": 1, "type": "SaveImage", "mode": 0}]}),
+        encoding="utf-8",
+    )
+    api_path.write_text(
+        json.dumps({"1": {"class_type": "SaveImage", "inputs": {"images": ["2", 0]}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DREAMFORGE_APP_CONFIG_PATH", str(tmp_path / "data" / "app-config.json"))
+
+    managed = import_custom_tool_workflow(str(ui_path), "custom/../carousel")
+    managed_path = Path(managed["workflow_path"])
+    assert managed_path.is_file()
+    assert managed_path.parent.parent.parent == tmp_path / "data" / "workflows"
+    assert (managed_path.parent / api_path.name).is_file()
+    assert managed["source_workflow_path"] == str(ui_path.resolve())
+    assert managed["workflow_format"] == "ui"
+    assert managed["managed_workflow_version"] == 1
+
+    ui_path.unlink()
+    api_path.unlink()
+    from dreamforge_comfy_workflow_import import load_api_workflow_template
+
+    assert load_api_workflow_template(managed_path)["1"]["class_type"] == "SaveImage"
+
+
+def test_import_custom_tool_workflow_rejects_non_workflow_json(tmp_path: Path, monkeypatch):
+    source = tmp_path / "not-a-workflow.json"
+    source.write_text('{"hello": "world"}', encoding="utf-8")
+    monkeypatch.setenv("DREAMFORGE_APP_CONFIG_PATH", str(tmp_path / "app-config.json"))
+
+    with pytest.raises(CustomToolError, match="Workflow could not be imported"):
+        import_custom_tool_workflow(str(source), "custom_1")
 
 
 def test_custom_tool_preflight_flags_missing_nodes_and_ui_json(tmp_path: Path):

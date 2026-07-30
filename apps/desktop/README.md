@@ -6,8 +6,9 @@ Native desktop shell for local DreamForge generation — split-pane studio UI wi
 
 1. **Node.js** 20+ (**arm64** on Apple Silicon — `node -p process.arch` must not be `x64` under Rosetta)
 2. **Rust** (`rustup`) — `cargo` on PATH (or use the launcher `.bat`, which prepends `%USERPROFILE%\.cargo\bin`)
-3. Repo root with Python runtime (`python_embeded\` after `setup.bat`, or `venv\` / `venv/` after `./setup.sh`) and model weights
-4. **ComfyUI** cloned under `backend/repositories/ComfyUI/` (via `./setup.sh` or `backend/launch.py --setup-only`)
+3. **Windows only:** Visual Studio Build Tools with the **Windows 10/11 SDK** (provides `rc.exe` for Tauri). If `cargo build` fails with `RC.EXE ... not found`, run `winget install Microsoft.WindowsSDK.10.0.22621` or add the SDK via Visual Studio Installer. `dreamforge.bat` loads this via `scripts\msvc_env.bat`.
+4. Repo root with Python runtime (`python_embeded\` after `setup.bat`, or `venv\` / `venv/` after `./setup.sh`) and model weights
+5. **ComfyUI** cloned under `backend/repositories/ComfyUI/` (via `./setup.sh` or `backend/launch.py --setup-only`)
 
 ## Run (dev)
 

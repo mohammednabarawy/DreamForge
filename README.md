@@ -86,6 +86,7 @@ Generated images and model weights are **not** committed. Place checkpoints unde
 | **Model files** | `.safetensors` / `.gguf` under `models/` |
 | **Node.js 20+** | Desktop app |
 | **Rust (rustup)** | Desktop app — `cargo` on PATH |
+| **Windows SDK** (Windows only) | Tauri build — `rc.exe` from VS Build Tools or `winget install Microsoft.WindowsSDK.10.0.22621` |
 
 ## First-time setup
 

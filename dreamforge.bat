@@ -2,6 +2,7 @@
 setlocal
 cd /d "%~dp0"
 call "%~dp0scripts\dreamforge_env.bat" || exit /b 1
+call "%~dp0scripts\msvc_env.bat" || exit /b 1
 if exist "%USERPROFILE%\.cargo\bin\cargo.exe" (
   set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
 ) else (

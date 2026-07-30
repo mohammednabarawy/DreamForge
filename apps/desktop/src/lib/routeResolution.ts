@@ -125,8 +125,10 @@ export function sanitizeSettingsForStudioMode(
   studioMode: StudioMode,
   settings: GenerationSettings,
 ): GenerationSettings {
+  const next = { ...settings };
+  if (studioMode !== "toolbox") next.custom_tool_id = undefined;
+
   if (isEditFamilyMode(studioMode)) {
-    const next = { ...settings };
     if (studioMode === "upscale") {
       next.input_image = undefined;
       next.inpaint_mask_path = undefined;
@@ -141,17 +143,15 @@ export function sanitizeSettingsForStudioMode(
   }
 
   if (studioMode === "toolbox") {
-    const next = { ...settings };
     next.upscale_image = undefined;
     next.upscale_method = undefined;
     return next;
   }
 
   if (studioMode !== "generate" && studioMode !== "agent") {
-    return settings;
+    return next;
   }
 
-  const next = { ...settings };
   next.upscale_image = undefined;
   next.upscale_method = undefined;
   next.inpaint_mask_path = undefined;

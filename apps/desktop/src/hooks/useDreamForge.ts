@@ -1086,14 +1086,15 @@ export function useDreamForge() {
           ...app,
           custom_tools: Array.isArray(app.custom_tools) ? app.custom_tools : [],
         });
-        const savedToolId = app.ui?.selected_custom_tool_id?.trim();
-        if (savedToolId) {
-          setSettings((prev) =>
-            prev.custom_tool_id === savedToolId
-              ? prev
-              : { ...prev, custom_tool_id: savedToolId },
-          );
-        }
+        const savedToolId =
+          app.ui?.studio_mode === "toolbox"
+            ? app.ui.selected_custom_tool_id?.trim()
+            : undefined;
+        setSettings((prev) =>
+          prev.custom_tool_id === savedToolId
+            ? prev
+            : { ...prev, custom_tool_id: savedToolId },
+        );
       }
       setAgentProviders(providers);
       if (styleProfile?.profile) {
@@ -3685,7 +3686,10 @@ export function useDreamForge() {
         userPickedStyleRef.current = plan.refUpdates.userPickedStyle;
       }
 
-      const mergedSettings = { ...settingsRef.current, ...plan.patch };
+      const mergedSettings = sanitizeSettingsForStudioMode(mode, {
+        ...settingsRef.current,
+        ...plan.patch,
+      });
       const routedSettings = await enforceCreativeTaskSettingsRemote(mergedSettings, {
         studioMode: mode,
         gallery: modelGalleryAll,

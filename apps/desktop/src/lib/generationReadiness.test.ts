@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { resolveCustomTool, type CustomTool } from "./customTools";
 import { computeGenerateReadiness } from "./generationReadiness";
+import { sanitizeSettingsForStudioMode } from "./routeResolution";
 
 const baseTool: CustomTool = {
   id: "custom_123",
@@ -41,5 +42,24 @@ describe("computeGenerateReadiness toolbox", () => {
       customTools: [baseTool],
     });
     expect(readiness.ok).toBe(true);
+  });
+});
+
+describe("sanitizeSettingsForStudioMode custom tools", () => {
+  it.each(["generate", "edit", "inpaint", "upscale", "agent"] as const)(
+    "clears the Toolbox workflow in %s mode",
+    (mode) => {
+      expect(
+        sanitizeSettingsForStudioMode(mode, { custom_tool_id: "custom_123" } as any)
+          .custom_tool_id,
+      ).toBeUndefined();
+    },
+  );
+
+  it("keeps the selected workflow in Toolbox mode", () => {
+    expect(
+      sanitizeSettingsForStudioMode("toolbox", { custom_tool_id: "custom_123" } as any)
+        .custom_tool_id,
+    ).toBe("custom_123");
   });
 });

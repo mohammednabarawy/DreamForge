@@ -7,6 +7,7 @@ def test_engine_namespace_preserves_workflow_specific_args():
         {
             "prompt": "regional poster",
             "workflow_mode": "area_composition",
+            "studio_mode": "generate",
             "region_prompts": ["0,0,512,512:left", "512,0,512,512:right"],
             "reference_mode": "ipadapter",
             "reference_images": ["D:/tmp/ref.png"],
@@ -26,6 +27,7 @@ def test_engine_namespace_preserves_workflow_specific_args():
     )
 
     assert ns.workflow_mode == "area_composition"
+    assert ns.studio_mode == "generate"
     assert ns.region_prompts == ["0,0,512,512:left", "512,0,512,512:right"]
     assert ns.reference_mode == "ipadapter"
     assert ns.reference_images == ["D:/tmp/ref.png"]

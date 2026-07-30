@@ -224,6 +224,7 @@ class DreamForgeEngine:
             "validate_output": "validate_output",
             "no_manifest": "no_manifest",
             "workflow_mode": "workflow_mode",
+            "studio_mode": "studio_mode",
             "prompt_enhancer": "prompt_enhancer",
             "arabic_text": "arabic_text",
             "execute_workflow_plan": "execute_workflow_plan",

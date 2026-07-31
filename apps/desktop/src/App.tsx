@@ -329,6 +329,7 @@ function DreamForgeStudio() {
         onClearUserStyleMemory={() => void mc.clearUserStyleMemory()}
         onExportUserStyleMemory={() => void mc.exportUserStyleMemory()}
         onRefreshInventory={mc.refreshStudioCatalog}
+        onInstallStarterPack={mc.installStarterPack}
       />
       <CompanionDownloadModal
         open={mc.companionDownload.open}

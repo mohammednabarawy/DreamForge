@@ -1042,3 +1042,36 @@ export function onDownloadProgress(cb: (payload: DownloadProgressPayload) => voi
 export function onDownloadComplete(cb: (payload: DownloadProgressPayload) => void) {
   return listen<DownloadProgressPayload>("download-complete", (e) => cb(e.payload));
 }
+
+export type ModelHealthResult = {
+  status: "healthy" | "degraded" | "incomplete";
+  installed_summary: Record<string, number>;
+  families_detected: string[];
+  corrupt_files: Array<{ name: string; path: string; category: string; reason: string }>;
+  incomplete_downloads: Array<{ name: string; path: string; size_mb: number }>;
+  missing_companions: Array<{ asset: string; family: string; recommendation: string; missing_details?: string }>;
+};
+
+export type SystemRepairResult = {
+  status: string;
+  actions_taken: string[];
+  gpu: Record<string, unknown>;
+  logs: string[];
+};
+
+export async function checkModelHealth() {
+  return invoke<ModelHealthResult>("check_model_health");
+}
+
+export async function runSystemRepair() {
+  return invoke<SystemRepairResult>("run_system_repair");
+}
+
+export type StarterPackResult = {
+  status: string;
+  items: ModelDependencyItem[];
+};
+
+export async function getStarterPackItems() {
+  return invoke<StarterPackResult>("get_starter_pack_items");
+}

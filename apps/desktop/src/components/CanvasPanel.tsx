@@ -43,15 +43,17 @@ type CanvasLayout = {
 };
 
 function canvasPanLimits(layout: CanvasLayout, zoom: number) {
+  const canPan = zoom > 1.001;
   const { frameW, frameH, imgW, imgH } = layout;
-  if (frameW <= 0 || frameH <= 0 || imgW <= 0 || imgH <= 0) {
-    return { maxX: 0, maxY: 0, canPan: false };
-  }
-  const scaledW = imgW * zoom;
-  const scaledH = imgH * zoom;
-  const maxX = Math.max(0, (scaledW - frameW) / 2);
-  const maxY = Math.max(0, (scaledH - frameH) / 2);
-  return { maxX, maxY, canPan: maxX > 0 || maxY > 0 };
+  const fw = frameW > 0 ? frameW : 800;
+  const fh = frameH > 0 ? frameH : 600;
+  const iw = imgW > 0 ? imgW : 512;
+  const ih = imgH > 0 ? imgH : 512;
+  const scaledW = iw * zoom;
+  const scaledH = ih * zoom;
+  const maxX = Math.max(scaledW / 2, Math.abs(scaledW - fw) / 2 + 100);
+  const maxY = Math.max(scaledH / 2, Math.abs(scaledH - fh) / 2 + 100);
+  return { maxX, maxY, canPan };
 }
 
 type Props = {
@@ -362,7 +364,12 @@ export function CanvasPanel({
   };
 
   const handleCanvasPanStart = (event: PointerEvent<HTMLDivElement>) => {
-    if (!canvasCanPan) return;
+    if (!canvasCanPan) {
+      if (canvasZoom <= 1.001 && !showCompareSplit) {
+        setZoomKeepingPan(CANVAS_ZOOM_STEP);
+      }
+      return;
+    }
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     panStartRef.current = {

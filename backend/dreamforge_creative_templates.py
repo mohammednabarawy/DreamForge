@@ -82,6 +82,24 @@ def list_creative_templates(*, studio_mode: str | None = None) -> list[dict[str,
                 "companions": list(entry.get("companions") or []),
             }
         )
+
+    # Programmatic Merge: Feature 4
+    if not mode or mode == "generate":
+        try:
+            from dreamforge_workflow_templates import WORKFLOW_TEMPLATES
+            for wf_id, wf_entry in WORKFLOW_TEMPLATES.items():
+                items.append(
+                    {
+                        "id": f"workflow_{wf_id}",
+                        "label": f"Create ({wf_entry.get('name')})",
+                        "studio_mode": "generate",
+                        "post_upscale": None,
+                        "companions": [],
+                    }
+                )
+        except ImportError:
+            pass
+
     return items
 
 
@@ -101,12 +119,35 @@ def default_template_id_for_mode(studio_mode: str, *, post_upscale: bool = False
     return str(base_id)
 
 
-def get_creative_template(template_id: str | None) -> dict[str, Any] | None:
-    if not template_id:
-        return None
+def resolve_creative_template(template_id: str) -> dict[str, Any] | None:
+    # Check if it's a merged workflow template
+    if str(template_id).startswith("workflow_"):
+        try:
+            from dreamforge_workflow_templates import WORKFLOW_TEMPLATES
+            wf_id = template_id[9:]
+            if wf_id in WORKFLOW_TEMPLATES:
+                wf = WORKFLOW_TEMPLATES[wf_id]
+                return {
+                    "id": template_id,
+                    "studio_mode": "generate",
+                    "label": f"Create ({wf.get('name')})",
+                    "model_pick": {},
+                    "defaults": dict(wf.get("default_params") or {}),
+                    "companions": [],
+                    "chain": {},
+                }
+        except ImportError:
+            pass
+
     catalog = load_creative_templates_catalog()
     entry = (catalog.get("templates") or {}).get(str(template_id))
     return copy.deepcopy(entry) if isinstance(entry, dict) else None
+
+
+def get_creative_template(template_id: str | None) -> dict[str, Any] | None:
+    if not template_id:
+        return None
+    return resolve_creative_template(template_id)
 
 
 def template_companion_ids(template_id: str | None) -> list[str]:

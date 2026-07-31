@@ -1541,6 +1541,40 @@ def cmd_analyze_identity_faces(params: dict) -> dict:
 from dreamforge_studio_bridge import STUDIO_HANDLERS  # noqa: E402
 
 
+def cmd_check_model_health(_params: dict) -> dict:
+    from dreamforge_model_health import check_model_health
+
+    return check_model_health()
+
+
+def cmd_run_system_repair(_params: dict) -> dict:
+    from dreamforge_repair import run_system_repair
+
+    return run_system_repair()
+
+
+def cmd_get_starter_pack_items(_params: dict) -> dict:
+    # Modeled as ModelDependencyItem objects
+    STARTER_PACK = [
+        {"url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors", "category": "checkpoints"},
+        {"url": "https://huggingface.co/stabilityai/sdxl-vae/resolve/main/sdxl_vae.safetensors", "category": "vae"},
+        {"url": "https://huggingface.co/h94/IP-Adapter-FaceID/resolve/main/ip-adapter-faceid_sdxl.bin", "category": "ipadapter"},
+        {"url": "https://huggingface.co/h94/IP-Adapter-FaceID/resolve/main/ip-adapter-faceid_sdxl_lora.safetensors", "category": "loras"},
+        {"url": "https://huggingface.co/lokitus/4x-UltraSharp/resolve/main/4x-UltraSharp.pth", "category": "upscale_models"},
+    ]
+    items = []
+    for item in STARTER_PACK:
+        items.append({
+            "id": f"starter_{item['url'].split('/')[-1]}",
+            "url": item["url"],
+            "filename": item["url"].split('/')[-1],
+            "category": item["category"],
+            "kind": "model",
+            "download_tier": "A"
+        })
+    return {"status": "success", "items": items}
+
+
 HANDLERS = {
     "ping": cmd_ping,
     "get_health": cmd_get_health,
@@ -1605,6 +1639,9 @@ HANDLERS = {
     "import_custom_tool_workflow": cmd_import_custom_tool_workflow,
     "check_comfy_backend": cmd_check_comfy_backend,
     "install_comfy_backend": cmd_install_comfy_backend,
+    "check_model_health": cmd_check_model_health,
+    "run_system_repair": cmd_run_system_repair,
+    "get_starter_pack_items": cmd_get_starter_pack_items,
     **STUDIO_HANDLERS,
 }
 

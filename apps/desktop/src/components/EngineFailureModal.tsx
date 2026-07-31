@@ -374,6 +374,20 @@ export function EngineFailureModal({
             <Clipboard size={13} />
             Copy diagnostics
           </ActionButton>
+          <ActionButton
+            onClick={async () => {
+              try {
+                const { runSystemRepair } = await import("../lib/tauri-api");
+                await runSystemRepair();
+                onRestartEngine?.();
+              } catch {
+                /* ignore */
+              }
+            }}
+          >
+            <Wrench size={13} />
+            System Repair
+          </ActionButton>
           <ActionButton onClick={onDismiss}>Dismiss</ActionButton>
           {primary && (
             <ActionButton

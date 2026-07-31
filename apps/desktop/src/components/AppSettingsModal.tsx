@@ -1,4 +1,4 @@
-import { Bot, CheckCircle2, KeyRound, ShieldCheck, X, XCircle, DownloadCloud, Loader2, FolderOpen } from "lucide-react";
+import { Bot, CheckCircle2, KeyRound, ShieldCheck, X, XCircle, DownloadCloud, Loader2, FolderOpen, ShieldAlert, Download } from "lucide-react";
 import { useState, useEffect } from "react";
 import { checkComfyBackend, getReleaseStatus, installComfyBackend, pickFolder, revealPathInExplorer, type ComfyBackendStatus, type ReleaseStatus } from "../lib/tauri-api";
 import {
@@ -36,6 +36,7 @@ type Props = {
   onClearUserStyleMemory?: () => void | Promise<void>;
   onExportUserStyleMemory?: () => void | Promise<void>;
   onRefreshInventory?: () => void | Promise<void>;
+  onInstallStarterPack?: () => void | Promise<void>;
 };
 
 export function AppSettingsModal({
@@ -55,6 +56,7 @@ export function AppSettingsModal({
   onClearUserStyleMemory,
   onExportUserStyleMemory,
   onRefreshInventory,
+  onInstallStarterPack,
 }: Props) {
   const [civitaiKey, setCivitaiKey] = useState("");
   const [agentProvider, setAgentProvider] = useState("ollama");
@@ -85,6 +87,41 @@ export function AppSettingsModal({
   const [repairMessage, setRepairMessage] = useState<string | null>(null);
   const [repairLog, setRepairLog] = useState<string | null>(null);
   const [saveBusy, setSaveBusy] = useState(false);
+  const [healthReport, setHealthReport] = useState<import("../lib/tauri-api").ModelHealthResult | null>(null);
+  const [healthBusy, setHealthBusy] = useState(false);
+
+  const handleCheckHealth = async () => {
+    setHealthBusy(true);
+    try {
+      const { checkModelHealth } = await import("../lib/tauri-api");
+      const res = await checkModelHealth();
+      setHealthReport(res);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setHealthBusy(false);
+    }
+  };
+
+  const handleRunSystemRepair = async () => {
+    setRepairBusy(true);
+    setRepairMessage(null);
+    try {
+      const { runSystemRepair } = await import("../lib/tauri-api");
+      const res = await runSystemRepair();
+      const summary = res.actions_taken?.length
+        ? res.actions_taken.join(" · ")
+        : "System repair complete.";
+      setRepairMessage(summary);
+      if (res.logs?.length) {
+        setRepairLog(res.logs.join("\n"));
+      }
+    } catch (e) {
+      setRepairMessage(`Repair error: ${e}`);
+    } finally {
+      setRepairBusy(false);
+    }
+  };
 
   const activeProvider = agentProviders.find((p) => p.id === agentProvider);
   const profileLabel = userStyleProfile?.enabled ? "Local profile" : "Local profile (memory off)";
@@ -775,6 +812,22 @@ export function AppSettingsModal({
                   >
                     Full repair
                   </button>
+                  <button
+                    type="button"
+                    disabled={repairBusy || installingBackend}
+                    onClick={() => void handleRunSystemRepair()}
+                    className="inline-flex items-center gap-1 rounded-md border border-df-blue/40 bg-df-blue/10 px-3 py-1.5 text-[11px] font-medium text-df-blue transition hover:bg-df-blue/20 disabled:opacity-50"
+                    title="Purges temporary VRAM caches, removes interrupted .part files, and resets setup markers"
+                  >
+                    {repairBusy ? (
+                      <>
+                        <Loader2 size={12} className="animate-spin" />
+                        Cleaning...
+                      </>
+                    ) : (
+                      "Clean Cache & System Repair"
+                    )}
+                  </button>
                 </div>
                 {repairMessage && (
                   <p className="text-[10px] text-dfui-secondary bg-dfui-surface/40 p-2 rounded border border-dfui-border/30">{repairMessage}</p>
@@ -786,6 +839,88 @@ export function AppSettingsModal({
                 )}
               </section>
             )}
+
+            <section className="space-y-3 rounded-lg border border-dfui-border/50 bg-dfui-bg/30 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-dfui-muted">
+                    Model health & integrity
+                  </p>
+                  <p className="text-[10px] text-dfui-tertiary">
+                    Scan for corrupt files, incomplete downloads, and missing companion assets
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={healthBusy}
+                  onClick={() => void handleCheckHealth()}
+                  className="flex-1 rounded-md border border-dfui-border/60 px-3 py-1.5 text-xs font-medium text-dfui-secondary shadow-sm transition hover:bg-dfui-surface hover:text-dfui-fg disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {healthBusy ? (
+                    <Loader2 size={14} className="inline animate-spin mr-1" />
+                  ) : (
+                    <ShieldAlert size={14} className="inline mr-1" />
+                  )}
+                  Check health
+                </button>
+                {onInstallStarterPack && (
+                  <button
+                    type="button"
+                    onClick={() => onInstallStarterPack()}
+                    className="flex-1 rounded-md bg-dfui-accent/10 border border-dfui-accent/30 px-3 py-1.5 text-xs font-medium text-dfui-accent shadow-sm transition hover:bg-dfui-accent/20 hover:border-dfui-accent/50"
+                  >
+                    <Download size={14} className="inline mr-1" />
+                    Install Starter Pack
+                  </button>
+                )}
+              </div>
+
+              {healthReport && (
+                <div className="space-y-2 text-[10px]">
+                  {healthReport.status === "healthy" ? (
+                    <p className="flex items-center gap-1.5 text-emerald-400">
+                      <CheckCircle2 size={12} />
+                      All models healthy · {healthReport.families_detected.length} families detected
+                    </p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {healthReport.corrupt_files.length > 0 && (
+                        <div className="rounded border border-rose-500/30 bg-rose-500/10 p-2 text-rose-200">
+                          <p className="font-semibold">Corrupt files ({healthReport.corrupt_files.length}):</p>
+                          <ul className="list-disc pl-4 mt-1 space-y-0.5">
+                            {healthReport.corrupt_files.slice(0, 5).map((f: any, i: number) => (
+                              <li key={i}>{f.name} — {f.reason}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {healthReport.incomplete_downloads.length > 0 && (
+                        <div className="rounded border border-amber-500/30 bg-amber-500/10 p-2 text-amber-200">
+                          <p className="font-semibold">Incomplete downloads ({healthReport.incomplete_downloads.length}):</p>
+                          <ul className="list-disc pl-4 mt-1 space-y-0.5">
+                            {healthReport.incomplete_downloads.slice(0, 5).map((f: any, i: number) => (
+                              <li key={i}>{f.name} ({f.size_mb} MB)</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {healthReport.missing_companions.length > 0 && (
+                        <div className="rounded border border-sky-500/30 bg-sky-500/10 p-2 text-sky-200">
+                          <p className="font-semibold">Missing companions ({healthReport.missing_companions.length}):</p>
+                          <ul className="list-disc pl-4 mt-1 space-y-0.5">
+                            {healthReport.missing_companions.map((c: any, i: number) => (
+                              <li key={i}><span className="font-medium">{c.asset}</span> ({c.family}) — {c.recommendation}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
 
             {userStyleProfile && onUserStyleMemoryEnabledChange && (
               <section className="space-y-3 rounded-lg border border-dfui-border/50 bg-dfui-bg/30 p-3">

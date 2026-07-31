@@ -137,6 +137,7 @@ import {
   type VramProfile,
 } from "../lib/vramProfiles";
 import { useCompanionDownload } from "./useCompanionDownload";
+import { getStarterPackItems } from "../lib/tauri-api";
 import {
   DEFAULT_MAX_LORA_STACK,
   hasLora,
@@ -4341,6 +4342,18 @@ export function useDreamForge() {
   ],
   );
   promptMissingCompanionsDownloadRef.current = promptMissingCompanionsDownload;
+
+  const installStarterPack = useCallback(async () => {
+    try {
+      const res = await getStarterPackItems();
+      if (res && res.items && res.items.length > 0) {
+        startCompanionDownload("Starter Pack", res.items);
+      }
+    } catch (e) {
+      console.error("Failed to load Starter Pack items", e);
+    }
+  }, [startCompanionDownload]);
+
   verifyCompanionDownloadsRef.current = async () => {
     const { merged } = await resolveMergedMissingDependencies();
     return { ready: merged.length === 0, stillMissing: merged };
@@ -4570,6 +4583,7 @@ export function useDreamForge() {
     refreshModelDependencies,
     downloadMissingCompanions,
     installCompanionItems,
+    installStarterPack,
     companionDownload,
     lowerVramProfile: lowerVramProfileHandler,
     canGenerate: effectiveGenerateReadiness.ok,

@@ -1,5 +1,6 @@
 import { Check, ImageIcon, RefreshCw, Upload } from "lucide-react";
 import { pathToAssetUrl } from "../lib/preview-display";
+import type { EnhanceTarget } from "../lib/autoEnhance";
 
 type Props = {
   images: string[];
@@ -9,6 +10,8 @@ type Props = {
   onRetry?: () => void;
   onUseAsSource?: (path: string) => void;
   retryBusy?: boolean;
+  onVaryImage?: (amount: "subtle" | "strong") => void;
+  onAutoEnhance?: (target: EnhanceTarget) => void;
 };
 
 export function ResultTray({
@@ -19,20 +22,72 @@ export function ResultTray({
   onRetry,
   onUseAsSource,
   retryBusy,
+  onVaryImage,
+  onAutoEnhance,
 }: Props) {
   if (images.length <= 1) return null;
 
   return (
     <div
-      className="absolute bottom-20 left-1/2 z-20 flex max-w-[min(42rem,92vw)] -translate-x-1/2 flex-col gap-1.5 rounded-lg border border-dfui-border/70 bg-dfui-panel/95 px-2 py-2 shadow-glass backdrop-blur-md"
+      className="absolute bottom-6 left-1/2 z-20 flex max-w-[min(42rem,92vw)] -translate-x-1/2 flex-col gap-1.5 rounded-lg border border-dfui-border/70 bg-dfui-panel/95 px-2 py-2 shadow-glass backdrop-blur-md"
       role="region"
       aria-label="Generation candidates"
     >
-      <div className="flex items-center justify-between gap-2 px-0.5">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-0.5">
         <p className="font-mono text-[9px] uppercase tracking-wider text-dfui-tertiary">
           Candidates ({images.length})
         </p>
-        <div className="flex items-center gap-1">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {onVaryImage ? (
+            <div className="flex items-center gap-1 rounded-md border border-dfui-border/50 bg-dfui-bg/40 px-1.5 py-0.5 text-[10px]">
+              <span className="text-dfui-tertiary">Vary:</span>
+              <button
+                type="button"
+                onClick={() => onVaryImage("subtle")}
+                className="rounded px-1.5 py-0.5 text-dfui-secondary hover:bg-dfui-surface hover:text-dfui-fg"
+                title="Light img2img variation"
+              >
+                Subtle
+              </button>
+              <button
+                type="button"
+                onClick={() => onVaryImage("strong")}
+                className="rounded px-1.5 py-0.5 text-dfui-secondary hover:bg-dfui-surface hover:text-dfui-fg"
+                title="Stronger img2img variation"
+              >
+                Strong
+              </button>
+            </div>
+          ) : null}
+          {onAutoEnhance ? (
+            <div className="flex items-center gap-1 rounded-md border border-dfui-border/50 bg-dfui-bg/40 px-1.5 py-0.5 text-[10px]">
+              <span className="text-dfui-tertiary">Fix:</span>
+              <button
+                type="button"
+                onClick={() => onAutoEnhance("face")}
+                className="rounded px-1.5 py-0.5 text-dfui-secondary hover:bg-dfui-surface hover:text-dfui-fg"
+                title="Detect & fix faces"
+              >
+                Face
+              </button>
+              <button
+                type="button"
+                onClick={() => onAutoEnhance("hands")}
+                className="rounded px-1.5 py-0.5 text-dfui-secondary hover:bg-dfui-surface hover:text-dfui-fg"
+                title="Detect & fix hands"
+              >
+                Hands
+              </button>
+              <button
+                type="button"
+                onClick={() => onAutoEnhance("eyes")}
+                className="rounded px-1.5 py-0.5 text-dfui-secondary hover:bg-dfui-surface hover:text-dfui-fg"
+                title="Detect & fix eyes"
+              >
+                Eyes
+              </button>
+            </div>
+          ) : null}
           {onRetry ? (
             <button
               type="button"

@@ -138,17 +138,11 @@ export function TitleBar({
       onPointerDown={handleTitleBarPointerDown}
       className="grid h-12 shrink-0 cursor-move grid-cols-[1fr_auto_1fr] items-center border-b border-dfui-border/60 bg-dfui-panel/80 px-3 backdrop-blur-glass select-none"
     >
-      <div className="flex min-w-0 cursor-default items-center gap-2.5">
-        <img
-          src={BRAND.logoIcon}
-          alt=""
-          className="h-8 w-8 shrink-0 rounded-md object-contain shadow-glow"
-          draggable={false}
-        />
+      <div className="flex min-w-0 cursor-default items-center">
         <img
           src={BRAND.logoWordmark}
           alt={BRAND.name}
-          className="h-7 max-w-[min(200px,38vw)] shrink object-contain object-left"
+          className="h-7 max-w-[min(220px,40vw)] shrink object-contain object-left"
           draggable={false}
         />
       </div>

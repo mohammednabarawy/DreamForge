@@ -10,9 +10,17 @@ type Props = {
   settings: GenerationSettings;
   sourceImage?: string;
   onChange: (patch: Partial<GenerationSettings>) => void;
+  onAutoEnhance?: (target: EnhanceTarget) => void;
+  onVaryImage?: (amount: "subtle" | "strong") => void;
 };
 
-export function AutoEnhancePanel({ settings, sourceImage, onChange }: Props) {
+export function AutoEnhancePanel({
+  settings,
+  sourceImage,
+  onChange,
+  onAutoEnhance,
+  onVaryImage,
+}: Props) {
   const activeTarget = normalizeEnhanceTarget(settings.enhance_target);
   const autoFix = Boolean(settings.enhance_auto_fix || activeTarget);
   const src =
@@ -30,19 +38,23 @@ export function AutoEnhancePanel({ settings, sourceImage, onChange }: Props) {
         detailPrompt: settings.detail_prompt,
       }),
     );
+    if (onAutoEnhance) {
+      onAutoEnhance(target);
+    }
   };
 
   return (
     <div className="overflow-hidden rounded-md border border-[#4a4a4a] bg-[#353535] font-mono shadow-[0_2px_8px_rgba(0,0,0,0.35)]">
       <div className="border-b border-[#4a4a4a] bg-[#232629] px-2.5 py-1.5">
-        <span className="text-[12px] font-semibold text-[#cccccc]">Detect &amp; fix</span>
+        <span className="text-[12px] font-semibold text-[#cccccc]">Detect, Fix &amp; Vary</span>
         <p className="text-[9px] leading-snug text-[#777777]">
-          Auto-detect face, hands, or eyes and run a targeted repair pass.
+          Auto-detect face, hands, or eyes to repair, or generate variations.
         </p>
       </div>
 
       <div className="space-y-2 px-2.5 py-2">
-        <div className="flex flex-wrap gap-1">
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="text-[9px] text-[#aaaaaa] mr-1">Fix:</span>
           {ENHANCE_TARGETS.map((target) => {
             const selected = activeTarget === target.id;
             return (
@@ -63,6 +75,30 @@ export function AutoEnhancePanel({ settings, sourceImage, onChange }: Props) {
             );
           })}
         </div>
+
+        {onVaryImage && (
+          <div className="flex flex-wrap items-center gap-1 pt-1 border-t border-[#444444]">
+            <span className="text-[9px] text-[#aaaaaa] mr-1">Vary:</span>
+            <button
+              type="button"
+              title="Light img2img variation"
+              disabled={!src}
+              onClick={() => onVaryImage("subtle")}
+              className="rounded border border-[#555555] px-2 py-0.5 text-[10px] text-[#aaaaaa] transition hover:border-[#6a9955]/60 hover:text-[#cccccc] disabled:opacity-40"
+            >
+              Subtle
+            </button>
+            <button
+              type="button"
+              title="Stronger img2img variation"
+              disabled={!src}
+              onClick={() => onVaryImage("strong")}
+              className="rounded border border-[#555555] px-2 py-0.5 text-[10px] text-[#aaaaaa] transition hover:border-[#6a9955]/60 hover:text-[#cccccc] disabled:opacity-40"
+            >
+              Strong
+            </button>
+          </div>
+        )}
 
         <label className="block">
           <span className="text-[9px] text-[#aaaaaa]">Detection prompt</span>
@@ -101,7 +137,7 @@ export function AutoEnhancePanel({ settings, sourceImage, onChange }: Props) {
         </label>
 
         {!src ? (
-          <p className="text-[9px] text-[#888888]">Attach a source image to enable auto-fix.</p>
+          <p className="text-[9px] text-[#888888]">Attach a source image to enable auto-fix and vary.</p>
         ) : autoFix ? (
           <p className="text-[9px] text-[#6a9955]">
             Ready — generate to run{" "}

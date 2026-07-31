@@ -32,6 +32,7 @@ import { EditFamilySettingsPanel } from "./EditFamilySettingsPanel";
 import { CreativeToolboxPanel } from "./CreativeToolboxPanel";
 import { UltimateSDUpscalePanel } from "./UltimateSDUpscalePanel";
 import { AutoEnhancePanel } from "./AutoEnhancePanel";
+import type { EnhanceTarget } from "../lib/autoEnhance";
 
 type Props = {
   settings: GenerationSettings;
@@ -52,6 +53,8 @@ type Props = {
   advancedMode?: boolean;
   modelGallery?: ModelGalleryItem[];
   onInstallCompanionItems?: (items: ModelDependencyItem[]) => void;
+  onAutoEnhance?: (target: EnhanceTarget) => void;
+  onVaryImage?: (amount: "subtle" | "strong") => void;
 };
 
 export function isModernModel(label: string): boolean {
@@ -132,6 +135,8 @@ export function GenerationSettingsPanel({
   advancedMode = false,
   modelGallery = [],
   onInstallCompanionItems,
+  onAutoEnhance,
+  onVaryImage,
 }: Props) {
   const [creativeTemplates, setCreativeTemplates] = useState<CreativeTemplateSummary[]>([]);
 
@@ -305,6 +310,8 @@ export function GenerationSettingsPanel({
               settings={settings}
               sourceImage={settings.upscale_image ?? settings.input_image}
               onChange={onChange}
+              onAutoEnhance={onAutoEnhance}
+              onVaryImage={onVaryImage}
             />
           </div>
         </>

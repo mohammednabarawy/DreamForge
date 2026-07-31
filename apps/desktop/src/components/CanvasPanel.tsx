@@ -1,10 +1,5 @@
 import { motion } from "framer-motion";
-import {
-  RotateCcw,
-  SplitSquareHorizontal,
-  ZoomIn,
-  ZoomOut,
-} from "lucide-react";
+import { SplitSquareHorizontal } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PointerEvent } from "react";
 import { BRAND } from "../lib/brand";
@@ -26,6 +21,7 @@ import { WorkflowPlanPanel } from "./WorkflowPlanPanel";
 import { CanvasMaskEditor } from "./CanvasMaskEditor";
 import { InpaintContextOverlay } from "./InpaintContextOverlay";
 import { OutpaintPreviewOverlay } from "./OutpaintPreviewOverlay";
+import type { EnhanceTarget } from "../lib/autoEnhance";
 import { ResultTray } from "./ResultTray";
 
 type Mention = { kind: "model" | "style"; label: string; value: string };
@@ -115,7 +111,7 @@ type Props = {
   referenceModelFamily?: string;
   experience?: UiExperience;
   onVaryImage?: (amount: "subtle" | "strong") => void;
-  onAutoEnhance?: (target: "face" | "hands" | "eyes") => void;
+  onAutoEnhance?: (target: EnhanceTarget) => void;
   resultCandidates?: string[];
   activeCandidatePath?: string | null;
   onSelectResultCandidate?: (path: string) => void;
@@ -535,7 +531,8 @@ export function CanvasPanel({
                 );
               }
             }}
-            title="Mouse wheel to zoom. Drag to pan when the image overflows the canvas."
+            onDoubleClick={resetCanvasView}
+            title="Mouse wheel to zoom. Drag to pan when the image overflows the canvas. Double-click to reset view."
           >
             {showCompareSplit ? (
               <div
@@ -720,35 +717,6 @@ export function CanvasPanel({
             </button>
           </div>
         )}
-        {previewUrl && !generating && onAutoEnhance && (
-          <div className="absolute bottom-16 left-4 z-10 flex items-center gap-1 rounded-lg border border-dfui-border/60 bg-dfui-panel/90 p-1 text-[10px] font-medium text-dfui-fg shadow-glass backdrop-blur-md">
-            <span className="px-1.5 text-dfui-muted">Fix</span>
-            <button
-              type="button"
-              onClick={() => onAutoEnhance("face")}
-              className="rounded-md px-2 py-1 text-dfui-muted transition hover:bg-dfui-surface hover:text-dfui-fg"
-              title="Detect and repair faces"
-            >
-              Face
-            </button>
-            <button
-              type="button"
-              onClick={() => onAutoEnhance("hands")}
-              className="rounded-md px-2 py-1 text-dfui-muted transition hover:bg-dfui-surface hover:text-dfui-fg"
-              title="Detect and repair hands"
-            >
-              Hands
-            </button>
-            <button
-              type="button"
-              onClick={() => onAutoEnhance("eyes")}
-              className="rounded-md px-2 py-1 text-dfui-muted transition hover:bg-dfui-surface hover:text-dfui-fg"
-              title="Mask and refine eyes"
-            >
-              Eyes
-            </button>
-          </div>
-        )}
         {resultCandidates.length > 1 && !generating && onSelectResultCandidate ? (
           <ResultTray
             images={resultCandidates}
@@ -758,69 +726,10 @@ export function CanvasPanel({
             onRetry={onRetryGeneration}
             onUseAsSource={onUseCandidateAsSource}
             retryBusy={generating}
+            onVaryImage={onVaryImage}
+            onAutoEnhance={onAutoEnhance}
           />
         ) : null}
-        {previewUrl && !generating && onVaryImage && (
-          <div className="absolute bottom-4 left-4 z-10 flex items-center gap-1 rounded-lg border border-dfui-border/60 bg-dfui-panel/90 p-1 text-[10px] font-medium text-dfui-fg shadow-glass backdrop-blur-md">
-            <span className="px-1.5 text-dfui-muted">Vary</span>
-            <button
-              type="button"
-              onClick={() => onVaryImage("subtle")}
-              className="rounded-md px-2 py-1 text-dfui-muted transition hover:bg-dfui-surface hover:text-dfui-fg"
-              title="Light img2img variation on this result"
-            >
-              Subtle
-            </button>
-            <button
-              type="button"
-              onClick={() => onVaryImage("strong")}
-              className="rounded-md px-2 py-1 text-dfui-muted transition hover:bg-dfui-surface hover:text-dfui-fg"
-              title="Stronger img2img variation on this result"
-            >
-              Strong
-            </button>
-          </div>
-        )}
-        {showCompareCanvas && !generating && (
-          <div className="absolute bottom-4 right-4 z-10 flex items-center gap-1 rounded-lg border border-dfui-border/60 bg-dfui-panel/90 p-1 text-[10px] font-medium text-dfui-fg shadow-glass backdrop-blur-md">
-            <button
-              type="button"
-              onClick={resetCanvasView}
-              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-dfui-muted transition hover:bg-dfui-surface hover:text-dfui-fg"
-              title="Fit image to canvas"
-            >
-              <RotateCcw size={12} />
-              Fit
-            </button>
-            <button
-              type="button"
-              onClick={() => setZoomKeepingPan(1)}
-              className="rounded-md px-2 py-1 text-dfui-muted transition hover:bg-dfui-surface hover:text-dfui-fg"
-              title="Reset zoom to 100%"
-            >
-              100%
-            </button>
-            <button
-              type="button"
-              onClick={() => setZoomKeepingPan(canvasZoom / CANVAS_ZOOM_STEP)}
-              className="rounded-md p-1.5 text-dfui-muted transition hover:bg-dfui-surface hover:text-dfui-fg"
-              title="Zoom out"
-            >
-              <ZoomOut size={13} />
-            </button>
-            <div className="min-w-10 text-center font-mono text-dfui-data">
-              {Math.round(canvasZoom * 100)}%
-            </div>
-            <button
-              type="button"
-              onClick={() => setZoomKeepingPan(canvasZoom * CANVAS_ZOOM_STEP)}
-              className="rounded-md p-1.5 text-dfui-muted transition hover:bg-dfui-surface hover:text-dfui-fg"
-              title="Zoom in"
-            >
-              <ZoomIn size={13} />
-            </button>
-          </div>
-        )}
         {canCompare && studioMode === "inpaint" && compareMode !== "before" && inputImagePath && (
           <button
             type="button"

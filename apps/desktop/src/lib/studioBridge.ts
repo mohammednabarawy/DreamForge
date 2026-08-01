@@ -327,6 +327,49 @@ export async function compileWorkflowRecipe(path: string) {
   return bridgeInvoke<WorkflowRecipeCompileResult>("compile_workflow_recipe", { path });
 }
 
+export type RecipeDiscoveryItem = {
+  id: string;
+  provider: string;
+  title: string;
+  image_url: string;
+  source_url: string;
+  recipe: Record<string, unknown>;
+  completeness?: { score?: number; present?: string[]; missing?: string[] };
+};
+
+export type RecipeDiscoverySearchResult = {
+  ok: boolean;
+  query: string;
+  page: number;
+  limit: number;
+  items: RecipeDiscoveryItem[];
+  providers: Array<{
+    provider: string;
+    ok: boolean;
+    items?: RecipeDiscoveryItem[];
+    error?: string;
+    error_code?: string;
+  }>;
+  provider_ok: number;
+  provider_errors: number;
+};
+
+export async function searchRecipeDiscovery(params: {
+  query: string;
+  provider?: "all" | "civitai_images" | "lexica";
+  page?: number;
+  limit?: number;
+  nsfw?: boolean;
+}) {
+  return bridgeInvoke<RecipeDiscoverySearchResult>("recipe_discovery_search", {
+    query: params.query,
+    provider: params.provider ?? "all",
+    page: params.page ?? 1,
+    limit: params.limit ?? 24,
+    nsfw: params.nsfw ?? false,
+  });
+}
+
 export function analyzeIdentityFaces(path: string): Promise<IdentityFaceAnalysis> {
   return bridgeInvoke<IdentityFaceAnalysis>("analyze_identity_faces", { path });
 }

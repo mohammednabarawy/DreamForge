@@ -61,7 +61,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function applyRecipe(value: unknown, onChange: Props["onChange"]): string {
+export function settingsPatchFromRecipe(value: unknown): Partial<GenerationSettings> {
   if (!isRecord(value) || value.schema_version !== "2.0") {
     throw new Error("This is not a DreamForge Recipe v2 file.");
   }
@@ -91,6 +91,11 @@ function applyRecipe(value: unknown, onChange: Props["onChange"]): string {
       patch.vram_profile = settings.vram_profile as GenerationSettings["vram_profile"];
     }
   }
+  return patch;
+}
+
+function applyRecipe(value: unknown, onChange: Props["onChange"]): string {
+  const patch = settingsPatchFromRecipe(value);
   onChange(patch);
   return `${patch.model || "recipe"} loaded`;
 }

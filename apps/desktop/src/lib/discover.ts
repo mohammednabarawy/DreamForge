@@ -6,14 +6,13 @@ const DISCOVER_KIND_KEY = "dreamforge.discoverLibrary.discoverKind.v1";
 
 export type DiscoverLibrarySurface = "discover" | "library";
 export type DiscoverLibraryTab = "models" | "loras" | "styles" | "settings" | "automation";
-export type DiscoverTab = "discover" | "discover_workflows";
+export type DiscoverTab = "discover" | "discover_recipes" | "discover_workflows";
 const DISCOVER_TAB_KEY = "dreamforge.discoverLibrary.discoverTab.v1";
 
 export function loadDiscoverTab(): DiscoverTab {
   try {
-    return localStorage.getItem(DISCOVER_TAB_KEY) === "discover_workflows"
-      ? "discover_workflows"
-      : "discover";
+    const saved = localStorage.getItem(DISCOVER_TAB_KEY);
+    return saved === "discover_workflows" || saved === "discover_recipes" ? saved : "discover";
   } catch {
     return "discover";
   }

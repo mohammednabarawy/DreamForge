@@ -7,6 +7,7 @@ import {
   LayoutGrid,
   Palette,
   RefreshCw,
+  Search,
   SlidersHorizontal,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -44,6 +45,7 @@ import { GenerationSettingsPanel } from "./GenerationSettingsPanel";
 import { AutomationPanel } from "./AutomationPanel";
 import { RecipeActions } from "./RecipeActions";
 import { DiscoverWorkflowTab } from "./DiscoverWorkflowTab";
+import { DiscoverRecipeTab } from "./DiscoverRecipeTab";
 import {
   aggregateLoraKeywords,
   importFooocusStyles,
@@ -65,7 +67,7 @@ import {
 import { DEFAULT_MAX_LORA_STACK } from "../lib/loraStack";
 import type { StyleGroup } from "../lib/inventory";
 
-type Tab = "discover" | "discover_workflows" | "models" | "loras" | "styles" | "settings" | "automation";
+type Tab = "discover" | "discover_recipes" | "discover_workflows" | "models" | "loras" | "styles" | "settings" | "automation";
 type ModelSort = "recommended" | "name" | "newest" | "largest" | "family";
 
 function formatModelSize(bytes?: number): string {
@@ -169,7 +171,7 @@ export function InspectorPanel({
 
   const tab: Tab = surface === "discover" ? discoverTab : libraryTab;
   const setTab = useCallback((next: Tab) => {
-    if (next === "discover" || next === "discover_workflows") {
+    if (next === "discover" || next === "discover_recipes" || next === "discover_workflows") {
       setDiscoverTab(next);
       saveDiscoverTab(next);
       return;
@@ -390,6 +392,7 @@ export function InspectorPanel({
   const tabs: { id: Tab; label: string; icon: typeof Boxes }[] = useMemo(() => {
     const tabMeta: Record<Tab, { label: string; icon: typeof Boxes }> = {
       discover: { label: "Discover", icon: Globe },
+      discover_recipes: { label: "Recipes", icon: Search },
       discover_workflows: { label: "Workflows", icon: LayoutGrid },
       models: { label: "Models", icon: Boxes },
       loras: { label: "LoRAs", icon: Layers },
@@ -398,7 +401,7 @@ export function InspectorPanel({
       automation: { label: surface === "library" ? "Automate" : "Batch", icon: LayoutGrid },
     };
     const ids: Tab[] = surface === "discover"
-      ? ["discover", "discover_workflows"]
+      ? ["discover", "discover_recipes", "discover_workflows"]
       : inspectorTabsForMode({
           studioMode,
           simpleInspectorLocked,
@@ -629,6 +632,8 @@ export function InspectorPanel({
             onRefreshInventory={onRefreshInventory}
           />
         )}
+
+        {tab === "discover_recipes" && <DiscoverRecipeTab onChange={onChange} />}
 
         {tab === "discover_workflows" && (
           <DiscoverWorkflowTab

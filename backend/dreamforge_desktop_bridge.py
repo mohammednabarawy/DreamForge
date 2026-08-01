@@ -1765,6 +1765,19 @@ def cmd_recipe_from_style(params: dict) -> dict:
     return {"ok": True, "recipe": recipe.to_dict()}
 
 
+def cmd_recipe_discovery_search(params: dict) -> dict:
+    """Browse remote prompt metadata without executing or downloading images."""
+    from dreamforge_recipe_discovery import search_recipe_discovery
+
+    return search_recipe_discovery(
+        query=str(params.get("query") or ""),
+        provider=str(params.get("provider") or "all"),
+        page=max(1, int(params.get("page") or 1)),
+        limit=max(1, min(50, int(params.get("limit") or 24))),
+        nsfw=bool(params.get("nsfw")),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Phase 3: Discovery, Provider, Download, Credential handlers
 # ---------------------------------------------------------------------------
@@ -1987,6 +2000,7 @@ HANDLERS = {
     "recipe_validate": cmd_recipe_validate,
     "recipe_export": cmd_recipe_export,
     "recipe_from_style": cmd_recipe_from_style,
+    "recipe_discovery_search": cmd_recipe_discovery_search,
     "provider_list": cmd_provider_list,
     "discovery_search": cmd_discovery_search,
     "discovery_cache_invalidate": cmd_discovery_cache_invalidate,

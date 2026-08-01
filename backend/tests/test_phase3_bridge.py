@@ -107,3 +107,4 @@ class TestPhase3BridgeHandlers:
 
     def test_recipe_discovery_handler_registered(self):
         assert "recipe_discovery_search" in HANDLERS
+        assert "recipe_resolve_civitai_resources" in HANDLERS

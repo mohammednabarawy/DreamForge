@@ -1025,6 +1025,11 @@ export async function downloadModel(params: {
   return invoke<void>("download_model", params);
 }
 
+export async function pickWorkflowFile(): Promise<string | null> {
+  if (!isTauri()) return null;
+  return await invoke("pick_workflow_file");
+}
+
 export type ReleaseStatus = {
   current: string;
   latest: string;

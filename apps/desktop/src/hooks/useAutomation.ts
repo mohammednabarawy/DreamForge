@@ -256,6 +256,8 @@ export function useAutomation({
     lastOutputDir,
     canRun:
       !generating &&
+      preview?.ok !== false &&
+      (preview?.job_count ?? 0) > 0 &&
       (automationType === "seed_batch" || Boolean(inputPath.trim())),
   };
 }

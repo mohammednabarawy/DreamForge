@@ -174,7 +174,9 @@ class TestDownloadManagerProcessing:
 
         def fake_download(**kwargs):
             called["url"] = kwargs["url"]
-            return {"ok": True, "path": str(tmp_path / "model.safetensors"), "filename": "model.safetensors"}
+            path = tmp_path / "model.safetensors"
+            path.write_bytes(b"model")
+            return {"ok": True, "path": str(path), "filename": "model.safetensors"}
 
         monkeypatch.setattr(
             "dreamforge_model_downloader.download_model", fake_download
@@ -207,7 +209,7 @@ class TestDownloadManagerProcessing:
             return {"ok": False, "error": "SHA256 mismatch for model.safetensors"}
 
         monkeypatch.setattr("dreamforge_model_downloader.download_model", fake_bad_hash)
-        result = mgr.enqueue(url="https://example.com/model.safetensors", expected_sha256="abc")
+        result = mgr.enqueue(url="https://example.com/model.safetensors", expected_sha256="a" * 64)
         item_id = result["item"]["id"]
         mgr._process_item(mgr._items[item_id])
         item = [i for i in mgr.queue_status()["items"] if i["id"] == item_id][0]
@@ -241,6 +243,36 @@ class TestDownloadManagerProcessing:
         item = [i for i in mgr.queue_status()["items"] if i["id"] == item_id][0]
         assert item["state"] == "installed"
         assert item["final_path"] == str(existing)
+
+    def test_existing_file_with_wrong_hash_is_replaced_only_by_verified_download(self, monkeypatch, tmp_path):
+        import hashlib
+        model_dir = tmp_path / "checkpoints"
+        model_dir.mkdir()
+        existing = model_dir / "existing.safetensors"
+        existing.write_bytes(b"wrong")
+        expected = hashlib.sha256(b"correct").hexdigest()
+        monkeypatch.setattr("dreamforge_model_downloader.resolve_category_folder", lambda _category: model_dir)
+        def fake_download(**_kwargs):
+            existing.write_bytes(b"correct")
+            return {"ok": True, "path": str(existing), "filename": existing.name}
+        monkeypatch.setattr("dreamforge_model_downloader.download_model", fake_download)
+        mgr = make_manager()
+        result = mgr.enqueue(url="https://example.com/model", filename="existing.safetensors", expected_sha256=expected)
+        mgr._process_item(mgr._items[result["item"]["id"]])
+        assert mgr.queue_status()["items"][0]["state"] == "installed"
+        assert existing.read_bytes() == b"correct"
+
+    def test_pause_interrupt_keeps_partial_item_paused(self, monkeypatch):
+        mgr = make_manager()
+        result = mgr.enqueue(url="https://example.com/model")
+        item = mgr._items[result["item"]["id"]]
+        def fake_download(**kwargs):
+            assert mgr.pause(item.id)["ok"] is True
+            assert kwargs["should_stop"]() is True
+            return {"ok": False, "interrupted": True}
+        monkeypatch.setattr("dreamforge_model_downloader.download_model", fake_download)
+        mgr._process_item(item)
+        assert item.state == "paused"
 
 
 class TestGetDownloadManager:

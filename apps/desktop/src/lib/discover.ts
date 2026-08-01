@@ -2,19 +2,19 @@ import { bridgeInvoke } from "./studioBridge";
 
 const SURFACE_KEY = "dreamforge.discoverLibrary.surface.v1";
 const LIBRARY_TAB_KEY = "dreamforge.discoverLibrary.libraryTab.v1";
-const DISCOVER_KIND_KEY = "dreamforge.discoverLibrary.discoverKind.v1";
 
 export type DiscoverLibrarySurface = "discover" | "library";
 export type DiscoverLibraryTab = "models" | "loras" | "styles" | "settings" | "automation";
-export type DiscoverTab = "discover" | "discover_recipes" | "discover_workflows";
+export type DiscoverTab = "discover_models" | "discover_loras" | "discover_recipes" | "discover_workflows";
 const DISCOVER_TAB_KEY = "dreamforge.discoverLibrary.discoverTab.v1";
 
 export function loadDiscoverTab(): DiscoverTab {
   try {
     const saved = localStorage.getItem(DISCOVER_TAB_KEY);
-    return saved === "discover_workflows" || saved === "discover_recipes" ? saved : "discover";
+    if (saved === "discover_loras" || saved === "discover_recipes" || saved === "discover_workflows") return saved;
+    return "discover_models";
   } catch {
-    return "discover";
+    return "discover_models";
   }
 }
 
@@ -56,22 +56,6 @@ export function loadDiscoverLibraryTab(): DiscoverLibraryTab {
 export function saveDiscoverLibraryTab(tab: DiscoverLibraryTab): void {
   try {
     localStorage.setItem(LIBRARY_TAB_KEY, tab);
-  } catch {
-    /* private mode or storage quota */
-  }
-}
-
-export function loadDiscoverKind(): "checkpoint" | "lora" {
-  try {
-    return localStorage.getItem(DISCOVER_KIND_KEY) === "lora" ? "lora" : "checkpoint";
-  } catch {
-    return "checkpoint";
-  }
-}
-
-export function saveDiscoverKind(kind: "checkpoint" | "lora"): void {
-  try {
-    localStorage.setItem(DISCOVER_KIND_KEY, kind);
   } catch {
     /* private mode or storage quota */
   }
@@ -144,12 +128,14 @@ export type ProviderListResult = {
 
 export type ProviderSearchResultEnvelope = {
   provider: string;
+  assets: DiscoverAsset[];
   ok: boolean;
   error: string;
   error_code: string;
   from_cache: boolean;
   total: number;
   page: number;
+  next_cursor: string;
 };
 
 export type DiscoverySearchResult = {
@@ -297,6 +283,7 @@ export async function discoverySearch(params: {
   nsfw?: boolean;
   sort?: string;
   provider_ids?: string[];
+  provider_cursors?: Record<string, string>;
 }): Promise<DiscoverySearchResult> {
   return bridgeInvoke<DiscoverySearchResult>("discovery_search", {
     query: params.query,
@@ -306,6 +293,7 @@ export async function discoverySearch(params: {
     nsfw: params.nsfw ?? false,
     sort: params.sort ?? "relevance",
     provider_ids: params.provider_ids ?? null,
+    provider_cursors: params.provider_cursors ?? null,
   });
 }
 

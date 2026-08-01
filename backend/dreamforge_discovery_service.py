@@ -15,6 +15,8 @@ Coordinates searches across registered providers (plan §11):
 from __future__ import annotations
 
 import threading
+from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from dreamforge_discovery_cache import get_cached_response, params_cache_key, put_cached_response
@@ -28,11 +30,13 @@ class DiscoveryService:
     def __init__(
         self,
         registry: ProviderRegistry | None = None,
+        asset_registry: Any | None = None,
         use_cache: bool = True,
         max_workers: int = 8,
         cache_ttl_seconds: int = 600,
     ) -> None:
         self.registry = registry or default_provider_registry()
+        self.asset_registry = asset_registry
         self.use_cache = use_cache
         self.max_workers = max_workers
         self.cache_ttl_seconds = cache_ttl_seconds
@@ -43,6 +47,7 @@ class DiscoveryService:
         params: ProviderSearchParams | None = None,
         *,
         provider_ids: list[str] | None = None,
+        provider_cursors: dict[str, str] | None = None,
         query: str = "",
         kind: str = "",
         limit: int = 20,
@@ -75,7 +80,11 @@ class DiscoveryService:
                     page=params.page,
                 )
                 return
-            results[index] = self._search_one(provider, params)
+            provider_params = replace(
+                params,
+                cursor=str((provider_cursors or {}).get(provider_id) or ""),
+            )
+            results[index] = self._search_one(provider, provider_params)
 
         threads = [
             threading.Thread(target=run, args=(i, p.id), name=f"discover-{p.id}")
@@ -117,6 +126,7 @@ class DiscoveryService:
                     from_cache=True,
                     total=int(cached.get("total") or 0),
                     page=params.page,
+                    next_cursor=str(cached.get("next_cursor") or ""),
                 )
                 return result
 
@@ -131,31 +141,41 @@ class DiscoveryService:
             return [p for pid in provider_ids if (p := self.registry.get(pid))]
         return self.registry.providers_for(kind)
 
-    @staticmethod
-    def _assemble_response(results: list[ProviderSearchResult], params: ProviderSearchParams) -> dict[str, Any]:
+    def _assemble_response(self, results: list[ProviderSearchResult], params: ProviderSearchParams) -> dict[str, Any]:
         """Merge per-provider results, dedupe by SHA256, and rank."""
+        local_registry = self.asset_registry
+        owns_registry = local_registry is None
+        if local_registry is None:
+            from dreamforge_asset_registry import AssetRegistry
+
+            local_registry = AssetRegistry()
         all_assets: list[dict[str, Any]] = []
         seen_sha: dict[str, str] = {}
         ok_count = 0
         error_count = 0
 
-        for result in results:
-            if result.ok:
-                ok_count += 1
-            else:
-                error_count += 1
-            for asset in result.assets:
-                asset_dict = asset.to_dict()
-                sha = asset.all_sha256 or None
-                duplicate_provider = ""
-                if sha:
-                    first_sha = next(iter(sha))
-                    if first_sha in seen_sha:
-                        duplicate_provider = seen_sha[first_sha]
-                    else:
-                        seen_sha[first_sha] = result.provider
-                asset_dict["deduplicated_from"] = duplicate_provider
-                all_assets.append(asset_dict)
+        try:
+            for result in results:
+                if result.ok:
+                    ok_count += 1
+                else:
+                    error_count += 1
+                for asset in result.assets:
+                    asset_dict = asset.to_dict()
+                    self._mark_installed(asset_dict, local_registry)
+                    sha = asset.all_sha256 or None
+                    duplicate_provider = ""
+                    if sha:
+                        first_sha = next(iter(sha))
+                        if first_sha in seen_sha:
+                            duplicate_provider = seen_sha[first_sha]
+                        else:
+                            seen_sha[first_sha] = result.provider
+                    asset_dict["deduplicated_from"] = duplicate_provider
+                    all_assets.append(asset_dict)
+        finally:
+            if owns_registry:
+                local_registry.close()
 
         # Rank: installed assets (is_local) sort after remote; keep provider order stable.
         all_assets.sort(key=lambda a: (bool(a.get("is_local")), a.get("name") or ""))
@@ -172,3 +192,16 @@ class DiscoveryService:
             "provider_ok": ok_count,
             "provider_errors": error_count,
         }
+
+    @staticmethod
+    def _mark_installed(asset: dict[str, Any], asset_registry: Any) -> None:
+        """Reconcile provider results with the SHA256-backed local registry."""
+        installed = False
+        for version in asset.get("versions") or []:
+            for file_ in version.get("files") or []:
+                record = asset_registry.file_by_sha256(str(file_.get("sha256") or ""))
+                local_path = str((record or {}).get("local_path") or "")
+                if local_path and Path(local_path).is_file():
+                    file_["local_path"] = local_path
+                    installed = True
+        asset["is_local"] = installed

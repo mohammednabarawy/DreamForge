@@ -66,8 +66,9 @@ import {
 } from "../lib/discover";
 import { DEFAULT_MAX_LORA_STACK } from "../lib/loraStack";
 import type { StyleGroup } from "../lib/inventory";
+import { settingsPatchFromRecipe } from "../lib/recipe";
 
-type Tab = "discover" | "discover_recipes" | "discover_workflows" | "models" | "loras" | "styles" | "settings" | "automation";
+type Tab = "discover_models" | "discover_loras" | "discover_recipes" | "discover_workflows" | "models" | "loras" | "styles" | "settings" | "automation";
 type ModelSort = "recommended" | "name" | "newest" | "largest" | "family";
 
 function formatModelSize(bytes?: number): string {
@@ -116,7 +117,6 @@ type Props = {
   onRefreshOutputs?: () => void;
   onBeforeAutomationRun?: () => Promise<boolean>;
   onRevealPath?: (path: string) => void;
-  onExecuteWorkflowRecipe?: (recipe: Record<string, unknown>, source?: string) => Promise<boolean>;
 };
 
 export function InspectorPanel({
@@ -159,7 +159,6 @@ export function InspectorPanel({
   onRefreshOutputs,
   onBeforeAutomationRun,
   onRevealPath,
-  onExecuteWorkflowRecipe,
 }: Props) {
   const [surface, setSurface] = useState<DiscoverLibrarySurface>(() => loadDiscoverLibrarySurface());
   const [libraryTab, setLibraryTab] = useState<DiscoverLibraryTab>(() => loadDiscoverLibraryTab());
@@ -173,7 +172,7 @@ export function InspectorPanel({
 
   const tab: Tab = surface === "discover" ? discoverTab : libraryTab;
   const setTab = useCallback((next: Tab) => {
-    if (next === "discover" || next === "discover_recipes" || next === "discover_workflows") {
+    if (next === "discover_models" || next === "discover_loras" || next === "discover_recipes" || next === "discover_workflows") {
       setDiscoverTab(next);
       saveDiscoverTab(next);
       return;
@@ -186,6 +185,17 @@ export function InspectorPanel({
     setSurface(next);
     saveDiscoverLibrarySurface(next);
   }, []);
+
+  const applyRecipeToGenerate = useCallback((recipe: Record<string, unknown>, source = "") => {
+    onChange({
+      ...settingsPatchFromRecipe(recipe),
+      use_comfy_server: true,
+      workflow_mode: "generate",
+      workflow_source: source || undefined,
+    });
+    switchSurface("library");
+    setTab("settings");
+  }, [onChange, setTab, switchSurface]);
 
   const handleImportFooocusStyles = useCallback(async (payload: unknown) => {
     const result = await importFooocusStyles(payload);
@@ -393,7 +403,8 @@ export function InspectorPanel({
 
   const tabs: { id: Tab; label: string; icon: typeof Boxes }[] = useMemo(() => {
     const tabMeta: Record<Tab, { label: string; icon: typeof Boxes }> = {
-      discover: { label: "Discover", icon: Globe },
+      discover_models: { label: "Models", icon: Boxes },
+      discover_loras: { label: "LoRAs", icon: Layers },
       discover_recipes: { label: "Recipes", icon: Search },
       discover_workflows: { label: "Workflows", icon: LayoutGrid },
       models: { label: "Models", icon: Boxes },
@@ -403,7 +414,7 @@ export function InspectorPanel({
       automation: { label: surface === "library" ? "Automate" : "Batch", icon: LayoutGrid },
     };
     const ids: Tab[] = surface === "discover"
-      ? ["discover", "discover_recipes", "discover_workflows"]
+      ? ["discover_models", "discover_loras", "discover_recipes", "discover_workflows"]
       : inspectorTabsForMode({
           studioMode,
           simpleInspectorLocked,
@@ -563,7 +574,7 @@ export function InspectorPanel({
           ))}
         </div>
         <div className="relative flex items-stretch">
-          {canScrollTabsLeft && (
+          {surface === "library" && canScrollTabsLeft && (
             <>
               <div
                 className="pointer-events-none absolute left-8 top-0 z-[1] h-full w-6 bg-gradient-to-r from-dfui-panel/95 to-transparent"
@@ -581,7 +592,9 @@ export function InspectorPanel({
           )}
           <div
             ref={tabScrollRef}
-            className="df-tab-scroll flex min-w-0 flex-1 gap-1 overflow-x-auto scroll-smooth px-2 py-2"
+            className={surface === "discover"
+              ? "grid min-w-0 flex-1 grid-cols-4 gap-1 px-2 py-2"
+              : "df-tab-scroll flex min-w-0 flex-1 gap-1 overflow-x-auto scroll-smooth px-2 py-2"}
           >
             {tabs.map(({ id, label, icon: Icon }) => (
               <button
@@ -589,7 +602,7 @@ export function InspectorPanel({
                 type="button"
                 data-tab-id={id}
                 onClick={() => setTab(id)}
-                className={`flex shrink-0 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition-all duration-200 ${
+                className={`flex items-center justify-center rounded-lg font-medium transition-all duration-200 ${surface === "discover" ? "min-w-0 flex-col gap-0.5 px-1 py-1.5 text-[9px]" : "shrink-0 gap-1.5 px-3 py-2 text-xs"} ${
                   tab === id ? "df-tab-active" : "df-tab"
                 }`}
               >
@@ -608,7 +621,7 @@ export function InspectorPanel({
               </button>
             ))}
           </div>
-          {canScrollTabsRight && (
+          {surface === "library" && canScrollTabsRight && (
             <>
               <button
                 type="button"
@@ -628,21 +641,34 @@ export function InspectorPanel({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3 text-sm">
-        {tab === "discover" && (
+        {(tab === "discover_models" || tab === "discover_loras") && (
           <MarketplaceTab
             civitaiApiKey={civitaiApiKey}
+            kind={tab === "discover_loras" ? "lora" : "checkpoint"}
             onRefreshInventory={onRefreshInventory}
           />
         )}
 
-        {tab === "discover_recipes" && <DiscoverRecipeTab onChange={onChange} />}
+        {tab === "discover_recipes" && (
+          <DiscoverRecipeTab
+            modelGallery={modelGallery}
+            loraGallery={loraGallery}
+            onRefreshInventory={onRefreshInventory}
+            onSaveStudioSettings={onSaveStudioSettings}
+            onChange={(patch) => {
+              onChange(patch);
+              switchSurface("library");
+              setTab("settings");
+            }}
+          />
+        )}
 
         {tab === "discover_workflows" && (
           <DiscoverWorkflowTab
             templates={workflowTemplates}
             loading={workflowLoading}
             error={workflowError}
-            onExecuteRecipe={onExecuteWorkflowRecipe}
+            onApplyRecipe={applyRecipeToGenerate}
           />
         )}
 

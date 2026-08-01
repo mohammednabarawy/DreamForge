@@ -4,8 +4,12 @@ from dreamforge_workflow_compatibility import analyze_workflow
 def _native_graph():
     return {
         "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "model.safetensors"}},
-        "2": {"class_type": "KSampler", "inputs": {"model": ["1", 0]}},
-        "3": {"class_type": "SaveImage", "inputs": {"images": ["2", 0]}},
+        "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "a fox", "clip": ["1", 1]}},
+        "3": {"class_type": "CLIPTextEncode", "inputs": {"text": "blur", "clip": ["1", 1]}},
+        "4": {"class_type": "EmptyLatentImage", "inputs": {"width": 512, "height": 512}},
+        "5": {"class_type": "KSampler", "inputs": {"model": ["1", 0], "positive": ["2", 0], "negative": ["3", 0], "latent_image": ["4", 0], "steps": 20, "cfg": 6, "sampler_name": "euler", "scheduler": "normal"}},
+        "6": {"class_type": "VAEDecode", "inputs": {"samples": ["5", 0], "vae": ["1", 2]}},
+        "7": {"class_type": "SaveImage", "inputs": {"images": ["6", 0]}},
     }
 
 
@@ -32,3 +36,15 @@ def test_command_node_is_invalid_and_blocked():
     result = analyze_workflow({"1": {"class_type": "ExecutePython", "inputs": {"code": "print(1)"}}})
     assert result["state"] == "INVALID"
     assert result["security"]["blocked"] is True
+
+
+def test_known_advanced_graph_is_not_native():
+    graph = _native_graph()
+    graph["8"] = {"class_type": "ControlNetLoader", "inputs": {"control_net_name": "depth.safetensors"}}
+    assert analyze_workflow(graph)["state"] == "ADAPTABLE"
+
+
+def test_disconnected_known_node_is_not_native():
+    graph = _native_graph()
+    graph["8"] = {"class_type": "CLIPTextEncode", "inputs": {"text": "unused", "clip": ["1", 1]}}
+    assert analyze_workflow(graph)["state"] == "ADAPTABLE"

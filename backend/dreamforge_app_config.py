@@ -79,6 +79,7 @@ DEFAULT_APP_CONFIG: dict[str, Any] = {
         "enhance_strength": "balanced",
         "use_flufferizer": True,
         "civitai_api_key": "",
+        "huggingface_api_key": "",
     },
     "custom_tools": [],
 }
@@ -102,6 +103,7 @@ _UI_KEYS = {
     "enhance_strength",
     "use_flufferizer",
     "civitai_api_key",
+    "huggingface_api_key",
     "selected_custom_tool_id",
 }
 _EXPERIENCE_VALUES = {"simple", "pro"}
@@ -161,16 +163,20 @@ def load_app_config(*, redacted: bool = True) -> dict[str, Any]:
     return redact_config(cfg) if redacted else cfg
 
 
-def save_app_config(incoming: dict[str, Any]) -> dict[str, Any]:
+def save_app_config(
+    incoming: dict[str, Any], *, preserve_redacted_secrets: bool = True
+) -> dict[str, Any]:
     existing = load_app_config(redacted=False)
     next_cfg = _normalize_ui_config(
         _normalize_agent_config(_merge_allowed(existing, incoming))
     )
     ui_in = incoming.get("ui") if isinstance(incoming.get("ui"), dict) else {}
-    if "civitai_api_key" in ui_in and not str(ui_in.get("civitai_api_key") or "").strip():
-        preserved = str(existing.get("ui", {}).get("civitai_api_key") or "").strip()
-        if preserved:
-            next_cfg.setdefault("ui", {})["civitai_api_key"] = preserved
+    if preserve_redacted_secrets:
+        for key in ("civitai_api_key", "huggingface_api_key"):
+            if key in ui_in and not str(ui_in.get(key) or "").strip():
+                preserved = str(existing.get("ui", {}).get(key) or "").strip()
+                if preserved:
+                    next_cfg.setdefault("ui", {})[key] = preserved
 
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -187,14 +193,12 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
     redacted["agent"]["api_key_configured"] = False
     redacted["agent"]["api_key_tail"] = ""
     ui = redacted.setdefault("ui", {})
-    civitai_key = str(ui.get("civitai_api_key") or "")
-    if civitai_key:
-        ui["civitai_api_key_configured"] = True
-        ui["civitai_api_key_tail"] = civitai_key[-4:] if len(civitai_key) >= 4 else civitai_key
-    else:
-        ui["civitai_api_key_configured"] = False
-        ui["civitai_api_key_tail"] = ""
-    ui["civitai_api_key"] = ""
+    for provider in ("civitai", "huggingface"):
+        key = f"{provider}_api_key"
+        secret = str(ui.get(key) or "")
+        ui[f"{key}_configured"] = bool(secret)
+        ui[f"{key}_tail"] = secret[-4:] if secret else ""
+        ui[key] = ""
     return redacted
 
 

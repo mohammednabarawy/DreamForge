@@ -40,6 +40,7 @@ def params_cache_key(provider_id: str, params: Any) -> str:
             "kind": params.kind,
             "limit": params.limit,
             "page": params.page,
+            "cursor": params.cursor,
             "filters": params.filters.to_cache_key(),
         },
         sort_keys=True,

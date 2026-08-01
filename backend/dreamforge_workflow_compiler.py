@@ -17,53 +17,32 @@ def _graph(payload: Mapping[str, Any]) -> dict[str, Any]:
     return copy.deepcopy(root if isinstance(root, dict) else payload)
 
 
-def _nodes(graph: Mapping[str, Any], class_type: str) -> list[dict[str, Any]]:
-    return [
-        node for node in graph.values()
-        if isinstance(node, Mapping) and node.get("class_type") == class_type
-    ]
-
-
-def _first_input(nodes: list[dict[str, Any]], name: str) -> Any:
-    for node in nodes:
-        value = (node.get("inputs") or {}).get(name)
-        if value not in (None, "") and not isinstance(value, list):
-            return value
-    return None
-
-
-def _text_prompts(graph: Mapping[str, Any]) -> tuple[str, str]:
-    positive = negative = ""
-    for node in _nodes(graph, "CLIPTextEncode") + _nodes(graph, "TextEncodeQwenImageEdit"):
-        inputs = node.get("inputs") or {}
-        text = inputs.get("text") or inputs.get("prompt")
-        if not isinstance(text, str) or not text.strip():
-            continue
-        meta = node.get("_meta") if isinstance(node.get("_meta"), Mapping) else {}
-        label = str(meta.get("title") or meta.get("name") or "").lower()
-        if "negative" in label and not negative:
-            negative = text.strip()
-        elif not positive:
-            positive = text.strip()
-        elif not negative:
-            negative = text.strip()
-    return positive, negative
+def _link(value: Any) -> str | None:
+    return str(value[0]) if isinstance(value, list) and len(value) >= 2 and isinstance(value[0], (str, int)) else None
 
 
 def compile_workflow_recipe(payload: Mapping[str, Any], *, source: str = "") -> dict[str, Any]:
     report = analyze_workflow(payload, source=source)
     if report.get("state") != "NATIVE":
         return {"ok": True, "report": report, "can_recreate": False, "missing": ["native workflow semantics"]}
-    graph = _graph(payload)
-    positive, negative = _text_prompts(graph)
-    loaders = _nodes(graph, "CheckpointLoaderSimple") + _nodes(graph, "UNETLoader") + _nodes(graph, "UnetLoaderGGUF")
-    samplers = _nodes(graph, "KSampler") + _nodes(graph, "KSamplerAdvanced")
-    latent = _nodes(graph, "EmptyLatentImage") + _nodes(graph, "EmptySD3LatentImage")
-    sampler = samplers[0] if samplers else {}
+    graph = {str(key): value for key, value in _graph(payload).items() if isinstance(value, Mapping)}
+    sampler = next(node for node in graph.values() if node.get("class_type") == "KSampler")
     sampler_inputs = sampler.get("inputs") or {}
-    model = _first_input(loaders, "ckpt_name") or _first_input(loaders, "unet_name") or ""
-    width = _first_input(latent, "width")
-    height = _first_input(latent, "height")
+    node = lambda value: graph.get(_link(value) or "", {})
+    positive = str((node(sampler_inputs.get("positive")).get("inputs") or {}).get("text") or "").strip()
+    negative = str((node(sampler_inputs.get("negative")).get("inputs") or {}).get("text") or "").strip()
+    latent_inputs = node(sampler_inputs.get("latent_image")).get("inputs") or {}
+    width, height = latent_inputs.get("width"), latent_inputs.get("height")
+
+    loras: list[LoRAComponent] = []
+    model_node = node(sampler_inputs.get("model"))
+    while model_node.get("class_type") in {"LoraLoader", "LoraLoaderModelOnly"}:
+        inputs = model_node.get("inputs") or {}
+        weight = inputs.get("strength_model")
+        loras.append(LoRAComponent(filename=str(inputs.get("lora_name") or ""), weight=float(1 if weight is None else weight)))
+        model_node = node(inputs.get("model"))
+    loader_inputs = model_node.get("inputs") or {}
+    model = loader_inputs.get("ckpt_name") or loader_inputs.get("unet_name") or ""
     missing: list[str] = []
     if not model:
         missing.append("model")
@@ -71,6 +50,8 @@ def compile_workflow_recipe(payload: Mapping[str, Any], *, source: str = "") -> 
         missing.append("positive_prompt")
     if not sampler_inputs.get("sampler_name"):
         missing.append("sampler")
+    if not sampler_inputs.get("scheduler"):
+        missing.append("scheduler")
     if not isinstance(sampler_inputs.get("cfg"), (int, float)) or float(sampler_inputs.get("cfg") or 0) <= 0:
         missing.append("cfg_scale")
     if not isinstance(sampler_inputs.get("steps"), (int, float)) or int(sampler_inputs.get("steps") or 0) <= 0:
@@ -86,20 +67,14 @@ def compile_workflow_recipe(payload: Mapping[str, Any], *, source: str = "") -> 
         cfg_scale=float(sampler_inputs.get("cfg") or 0),
         steps=int(sampler_inputs.get("steps") or 0),
         aspect_ratio=f"{width}x{height}" if width and height else "",
-        loras=[
-            LoRAComponent(
-                filename=str((node.get("inputs") or {}).get("lora_name") or ""),
-                weight=float((node.get("inputs") or {}).get("strength_model") or 1),
-            )
-            for node in _nodes(graph, "LoraLoader") + _nodes(graph, "LoraLoaderModelOnly")
-            if (node.get("inputs") or {}).get("lora_name")
-        ],
+        loras=[item for item in reversed(loras) if item.filename],
         source="comfy_workflow",
         source_url=source,
         provenance=Provenance(provider="local", source_url=source),
         settings={
             "width": int(width),
             "height": int(height),
+            "scheduler": str(sampler_inputs.get("scheduler") or ""),
         } if isinstance(width, (int, float)) and isinstance(height, (int, float)) and width > 0 and height > 0 else {},
     )
     return {

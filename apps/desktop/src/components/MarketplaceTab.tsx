@@ -27,14 +27,13 @@ import {
   pauseDownload,
   recommendFileVariants,
   resumeDownload,
-  loadDiscoverKind,
-  saveDiscoverKind,
   setCredential,
   supportedArchitectures,
 } from "../lib/discover";
 
 type Props = {
   civitaiApiKey: string;
+  kind: DiscoverKind;
   onRefreshInventory: () => void;
 };
 
@@ -78,9 +77,8 @@ function formatVariant(variant: string) {
     .join(" ");
 }
 
-export function MarketplaceTab({ onRefreshInventory }: Props) {
+export function MarketplaceTab({ kind, onRefreshInventory }: Props) {
   const [query, setQuery] = useState("");
-  const [kind, setKindState] = useState<DiscoverKind>(() => loadDiscoverKind());
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<string>("all");
   const [assets, setAssets] = useState<DiscoverAsset[]>([]);
@@ -88,19 +86,19 @@ export function MarketplaceTab({ onRefreshInventory }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [supportedArches, setSupportedArches] = useState<string[]>([]);
   const [compute, setCompute] = useState<ComputeProfileInfo | null>(null);
-  const [credentialConfigured, setCredentialConfigured] = useState(false);
+  const [credentialProvider, setCredentialProvider] = useState<"civitai" | "huggingface">("civitai");
+  const [credentialConfigured, setCredentialConfigured] = useState<Record<string, boolean>>({});
   const [queue, setQueue] = useState<DownloadItem[]>([]);
   const [variantSel, setVariantSel] = useState<Record<string, DiscoverAssetFile>>({});
   const [recommendations, setRecommendations] = useState<Record<string, RatedFileVariant | null>>({});
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [showKeyField, setShowKeyField] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
   const seenInstalled = useRef(new Set<string>());
-
-  const setKind = useCallback((next: DiscoverKind) => {
-    setKindState(next);
-    saveDiscoverKind(next);
-  }, []);
+  const queryRef = useRef("");
+  const pageRef = useRef(1);
+  const cursorsRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
     void listProviders()
@@ -113,7 +111,7 @@ export function MarketplaceTab({ onRefreshInventory }: Props) {
       .then(setCompute)
       .catch(() => undefined);
     void credentialStatus()
-      .then((res) => setCredentialConfigured(Boolean(res.status?.civitai?.configured)))
+      .then((res) => setCredentialConfigured(Object.fromEntries(Object.entries(res.status ?? {}).map(([id, value]) => [id, Boolean(value?.configured)]))))
       .catch(() => undefined);
   }, []);
 
@@ -129,14 +127,13 @@ export function MarketplaceTab({ onRefreshInventory }: Props) {
           );
           if (newlyInstalled.length) {
             newlyInstalled.forEach((i) => seenInstalled.current.add(i.id));
-            newlyInstalled.forEach((i) => {
-              void relocateDownloadedModel({
+            void Promise.allSettled(newlyInstalled.map((i) =>
+              relocateDownloadedModel({
                 path: i.final_path,
                 category: i.category,
                 filename: i.filename,
-              }).catch(() => undefined);
-            });
-            void onRefreshInventory();
+              })
+            )).then(() => onRefreshInventory());
           }
         })
         .catch(() => undefined);
@@ -149,28 +146,41 @@ export function MarketplaceTab({ onRefreshInventory }: Props) {
     };
   }, [onRefreshInventory]);
 
-  const runSearch = useCallback(async () => {
+  const runSearch = useCallback(async (append = false) => {
     setSearching(true);
     setError(null);
+    if (!append) setAssets([]);
+    const page = append ? pageRef.current + 1 : 1;
     try {
       const res = await discoverySearch({
-        query: query.trim(),
+        query: queryRef.current.trim(),
         kind,
         limit: 24,
-        page: 1,
+        page,
         provider_ids: selectedProvider === "all" ? undefined : [selectedProvider],
+        provider_cursors: append ? cursorsRef.current : undefined,
       });
-      setAssets(res.assets);
+      setAssets((current) => {
+        if (!append) return res.assets;
+        const merged = new Map(current.map((asset) => [asset.id, asset]));
+        res.assets.forEach((asset) => merged.set(asset.id, asset));
+        return [...merged.values()];
+      });
+      pageRef.current = page;
+      cursorsRef.current = Object.fromEntries(
+        res.providers.filter((entry) => entry.next_cursor).map((entry) => [entry.provider, entry.next_cursor]),
+      );
+      setHasMore(res.providers.some((entry) => Boolean(entry.next_cursor) || entry.assets.length >= 24));
       if (res.provider_errors > 0 && res.provider_ok === 0) {
         setError("No search provider responded. Check your connection or API key.");
       }
     } catch (e) {
       setError(String(e));
-      setAssets([]);
+      if (!append) setAssets([]);
     } finally {
       setSearching(false);
     }
-  }, [query, kind, selectedProvider]);
+  }, [kind, selectedProvider]);
 
   useEffect(() => {
     void runSearch();
@@ -240,8 +250,8 @@ export function MarketplaceTab({ onRefreshInventory }: Props) {
   const handleSaveApiKey = async () => {
     setSettingsError(null);
     try {
-      const res = await setCredential("civitai", apiKeyInput.trim());
-      setCredentialConfigured(Boolean(res.status?.civitai?.configured));
+      const res = await setCredential(credentialProvider, apiKeyInput.trim());
+      setCredentialConfigured((current) => ({ ...current, [credentialProvider]: Boolean(res.status?.[credentialProvider]?.configured) }));
       setShowKeyField(false);
       setApiKeyInput("");
     } catch (e) {
@@ -252,7 +262,8 @@ export function MarketplaceTab({ onRefreshInventory }: Props) {
   const queueByAsset = useMemo(() => {
     const map: Record<string, DownloadItem> = {};
     queue.forEach((item) => {
-      if (!map[item.provider_asset_id]) map[item.provider_asset_id] = item;
+      const key = [item.provider, item.provider_asset_id, item.provider_version_id, item.filename].join(":");
+      if (!map[key] || ACTIVE_STATES.has(item.state)) map[key] = item;
     });
     return map;
   }, [queue]);
@@ -264,7 +275,11 @@ export function MarketplaceTab({ onRefreshInventory }: Props) {
 
   const downloadButtonState = (asset: DiscoverAsset) => {
     if (asset.is_local) return "installed";
-    const item = queueByAsset[asset.provenance.provider_asset_id];
+    const version = activeVersion(asset);
+    const file = selectedFile(asset);
+    const key = [asset.provenance.provider, asset.provenance.provider_asset_id, asset.provenance.provider_version_id || version?.provider_version_id || "", file?.filename || ""].join(":");
+    const item = queueByAsset[key];
+    if (item?.state === "installed") return "installed";
     if (item && ACTIVE_STATES.has(item.state)) return "downloading";
     return "download";
   };
@@ -275,35 +290,23 @@ export function MarketplaceTab({ onRefreshInventory }: Props) {
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <div className="space-y-2">
-        <div className="flex gap-1.5">
-          {(["checkpoint", "lora"] as DiscoverKind[]).map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              onClick={() => setKind(mode)}
-              className={`flex-1 rounded-md border px-2 py-1.5 text-[10px] font-semibold transition ${
-                kind === mode
-                  ? "border-dfui-accent bg-dfui-accent/15 text-dfui-fg"
-                  : "border-dfui-border/60 text-dfui-muted hover:text-dfui-fg"
-              }`}
-            >
-              {prettyKind(mode)}
-            </button>
-          ))}
-        </div>
         <div className="flex gap-2">
           <input
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              queryRef.current = e.target.value;
+              setHasMore(false);
+            }}
             onKeyDown={(e) => {
-              if (e.key === "Enter") void runSearch();
+              if (e.key === "Enter") void runSearch(false);
             }}
             placeholder={`Search ${prettyKind(kind)}...`}
             className="df-input min-w-0 flex-1 px-2.5 py-1.5 text-xs"
           />
           <button
             type="button"
-            onClick={() => void runSearch()}
+            onClick={() => void runSearch(false)}
             disabled={searching}
             className="df-button-primary inline-flex items-center justify-center rounded-md px-3 py-1.5 text-xs disabled:opacity-50"
             title="Search"
@@ -349,17 +352,21 @@ export function MarketplaceTab({ onRefreshInventory }: Props) {
         {!showKeyField ? (
           <div className="flex items-center gap-2 rounded-md border border-dfui-border/50 bg-dfui-bg/30 px-2 py-1.5">
             <KeyRound size={12} className="text-dfui-muted" />
+            <select value={credentialProvider} onChange={(e) => setCredentialProvider(e.target.value as "civitai" | "huggingface")} className="df-input px-1 py-0.5 text-[9px]" aria-label="Credential provider">
+              <option value="civitai">Civitai</option>
+              <option value="huggingface">Hugging Face</option>
+            </select>
             <p className="min-w-0 flex-1 text-[10px] text-dfui-tertiary">
-              {credentialConfigured
-                ? "Using saved Civitai API key from App settings"
-                : "No Civitai API key set. Add one for gated downloads."}
+              {credentialConfigured[credentialProvider]
+                ? `Using saved ${credentialProvider === "civitai" ? "Civitai" : "Hugging Face"} token`
+                : `Add a ${credentialProvider === "civitai" ? "Civitai API key" : "Hugging Face token"} for gated downloads.`}
             </p>
             <button
               type="button"
               onClick={() => setShowKeyField(true)}
               className="shrink-0 rounded border border-dfui-border/60 px-1.5 py-0.5 text-[9px] text-dfui-secondary transition hover:text-dfui-fg"
             >
-              {credentialConfigured ? "Update" : "Add key"}
+              {credentialConfigured[credentialProvider] ? "Update" : "Add key"}
             </button>
           </div>
         ) : (
@@ -372,7 +379,7 @@ export function MarketplaceTab({ onRefreshInventory }: Props) {
                   if (e.key === "Enter") void handleSaveApiKey();
                 }}
                 type="password"
-                placeholder="Civitai API key"
+                placeholder={credentialProvider === "civitai" ? "Civitai API key" : "Hugging Face token"}
                 className="df-input min-w-0 flex-1 px-2 py-1 text-[10px]"
               />
               <button
@@ -412,10 +419,11 @@ export function MarketplaceTab({ onRefreshInventory }: Props) {
             const version = activeVersion(asset);
             if (!version) return null;
             const image = version.thumbnail_url || asset.versions[0]?.thumbnail_url;
-            const queueItem = queueByAsset[asset.provenance.provider_asset_id];
-            const buttonState = downloadButtonState(asset);
             const recommended = recommendations[asset.id] ?? null;
             const file = selectedFile(asset);
+            const queueKey = [asset.provenance.provider, asset.provenance.provider_asset_id, asset.provenance.provider_version_id || version.provider_version_id || "", file?.filename || ""].join(":");
+            const queueItem = queueByAsset[queueKey];
+            const buttonState = downloadButtonState(asset);
             const unsupported = archUnsupported(asset);
             const multiFile = version.files.length > 1;
 
@@ -430,6 +438,8 @@ export function MarketplaceTab({ onRefreshInventory }: Props) {
                     className="absolute inset-0 h-full w-full object-cover opacity-70 transition-opacity group-hover:opacity-45"
                     alt=""
                     loading="lazy"
+                    decoding="async"
+                    referrerPolicy="no-referrer"
                   />
                 ) : (
                   <div className="absolute inset-0 bg-dfui-panel" />
@@ -558,6 +568,16 @@ export function MarketplaceTab({ onRefreshInventory }: Props) {
             </div>
           )}
         </div>
+        {assets.length > 0 && hasMore && (
+          <button
+            type="button"
+            onClick={() => void runSearch(true)}
+            disabled={searching}
+            className="mx-auto mt-3 block rounded-md border border-dfui-border/60 px-4 py-1.5 text-[10px] text-dfui-secondary transition hover:text-dfui-fg disabled:opacity-50"
+          >
+            {searching ? "Loading…" : "Load more results"}
+          </button>
+        )}
       </div>
 
       {activeQueue.length > 0 && (

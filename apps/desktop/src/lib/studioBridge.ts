@@ -351,9 +351,12 @@ export type WorkflowIndexItem = DiscoverWorkflowTemplate & {
   url?: string;
   thumbnail_url?: string;
   source?: string;
+  category?: string;
+  tags?: string[];
+  open_source?: boolean;
 };
 
-export async function searchWorkflowIndex(url: string) {
+export async function searchWorkflowIndex(url = "") {
   return bridgeInvoke<{ ok: boolean; items?: WorkflowIndexItem[]; count?: number; error?: string }>("workflow_index_search", { url });
 }
 
@@ -396,9 +399,12 @@ export type RecipeDiscoverySearchResult = {
     items?: RecipeDiscoveryItem[];
     error?: string;
     error_code?: string;
+    total?: number;
+    next_cursor?: string;
   }>;
   provider_ok: number;
   provider_errors: number;
+  next_cursor?: string;
 };
 
 export async function searchRecipeDiscovery(params: {
@@ -407,6 +413,7 @@ export async function searchRecipeDiscovery(params: {
   page?: number;
   limit?: number;
   nsfw?: boolean;
+  cursor?: string;
 }) {
   return bridgeInvoke<RecipeDiscoverySearchResult>("recipe_discovery_search", {
     query: params.query,
@@ -414,7 +421,43 @@ export async function searchRecipeDiscovery(params: {
     page: params.page ?? 1,
     limit: params.limit ?? 24,
     nsfw: params.nsfw ?? false,
+    cursor: params.cursor ?? "",
   });
+}
+
+export async function saveRecipeToLibrary(recipeId: string, recipe: Record<string, unknown>) {
+  return bridgeInvoke<{ ok: boolean; path?: string; filename?: string; error?: string }>(
+    "recipe_save_library",
+    { recipe_id: recipeId, recipe },
+  );
+}
+
+export type CivitaiRecipeResource = {
+  id: string;
+  kind: "model" | "lora" | "other";
+  name: string;
+  version_name: string;
+  model_id: string;
+  model_version_id: string;
+  source_url: string;
+  filename: string;
+  download_url: string;
+  sha256: string;
+  local_engine_name: string;
+  category: string;
+  weight: number;
+  downloadable: boolean;
+  error: string;
+};
+
+export type RecipeResourceResolution = {
+  ok: boolean;
+  resources: CivitaiRecipeResource[];
+  errors: Array<{ model_version_id: string; error: string }>;
+};
+
+export function resolveRecipeCivitaiResources(recipe: Record<string, unknown>) {
+  return bridgeInvoke<RecipeResourceResolution>("recipe_resolve_civitai_resources", { recipe });
 }
 
 export function analyzeIdentityFaces(path: string): Promise<IdentityFaceAnalysis> {

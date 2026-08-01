@@ -116,6 +116,8 @@ class DownloadManager:
         self._stop_event = threading.Event()
         self._pause_events: dict[str, threading.Event] = {}
         self._load_queue()
+        if self._auto_start_worker and any(item.state == DownloadState.QUEUED.value for item in self._items.values()):
+            self._ensure_worker()
 
     def _load_queue(self) -> None:
         if QUEUE_PATH.exists():
@@ -125,15 +127,23 @@ class DownloadManager:
                 for entry in raw:
                     item = DownloadItem.from_dict(entry)
                     self._items[item.id] = item
-                    if item.state == DownloadState.DOWNLOADING.value:
+                    if item.state in {
+                        DownloadState.RESOLVING.value,
+                        DownloadState.CHECKING_DISK.value,
+                        DownloadState.DOWNLOADING.value,
+                        DownloadState.VERIFYING.value,
+                        DownloadState.REGISTERING.value,
+                    }:
                         item.state = DownloadState.QUEUED.value
             except Exception:
                 pass
 
     def _save_queue(self) -> None:
         QUEUE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(QUEUE_PATH, "w", encoding="utf-8") as f:
+        temporary = QUEUE_PATH.with_suffix(QUEUE_PATH.suffix + ".tmp")
+        with open(temporary, "w", encoding="utf-8") as f:
             json.dump([item.to_dict() for item in self._items.values()], f, indent=2)
+        temporary.replace(QUEUE_PATH)
 
     def enqueue(
         self,
@@ -147,6 +157,15 @@ class DownloadManager:
     ) -> dict[str, Any]:
         """Add an item to the download queue. Returns the item dict."""
         import hashlib
+        from dreamforge_model_downloader import CATEGORY_FOLDERS, safe_model_filename
+
+        if not str(url).lower().startswith("https://"):
+            return {"ok": False, "error": "download_requires_https"}
+        if category.strip().lower() not in CATEGORY_FOLDERS:
+            return {"ok": False, "error": "unsupported_model_category"}
+        if expected_sha256 and (len(expected_sha256) != 64 or any(c not in "0123456789abcdefABCDEF" for c in expected_sha256)):
+            return {"ok": False, "error": "invalid_sha256"}
+        filename = safe_model_filename(filename) if filename else ""
 
         item_id = hashlib.sha256(f"{url}:{category}:{filename}".encode()).hexdigest()[:16]
         with self._lock:
@@ -257,15 +276,18 @@ class DownloadManager:
             item.started_at = _now_iso()
             self._save_queue()
 
-        civitai_key = ""
-        if item.provider == "civitai" or "civitai.com" in item.url:
+        provider_token = ""
+        if item.provider in {"civitai", "huggingface"}:
             try:
                 from dreamforge_credentials import get_provider_credential
-                civitai_key = get_provider_credential("civitai")
+                provider_token = get_provider_credential(item.provider)
             except Exception:
                 pass
 
         with self._lock:
+            if item.state == DownloadState.CANCELLED.value:
+                self._save_queue()
+                return
             item.state = DownloadState.CHECKING_DISK.value
             self._save_queue()
 
@@ -275,15 +297,30 @@ class DownloadManager:
         if target_filename:
             target_path = dest_dir / target_filename
             if target_path.exists():
-                item.state = DownloadState.INSTALLED.value
-                item.final_path = str(target_path)
-                item.finished_at = _now_iso()
-                item.progress_pct = 100.0
-                with self._lock:
-                    self._save_queue()
-                return
+                from dreamforge_model_downloader import verify_sha256
+                matches = not item.expected_sha256 or verify_sha256(target_path, item.expected_sha256)
+                if matches:
+                    item.final_path = str(target_path)
+                    item.filename = target_path.name
+                    item.total_bytes = target_path.stat().st_size
+                    if not self._register_asset(item):
+                        item.state = DownloadState.FAILED_DISK.value
+                        item.error_code = "registry_failed"
+                        item.error = "Downloaded file could not be registered"
+                        with self._lock:
+                            self._save_queue()
+                        return
+                    item.state = DownloadState.INSTALLED.value
+                    item.finished_at = _now_iso()
+                    item.progress_pct = 100.0
+                    with self._lock:
+                        self._save_queue()
+                    return
 
         with self._lock:
+            if item.state == DownloadState.CANCELLED.value:
+                self._save_queue()
+                return
             item.state = DownloadState.DOWNLOADING.value
             self._save_queue()
 
@@ -308,14 +345,20 @@ class DownloadManager:
             category=item.category,
             filename=item.filename or None,
             expected_sha256=item.expected_sha256 or None,
-            civitai_api_key=civitai_key or None,
+            civitai_api_key=provider_token if item.provider == "civitai" else None,
+            bearer_token=provider_token if item.provider == "huggingface" else None,
             progress_callback=_progress,
+            should_stop=pause_evt.is_set,
         )
 
         with self._lock:
             self._pause_events.pop(item.id, None)
 
         if not result.get("ok"):
+            if result.get("interrupted") and item.state in {DownloadState.PAUSED.value, DownloadState.CANCELLED.value}:
+                with self._lock:
+                    self._save_queue()
+                return
             error_msg = str(result.get("error") or "Download failed")
             error_lower = error_msg.lower()
             if "sha256" in error_lower or "hash" in error_lower:
@@ -339,7 +382,13 @@ class DownloadManager:
             item.state = DownloadState.REGISTERING.value
             self._save_queue()
 
-        self._register_asset(item)
+        if not self._register_asset(item):
+            with self._lock:
+                item.state = DownloadState.FAILED_DISK.value
+                item.error_code = "registry_failed"
+                item.error = "Downloaded file could not be registered"
+                self._save_queue()
+            return
 
         with self._lock:
             item.state = DownloadState.INSTALLED.value
@@ -347,7 +396,7 @@ class DownloadManager:
             item.finished_at = _now_iso()
             self._save_queue()
 
-    def _register_asset(self, item: DownloadItem) -> None:
+    def _register_asset(self, item: DownloadItem) -> bool:
         """Register the downloaded file in the AssetRegistry."""
         try:
             from dreamforge_asset_registry import AssetRegistry
@@ -363,6 +412,8 @@ class DownloadManager:
             )
 
             registry = AssetRegistry()
+            from dreamforge_asset_registry import sha256_of_file
+            digest = sha256_of_file(Path(item.final_path))
             kind = kind_for_category(item.category)
             provenance = Provenance(
                 provider=item.provider or "download",
@@ -370,14 +421,14 @@ class DownloadManager:
                 provider_asset_id=item.provider_asset_id,
                 provider_version_id=item.provider_version_id,
                 downloaded_at=_now_iso(),
-                sha256=item.expected_sha256,
+                sha256=digest,
             )
             variant = detect_variant(item.filename)
             architecture = detect_architecture(item.filename)
             file_obj = AssetFile(
                 filename=item.filename,
-                sha256=item.expected_sha256,
-                size_bytes=item.total_bytes,
+                sha256=digest,
+                size_bytes=Path(item.final_path).stat().st_size,
                 variant=variant,
                 format=item.filename.rsplit(".", 1)[-1].lower() if "." in item.filename else "",
                 download_url=item.url,
@@ -399,9 +450,10 @@ class DownloadManager:
                 provenance=provenance,
                 version_id="v1",
             )
-            registry.upsert(asset)
+            registry.upsert_asset(asset)
+            return True
         except Exception:
-            pass
+            return False
 
 
 _default_manager: DownloadManager | None = None

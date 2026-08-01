@@ -3037,6 +3037,14 @@ fn pick_json_file() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
+fn pick_workflow_file() -> Result<Option<String>, String> {
+    let picked = rfd::FileDialog::new()
+        .add_filter("ComfyUI workflow", &["json", "png"])
+        .pick_file();
+    Ok(picked.map(|path| path.to_string_lossy().into_owned()))
+}
+
+#[tauri::command]
 fn read_text_file(path: String) -> Result<String, String> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
@@ -4049,6 +4057,7 @@ pub fn run() {
             pick_image_file,
             pick_text_file,
             pick_json_file,
+            pick_workflow_file,
             pick_folder,
             read_live_preview,
             invoke_generation,

@@ -118,7 +118,6 @@ export function generationSectionVisible(
 }
 
 export type InspectorTabId =
-  | "discover"
   | "models"
   | "loras"
   | "styles"
@@ -136,27 +135,27 @@ export function inspectorTabsForMode(input: {
   const { studioMode, simpleInspectorLocked, powerUserInspector, isInpaint, isUpscale } = input;
 
   if (isUpscale) {
-    return ["discover", "models", "settings"];
+    return ["models", "settings"];
   }
   if (simpleInspectorLocked) {
-    return ["discover", "settings", "models"];
+    return ["settings", "models"];
   }
   if (isInpaint) {
     return powerUserInspector
-      ? ["discover", "models", "loras", "settings", "automation"]
-      : ["discover", "models", "settings"];
+      ? ["models", "loras", "settings", "automation"]
+      : ["models", "settings"];
   }
   if (studioMode === "edit" || studioMode === "toolbox") {
     return powerUserInspector
-      ? ["discover", "models", "loras", "settings", "automation"]
-      : ["discover", "models", "settings"];
+      ? ["models", "loras", "settings", "automation"]
+      : ["models", "settings"];
   }
   if (isGenerateFamilyMode(studioMode)) {
     return powerUserInspector
-      ? ["discover", "models", "loras", "styles", "settings", "automation"]
-      : ["discover", "models", "styles", "settings"];
+      ? ["models", "loras", "styles", "settings", "automation"]
+      : ["models", "styles", "settings"];
   }
-  return ["discover", "models", "settings"];
+  return ["models", "settings"];
 }
 
 export const MODE_AUTO_SUMMARY: Partial<Record<string, string>> = {

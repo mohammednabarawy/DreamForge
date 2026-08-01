@@ -742,6 +742,16 @@ def cmd_relocate_downloaded_model(params: dict) -> dict:
     if not success:
         return {"ok": False, "error": error, "path": str(source)}
 
+    # The download manager registered the pre-move path. Keep SHA identity
+    # attached to the canonical file so Discover immediately reports it local.
+    from dreamforge_asset_registry import AssetRegistry, sha256_of_file
+
+    registry = AssetRegistry()
+    try:
+        registry.mark_file_local(sha256_of_file(destination), str(destination))
+    finally:
+        registry.close()
+
     # Move sidecar metadata (.json / preview) alongside the weight file.
     moved_sidecars = []
     for ext in (".json", ".png", ".jpg", ".jpeg", ".webp", ".txt", ".civitai.info"):
@@ -1801,6 +1811,16 @@ def cmd_recipe_from_style(params: dict) -> dict:
     return {"ok": True, "recipe": recipe.to_dict()}
 
 
+def cmd_recipe_save_library(params: dict) -> dict:
+    """Normalize and atomically save a discovered recipe to the managed Library."""
+    from dreamforge_recipe_library import save_recipe
+
+    recipe = params.get("recipe")
+    if not isinstance(recipe, dict):
+        return _error("missing_recipe")
+    return save_recipe(recipe, str(params.get("recipe_id") or "recipe"))
+
+
 def cmd_recipe_discovery_search(params: dict) -> dict:
     """Browse remote prompt metadata without executing or downloading images."""
     from dreamforge_recipe_discovery import search_recipe_discovery
@@ -1811,7 +1831,17 @@ def cmd_recipe_discovery_search(params: dict) -> dict:
         page=max(1, int(params.get("page") or 1)),
         limit=max(1, min(50, int(params.get("limit") or 24))),
         nsfw=bool(params.get("nsfw")),
+        cursor=str(params.get("cursor") or ""),
     )
+
+
+def cmd_recipe_resolve_civitai_resources(params: dict) -> dict:
+    from dreamforge_recipe_discovery import resolve_civitai_recipe_resources
+
+    recipe = params.get("recipe")
+    if not isinstance(recipe, dict):
+        return _error("missing_recipe")
+    return resolve_civitai_recipe_resources(recipe)
 
 
 # ---------------------------------------------------------------------------
@@ -1839,6 +1869,7 @@ def cmd_discovery_search(params: dict) -> dict:
         nsfw=bool(params.get("nsfw")),
         sort=str(params.get("sort") or "relevance"),
         provider_ids=params.get("provider_ids") or None,
+        provider_cursors=params.get("provider_cursors") or None,
     )
 
 
@@ -2039,8 +2070,10 @@ HANDLERS = {
     "asset_registry_dedupe": cmd_asset_registry_dedupe,
     "recipe_validate": cmd_recipe_validate,
     "recipe_export": cmd_recipe_export,
+    "recipe_save_library": cmd_recipe_save_library,
     "recipe_from_style": cmd_recipe_from_style,
     "recipe_discovery_search": cmd_recipe_discovery_search,
+    "recipe_resolve_civitai_resources": cmd_recipe_resolve_civitai_resources,
     "provider_list": cmd_provider_list,
     "discovery_search": cmd_discovery_search,
     "discovery_cache_invalidate": cmd_discovery_cache_invalidate,

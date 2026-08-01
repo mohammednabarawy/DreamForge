@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
-import { Bookmark, Check, Download, FileSearch, Play, Workflow } from "lucide-react";
-import { pickJsonFile } from "../lib/tauri-api";
+import { useEffect, useMemo, useState } from "react";
+import { Bookmark, Check, CheckCircle2, Download, FileSearch, RefreshCw, Workflow } from "lucide-react";
+import { pickWorkflowFile } from "../lib/tauri-api";
 import { analyzeWorkflowCompatibility, compileWorkflowIR, compileWorkflowRecipe, downloadWorkflow, saveWorkflowFile, searchWorkflowIndex, type DiscoverWorkflowTemplate, type WorkflowCompatibilityReport, type WorkflowIRCompileResult, type WorkflowIndexItem, type WorkflowRecipeCompileResult } from "../lib/studioBridge";
 
 const STORAGE_KEY = "dreamforge.workflowLibrary.v1";
+const INSTALLED_KEY = "dreamforge.workflowInstalled.v1";
 
 function readSaved(): string[] {
   try {
@@ -26,13 +27,20 @@ type Props = {
   templates: DiscoverWorkflowTemplate[];
   loading: boolean;
   error?: string | null;
-  onExecuteRecipe?: (recipe: Record<string, unknown>, source?: string) => Promise<boolean>;
+  onApplyRecipe: (recipe: Record<string, unknown>, source?: string) => void;
 };
 
-export function DiscoverWorkflowTab({ templates, loading, error, onExecuteRecipe }: Props) {
+export function DiscoverWorkflowTab({ templates, loading, error, onApplyRecipe }: Props) {
   const [query, setQuery] = useState("");
   const [saved, setSaved] = useState<string[]>(() => readSaved());
-  const [indexUrl, setIndexUrl] = useState("");
+  const [installed, setInstalled] = useState<string[]>(() => {
+    try {
+      const value = JSON.parse(localStorage.getItem(INSTALLED_KEY) ?? "[]");
+      return Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : [];
+    } catch {
+      return [];
+    }
+  });
   const [remoteTemplates, setRemoteTemplates] = useState<WorkflowIndexItem[]>([]);
   const [indexBusy, setIndexBusy] = useState(false);
   const [indexError, setIndexError] = useState("");
@@ -41,13 +49,26 @@ export function DiscoverWorkflowTab({ templates, loading, error, onExecuteRecipe
   const [ir, setIr] = useState<WorkflowIRCompileResult | null>(null);
   const [analyzedPath, setAnalyzedPath] = useState("");
   const [savedPath, setSavedPath] = useState("");
+  const [saveError, setSaveError] = useState("");
   const [analyzing, setAnalyzing] = useState(false);
-  const [executing, setExecuting] = useState(false);
+  const [category, setCategory] = useState("all");
+  const [tag, setTag] = useState("all");
+  const [source, setSource] = useState<"all" | "open" | "api">("all");
   const q = query.trim().toLowerCase();
-  const allTemplates = [...templates, ...remoteTemplates];
+  const allTemplates = useMemo<WorkflowIndexItem[]>(
+    () => remoteTemplates.length ? remoteTemplates : templates,
+    [templates, remoteTemplates],
+  );
+  const categories = useMemo(() => [...new Set(allTemplates.map((item) => item.category).filter(Boolean) as string[])].sort(), [allTemplates]);
+  const tags = useMemo(() => [...new Set(allTemplates.flatMap((item) => item.tags ?? []))].sort(), [allTemplates]);
   const filtered = useMemo(
-    () => allTemplates.filter((item) => !q || `${item.label} ${item.summary} ${item.operation}`.toLowerCase().includes(q)),
-    [allTemplates, q],
+    () => allTemplates.filter((item) =>
+      (!q || `${item.label} ${item.summary} ${item.operation} ${(item.tags ?? []).join(" ")} ${(item.required_models ?? []).join(" ")}`.toLowerCase().includes(q)) &&
+      (category === "all" || item.category === category) &&
+      (tag === "all" || item.tags?.includes(tag)) &&
+      (source === "all" || (source === "open" ? item.open_source === true : item.tags?.includes("API")))
+    ),
+    [allTemplates, category, q, source, tag],
   );
 
   const toggleSaved = (id: string) => {
@@ -58,11 +79,10 @@ export function DiscoverWorkflowTab({ templates, loading, error, onExecuteRecipe
     });
   };
 
-  const analyzeLocalWorkflow = async () => {
-    const path = await pickJsonFile();
-    if (!path) return;
+  const inspectPath = async (path: string) => {
     setAnalyzedPath(path);
     setSavedPath("");
+    setSaveError("");
     setAnalyzing(true);
     try {
       const report = await analyzeWorkflowCompatibility(path);
@@ -78,22 +98,16 @@ export function DiscoverWorkflowTab({ templates, loading, error, onExecuteRecipe
     }
   };
 
-  const executeRecipe = async () => {
-    if (!compiled?.can_recreate || !compiled.recipe || !onExecuteRecipe) return;
-    setExecuting(true);
-    try {
-      await onExecuteRecipe(compiled.recipe, analyzedPath);
-    } finally {
-      setExecuting(false);
-    }
+  const analyzeLocalWorkflow = async () => {
+    const path = await pickWorkflowFile();
+    if (path) await inspectPath(path);
   };
 
   const loadOfficialIndex = async () => {
-    if (!indexUrl.trim()) return;
     setIndexBusy(true);
     setIndexError("");
     try {
-      const result = await searchWorkflowIndex(indexUrl.trim());
+      const result = await searchWorkflowIndex();
       if (!result.ok) throw new Error(result.error ?? "Could not load workflow index");
       setRemoteTemplates(result.items ?? []);
     } catch (error) {
@@ -103,13 +117,30 @@ export function DiscoverWorkflowTab({ templates, loading, error, onExecuteRecipe
     }
   };
 
+  useEffect(() => {
+    void loadOfficialIndex();
+  }, []);
+
   const downloadRemoteWorkflow = async (item: WorkflowIndexItem) => {
     if (!item.url) return;
     setIndexBusy(true);
+    setIndexError("");
     try {
       const result = await downloadWorkflow(item.url, `${item.id}.json`);
       if (!result.ok) throw new Error(result.error ?? "Could not download workflow");
-      setSavedPath(result.path ?? result.filename ?? "workflow saved");
+      const path = result.path ?? "";
+      if (path) await inspectPath(path);
+      setSavedPath(path || result.filename || "workflow saved");
+      setInstalled((current) => {
+        if (current.includes(item.id)) return current;
+        const next = [...current, item.id];
+        try {
+          localStorage.setItem(INSTALLED_KEY, JSON.stringify(next));
+        } catch {
+          /* private mode or storage quota */
+        }
+        return next;
+      });
     } catch (error) {
       setIndexError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -120,12 +151,13 @@ export function DiscoverWorkflowTab({ templates, loading, error, onExecuteRecipe
   const saveLocalWorkflow = async () => {
     if (!analyzedPath) return;
     setAnalyzing(true);
+    setSaveError("");
     try {
       const result = await saveWorkflowFile(analyzedPath);
       if (!result.ok) throw new Error(result.error ?? "Could not save workflow");
       setSavedPath(result.path ?? result.filename ?? "saved");
     } catch (error) {
-      setSavedPath(error instanceof Error ? error.message : String(error));
+      setSaveError(error instanceof Error ? error.message : String(error));
     } finally {
       setAnalyzing(false);
     }
@@ -146,11 +178,11 @@ export function DiscoverWorkflowTab({ templates, loading, error, onExecuteRecipe
       <div className="shrink-0 rounded-lg border border-dfui-accent/25 bg-dfui-accent/5 px-2.5 py-2">
         <div className="flex items-center gap-1.5">
           <Workflow size={13} className="text-dfui-accent" />
-          <p className="text-[10px] font-semibold text-dfui-fg">ComfyUI workflow templates</p>
-          <span className="ml-auto text-[9px] text-dfui-tertiary">{saved.length} saved</span>
+          <p className="text-[10px] font-semibold text-dfui-fg">Official ComfyUI workflow library</p>
+          <span className="ml-auto text-[9px] text-dfui-tertiary">{remoteTemplates.length} official · {saved.length} saved</span>
         </div>
         <p className="mt-1 text-[9px] leading-snug text-dfui-tertiary">
-          Browse-only templates from DreamForge&apos;s local registry. Saving a template never executes or installs a workflow.
+          Browse the official ComfyUI picker catalog. Import downloads a safe copy for compatibility analysis; it never executes automatically.
         </p>
       </div>
       <input
@@ -160,16 +192,22 @@ export function DiscoverWorkflowTab({ templates, loading, error, onExecuteRecipe
         className="df-input shrink-0 px-2.5 py-1.5 text-xs"
         aria-label="Search workflow templates"
       />
-      <div className="flex shrink-0 gap-1">
-        <input
-          value={indexUrl}
-          onChange={(event) => setIndexUrl(event.target.value)}
-          placeholder="Official index URL (HTTPS)"
-          className="df-input min-w-0 flex-1 px-2.5 py-1.5 text-[10px]"
-          aria-label="Official workflow index URL"
-        />
-        <button type="button" onClick={() => void loadOfficialIndex()} disabled={indexBusy || !indexUrl.trim()} className="rounded border border-dfui-border/50 px-2 py-1 text-[9px] text-dfui-secondary hover:text-dfui-fg disabled:opacity-50">
-          {indexBusy ? "Loading…" : "Load index"}
+      <div className="grid shrink-0 grid-cols-2 gap-1 sm:grid-cols-4">
+        <select value={category} onChange={(event) => setCategory(event.target.value)} className="df-select px-1.5 py-1 text-[9px]" aria-label="Workflow category">
+          <option value="all">All categories</option>
+          {categories.map((value) => <option key={value} value={value}>{value}</option>)}
+        </select>
+        <select value={tag} onChange={(event) => setTag(event.target.value)} className="df-select px-1.5 py-1 text-[9px]" aria-label="Workflow filter">
+          <option value="all">All filters</option>
+          {tags.map((value) => <option key={value} value={value}>{value}</option>)}
+        </select>
+        <select value={source} onChange={(event) => setSource(event.target.value as "all" | "open" | "api")} className="df-select px-1.5 py-1 text-[9px]" aria-label="Workflow source type">
+          <option value="all">All workflows</option>
+          <option value="open">Open source</option>
+          <option value="api">API workflows</option>
+        </select>
+        <button type="button" onClick={() => void loadOfficialIndex()} disabled={indexBusy} className="inline-flex items-center justify-center gap-1 rounded border border-dfui-border/50 px-2 py-1 text-[9px] text-dfui-secondary hover:text-dfui-fg disabled:opacity-50">
+          <RefreshCw size={10} /> {indexBusy ? "Loading…" : "Refresh official"}
         </button>
       </div>
       {indexError && <p className="rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-[9px] text-red-200">{indexError}</p>}
@@ -195,14 +233,21 @@ export function DiscoverWorkflowTab({ templates, loading, error, onExecuteRecipe
             </button>
           )}
           {savedPath && <p className="mt-1 truncate text-emerald-200" role="status">{savedPath}</p>}
+          {saveError && <p className="mt-1 text-red-200" role="alert">{saveError}</p>}
           {compiled?.can_recreate && (
-            <div className="mt-1 flex flex-wrap gap-1">
+            <div className="mt-1 space-y-1">
+              <p className="text-dfui-tertiary">
+                {String(compiled.recipe?.model ?? "Unknown model")} · {String(compiled.recipe?.sampler ?? "sampler?")} / {String((compiled.recipe?.settings as Record<string, unknown> | undefined)?.scheduler ?? "scheduler?")} · {String(compiled.recipe?.steps ?? "?")} steps · CFG {String(compiled.recipe?.cfg_scale ?? "?")} · {String(compiled.recipe?.aspect_ratio ?? "size?")}
+              </p>
+              <p className="line-clamp-2 text-dfui-secondary">{String(compiled.recipe?.positive_prompt ?? "")}</p>
+              <div className="flex flex-wrap gap-1">
               <button type="button" onClick={exportRecipe} className="inline-flex items-center gap-1 rounded border border-dfui-accent/50 px-1.5 py-1 text-[9px] text-dfui-fg hover:bg-dfui-accent/10">
                 <Download size={10} /> Export portable recipe
               </button>
-              {onExecuteRecipe && ir?.can_execute && <button type="button" onClick={() => void executeRecipe()} disabled={executing} className="inline-flex items-center gap-1 rounded border border-emerald-400/50 px-1.5 py-1 text-[9px] text-emerald-100 hover:bg-emerald-400/10 disabled:opacity-50">
-                <Play size={10} /> {executing ? "Executing…" : "Execute in ComfyUI"}
+              {ir?.can_execute && <button type="button" onClick={() => onApplyRecipe(compiled.recipe!, analyzedPath)} className="inline-flex items-center gap-1 rounded border border-emerald-400/50 px-1.5 py-1 text-[9px] text-emerald-100 hover:bg-emerald-400/10">
+                <Check size={10} /> Use in Generate
               </button>}
+              </div>
             </div>
           )}
           {!compiled?.can_recreate && !!compiled?.missing?.length && <p className="mt-1 text-red-200">Recipe unavailable: {compiled.missing.join(", ")}</p>}
@@ -210,17 +255,19 @@ export function DiscoverWorkflowTab({ templates, loading, error, onExecuteRecipe
       )}
       {error && <p className="rounded border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-[10px] text-red-200">{error}</p>}
       <div className="df-gallery-pane space-y-2">
-        {loading && <p className="py-8 text-center text-xs text-dfui-muted">Loading workflow templates…</p>}
+        {(loading || (indexBusy && !remoteTemplates.length)) && <p className="py-8 text-center text-xs text-dfui-muted">Loading workflow templates…</p>}
         {!loading && filtered.map((item) => {
           const isSaved = saved.includes(item.id);
+          const isInstalled = installed.includes(item.id);
           return (
             <article key={item.id} className="rounded-lg border border-dfui-border/50 bg-dfui-panel/60 p-2.5">
               <div className="flex items-start gap-2">
-                {item.thumbnail_url ? <img src={item.thumbnail_url} alt="" loading="lazy" className="h-10 w-10 rounded object-cover" /> : null}
+                {item.thumbnail_url ? <img src={item.thumbnail_url} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="h-10 w-10 rounded object-cover" /> : null}
                 <div className="min-w-0 flex-1">
                   <h3 className="text-xs font-semibold text-dfui-fg">{item.label}</h3>
-                  <p className="mt-0.5 text-[9px] uppercase tracking-wide text-dfui-tertiary">{item.mode} · {item.operation}</p>
+                  <p className="mt-0.5 text-[9px] uppercase tracking-wide text-dfui-tertiary">{item.category ?? item.mode} · {item.operation}</p>
                 </div>
+                {isInstalled && <span className="inline-flex shrink-0 items-center gap-1 rounded bg-emerald-500/15 px-1.5 py-1 text-[8px] text-emerald-200" title="In Workflow Library"><CheckCircle2 size={10} /> In Library</span>}
                 <button
                   type="button"
                   onClick={() => toggleSaved(item.id)}
@@ -228,14 +275,15 @@ export function DiscoverWorkflowTab({ templates, loading, error, onExecuteRecipe
                   className={`inline-flex shrink-0 items-center gap-1 rounded border px-2 py-1 text-[9px] ${isSaved ? "border-dfui-accent/60 bg-dfui-accent/15 text-dfui-fg" : "border-dfui-border/50 text-dfui-muted hover:text-dfui-fg"}`}
                 >
                   {isSaved ? <Check size={11} /> : <Bookmark size={11} />}
-                  {isSaved ? "Saved" : "Save to Library"}
+                  {isSaved ? "Bookmarked" : "Bookmark"}
                 </button>
-                {item.url && <button type="button" onClick={() => void downloadRemoteWorkflow(item)} disabled={indexBusy} className="inline-flex shrink-0 items-center gap-1 rounded border border-dfui-accent/50 px-2 py-1 text-[9px] text-dfui-fg hover:bg-dfui-accent/10 disabled:opacity-50">
-                  <Download size={11} /> Import
+                {item.url && <button type="button" onClick={() => void downloadRemoteWorkflow(item)} disabled={indexBusy || isInstalled} className="inline-flex shrink-0 items-center gap-1 rounded border border-dfui-accent/50 px-2 py-1 text-[9px] text-dfui-fg hover:bg-dfui-accent/10 disabled:opacity-50">
+                  {isInstalled ? <CheckCircle2 size={11} /> : <Download size={11} />} {isInstalled ? "Installed" : "Import"}
                 </button>}
               </div>
               <p className="mt-2 text-[10px] leading-snug text-dfui-secondary">{item.summary}</p>
               <div className="mt-2 flex flex-wrap gap-1">
+                {(item.tags ?? []).slice(0, 4).map((value) => <span key={value} className="rounded bg-dfui-accent/10 px-1.5 py-0.5 text-[8px] text-dfui-secondary">{value}</span>)}
                 {(item.required_models ?? []).slice(0, 4).map((model) => <span key={model} className="rounded bg-dfui-border/30 px-1.5 py-0.5 text-[8px] text-dfui-tertiary">{model}</span>)}
                 {(item.required_node_packs ?? []).slice(0, 3).map((pack) => <span key={pack} className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[8px] text-amber-200">{pack}</span>)}
               </div>

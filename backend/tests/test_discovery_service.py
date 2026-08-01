@@ -21,9 +21,11 @@ class FakeProvider(DiscoveryProvider):
         self._error_code = error_code
         self._error_msg = error_msg
         self.call_count = 0
+        self.last_params = None
 
     def search(self, params):
         self.call_count += 1
+        self.last_params = params
         return ProviderSearchResult(
             provider=self.id,
             assets=self._assets,
@@ -44,6 +46,28 @@ def _make_asset(asset_id, sha="", name=""):
         versions=[version],
         provenance=Provenance(provider="test", provider_asset_id=asset_id),
     )
+
+
+def test_search_marks_sha256_match_as_installed(tmp_path):
+    from dreamforge_asset_registry import AssetRegistry, sha256_of_file
+    from dreamforge_assets import AssetKind
+
+    local = tmp_path / "m.safetensors"
+    local.write_bytes(b"installed")
+    digest = sha256_of_file(local)
+    assets = AssetRegistry(tmp_path / "assets.db")
+    assets.register_local_file(local, sha256=digest, kind=AssetKind.LORA)
+    providers = ProviderRegistry()
+    providers.register(FakeProvider("a", assets=[_make_asset("a1", sha=digest)]))
+
+    result = DiscoveryService(
+        registry=providers,
+        asset_registry=assets,
+        use_cache=False,
+    ).search(query="test", kind="lora")
+
+    assert result["assets"][0]["is_local"] is True
+    assert result["assets"][0]["versions"][0]["files"][0]["local_path"] == str(local)
 
 
 @pytest.fixture(autouse=True)
@@ -95,6 +119,19 @@ class TestDiscoveryServiceSearch:
         svc = DiscoveryService(registry=reg, use_cache=False)
         result = svc.search(query="test", provider_ids=["a"])
         assert result["provider_ok"] == 1
+
+    def test_provider_cursor_is_applied_to_only_its_provider(self):
+        reg = ProviderRegistry()
+        first = FakeProvider("a")
+        second = FakeProvider("b")
+        reg.register(first)
+        reg.register(second)
+        DiscoveryService(registry=reg, use_cache=False).search(
+            query="test",
+            provider_cursors={"a": "next-a"},
+        )
+        assert first.last_params.cursor == "next-a"
+        assert second.last_params.cursor == ""
 
     def test_kind_filter(self):
         reg = ProviderRegistry()

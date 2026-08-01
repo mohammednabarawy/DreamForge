@@ -1,4 +1,5 @@
 import json
+from PIL import Image, PngImagePlugin
 
 import dreamforge_workflow_library as library
 
@@ -6,10 +7,12 @@ import dreamforge_workflow_library as library
 def _native_workflow():
     return {
         "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "model.safetensors"}},
-        "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "a fox"}},
+        "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "a fox", "clip": ["1", 1]}},
+        "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "blur", "clip": ["1", 1]}},
         "3": {"class_type": "EmptyLatentImage", "inputs": {"width": 512, "height": 512}},
-        "4": {"class_type": "KSampler", "inputs": {"steps": 10, "cfg": 5, "sampler_name": "euler"}},
-        "5": {"class_type": "SaveImage", "inputs": {"filename_prefix": "DreamForge"}},
+        "4": {"class_type": "KSampler", "inputs": {"model": ["1", 0], "positive": ["2", 0], "negative": ["6", 0], "latent_image": ["3", 0], "steps": 10, "cfg": 5, "sampler_name": "euler", "scheduler": "normal"}},
+        "7": {"class_type": "VAEDecode", "inputs": {"samples": ["4", 0], "vae": ["1", 2]}},
+        "5": {"class_type": "SaveImage", "inputs": {"images": ["7", 0], "filename_prefix": "DreamForge"}},
     }
 
 
@@ -36,3 +39,16 @@ def test_save_workflow_file_rejects_invalid_json(tmp_path, monkeypatch):
     result = library.save_workflow_file(source)
     assert result["ok"] is False
     assert result["error"].startswith("workflow_json_invalid")
+
+
+def test_save_png_workflow_extracts_portable_json(tmp_path, monkeypatch):
+    source = tmp_path / "embedded.png"
+    metadata = PngImagePlugin.PngInfo()
+    metadata.add_text("prompt", json.dumps(_native_workflow()))
+    Image.new("RGB", (2, 2)).save(source, pnginfo=metadata)
+    monkeypatch.setattr(library, "WORKFLOW_LIBRARY_ROOT", tmp_path / "library")
+    result = library.save_workflow_file(source)
+    assert result["ok"] is True
+    saved = tmp_path / "library" / result["filename"]
+    assert saved.suffix == ".json"
+    assert json.loads(saved.read_text(encoding="utf-8"))["4"]["class_type"] == "KSampler"

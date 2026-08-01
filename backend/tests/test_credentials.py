@@ -58,6 +58,10 @@ class TestGetProviderCredential:
     def test_unknown_provider_returns_empty(self, fake_config):
         assert get_provider_credential("unknown") == ""
 
+    def test_huggingface_uses_its_own_secret(self, fake_config):
+        fake_config["ui"] = {"civitai_api_key": "civ", "huggingface_api_key": "hf_secret"}
+        assert get_provider_credential("huggingface") == "hf_secret"
+
 
 class TestSetProviderCredential:
     def test_set(self, fake_config):
@@ -71,12 +75,17 @@ class TestSetProviderCredential:
         result = set_provider_credential("civitai", "")
         assert result["ok"] is True
         assert result["status"]["civitai"]["configured"] is False
-        assert "civitai_api_key" not in fake_config.get("ui", {})
+        assert fake_config["ui"]["civitai_api_key"] == ""
 
     def test_unsupported_provider(self, fake_config):
         result = set_provider_credential("unsupported", "key")
         assert result["ok"] is False
         assert "unsupported_provider" in result["error"]
+
+    def test_huggingface_does_not_overwrite_civitai(self, fake_config):
+        fake_config["ui"] = {"civitai_api_key": "civ"}
+        set_provider_credential("huggingface", "hf_token")
+        assert fake_config["ui"] == {"civitai_api_key": "civ", "huggingface_api_key": "hf_token"}
 
 
 class TestCredentialRedactedStatus:

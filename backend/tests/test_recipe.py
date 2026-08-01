@@ -146,3 +146,15 @@ def test_recipe_lora_dict_normalization():
     assert isinstance(recipe.loras[0], LoRAComponent)
     assert recipe.loras[0].weight == 0.5
     assert recipe.styles == ["anime"]
+
+
+def test_optional_fields_do_not_push_completeness_over_one():
+    recipe = DreamForgeRecipe(
+        model="m", positive_prompt="p", negative_prompt="n", seed=1,
+        sampler="euler", cfg_scale=5, steps=10, aspect_ratio="512x512",
+    )
+    assert recipe.completeness()["score"] == 1.0
+
+
+def test_lora_zero_weight_is_preserved():
+    assert LoRAComponent.from_dict({"filename": "x", "weight": 0}).weight == 0

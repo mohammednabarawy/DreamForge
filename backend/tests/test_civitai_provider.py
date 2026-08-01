@@ -57,6 +57,7 @@ class TestCivitaiKindMapping:
 
     def test_lora(self):
         assert civitai_kind_to_asset_kind("LoRA") == "lora"
+        assert civitai_kind_to_asset_kind("LORA") == "lora"
 
     def test_vae(self):
         assert civitai_kind_to_asset_kind("VAE") == "vae"
@@ -136,7 +137,7 @@ class TestCivitaiProviderUrlBuild:
         assert "query=flux" in url
         assert "types=Checkpoint" in url
         assert "limit=10" in url
-        assert "page=1" in url
+        assert "page=" not in url
 
     def test_nsfw_false_default(self):
         provider = CivitaiProvider()
@@ -154,7 +155,21 @@ class TestCivitaiProviderUrlBuild:
         provider = CivitaiProvider()
         params = ProviderSearchParams(query="test", kind="lora")
         url = provider._build_url(params)
-        assert "types=LoRA" in url
+        assert "types=LORA" in url
+
+    def test_unfiltered_browse_keeps_page_pagination(self):
+        url = CivitaiProvider()._build_url(
+            ProviderSearchParams(query="", kind="lora", page=3)
+        )
+        assert "types=LORA" in url
+        assert "page=3" in url
+
+    def test_cursor_replaces_page(self):
+        url = CivitaiProvider()._build_url(
+            ProviderSearchParams(query="portrait", kind="lora", page=3, cursor="abc|2")
+        )
+        assert "cursor=abc%7C2" in url
+        assert "page=" not in url
 
     def test_no_kind(self):
         provider = CivitaiProvider()

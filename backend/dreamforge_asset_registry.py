@@ -264,7 +264,9 @@ class AssetRegistry:
             return None
         with self._lock:
             row = self._conn.execute(
-                "SELECT * FROM files WHERE sha256 = ? ORDER BY local_path LIMIT 1",
+                """SELECT * FROM files WHERE sha256 = ?
+                   ORDER BY CASE WHEN local_path <> '' THEN 0 ELSE 1 END, local_path
+                   LIMIT 1""",
                 (sha256,),
             ).fetchone()
         if row is None:
@@ -434,7 +436,7 @@ class AssetScanner:
         if not folder.is_dir():
             result.errors.append(f"missing folder: {folder}")
             return result
-        for path in sorted(folder.iterdir()):
+        for path in sorted(folder.rglob("*")):
             if not path.is_file():
                 continue
             if path.suffix.lower() not in MODEL_FILE_EXTENSIONS:

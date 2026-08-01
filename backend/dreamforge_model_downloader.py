@@ -40,9 +40,18 @@ CATEGORY_FOLDERS = {
 }
 
 
+def safe_model_filename(value: str | None) -> str:
+    name = Path(str(value or "")).name.strip().strip(".")
+    if not name or any(ord(char) < 32 for char in name):
+        return "downloaded_model.safetensors"
+    return name
+
+
 def resolve_category_folder(category: str) -> Path:
     cat_key = category.strip().lower()
-    folder_name = CATEGORY_FOLDERS.get(cat_key, cat_key)
+    if cat_key not in CATEGORY_FOLDERS:
+        raise ValueError(f"unsupported model category: {category}")
+    folder_name = CATEGORY_FOLDERS[cat_key]
     dest = MODELS_ROOT / folder_name
     dest.mkdir(parents=True, exist_ok=True)
     return dest
@@ -53,13 +62,13 @@ def parse_filename_from_url(url: str, headers: dict[str, str] | None = None) -> 
         cd = headers.get("content-disposition") or headers.get("Content-Disposition") or ""
         match = re.search(r'filename\*?=(?:UTF-8\'\')?["\']?([^"\';]+)["\']?', cd, re.IGNORECASE)
         if match:
-            return urllib.parse.unquote(match.group(1))
+            return safe_model_filename(urllib.parse.unquote(match.group(1)))
 
     parsed = urllib.parse.urlparse(url)
     path = urllib.parse.unquote(parsed.path)
     name = Path(path).name
     if name and "." in name:
-        return name
+        return safe_model_filename(name)
     return "downloaded_model.safetensors"
 
 
@@ -78,8 +87,10 @@ def _record_manifest(entry: dict[str, Any]) -> None:
     manifest = [item for item in manifest if item.get("path") != entry.get("path")]
     manifest.append(entry)
     MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
+    temporary = MANIFEST_PATH.with_suffix(MANIFEST_PATH.suffix + ".tmp")
+    with open(temporary, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
+    temporary.replace(MANIFEST_PATH)
 
 
 def verify_sha256(file_path: Path, expected_sha256: str) -> bool:
@@ -97,9 +108,13 @@ def download_model(
     filename: str | None = None,
     expected_sha256: str | None = None,
     civitai_api_key: str | None = None,
+    bearer_token: str | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     """Download a model file with progress tracking, resuming, and sha256 verification."""
+    if urllib.parse.urlparse(url).scheme.lower() != "https":
+        return {"ok": False, "error": "Download requires HTTPS"}
     dest_dir = resolve_category_folder(category)
 
     civitai_key = civitai_api_key or os.environ.get("CIVITAI_API_KEY")
@@ -111,6 +126,8 @@ def download_model(
     headers = {
         "User-Agent": "DreamForge-Downloader/2.0",
     }
+    if bearer_token:
+        headers["Authorization"] = f"Bearer {bearer_token}"
 
     req = urllib.request.Request(req_url, headers=headers)
 
@@ -127,6 +144,7 @@ def download_model(
         if not target_filename:
             target_filename = parse_filename_from_url(url)
 
+    target_filename = safe_model_filename(target_filename)
     target_path = dest_dir / target_filename
     part_path = dest_dir / f"{target_filename}.part"
 
@@ -146,41 +164,47 @@ def download_model(
     mode = "ab" if downloaded_bytes > 0 else "wb"
 
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp, open(part_path, mode) as out_file:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             content_range = resp.headers.get("Content-Range", "")
+            if downloaded_bytes and not content_range:
+                downloaded_bytes = 0
+                mode = "wb"
             if content_range and "/" in content_range:
                 total_bytes = int(content_range.split("/")[-1])
             elif total_bytes == 0:
                 total_bytes = downloaded_bytes + int(resp.headers.get("Content-Length", 0))
 
-            chunk_size = 512 * 1024
-            while True:
-                chunk = resp.read(chunk_size)
-                if not chunk:
-                    break
-                out_file.write(chunk)
-                written_session += len(chunk)
-                current_total = downloaded_bytes + written_session
+            with open(part_path, mode) as out_file:
+                chunk_size = 512 * 1024
+                while True:
+                    if should_stop and should_stop():
+                        return {"ok": False, "interrupted": True, "filename": target_filename, "path": str(target_path)}
+                    chunk = resp.read(chunk_size)
+                    if not chunk:
+                        break
+                    out_file.write(chunk)
+                    written_session += len(chunk)
+                    current_total = downloaded_bytes + written_session
 
-                now = time.time()
-                elapsed = now - start_time
-                speed_mbs = (written_session / (1024 * 1024)) / elapsed if elapsed > 0 else 0.0
-                remaining_bytes = max(0, total_bytes - current_total)
-                eta_secs = int(remaining_bytes / (speed_mbs * 1024 * 1024)) if speed_mbs > 0 else 0
+                    now = time.time()
+                    elapsed = now - start_time
+                    speed_mbs = (written_session / (1024 * 1024)) / elapsed if elapsed > 0 else 0.0
+                    remaining_bytes = max(0, total_bytes - current_total)
+                    eta_secs = int(remaining_bytes / (speed_mbs * 1024 * 1024)) if speed_mbs > 0 else 0
 
-                progress_data = {
-                    "filename": target_filename,
-                    "downloaded_bytes": current_total,
-                    "total_bytes": total_bytes,
-                    "percentage": round((current_total / total_bytes) * 100, 1) if total_bytes > 0 else 0.0,
-                    "speed_mbs": round(speed_mbs, 2),
-                    "eta_seconds": eta_secs,
-                    "status": "downloading",
-                }
+                    progress_data = {
+                        "filename": target_filename,
+                        "downloaded_bytes": current_total,
+                        "total_bytes": total_bytes,
+                        "percentage": round((current_total / total_bytes) * 100, 1) if total_bytes > 0 else 0.0,
+                        "speed_mbs": round(speed_mbs, 2),
+                        "eta_seconds": eta_secs,
+                        "status": "downloading",
+                    }
 
-                if progress_callback and (now - last_update >= 0.5 or current_total == total_bytes):
-                    progress_callback(progress_data)
-                    last_update = now
+                    if progress_callback and (now - last_update >= 0.5 or current_total == total_bytes):
+                        progress_callback(progress_data)
+                        last_update = now
 
     except Exception as exc:
         return {
@@ -190,21 +214,20 @@ def download_model(
             "path": str(target_path),
         }
 
-    if part_path.exists():
-        if target_path.exists():
-            target_path.unlink()
-        part_path.rename(target_path)
-
     sha_ok = True
     if expected_sha256:
-        sha_ok = verify_sha256(target_path, expected_sha256)
+        sha_ok = verify_sha256(part_path, expected_sha256)
         if not sha_ok:
+            part_path.unlink(missing_ok=True)
             return {
                 "ok": False,
                 "error": f"SHA256 mismatch for {target_filename}",
                 "filename": target_filename,
                 "path": str(target_path),
             }
+
+    if part_path.exists():
+        part_path.replace(target_path)
 
     entry = {
         "url": url,

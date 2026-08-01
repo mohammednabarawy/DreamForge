@@ -1,4 +1,4 @@
-from dreamforge_automation import expand_automation_jobs, preview_automation
+from dreamforge_automation import MAX_AUTOMATION_JOBS, expand_automation_jobs, preview_automation
 
 
 def test_seed_batch_expansion():
@@ -40,6 +40,12 @@ def test_preview_automation():
     preview = preview_automation({"type": "seed_batch", "count": 2, "base_settings": {}})
     assert preview["job_count"] == 2
     assert len(preview["jobs"]) == 2
+
+
+def test_missing_prompt_file_is_a_failed_preview(tmp_path):
+    preview = preview_automation({"type": "prompt_lines", "prompt_file": str(tmp_path / "missing.txt")})
+    assert preview["ok"] is False
+    assert preview["error"] == "empty_automation"
 
 
 def test_recipe_batch_uses_recipe_values_and_seed_sweep(tmp_path):
@@ -108,3 +114,14 @@ def test_recipe_matrix_expands_models_and_loras(tmp_path):
     assert jobs[0]["overrides"]["lora"] == ["none.safetensors"]
     assert jobs[1]["overrides"]["seed"] == 15
     assert jobs[-1]["overrides"]["model"] == "b.safetensors"
+
+
+def test_recipe_matrix_is_bounded(tmp_path):
+    recipe_file = tmp_path / "recipe.json"
+    recipe_file.write_text('{"schema_version":"2.0","positive_prompt":"x"}', encoding="utf-8")
+    jobs = expand_automation_jobs({
+        "type": "recipe_matrix", "recipe_file": str(recipe_file), "count": 64,
+        "model_variants": [f"m{i}" for i in range(20)],
+        "lora_variants": [f"l{i}" for i in range(20)],
+    })
+    assert len(jobs) == MAX_AUTOMATION_JOBS

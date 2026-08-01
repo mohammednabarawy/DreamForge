@@ -7,7 +7,8 @@ version are still exposed because some checkpoints bundle them, but metadata
 rows like "Preview" are skipped).
 
 Civitai API v1:
-- ``GET /api/v1/models?query=..&types=Checkpoint,LoRA&limit=..&page=..``
+- ``GET /api/v1/models?query=..&types=Checkpoint,LORA&limit=..``
+- query search uses cursor pagination, so DreamForge does not combine it with ``page``.
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ _CIVITAI_KIND_MAP: dict[str, str] = {
     "Checkpoint": "checkpoint",
     "Checkpoints": "checkpoint",
     "LoRA": "lora",
+    "LORA": "lora",
     "Loras": "lora",
     "TextualInversion": "embedding",
     "Hypernetwork": "embedding",
@@ -252,7 +254,9 @@ class CivitaiProvider(DiscoveryProvider):
         result = ProviderSearchResult(provider=self.id, page=params.page)
         url = self._build_url(params)
         try:
-            data = http_get_json(url, timeout=self.timeout_seconds)
+            token = self._credential()
+            headers = {"Authorization": f"Bearer {token}"} if token else None
+            data = http_get_json(url, headers=headers, timeout=self.timeout_seconds)
         except Exception as exc:
             from dreamforge_provider_base import ProviderError, classify_http_error
 
@@ -268,6 +272,7 @@ class CivitaiProvider(DiscoveryProvider):
         items = data.get("items") or []
         metadata = data.get("metadata") or {}
         result.total = int(metadata.get("totalItems") or len(items))
+        result.next_cursor = str(metadata.get("nextCursor") or "")
         result.assets = normalize_civitai_models(items)
         return result
 
@@ -282,7 +287,11 @@ class CivitaiProvider(DiscoveryProvider):
             if types:
                 query_args.append(("types", ",".join(types)))
         query_args.append(("limit", str(max(1, min(params.limit, 100)))))
-        query_args.append(("page", str(max(1, params.page))))
+        if params.cursor:
+            query_args.append(("cursor", params.cursor))
+        # Civitai rejects page-based pagination when query search is active.
+        elif not params.query:
+            query_args.append(("page", str(max(1, params.page))))
         if not params.filters.nsfw:
             query_args.append(("nsfw", "false"))
         if params.filters.sort:
@@ -296,7 +305,7 @@ class CivitaiProvider(DiscoveryProvider):
     def _civitai_types(kind: str) -> list[str]:
         return {
             "checkpoint": ["Checkpoint"],
-            "lora": ["LoRA"],
+            "lora": ["LORA"],
             "vae": ["VAE"],
             "controlnet": ["Controlnet"],
             "embedding": ["TextualInversion"],

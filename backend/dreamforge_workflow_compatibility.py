@@ -27,6 +27,15 @@ KNOWN_NODE_TYPES = {
     "FluxGuidance", "ReferenceLatent", "ApplyControlNet", "PreviewImage",
 }
 
+# Only this deliberately small subset can be losslessly recreated by the
+# current Recipe v2 compiler. Known advanced nodes remain ADAPTABLE.
+NATIVE_RECIPE_NODE_TYPES = {
+    "CheckpointLoaderSimple", "UNETLoader", "UnetLoaderGGUF", "CLIPLoader",
+    "CLIPLoaderGGUF", "VAELoader", "EmptyLatentImage", "EmptySD3LatentImage",
+    "CLIPTextEncode", "KSampler", "LoraLoader", "LoraLoaderModelOnly",
+    "VAEDecode", "SaveImage", "PreviewImage",
+}
+
 DEPENDENCY_FIELDS = re.compile(
     r"(checkpoint|ckpt|unet|diffusion|lora|vae|clip|text.?encoder|control.?net|upscale.?model|embedding)",
     re.IGNORECASE,
@@ -95,6 +104,70 @@ def _security(payload: Mapping[str, Any], types: list[str]) -> dict[str, Any]:
     }
 
 
+def _link(value: Any) -> str | None:
+    if isinstance(value, list) and len(value) >= 2 and isinstance(value[0], (str, int)):
+        return str(value[0])
+    return None
+
+
+def _native_recipe_shape(graph: Mapping[str, Any]) -> tuple[bool, str]:
+    """Return whether the API graph is exactly the lossless Recipe v2 subset."""
+    nodes = {str(key): value for key, value in graph.items() if isinstance(value, Mapping)}
+    types = {str(node.get("class_type") or "") for node in nodes.values()}
+    if not types or not types <= NATIVE_RECIPE_NODE_TYPES:
+        return False, "known advanced nodes require an adapter"
+
+    samplers = [key for key, node in nodes.items() if node.get("class_type") == "KSampler"]
+    outputs = [key for key, node in nodes.items() if node.get("class_type") in {"SaveImage", "PreviewImage"}]
+    if len(samplers) != 1 or not outputs:
+        return False, "native recreation requires one sampler and an image output"
+    sampler_id = samplers[0]
+    sampler_inputs = nodes[sampler_id].get("inputs") or {}
+    if not all(_link(sampler_inputs.get(name)) for name in ("model", "positive", "negative", "latent_image")):
+        return False, "sampler inputs are not fully connected"
+    if not all(sampler_inputs.get(name) not in (None, "") for name in ("steps", "cfg", "sampler_name", "scheduler")):
+        return False, "sampler settings are incomplete"
+
+    def node_type(node_id: str | None) -> str:
+        return str((nodes.get(node_id or "") or {}).get("class_type") or "")
+
+    def reaches(start: str | None, targets: set[str], seen: set[str] | None = None) -> bool:
+        if not start or start not in nodes:
+            return False
+        if start in targets:
+            return True
+        seen = seen or set()
+        if start in seen:
+            return False
+        seen.add(start)
+        return any(reaches(_link(value), targets, seen) for value in (nodes[start].get("inputs") or {}).values())
+
+    model_id = _link(sampler_inputs.get("model"))
+    if not reaches(model_id, {key for key, node in nodes.items() if node.get("class_type") in {"CheckpointLoaderSimple", "UNETLoader", "UnetLoaderGGUF"}}):
+        return False, "sampler model is not connected to a supported loader"
+    if node_type(_link(sampler_inputs.get("positive"))) != "CLIPTextEncode" or node_type(_link(sampler_inputs.get("negative"))) != "CLIPTextEncode":
+        return False, "positive and negative prompts must be directly encoded"
+    if node_type(_link(sampler_inputs.get("latent_image"))) not in {"EmptyLatentImage", "EmptySD3LatentImage"}:
+        return False, "sampler latent is not a supported empty latent"
+    if not any(reaches(output, {sampler_id}) for output in outputs):
+        return False, "image output is not connected to the sampler"
+
+    reachable: set[str] = set()
+    def collect(node_id: str) -> None:
+        if node_id in reachable or node_id not in nodes:
+            return
+        reachable.add(node_id)
+        for value in (nodes[node_id].get("inputs") or {}).values():
+            linked = _link(value)
+            if linked:
+                collect(linked)
+    for output in outputs:
+        collect(output)
+    if reachable != set(nodes):
+        return False, "workflow contains disconnected or unused nodes"
+    return True, "lossless native text-to-image recipe"
+
+
 def analyze_workflow(payload: Mapping[str, Any], *, source: str = "") -> dict[str, Any]:
     if not isinstance(payload, Mapping) or not payload:
         return {"ok": True, "state": "INVALID", "format": "unknown", "reason": "workflow must be a non-empty object"}
@@ -115,15 +188,13 @@ def analyze_workflow(payload: Mapping[str, Any], *, source: str = "") -> dict[st
             state = "COMFY_ONLY"
             reason = f"unknown node semantics: {unknown[0]}"
         else:
-            required = {"SaveImage"} & set(types)
-            has_loader = bool(set(types) & {"CheckpointLoaderSimple", "UNETLoader", "UnetLoaderGGUF"})
-            has_sampler = bool(set(types) & {"KSampler", "KSamplerAdvanced", "SamplerCustom"})
-            if required and has_loader and has_sampler:
-                state = "ADAPTABLE" if ui_format else "NATIVE"
-                reason = "UI workflow requires conversion" if ui_format else "known native text/image graph semantics"
+            native, native_reason = _native_recipe_shape(graph) if not ui_format else (False, "UI workflow requires conversion")
+            if native:
+                state = "NATIVE"
+                reason = native_reason
             else:
                 state = "ADAPTABLE"
-                reason = "known nodes need binding or graph normalization before execution"
+                reason = native_reason
     node_count = ui_active_node_count(payload) if ui_format else len(graph)
     return {
         "ok": True,

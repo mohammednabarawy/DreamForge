@@ -114,6 +114,7 @@ class ProviderSearchParams:
     kind: str = ""  # AssetKind value (checkpoint, lora, ...)
     limit: int = 20
     page: int = 1
+    cursor: str = ""
     filters: SearchFilters = field(default_factory=SearchFilters)
 
 
@@ -128,6 +129,7 @@ class ProviderSearchResult:
     from_cache: bool = False
     total: int = 0
     page: int = 1
+    next_cursor: str = ""
 
     @property
     def ok(self) -> bool:
@@ -142,6 +144,7 @@ class ProviderSearchResult:
             "from_cache": self.from_cache,
             "total": self.total,
             "page": self.page,
+            "next_cursor": self.next_cursor,
             "ok": self.ok,
         }
 

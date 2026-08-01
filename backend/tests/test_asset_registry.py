@@ -178,6 +178,15 @@ def test_scanner_ignores_non_model_extensions(registry, tmp_path):
     assert result.errors == []
 
 
+def test_scanner_includes_nested_model_folders(registry, tmp_path):
+    nested = tmp_path / "models" / "vendor"
+    nested.mkdir(parents=True)
+    (nested / "nested.safetensors").write_bytes(b"nested")
+    result = AssetScanner(registry, snapshot_path=tmp_path / "snap.json").scan_folder(tmp_path / "models")
+    assert result.scanned == 1
+    assert result.registered == 1
+
+
 def test_scanner_missing_folder_reports_error(registry, tmp_path):
     scanner = AssetScanner(registry, snapshot_path=tmp_path / "snap.json")
     result = scanner.scan_folder(tmp_path / "nope", kind=AssetKind.CHECKPOINT)

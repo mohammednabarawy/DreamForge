@@ -38,6 +38,7 @@ _SAMPLERS: tuple[str, ...] = (
     "euler_ancestral",
     "dpmpp_2m",
     "dpmpp_2m_sde",
+    "dpmpp_3m_sde",
     "dpmpp_sde",
     "dpm_2",
     "dpm_2_ancestral",
@@ -76,9 +77,11 @@ def normalize_sampler(value: str | None) -> str | None:
     key = str(value).strip().lower()
     key = key.replace("++", "pp").replace("+", "pp")
     key = key.replace(" ", "_").replace("-", "_")
+    if key.startswith("euler_a"):
+        return "euler_ancestral"
     if key in _SAMPLER_ALIASES:
         return _SAMPLER_ALIASES[key]
-    for sampler in _SAMPLERS:
+    for sampler in sorted(_SAMPLERS, key=len, reverse=True):
         if key.startswith(sampler):
             return sampler
     return None
@@ -101,7 +104,7 @@ class LoRAComponent:
         data = data or {}
         return cls(
             filename=str(data.get("filename") or ""),
-            weight=float(data.get("weight") or 1.0),
+            weight=float(1.0 if data.get("weight") is None else data.get("weight")),
         )
 
 
@@ -173,7 +176,7 @@ class DreamForgeRecipe:
             present.append("seed")
         if self.negative_prompt:
             present.append("negative_prompt")
-        score = len(present) / len(_COMPLETE_FIELDS) if _COMPLETE_FIELDS else 0.0
+        score = len([field for field in present if field in _COMPLETE_FIELDS]) / len(_COMPLETE_FIELDS) if _COMPLETE_FIELDS else 0.0
         return {
             "score": round(score, 3),
             "present": present,

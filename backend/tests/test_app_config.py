@@ -373,6 +373,15 @@ def test_save_app_config_preserves_civitai_key_on_empty_patch(tmp_path: Path, mo
     assert raw["ui"]["civitai_api_key"] == "my-secret-key"
 
 
+def test_backend_can_explicitly_clear_provider_key(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv(app_config.CONFIG_ENV, str(tmp_path / "config.json"))
+    app_config.save_app_config({"ui": {"huggingface_api_key": "hf-secret"}})
+    app_config.save_app_config(
+        {"ui": {"huggingface_api_key": ""}}, preserve_redacted_secrets=False
+    )
+    assert app_config.load_app_config(redacted=False)["ui"]["huggingface_api_key"] == ""
+
+
 def test_load_app_config_defaults_experience_pro_for_legacy_file(tmp_path: Path, monkeypatch):
     path = tmp_path / "app-config.json"
     monkeypatch.setenv(app_config.CONFIG_ENV, str(path))

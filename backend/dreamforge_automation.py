@@ -11,6 +11,8 @@ from typing import Any
 from dreamforge_recipe import DreamForgeRecipe
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
+MAX_AUTOMATION_JOBS = 256
+MAX_AUTOMATION_INPUT_BYTES = 2 * 1024 * 1024
 
 
 def _emit_automation_progress(
@@ -39,29 +41,36 @@ def _emit_automation_progress(
 
 
 def _read_prompt_lines(path: Path) -> list[str]:
+    if not path.is_file() or path.stat().st_size > MAX_AUTOMATION_INPUT_BYTES:
+        return []
     text = path.read_text(encoding="utf-8", errors="replace")
-    return [line.strip() for line in text.splitlines() if line.strip()]
+    return [line.strip() for line in text.splitlines() if line.strip()][:MAX_AUTOMATION_JOBS]
 
 
 def _list_prompt_files(folder: Path) -> list[Path]:
-    return sorted(p for p in folder.glob("*.txt") if p.is_file())
+    return sorted(p for p in folder.glob("*.txt") if p.is_file())[:MAX_AUTOMATION_JOBS] if folder.is_dir() else []
 
 
 def _list_recipe_files(folder: Path) -> list[Path]:
-    return sorted(p for p in folder.glob("*.json") if p.is_file())
+    return sorted(p for p in folder.glob("*.json") if p.is_file())[:MAX_AUTOMATION_JOBS] if folder.is_dir() else []
 
 
 def _list_input_images(folder: Path) -> list[Path]:
+    if not folder.is_dir():
+        return []
     files: list[Path] = []
     for path in sorted(folder.iterdir()):
         if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES:
             files.append(path)
-    return files
+    return files[:MAX_AUTOMATION_JOBS]
 
 
 def _recipe_settings(path: str | Path) -> dict[str, Any] | None:
     try:
-        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        recipe_path = Path(path)
+        if not recipe_path.is_file() or recipe_path.stat().st_size > MAX_AUTOMATION_INPUT_BYTES:
+            return None
+        payload = json.loads(recipe_path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict) or payload.get("schema_version") != "2.0":
             return None
         recipe = DreamForgeRecipe.from_dict(payload)
@@ -94,7 +103,10 @@ def expand_automation_jobs(spec: dict[str, Any]) -> list[dict[str, Any]]:
     """Expand an automation spec into per-job override dicts."""
     automation_type = str(spec.get("type") or spec.get("automation_type") or "seed_batch").strip()
     base = dict(spec.get("base_settings") or spec.get("settings") or {})
-    count = max(1, int(spec.get("count") or 4))
+    try:
+        count = min(64, max(1, int(spec.get("count") or 4)))
+    except (TypeError, ValueError):
+        count = 4
     template_id = spec.get("template_id")
     studio_mode = spec.get("studio_mode")
 
@@ -218,6 +230,8 @@ def expand_automation_jobs(spec: dict[str, Any]) -> list[dict[str, Any]]:
                     for char in '<>:"/\\|?*':
                         label = label.replace(char, "_")
                     jobs.append({"index": len(jobs) + 1, "overrides": job, "label": label})
+                    if len(jobs) >= MAX_AUTOMATION_JOBS:
+                        return jobs
 
     elif automation_type == "prompt_lines":
         prompt_file = spec.get("prompt_file") or spec.get("input_path")
@@ -252,6 +266,8 @@ def expand_automation_jobs(spec: dict[str, Any]) -> list[dict[str, Any]]:
                         "label": f"{file_path.name}:{index}",
                     }
                 )
+                if len(jobs) >= MAX_AUTOMATION_JOBS:
+                    return jobs
 
     elif automation_type == "input_folder":
         folder = spec.get("input_folder") or spec.get("input_path")
@@ -291,8 +307,13 @@ def preview_automation(spec: dict[str, Any]) -> dict[str, Any]:
         "job_count": len(jobs),
         "jobs": [{"index": j.get("index"), "label": j.get("label")} for j in jobs[:50]],
     }
-    if payload["type"] == "recipe_batch" and not jobs:
-        payload.update(ok=False, error="invalid_recipe", message="Choose a valid DreamForge Recipe v2 JSON file")
+    if not jobs:
+        recipe_type = payload["type"] in {"recipe_batch", "recipe_matrix", "recipe_folder"}
+        payload.update(
+            ok=False,
+            error="invalid_recipe" if recipe_type else "empty_automation",
+            message="Choose a valid DreamForge Recipe v2 file or folder" if recipe_type else "No valid input jobs found",
+        )
     return payload
 
 

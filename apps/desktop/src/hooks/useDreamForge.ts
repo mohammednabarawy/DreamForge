@@ -38,7 +38,6 @@ import {
 import { isAdvancedMode, isSimpleExperience, type UiExperience } from "../lib/experienceUi";
 import { ideogram4SettingsDefaults, looksLikeIdeogramJson } from "../lib/ideogram4Ui";
 import { resolveAspectPresets } from "../lib/aspectPresets";
-import { settingsPatchFromRecipe } from "../lib/recipe";
 import { enhancePrefsFromAppConfig, shouldAutoEnhanceOnGenerate } from "../lib/promptEnhance";
 import { effectiveInpaintEditStrength, inpaintModelWarning } from "../lib/inpaintModel";
 import { upscaleModelWarning } from "../lib/upscaleModel";
@@ -626,6 +625,8 @@ export function useDreamForge() {
   const lastSelectedKeyRef = useRef<string>("");
   const previewGenerationRef = useRef(0);
   const finalPreviewAppliedRef = useRef(false);
+  const styleBasePromptRef = useRef("");
+  const lastStyledPromptRef = useRef("");
 
   const previewSignature = useCallback((url: string) => {
     if (!url.startsWith("data:")) return url;
@@ -1975,12 +1976,22 @@ export function useDreamForge() {
       const styleId = (style || "none").trim() || "none";
       if (styleId === "none") {
         userPickedStyleRef.current = false;
-        patchSettings({ style: "none", styles: [] });
+        const prompt = settingsRef.current.prompt === lastStyledPromptRef.current
+          ? styleBasePromptRef.current
+          : settingsRef.current.prompt;
+        styleBasePromptRef.current = "";
+        lastStyledPromptRef.current = "";
+        patchSettings({ style: "none", styles: [], prompt });
         return;
       }
       if (styleId === settingsRef.current.style) {
         userPickedStyleRef.current = false;
-        patchSettings({ style: "none", styles: [] });
+        const prompt = settingsRef.current.prompt === lastStyledPromptRef.current
+          ? styleBasePromptRef.current
+          : settingsRef.current.prompt;
+        styleBasePromptRef.current = "";
+        lastStyledPromptRef.current = "";
+        patchSettings({ style: "none", styles: [], prompt });
         return;
       }
       userPickedStyleRef.current = true;
@@ -1997,8 +2008,17 @@ export function useDreamForge() {
       if (typeof recipe?.aspect_ratio === "string" && recipe.aspect_ratio.trim()) {
         stylePatch.aspect_ratio = recipe.aspect_ratio.replace("×", "x");
       }
-      if (recipe?.prompt_prefix && !settingsRef.current.prompt?.trim()) {
-        stylePatch.prompt = recipe.prompt_prefix;
+      if (recipe?.prompt_prefix) {
+        const current = settingsRef.current.prompt?.trim() ?? "";
+        const base = current === lastStyledPromptRef.current ? styleBasePromptRef.current : current;
+        const template = recipe.prompt_prefix.trim();
+        const prompt = (template.includes("{prompt}")
+          ? template.replaceAll("{prompt}", base)
+          : [template, base].filter(Boolean).join(", "))
+          .replace(/^[,\s]+|[,\s]+$/g, "");
+        styleBasePromptRef.current = base;
+        lastStyledPromptRef.current = prompt;
+        stylePatch.prompt = prompt;
       }
       if (recipe?.negative_prompt) {
         stylePatch.negative_prompt = recipe.negative_prompt;
@@ -2536,32 +2556,6 @@ export function useDreamForge() {
     ],
   );
 
-  const runWorkflowRecipe = useCallback(
-    async (recipe: Record<string, unknown>, source = "") => {
-      try {
-        const patch = settingsPatchFromRecipe(recipe);
-        const nextSettings: GenerationSettings = {
-          ...settingsRef.current,
-          ...patch,
-          use_comfy_server: true,
-          workflow_mode: "generate",
-          workflow_source: source || undefined,
-        };
-        patchSettings(patch);
-        setStatus("Executing verified workflow recipe through ComfyUI…");
-        return await startGeneration(nextSettings, {
-          mapped: "native workflow",
-          hint: source ? source.split(/[\\/]/).pop() : "portable recipe",
-          studioMode: "generate",
-        });
-      } catch (error) {
-        setStatus(`Workflow execution blocked: ${String(error)}`);
-        return false;
-      }
-    },
-    [patchSettings, startGeneration],
-  );
-
   const applyPlanSnapshot = useCallback(
     async (plan: AgentPlanSnapshot) => {
       const base = settingsRef.current;
@@ -2966,14 +2960,18 @@ export function useDreamForge() {
         title: "Running batch…",
         phase: "preparing",
       });
+      let started = false;
       try {
         const { ok } = await runner();
+        started = ok;
         return ok;
       } finally {
-        setGenerating(false);
-        generatingRef.current = false;
-        setEngineState(workerReadyRef.current ? "ready" : "booting");
-        setLiveProgress(null);
+        if (!started) {
+          setGenerating(false);
+          generatingRef.current = false;
+          setEngineState(workerReadyRef.current ? "ready" : "booting");
+          setLiveProgress(null);
+        }
       }
     },
     [applyLiveProgress],
@@ -4655,7 +4653,6 @@ export function useDreamForge() {
     runGenerate,
     runGenerateVariants,
     runAutomationBatch,
-    runWorkflowRecipe,
     runCancel,
     useSelectedImageFor,
     attachReferenceImage,

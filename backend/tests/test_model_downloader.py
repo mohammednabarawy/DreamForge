@@ -4,6 +4,7 @@ from pathlib import Path
 from dreamforge_model_downloader import (
     parse_filename_from_url,
     resolve_category_folder,
+    safe_model_filename,
     verify_sha256,
 )
 
@@ -30,3 +31,10 @@ def test_verify_sha256(tmp_path):
     expected = hashlib.sha256(b"hello dreamforge").hexdigest()
     assert verify_sha256(dummy_file, expected) is True
     assert verify_sha256(dummy_file, "badhash") is False
+
+
+def test_filename_and_category_cannot_escape_models_root():
+    assert safe_model_filename("../../evil.safetensors") == "evil.safetensors"
+    import pytest
+    with pytest.raises(ValueError):
+        resolve_category_folder("../../outside")

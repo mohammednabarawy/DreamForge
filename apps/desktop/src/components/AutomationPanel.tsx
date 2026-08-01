@@ -6,11 +6,12 @@ import {
   FileText,
   FileJson,
   Images,
+  Square,
 } from "lucide-react";
 import { useAutomation, type AutomationType } from "../hooks/useAutomation";
 import type { GenerationSettings, ModelGalleryItem } from "../lib/tauri-api";
 import type { StudioMode } from "../lib/model-selection";
-import { pickFolder, pickTextFile } from "../lib/tauri-api";
+import { pickFolder, pickJsonFile, pickTextFile } from "../lib/tauri-api";
 import type { AutomationPreview } from "../lib/studioBridge";
 
 type PreviewJob = NonNullable<AutomationPreview["jobs"]>[number];
@@ -244,8 +245,11 @@ export function AutomationPanel({
                 type="button"
                 disabled={generating}
                 onClick={async () => {
-                  if (automation.automationType === "prompt_lines" || automation.automationType === "recipe_batch" || automation.automationType === "recipe_matrix") {
+                  if (automation.automationType === "prompt_lines") {
                     const picked = await pickTextFile();
+                    if (picked) automation.setInputPath(picked);
+                  } else if (automation.automationType === "recipe_batch" || automation.automationType === "recipe_matrix") {
+                    const picked = await pickJsonFile();
                     if (picked) automation.setInputPath(picked);
                   } else {
                     const picked = await pickFolder();
@@ -277,7 +281,6 @@ export function AutomationPanel({
               >
                 <option value="upscale">Enhance (upscale)</option>
                 <option value="edit">Edit</option>
-                <option value="inpaint">Fix region (needs mask per image)</option>
               </select>
             </label>
           ) : null}
@@ -361,6 +364,15 @@ export function AutomationPanel({
           <Play size={13} fill="currentColor" />
           Run batch
         </button>
+        {generating ? (
+          <button
+            type="button"
+            onClick={() => void automation.runCancel()}
+            className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-red-400/50 px-3 py-2 text-xs font-semibold text-red-200 hover:bg-red-500/10"
+          >
+            <Square size={12} fill="currentColor" /> Cancel batch
+          </button>
+        ) : null}
         {automation.lastOutputDir ? (
           <button
             type="button"

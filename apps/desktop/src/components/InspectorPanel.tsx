@@ -116,6 +116,7 @@ type Props = {
   onRefreshOutputs?: () => void;
   onBeforeAutomationRun?: () => Promise<boolean>;
   onRevealPath?: (path: string) => void;
+  onExecuteWorkflowRecipe?: (recipe: Record<string, unknown>, source?: string) => Promise<boolean>;
 };
 
 export function InspectorPanel({
@@ -158,6 +159,7 @@ export function InspectorPanel({
   onRefreshOutputs,
   onBeforeAutomationRun,
   onRevealPath,
+  onExecuteWorkflowRecipe,
 }: Props) {
   const [surface, setSurface] = useState<DiscoverLibrarySurface>(() => loadDiscoverLibrarySurface());
   const [libraryTab, setLibraryTab] = useState<DiscoverLibraryTab>(() => loadDiscoverLibraryTab());
@@ -640,6 +642,7 @@ export function InspectorPanel({
             templates={workflowTemplates}
             loading={workflowLoading}
             error={workflowError}
+            onExecuteRecipe={onExecuteWorkflowRecipe}
           />
         )}
 

@@ -291,6 +291,9 @@ export type DiscoverWorkflowTemplate = {
   required_models?: string[];
   required_node_packs?: string[];
   security_note?: string;
+  url?: string;
+  thumbnail_url?: string;
+  source?: string;
 };
 
 export async function listWorkflowTemplates() {
@@ -325,6 +328,37 @@ export type WorkflowRecipeCompileResult = {
 
 export async function compileWorkflowRecipe(path: string) {
   return bridgeInvoke<WorkflowRecipeCompileResult>("compile_workflow_recipe", { path });
+}
+
+export type WorkflowIRCompileResult = {
+  ok: boolean;
+  version?: string;
+  can_execute?: boolean;
+  kind?: string;
+  source?: string;
+  nodes?: string[];
+  dependencies?: string[];
+  recipe?: Record<string, unknown>;
+  report?: WorkflowCompatibilityReport;
+  missing?: string[];
+};
+
+export async function compileWorkflowIR(path: string) {
+  return bridgeInvoke<WorkflowIRCompileResult>("compile_workflow_ir", { path });
+}
+
+export type WorkflowIndexItem = DiscoverWorkflowTemplate & {
+  url?: string;
+  thumbnail_url?: string;
+  source?: string;
+};
+
+export async function searchWorkflowIndex(url: string) {
+  return bridgeInvoke<{ ok: boolean; items?: WorkflowIndexItem[]; count?: number; error?: string }>("workflow_index_search", { url });
+}
+
+export async function downloadWorkflow(url: string, filename?: string) {
+  return bridgeInvoke<{ ok: boolean; path?: string; filename?: string; execution?: "disabled"; error?: string }>("workflow_download", { url, filename });
 }
 
 export type WorkflowSaveResult = {

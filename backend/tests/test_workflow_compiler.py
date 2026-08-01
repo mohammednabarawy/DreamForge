@@ -20,3 +20,15 @@ def test_comfy_only_graph_cannot_compile():
     result = compile_workflow_recipe({"1": {"class_type": "CustomMagic", "inputs": {}}})
     assert result["can_recreate"] is False
     assert result["report"]["state"] == "COMFY_ONLY"
+
+
+def test_native_graph_with_unbound_sampler_is_blocked():
+    result = compile_workflow_recipe({
+        "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "model.safetensors"}},
+        "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "a fox"}},
+        "3": {"class_type": "KSampler", "inputs": {}},
+        "4": {"class_type": "SaveImage", "inputs": {}},
+    })
+    assert result["report"]["state"] == "NATIVE"
+    assert result["can_recreate"] is False
+    assert "sampler" in result["missing"]

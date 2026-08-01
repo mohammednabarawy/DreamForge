@@ -1,6 +1,6 @@
 import { Download, ExternalLink, RotateCcw, Search } from "lucide-react";
 import { useCallback, useState } from "react";
-import { settingsPatchFromRecipe } from "./RecipeActions";
+import { settingsPatchFromRecipe } from "../lib/recipe";
 import {
   searchRecipeDiscovery,
   type RecipeDiscoveryItem,

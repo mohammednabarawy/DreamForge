@@ -90,6 +90,9 @@ class TestPhase3BridgeHandlers:
         ]:
             assert cmd in HANDLERS, f"missing handler: {cmd}"
 
+    def test_workflow_ir_handler_registered(self):
+        assert "compile_workflow_ir" in HANDLERS
+
     def test_custom_style_handlers_registered(self):
         assert "import_fooocus_styles" in HANDLERS
         assert "delete_custom_style" in HANDLERS

@@ -565,6 +565,33 @@ def cmd_compile_workflow_recipe(params: dict) -> dict:
     return compile_workflow_recipe(payload)
 
 
+def cmd_compile_workflow_ir(params: dict) -> dict:
+    from dreamforge_workflow_ir import compile_workflow_ir, compile_workflow_ir_file
+
+    path = str(params.get("path") or "").strip()
+    if path:
+        return compile_workflow_ir_file(path)
+    payload = params.get("workflow")
+    if not isinstance(payload, dict):
+        return {"ok": True, "version": "1.0", "can_execute": False, "missing": ["workflow or path"]}
+    return compile_workflow_ir(payload)
+
+
+def cmd_workflow_index_search(params: dict) -> dict:
+    from dreamforge_workflow_provider import fetch_workflow_index
+
+    return fetch_workflow_index(str(params.get("url") or ""))
+
+
+def cmd_workflow_download(params: dict) -> dict:
+    from dreamforge_workflow_provider import download_workflow
+
+    return download_workflow(
+        str(params.get("url") or ""),
+        filename=str(params.get("filename") or "workflow.json"),
+    )
+
+
 def cmd_save_workflow_file(params: dict) -> dict:
     from dreamforge_workflow_library import save_workflow_file
 
@@ -1964,6 +1991,9 @@ HANDLERS = {
     "list_workflow_templates": cmd_list_workflow_templates,
     "analyze_workflow_compatibility": cmd_analyze_workflow_compatibility,
     "compile_workflow_recipe": cmd_compile_workflow_recipe,
+    "compile_workflow_ir": cmd_compile_workflow_ir,
+    "workflow_index_search": cmd_workflow_index_search,
+    "workflow_download": cmd_workflow_download,
     "save_workflow_file": cmd_save_workflow_file,
     "get_ui_defaults": cmd_get_ui_defaults,
     "classify_models": cmd_classify_models,

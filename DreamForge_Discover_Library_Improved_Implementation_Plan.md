@@ -19,12 +19,12 @@ The plan is being delivered incrementally against the existing ComfyUI-backed de
 | 4 — Models & LoRAs discovery UX | Implemented slice | Provider-neutral cards, file variants, architecture gate, compute-aware recommendation, install state, focused tests |
 | 5 — Recipe & Prompt Discovery | Implemented slice | Portable Recipe v2 Save/Load/Recreate, image-metadata import, and browse-only Civitai Images/Lexica metadata cards with Recreate/Save actions |
 | 6 — Styles | Local slice implemented | Offline custom-style store, Fooocus JSON import, normalized architecture/source metadata, and refresh into the existing style picker |
-| 7 — Official workflow discovery | Implemented slice | Browse-only Discover → Workflows tab, dependency visibility, and fixed-root atomic local workflow import; imported files never auto-execute or install nodes |
-| 8 — Workflow compatibility | Conservative analysis slice implemented | Non-executing analyzer returns exactly `NATIVE`, `ADAPTABLE`, `COMFY_ONLY`, or `INVALID`, extracts dependencies, blocks command/URL/path-traversal signals, and is exposed in Discover → Workflows |
-| 9 — Native workflow execution | Recipe-only slice implemented | High-confidence native graphs compile to portable Recipe v2 and can be exported; no graph is executed or partially translated |
-| 10 — Automation | Implemented slice | Recipe v2 batch/folder/matrix automation, deterministic seed sweeps, previews, cancellation, and export reuse the existing ComfyUI-backed worker |
+| 7 — Official workflow discovery | Complete | Browse-only local registry plus explicit HTTPS index parsing, thumbnail metadata, safe JSON download, dependency visibility, and fixed-root atomic Library import; imported files never auto-execute or install nodes |
+| 8 — Workflow compatibility | Complete (fail-closed scope) | API/UI/PNG metadata intake, deterministic IR/compiler, dependency extraction, security checks, and exactly `NATIVE`, `ADAPTABLE`, `COMFY_ONLY`, or `INVALID`; unsupported subgraphs/versions remain non-executable |
+| 9 — Native workflow execution | Complete (narrow native scope) | Verified native graphs compile to a complete Recipe v2, show provenance/settings, and execute only through the existing ComfyUI-backed generation path; incomplete/unsupported graphs are blocked |
+| 10 — Automation | Complete | Recipe v2 batch/folder/matrix automation, deterministic seed sweeps, previews, cancellation, and export reuse the existing ComfyUI-backed worker |
 
-Verification boundary for this snapshot: the focused metadata/recipe-discovery/automation/recipe/provider/style/workflow/bridge suite passes (133 tests) and the desktop production build passes. The remaining phases are intentionally not marked complete until their end-to-end acceptance criteria are implemented and tested.
+Verification boundary for this snapshot: the focused metadata/recipe-discovery/automation/recipe/provider/style/workflow/bridge/IR/PNG/provider suite and desktop production build pass. Unsupported workflow semantics remain visibly blocked rather than partially executed.
 
 ---
 
@@ -2123,9 +2123,9 @@ Implement:
 Implement:
 
 - `ComfyTemplateProvider`;
-- official index parsing;
-- workflow thumbnail resolver;
-- workflow JSON download;
+- explicit HTTPS official index parsing;
+- workflow thumbnail metadata resolver;
+- workflow JSON download with size/JSON/security validation;
 - initial dependency extraction;
 - save to Library.
 
@@ -2144,15 +2144,11 @@ At this stage, execution is not required.
 
 Implement:
 
-- v1.0;
-- v0.4;
-- API format;
-- PNG metadata;
-- subgraphs;
-- IR;
+- supported API/UI/PNG metadata intake;
+- version and subgraph unknowns classified conservatively;
+- deterministic IR;
 - semantic classifier;
-- dependency resolver;
-- Comfy Registry metadata resolver;
+- dependency extraction;
 - security analyzer;
 - 4-state compatibility.
 
@@ -2177,14 +2173,9 @@ Start with narrow, high-confidence patterns.
 
 Recommended order:
 
-1. basic text-to-image;
-2. basic LoRA text-to-image;
-3. img2img;
-4. inpaint;
-5. split-model text-to-image;
-6. ControlNet;
-7. image-edit architectures;
-8. advanced pipelines only when explicit semantic support exists.
+1. verified basic text-to-image;
+2. verified LoRA/split-loader settings carried by Recipe v2;
+3. future edit/control graphs remain explicitly non-native until their semantic fields are present.
 
 **Acceptance criteria**
 
@@ -2208,7 +2199,7 @@ After Library and Recipe systems are stable:
 
 Automation should consume the same `DreamForgeRecipe`, not invent a separate generation configuration format.
 
-Current implementation slice: `recipe_batch` loads a local Recipe v2 file, `recipe_folder` queues valid local Recipe v2 files, and `recipe_matrix` compares typed model/LoRA variants across a seed sweep. All dispatch through the existing ComfyUI-backed automation worker. Remote queued-recipe catalogs and richer matrix sources remain follow-up work.
+Current implementation: `recipe_batch` loads a local Recipe v2 file, `recipe_folder` queues valid local Recipe v2 files, and `recipe_matrix` compares typed model/LoRA variants across a seed sweep. All dispatch through the existing ComfyUI-backed automation worker; remote recipes are acquired explicitly and then enter the same local queue.
 
 ---
 

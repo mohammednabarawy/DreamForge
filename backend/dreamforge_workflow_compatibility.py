@@ -146,7 +146,12 @@ def analyze_workflow_file(path: str | Path) -> dict[str, Any]:
     try:
         if file_path.stat().st_size > MAX_WORKFLOW_BYTES:
             return {"ok": True, "state": "INVALID", "format": "unknown", "source": str(file_path), "reason": "workflow file is too large"}
-        payload = json.loads(file_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        if file_path.suffix.lower() == ".png":
+            from dreamforge_workflow_png import load_png_workflow
+
+            payload = load_png_workflow(file_path)
+        else:
+            payload = json.loads(file_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
         return {"ok": True, "state": "INVALID", "format": "unknown", "source": str(file_path), "reason": f"workflow JSON is invalid: {exc}"}
     return analyze_workflow(payload, source=str(file_path))

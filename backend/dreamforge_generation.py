@@ -3474,6 +3474,7 @@ def run_generation(
                 "model": model,
                 "settings": settings,
                 "routing": routing,
+                "workflow_source": getattr(job, "workflow_source", None),
                 "final_edit_request": final_request,
                 "lineage": build_edit_lineage(
                     job=job,

@@ -69,6 +69,14 @@ def compile_workflow_recipe(payload: Mapping[str, Any], *, source: str = "") -> 
         missing.append("model")
     if not positive:
         missing.append("positive_prompt")
+    if not sampler_inputs.get("sampler_name"):
+        missing.append("sampler")
+    if not isinstance(sampler_inputs.get("cfg"), (int, float)) or float(sampler_inputs.get("cfg") or 0) <= 0:
+        missing.append("cfg_scale")
+    if not isinstance(sampler_inputs.get("steps"), (int, float)) or int(sampler_inputs.get("steps") or 0) <= 0:
+        missing.append("steps")
+    if not isinstance(width, (int, float)) or not isinstance(height, (int, float)) or width <= 0 or height <= 0:
+        missing.append("aspect_ratio")
     recipe = DreamForgeRecipe(
         model=str(model),
         positive_prompt=positive,
@@ -89,6 +97,10 @@ def compile_workflow_recipe(payload: Mapping[str, Any], *, source: str = "") -> 
         source="comfy_workflow",
         source_url=source,
         provenance=Provenance(provider="local", source_url=source),
+        settings={
+            "width": int(width),
+            "height": int(height),
+        } if isinstance(width, (int, float)) and isinstance(height, (int, float)) and width > 0 and height > 0 else {},
     )
     return {
         "ok": True,
@@ -105,7 +117,12 @@ def compile_workflow_file(path: str | Path) -> dict[str, Any]:
     if report.get("state") == "INVALID":
         return {"ok": True, "report": report, "can_recreate": False, "missing": [report.get("reason", "invalid workflow")]}
     try:
-        payload = load_api_workflow_template(file_path)
+        if file_path.suffix.lower() == ".png":
+            from dreamforge_workflow_png import load_png_workflow
+
+            payload = load_png_workflow(file_path)
+        else:
+            payload = load_api_workflow_template(file_path)
     except (OSError, ValueError) as exc:
         return {"ok": True, "report": report, "can_recreate": False, "missing": [str(exc)]}
     return compile_workflow_recipe(payload, source=str(file_path))

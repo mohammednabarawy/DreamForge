@@ -38,6 +38,7 @@ import {
 import { isAdvancedMode, isSimpleExperience, type UiExperience } from "../lib/experienceUi";
 import { ideogram4SettingsDefaults, looksLikeIdeogramJson } from "../lib/ideogram4Ui";
 import { resolveAspectPresets } from "../lib/aspectPresets";
+import { settingsPatchFromRecipe } from "../lib/recipe";
 import { enhancePrefsFromAppConfig, shouldAutoEnhanceOnGenerate } from "../lib/promptEnhance";
 import { effectiveInpaintEditStrength, inpaintModelWarning } from "../lib/inpaintModel";
 import { upscaleModelWarning } from "../lib/upscaleModel";
@@ -2535,6 +2536,32 @@ export function useDreamForge() {
     ],
   );
 
+  const runWorkflowRecipe = useCallback(
+    async (recipe: Record<string, unknown>, source = "") => {
+      try {
+        const patch = settingsPatchFromRecipe(recipe);
+        const nextSettings: GenerationSettings = {
+          ...settingsRef.current,
+          ...patch,
+          use_comfy_server: true,
+          workflow_mode: "generate",
+          workflow_source: source || undefined,
+        };
+        patchSettings(patch);
+        setStatus("Executing verified workflow recipe through ComfyUI…");
+        return await startGeneration(nextSettings, {
+          mapped: "native workflow",
+          hint: source ? source.split(/[\\/]/).pop() : "portable recipe",
+          studioMode: "generate",
+        });
+      } catch (error) {
+        setStatus(`Workflow execution blocked: ${String(error)}`);
+        return false;
+      }
+    },
+    [patchSettings, startGeneration],
+  );
+
   const applyPlanSnapshot = useCallback(
     async (plan: AgentPlanSnapshot) => {
       const base = settingsRef.current;
@@ -4628,6 +4655,7 @@ export function useDreamForge() {
     runGenerate,
     runGenerateVariants,
     runAutomationBatch,
+    runWorkflowRecipe,
     runCancel,
     useSelectedImageFor,
     attachReferenceImage,

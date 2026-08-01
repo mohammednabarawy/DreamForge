@@ -289,6 +289,7 @@ function DreamForgeStudio() {
             onRefreshOutputs={() => void mc.refreshOutputs({ selectNewest: true })}
             onBeforeAutomationRun={mc.ensureCreativeAssetsReady}
             onRevealPath={(path) => void mc.openOutputInExplorer(path)}
+            onExecuteWorkflowRecipe={mc.runWorkflowRecipe}
           />
           </div>
         </Panel>

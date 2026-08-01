@@ -239,6 +239,8 @@ export type GenerationSettings = {
   civitai_api_key?: string;
   studio_mode?: "generate" | "edit" | "inpaint" | "upscale" | "toolbox" | "agent";
   workflow_mode?: string;
+  /** Provenance for an explicitly recreated workflow recipe. */
+  workflow_source?: string;
   arabic_text?: string;
   execute_workflow_plan?: boolean;
   workflow_plan?: Array<Record<string, unknown>>;

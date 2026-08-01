@@ -89,3 +89,7 @@ class TestPhase3BridgeHandlers:
             "download_clear_completed",
         ]:
             assert cmd in HANDLERS, f"missing handler: {cmd}"
+
+    def test_custom_style_handlers_registered(self):
+        assert "import_fooocus_styles" in HANDLERS
+        assert "delete_custom_style" in HANDLERS

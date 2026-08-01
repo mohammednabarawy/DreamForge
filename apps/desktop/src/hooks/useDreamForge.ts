@@ -1999,6 +1999,9 @@ export function useDreamForge() {
       if (recipe?.prompt_prefix && !settingsRef.current.prompt?.trim()) {
         stylePatch.prompt = recipe.prompt_prefix;
       }
+      if (recipe?.negative_prompt) {
+        stylePatch.negative_prompt = recipe.negative_prompt;
+      }
 
       let routedModel: string | undefined;
       if (!userPickedModelRef.current && style) {

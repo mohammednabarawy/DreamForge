@@ -14,6 +14,10 @@ export type StyleRecipe = {
   performance?: string;
   aspect_ratio?: string;
   prompt_prefix?: string;
+  negative_prompt?: string;
+  architecture?: string;
+  source?: string;
+  offline?: boolean;
   notes?: string;
 };
 

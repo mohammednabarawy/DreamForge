@@ -45,6 +45,7 @@ import { AutomationPanel } from "./AutomationPanel";
 import { RecipeActions } from "./RecipeActions";
 import {
   aggregateLoraKeywords,
+  importFooocusStyles,
   type StudioSettings,
 } from "../lib/studioBridge";
 import {
@@ -167,6 +168,12 @@ export function InspectorPanel({
     setSurface(next);
     saveDiscoverLibrarySurface(next);
   }, []);
+
+  const handleImportFooocusStyles = useCallback(async (payload: unknown) => {
+    const result = await importFooocusStyles(payload);
+    if (!result.ok) throw new Error(result.error ?? "Style import failed");
+    await onRefreshInventory();
+  }, [onRefreshInventory]);
 
   const showEditStrength = Boolean(settings.input_image) || ["kontext", "inpaint", "img2img", "qwen_edit"].includes(settings.edit_type ?? "");
   const isQwenModel = (settings.model ?? activeModelLabel ?? "").toLowerCase().includes("qwen");
@@ -726,6 +733,7 @@ export function InspectorPanel({
             onFilterChange={setStyleFilter}
             onSelect={onStyleChange}
             activeStyle={settings.style}
+            onImportFooocusStyles={handleImportFooocusStyles}
           />
         )}
 

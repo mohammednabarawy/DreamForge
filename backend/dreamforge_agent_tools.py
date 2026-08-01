@@ -470,12 +470,15 @@ def summarize_style_recipe(
     payload: dict[str, Any] = {
         "id": style_id,
         "label": style_recipe_label(style_id, spec),
+        "original_name": spec.get("original_name"),
         "models": list(spec.get("models") or []),
         "performance": spec.get("performance"),
         "aspect_ratio": spec.get("aspect_ratio"),
         "prompt_prefix": spec.get("prompt_prefix"),
+        "negative_prompt": spec.get("negative_prompt"),
+        "architecture": spec.get("architecture") or spec.get("base_model"),
         "prompt_profile": spec.get("prompt_profile"),
-        "sdxl_styles": list(spec.get("styles") or []),
+        "styles": list(spec.get("styles") or []),
         "notes": spec.get("notes"),
     }
     if include_thumbnail:

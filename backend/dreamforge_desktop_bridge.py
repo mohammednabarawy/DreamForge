@@ -504,9 +504,33 @@ def cmd_delete_session(params: dict) -> dict:
 
 def cmd_list_styles(_params: dict) -> dict:
     from dreamforge_agent_tools import list_style_recipes_for_agent
+    from dreamforge_custom_styles import list_custom_styles
 
     recipes = list_style_recipes_for_agent(include_thumbnail=True)
+    custom = list_custom_styles()
+    recipes.extend(
+        {
+            **style,
+            "label": style.get("original_name") or style.get("id"),
+        }
+        for style in custom
+    )
     return {"ok": True, "styles": recipes}
+
+
+def cmd_import_fooocus_styles(params: dict) -> dict:
+    from dreamforge_custom_styles import import_fooocus_styles
+
+    try:
+        return import_fooocus_styles(params.get("styles"))
+    except ValueError as exc:
+        return _error(str(exc))
+
+
+def cmd_delete_custom_style(params: dict) -> dict:
+    from dreamforge_custom_styles import delete_custom_style
+
+    return delete_custom_style(str(params.get("style_id") or ""))
 
 
 def _style_recipe_label(style_id: str, spec: dict) -> str:
@@ -1881,6 +1905,8 @@ HANDLERS = {
     "build_cli_argv": cmd_build_cli_argv,
     "analyze_identity_faces": cmd_analyze_identity_faces,
     "list_styles": cmd_list_styles,
+    "import_fooocus_styles": cmd_import_fooocus_styles,
+    "delete_custom_style": cmd_delete_custom_style,
     "get_ui_defaults": cmd_get_ui_defaults,
     "classify_models": cmd_classify_models,
     "organize_models": cmd_organize_models,

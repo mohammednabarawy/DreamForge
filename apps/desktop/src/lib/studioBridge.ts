@@ -265,6 +265,20 @@ export type IdentityFaceAnalysis = {
   }>;
 };
 
+export async function importFooocusStyles(styles: unknown) {
+  return bridgeInvoke<{ ok: boolean; count?: number; error?: string }>(
+    "import_fooocus_styles",
+    { styles },
+  );
+}
+
+export async function deleteCustomStyle(styleId: string) {
+  return bridgeInvoke<{ ok: boolean; removed?: number; error?: string }>(
+    "delete_custom_style",
+    { style_id: styleId },
+  );
+}
+
 export function analyzeIdentityFaces(path: string): Promise<IdentityFaceAnalysis> {
   return bridgeInvoke<IdentityFaceAnalysis>("analyze_identity_faces", { path });
 }

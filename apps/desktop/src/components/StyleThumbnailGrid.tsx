@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Star } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Star, Upload } from "lucide-react";
 import type { StyleRecipe } from "../lib/model-selection";
 import type { StyleGroup } from "../lib/inventory";
 import { ThumbnailGallery, type GalleryTile } from "./ThumbnailGallery";
@@ -31,6 +31,7 @@ type Props = {
   onFilterChange: (value: string) => void;
   onSelect: (styleId: string) => void;
   activeStyle?: string;
+  onImportFooocusStyles?: (payload: unknown) => Promise<void>;
 };
 
 export function StyleThumbnailGrid({
@@ -40,10 +41,13 @@ export function StyleThumbnailGrid({
   onFilterChange,
   onSelect,
   activeStyle,
+  onImportFooocusStyles,
 }: Props) {
   const [group, setGroup] = useState("all");
   const [favorites, setFavorites] = useState<string[]>(() => readStoredIds(FAVORITES_KEY));
   const [recent, setRecent] = useState<string[]>(() => readStoredIds(RECENT_KEY));
+  const [importMessage, setImportMessage] = useState("");
+  const importRef = useRef<HTMLInputElement>(null);
   const q = filter.trim().toLowerCase();
 
   useEffect(() => {
@@ -95,6 +99,10 @@ export function StyleThumbnailGrid({
         value: typeof s.id === "string" ? s.id : "",
         label,
         thumbnailPath: s.thumbnail,
+        sublabel: [
+          s.architecture,
+          s.source === "fooocus_import" ? "Offline custom" : "",
+        ].filter(Boolean).join(" · ") || undefined,
         selected: activeStyle === s.id,
         badge: favorites.includes(String(s.id)) ? "Favorite" : s.models && s.models.length > 0 ? "Preset" : undefined,
       };
@@ -142,9 +150,40 @@ export function StyleThumbnailGrid({
             <option key={item.id} value={item.id}>{item.label}</option>
           ))}
         </select>
+        {onImportFooocusStyles && (
+          <>
+            <button
+              type="button"
+              onClick={() => importRef.current?.click()}
+              className="inline-flex shrink-0 items-center gap-1 rounded border border-dfui-border/50 px-2 py-1.5 text-[10px] text-dfui-secondary hover:text-dfui-fg"
+              title="Import Fooocus style JSON"
+            >
+              <Upload size={12} /> Import
+            </button>
+            <input
+              ref={importRef}
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              onChange={async (event) => {
+                const file = event.target.files?.[0];
+                event.target.value = "";
+                if (!file) return;
+                try {
+                  setImportMessage("Importing…");
+                  await onImportFooocusStyles(JSON.parse(await file.text()));
+                  setImportMessage("Imported styles are available offline.");
+                } catch (error) {
+                  setImportMessage(error instanceof Error ? error.message : "Style import failed");
+                }
+              }}
+            />
+          </>
+        )}
       </div>
       <div className="flex shrink-0 items-center justify-between gap-2 text-[10px] text-dfui-muted">
         <span>{filteredStyles.length} of {styles.length} styles</span>
+        {importMessage && <span className="truncate text-dfui-secondary" role="status">{importMessage}</span>}
         {activeStyle && activeStyle !== "none" && (
           <button
             type="button"

@@ -17,14 +17,14 @@ The plan is being delivered incrementally against the existing ComfyUI-backed de
 | 2 — Dual-mode UI + local library | Implemented slice | Persisted Discover/Library surface and Library Models/LoRAs/Styles/Generate/Automate navigation; existing local galleries and LoRA stack remain the execution source |
 | 3 — Provider/download foundation | Implemented slice | Backend Civitai + Hugging Face providers, isolated cached search, credential status, persistent queue, pause/resume/cancel, verification, focused tests |
 | 4 — Models & LoRAs discovery UX | Implemented slice | Provider-neutral cards, file variants, architecture gate, compute-aware recommendation, install state, focused tests |
-| 5 — Recipe & Prompt Discovery | Local slice implemented | Portable Recipe v2 Save/Load/Recreate actions in Library → Generate; online Civitai Images/Lexica discovery remains next |
+| 5 — Recipe & Prompt Discovery | Local slice implemented | Portable Recipe v2 Save/Load/Recreate plus image-metadata import in Library → Generate; online Civitai Images/Lexica discovery remains next |
 | 6 — Styles | Local slice implemented | Offline custom-style store, Fooocus JSON import, normalized architecture/source metadata, and refresh into the existing style picker |
 | 7 — Official workflow discovery | Local slice implemented | Browse-only Discover → Workflows tab backed by the first-party Comfy template registry; templates can be bookmarked locally and never auto-execute |
 | 8 — Workflow compatibility | Conservative analysis slice implemented | Non-executing analyzer returns exactly `NATIVE`, `ADAPTABLE`, `COMFY_ONLY`, or `INVALID`, extracts dependencies, blocks command/URL/path-traversal signals, and is exposed in Discover → Workflows |
 | 9 — Native workflow execution | Recipe-only slice implemented | High-confidence native graphs compile to portable Recipe v2 and can be exported; no graph is executed or partially translated |
-| 10 — Automation | Implemented slice | Recipe v2 batch automation, deterministic seed sweeps, prompt/input-folder batches, previews, cancellation, and export reuse the existing ComfyUI-backed worker; matrix/queued-recipe expansion remains next |
+| 10 — Automation | Implemented slice | Recipe v2 batch/folder/matrix automation, deterministic seed sweeps, previews, cancellation, and export reuse the existing ComfyUI-backed worker |
 
-Verification boundary for this snapshot: the focused automation/workflow/style/bridge suite passes (55 tests) and the desktop production build passes. The remaining phases are intentionally not marked complete until their end-to-end acceptance criteria are implemented and tested.
+Verification boundary for this snapshot: the focused metadata/automation/recipe/style/workflow/bridge suite passes (43 tests) and the desktop production build passes. The remaining phases are intentionally not marked complete until their end-to-end acceptance criteria are implemented and tested.
 
 ---
 

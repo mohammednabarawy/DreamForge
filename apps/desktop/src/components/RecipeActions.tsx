@@ -1,6 +1,8 @@
 import { useRef, useState } from "react";
-import { Download, FileJson, Upload } from "lucide-react";
+import { Download, FileJson, Image, Upload } from "lucide-react";
+import { pickImageFile } from "../lib/tauri-api";
 import type { GenerationSettings } from "../lib/tauri-api";
+import { importImageMetadata } from "../lib/imageMetadata";
 
 type Props = {
   settings: GenerationSettings;
@@ -95,6 +97,7 @@ function applyRecipe(value: unknown, onChange: Props["onChange"]): string {
 
 export function RecipeActions({ settings, onChange }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [imageBusy, setImageBusy] = useState(false);
   const [message, setMessage] = useState("");
 
   const save = () => {
@@ -118,6 +121,29 @@ export function RecipeActions({ settings, onChange }: Props) {
     if (inputRef.current) inputRef.current.value = "";
   };
 
+  const importImage = async () => {
+    const path = await pickImageFile();
+    if (!path) return;
+    setImageBusy(true);
+    try {
+      const result = await importImageMetadata(path);
+      if (!result.ok || !result.patch) {
+        setMessage(
+          result.error === "no_generation_metadata"
+            ? "No generation metadata found"
+            : "Could not read image metadata",
+        );
+        return;
+      }
+      onChange(result.patch);
+      setMessage("Image metadata imported; review before saving");
+    } catch (error) {
+      setMessage(`Image import failed: ${String(error)}`);
+    } finally {
+      setImageBusy(false);
+    }
+  };
+
   return (
     <div className="shrink-0 rounded-lg border border-dfui-accent/25 bg-dfui-accent/5 px-2.5 py-2">
       <div className="flex items-center gap-1.5">
@@ -128,6 +154,9 @@ export function RecipeActions({ settings, onChange }: Props) {
         </button>
         <button type="button" onClick={() => inputRef.current?.click()} className="inline-flex items-center gap-1 rounded border border-dfui-border/50 px-1.5 py-1 text-[9px] text-dfui-secondary hover:text-dfui-fg">
           <Upload size={11} /> Recreate
+        </button>
+        <button type="button" disabled={imageBusy} onClick={() => void importImage()} className="inline-flex items-center gap-1 rounded border border-dfui-border/50 px-1.5 py-1 text-[9px] text-dfui-secondary hover:text-dfui-fg disabled:opacity-50" title="Import known generation metadata from an image">
+          <Image size={11} /> {imageBusy ? "Reading" : "From image"}
         </button>
         <input ref={inputRef} type="file" accept="application/json,.json" className="hidden" onChange={(event) => void load(event.target.files?.[0])} />
       </div>

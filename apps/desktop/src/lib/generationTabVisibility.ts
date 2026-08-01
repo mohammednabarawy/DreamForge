@@ -40,13 +40,14 @@ export function buildGenerationTabContext(input: {
   studioMode: string;
   advancedMode?: boolean;
   activeModelLabel: string;
+  modelFamily?: string;
   isQwenModel: boolean;
   showGenerateLikeSettings: boolean;
   showEditStrength: boolean;
   customPerf: boolean;
 }): GenerationTabContext {
   const studioMode = input.studioMode;
-  const activeModelLower = input.activeModelLabel.toLowerCase();
+  const activeModelLower = (input.modelFamily || input.activeModelLabel).toLowerCase();
   const isModernModel =
     activeModelLower.includes("flux") ||
     activeModelLower.includes("qwen") ||
@@ -121,6 +122,7 @@ export type InspectorTabId =
   | "models"
   | "loras"
   | "styles"
+  | "recipes"
   | "settings"
   | "automation";
 
@@ -135,25 +137,25 @@ export function inspectorTabsForMode(input: {
   const { studioMode, simpleInspectorLocked, powerUserInspector, isInpaint, isUpscale } = input;
 
   if (isUpscale) {
-    return ["models", "settings"];
+    return ["models", "recipes", "settings"];
   }
   if (simpleInspectorLocked) {
-    return ["settings", "models"];
+    return ["settings", "models", "recipes"];
   }
   if (isInpaint) {
     return powerUserInspector
-      ? ["models", "loras", "settings", "automation"]
-      : ["models", "settings"];
+      ? ["models", "loras", "recipes", "settings", "automation"]
+      : ["models", "recipes", "settings"];
   }
   if (studioMode === "edit" || studioMode === "toolbox") {
     return powerUserInspector
-      ? ["models", "loras", "settings", "automation"]
-      : ["models", "settings"];
+      ? ["models", "loras", "recipes", "settings", "automation"]
+      : ["models", "recipes", "settings"];
   }
   if (isGenerateFamilyMode(studioMode)) {
     return powerUserInspector
-      ? ["models", "loras", "styles", "settings", "automation"]
-      : ["models", "styles", "settings"];
+      ? ["models", "loras", "styles", "recipes", "settings", "automation"]
+      : ["models", "styles", "recipes", "settings"];
   }
   return ["models", "settings"];
 }

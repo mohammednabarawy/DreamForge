@@ -30,6 +30,7 @@ import {
   coerceReferenceSlots,
   DEFAULT_SLOT_STOP_AT,
   removeReferenceSlotAt,
+  moveReferenceSlot,
   syncLegacyFromPrimarySlot,
   updateReferenceSlotAt,
 } from "../lib/referenceSlots";
@@ -618,6 +619,10 @@ export function ReferenceImageControl({
             }
           }}
           onRemoveSlot={(index) => onPatchSettings?.(removeReferenceSlotAt(settings, index, studioMode, maxSlots))}
+          onMoveSlot={(index, direction) => {
+            const patch = moveReferenceSlot(settings, index, direction, studioMode, maxSlots);
+            if (patch) onPatchSettings?.(patch);
+          }}
         />
       )}
       {showExtraRefs && (

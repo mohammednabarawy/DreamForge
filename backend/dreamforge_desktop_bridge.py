@@ -1821,6 +1821,18 @@ def cmd_recipe_save_library(params: dict) -> dict:
     return save_recipe(recipe, str(params.get("recipe_id") or "recipe"))
 
 
+def cmd_recipe_list_library(params: dict) -> dict:
+    from dreamforge_recipe_library import list_recipes
+
+    return list_recipes()
+
+
+def cmd_recipe_delete_library(params: dict) -> dict:
+    from dreamforge_recipe_library import delete_recipe
+
+    return delete_recipe(str(params.get("filename") or ""))
+
+
 def cmd_recipe_discovery_search(params: dict) -> dict:
     """Browse remote prompt metadata without executing or downloading images."""
     from dreamforge_recipe_discovery import search_recipe_discovery
@@ -2071,6 +2083,8 @@ HANDLERS = {
     "recipe_validate": cmd_recipe_validate,
     "recipe_export": cmd_recipe_export,
     "recipe_save_library": cmd_recipe_save_library,
+    "recipe_list_library": cmd_recipe_list_library,
+    "recipe_delete_library": cmd_recipe_delete_library,
     "recipe_from_style": cmd_recipe_from_style,
     "recipe_discovery_search": cmd_recipe_discovery_search,
     "recipe_resolve_civitai_resources": cmd_recipe_resolve_civitai_resources,

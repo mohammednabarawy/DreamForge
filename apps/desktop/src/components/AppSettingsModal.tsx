@@ -18,6 +18,8 @@ import type {
   ModelOrganizationPlan,
 } from "../lib/studioBridge";
 import { organizeModels } from "../lib/studioBridge";
+import type { GenerationSettings } from "../lib/tauri-api";
+import { openExternalUrl } from "../lib/externalLinks";
 
 type Props = {
   open: boolean;
@@ -37,6 +39,8 @@ type Props = {
   onExportUserStyleMemory?: () => void | Promise<void>;
   onRefreshInventory?: () => void | Promise<void>;
   onInstallStarterPack?: () => void | Promise<void>;
+  generationSettings?: GenerationSettings;
+  onGenerationSettingsChange?: (patch: Partial<GenerationSettings>) => void;
 };
 
 export function AppSettingsModal({
@@ -57,6 +61,8 @@ export function AppSettingsModal({
   onExportUserStyleMemory,
   onRefreshInventory,
   onInstallStarterPack,
+  generationSettings,
+  onGenerationSettingsChange,
 }: Props) {
   const [civitaiKey, setCivitaiKey] = useState("");
   const [agentProvider, setAgentProvider] = useState("ollama");
@@ -516,14 +522,13 @@ export function AppSettingsModal({
                   {releaseBusy ? "Checking…" : "Check for updates"}
                 </button>
                 {releaseStatus?.release_url && (
-                  <a
-                    href={releaseStatus.release_url}
-                    target="_blank"
-                    rel="noreferrer"
+                  <button
+                    type="button"
+                    onClick={() => void openExternalUrl(releaseStatus.release_url!)}
                     className="df-btn df-btn-secondary flex-1 py-1.5 text-center text-[10px]"
                   >
                     Open release page
-                  </a>
+                  </button>
                 )}
               </div>
             </section>
@@ -977,6 +982,24 @@ export function AppSettingsModal({
                     </button>
                   )}
                 </div>
+              </section>
+            )}
+
+            {studioSettings && (
+              <section className="space-y-3 rounded-lg border border-dfui-border/40 p-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-dfui-muted">Generation engine & limits</p>
+                {generationSettings && onGenerationSettingsChange ? <label className="block">
+                  <span className="text-[10px] font-medium text-dfui-tertiary">VRAM profile</span>
+                  <select value={generationSettings.vram_profile ?? "auto"} onChange={(event) => onGenerationSettingsChange({ vram_profile: event.target.value as GenerationSettings["vram_profile"] })} className="df-select mt-1 w-full px-2.5 py-2 text-xs">
+                    <option value="auto">Auto detect</option><option value="16gb">16 GB</option><option value="8gb">8 GB</option><option value="5gb">5 GB</option><option value="no_gpu">CPU only</option><option value="mps_24gb">Mac 24 GB</option><option value="mps_16gb">Mac 16 GB</option><option value="mps_8gb">Mac 8 GB</option><option value="mps_4gb">Mac 4 GB</option>
+                  </select>
+                </label> : null}
+                {onSaveStudioSettings ? <div className="grid grid-cols-3 gap-2">
+                  <label className="text-[10px] text-dfui-tertiary">Max images<input type="number" min={1} max={50} defaultValue={studioSettings.image_number_max ?? 8} onBlur={(event) => void onSaveStudioSettings({ image_number_max: Number(event.target.value) })} className="df-input mt-1 w-full px-2 py-1 font-mono text-[10px]" /></label>
+                  <label className="text-[10px] text-dfui-tertiary">LoRA min<input type="number" step={0.05} defaultValue={studioSettings.lora_min ?? 0} onBlur={(event) => void onSaveStudioSettings({ lora_min: Number(event.target.value) })} className="df-input mt-1 w-full px-2 py-1 font-mono text-[10px]" /></label>
+                  <label className="text-[10px] text-dfui-tertiary">LoRA max<input type="number" step={0.05} defaultValue={studioSettings.lora_max ?? 2} onBlur={(event) => void onSaveStudioSettings({ lora_max: Number(event.target.value) })} className="df-input mt-1 w-full px-2 py-1 font-mono text-[10px]" /></label>
+                </div> : null}
+                <p className="text-[9px] leading-snug text-dfui-tertiary">VRAM changes apply after the generation engine restarts.</p>
               </section>
             )}
 

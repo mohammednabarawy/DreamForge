@@ -48,6 +48,9 @@ def test_parse_a1111_parameters_string():
     assert parsed["Negative"] == "ugly, blurry"
     assert parsed["width"] == 512
     assert parsed["height"] == 768
+    patch = settings_patch_from_metadata(parsed)
+    assert patch["sampler"] == "dpmpp_2m"
+    assert patch["scheduler"] == "karras"
 
 
 def test_import_missing_metadata(tmp_path):
@@ -58,3 +61,15 @@ def test_import_missing_metadata(tmp_path):
     result = import_image_metadata(str(path))
     assert result["ok"] is False
     assert result["error"] == "no_generation_metadata"
+
+
+def test_parse_comfy_prompt_graph():
+    graph = {
+        "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "dream.safetensors"}},
+        "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "portrait"}},
+        "3": {"class_type": "CLIPTextEncode", "inputs": {"text": "blurry"}},
+        "4": {"class_type": "EmptyLatentImage", "inputs": {"width": 768, "height": 1024}},
+        "5": {"class_type": "KSampler", "inputs": {"seed": 9, "steps": 24, "cfg": 5.5, "sampler_name": "euler", "scheduler": "normal", "denoise": 1, "positive": ["2", 0], "negative": ["3", 0], "latent_image": ["4", 0]}},
+    }
+    parsed = _parse_parameters_blob(json.dumps(graph))
+    assert parsed == {"seed": 9, "steps": 24, "cfg": 5.5, "sampler_name": "euler", "scheduler": "normal", "denoise": 1, "Prompt": "portrait", "Negative": "blurry", "model": "dream.safetensors", "width": 768, "height": 1024}

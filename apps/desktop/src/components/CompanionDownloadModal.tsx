@@ -17,6 +17,7 @@ import type {
 } from "../hooks/useCompanionDownload";
 import { latestActivityLine } from "../lib/loadingMessages";
 import type { DownloadProgressPayload, ModelDependencyItem } from "../lib/tauri-api";
+import { openExternalUrl } from "../lib/externalLinks";
 
 type Props = {
   open: boolean;
@@ -321,16 +322,15 @@ export function CompanionDownloadModal({
                       )}
                     </div>
                     {item.url ? (
-                      <a
-                        href={item.url}
-                        target="_blank"
-                        rel="noreferrer"
+                      <button
+                        type="button"
+                        onClick={() => void openExternalUrl(item.url!)}
                         className="inline-flex shrink-0 items-center gap-1 rounded-md border border-dfui-border/60 px-2 py-1 text-[10px] text-dfui-secondary transition hover:border-df-blue/50 hover:text-df-blue"
                         title="Open download link"
                       >
                         <ExternalLink size={11} />
                         Link
-                      </a>
+                      </button>
                     ) : (
                       <span className="shrink-0 rounded-md border border-amber-400/30 px-2 py-1 text-[10px] text-amber-200">
                         Manual

@@ -48,6 +48,11 @@ function DreamForgeStudio() {
   const [fullLogOpen, setFullLogOpen] = useState(false);
   const [appSettingsOpen, setAppSettingsOpen] = useState(false);
   const [bootFailureDismissed, setBootFailureDismissed] = useState(false);
+  const [focusMode, setFocusMode] = useState(() => localStorage.getItem("dreamforge.studio.focus-mode.v1") === "true");
+  const toggleFocusMode = () => setFocusMode((value) => {
+    localStorage.setItem("dreamforge.studio.focus-mode.v1", String(!value));
+    return !value;
+  });
   const hideGlobalStatus = shouldHideGlobalStatusForProgress({
     engineState: mc.engineState,
     generating: mc.generating,
@@ -138,7 +143,8 @@ function DreamForgeStudio() {
           </motion.div>
         )}
       </AnimatePresence>
-      <PanelGroup direction="horizontal" className="min-h-0 flex-1 overflow-hidden">
+      <PanelGroup autoSaveId={focusMode ? undefined : "dreamforge.studio.layout.v1"} direction="horizontal" className="min-h-0 flex-1 overflow-hidden">
+        {!focusMode ? <>
         <Panel defaultSize={18} minSize={14} maxSize={30} className="min-h-0">
           <div className="df-panel-shell">
           <HistoryPanel
@@ -174,6 +180,7 @@ function DreamForgeStudio() {
           </div>
         </Panel>
         <PanelResizeHandle className="w-1 bg-dfui-border/50 transition hover:bg-dfui-accent/60" />
+        </> : null}
         <Panel defaultSize={58} minSize={42} className="min-h-0">
           <div className="df-panel-shell">
           <CanvasPanel
@@ -243,9 +250,12 @@ function DreamForgeStudio() {
             onSelectResultCandidate={(path) => void mc.selectResultCandidate(path)}
             onRetryGeneration={() => void mc.runGenerate()}
             onUseCandidateAsSource={(path) => void mc.useCandidateAsSource(path)}
+            focusMode={focusMode}
+            onToggleFocusMode={toggleFocusMode}
           />
           </div>
         </Panel>
+        {!focusMode ? <>
         <PanelResizeHandle className="w-1 bg-dfui-border/50 transition hover:bg-dfui-accent/60" />
         <Panel defaultSize={24} minSize={20} maxSize={36} className="min-h-0">
           <div className="df-panel-shell">
@@ -292,6 +302,7 @@ function DreamForgeStudio() {
           />
           </div>
         </Panel>
+        </> : null}
       </PanelGroup>
       <FullLogModal
         open={fullLogOpen}
@@ -321,6 +332,8 @@ function DreamForgeStudio() {
         onTestAgentProvider={(patch) => void mc.testAgentProvider(patch)}
         studioSettings={mc.studioSettings}
         onSaveStudioSettings={(patch) => void mc.saveStudioSettings(patch)}
+        generationSettings={mc.settings}
+        onGenerationSettingsChange={mc.patchSettings}
         userStyleProfile={mc.userStyleProfile}
         userStyleProfilePath={mc.userStyleProfilePath}
         onUserStyleMemoryEnabledChange={(enabled) =>

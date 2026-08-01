@@ -25,7 +25,7 @@ export function ResultTray({
   onVaryImage,
   onAutoEnhance,
 }: Props) {
-  if (images.length <= 1) return null;
+  if (images.length === 0) return null;
 
   return (
     <div
@@ -114,7 +114,7 @@ export function ResultTray({
           ) : null}
         </div>
       </div>
-      <div
+      {images.length > 1 ? <div
         className="flex gap-1.5 overflow-x-auto pb-0.5"
         role="listbox"
         aria-label="Select a candidate image"
@@ -156,7 +156,7 @@ export function ResultTray({
             </button>
           );
         })}
-      </div>
+      </div> : null}
     </div>
   );
 }

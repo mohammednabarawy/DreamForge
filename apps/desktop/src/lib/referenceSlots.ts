@@ -291,6 +291,20 @@ export function removeReferenceSlotAt(
   return syncLegacyFromPrimarySlot(settings, slots);
 }
 
+export function moveReferenceSlot(
+  settings: GenerationSettings,
+  index: number,
+  direction: -1 | 1,
+  studioMode: StudioMode = "generate",
+  maxSlots: number = MAX_REFERENCE_SLOTS,
+): Partial<GenerationSettings> | null {
+  const slots = [...coerceReferenceSlots(settings, studioMode, maxSlots)];
+  const target = index + direction;
+  if (index < 1 || target < 1 || target >= slots.length) return null;
+  [slots[index], slots[target]] = [slots[target], slots[index]];
+  return syncLegacyFromPrimarySlot(settings, slots);
+}
+
 export function applyReferencesAtSubmit(
   settings: GenerationSettings,
   studioMode: StudioMode = "generate",

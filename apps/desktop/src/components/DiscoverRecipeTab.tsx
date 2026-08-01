@@ -11,6 +11,7 @@ import {
   type RecipeDiscoveryItem,
 } from "../lib/studioBridge";
 import type { GenerationSettings, LoraGalleryItem, ModelGalleryItem } from "../lib/tauri-api";
+import { openExternalUrl } from "../lib/externalLinks";
 
 type Props = {
   onChange: (patch: Partial<GenerationSettings>) => void;
@@ -65,6 +66,7 @@ export function DiscoverRecipeTab({ onChange, modelGallery, loraGallery, onRefre
   const [saved, setSaved] = useState<string[]>(readSavedRecipes);
   const [hasMore, setHasMore] = useState(false);
   const [dependencyItem, setDependencyItem] = useState<RecipeDiscoveryItem | null>(null);
+  const [resolverVisible, setResolverVisible] = useState(false);
   const [dependencies, setDependencies] = useState<RecipeDependency[]>([]);
   const [choices, setChoices] = useState<Record<string, string>>({});
   const [resolving, setResolving] = useState(false);
@@ -217,6 +219,7 @@ export function DiscoverRecipeTab({ onChange, modelGallery, loraGallery, onRefre
         return;
       }
       setDependencyItem(item);
+      setResolverVisible(true);
       setDependencies(next);
       setChoices(Object.fromEntries(next.map((dependency) => [
         dependency.key,
@@ -286,14 +289,18 @@ export function DiscoverRecipeTab({ onChange, modelGallery, loraGallery, onRefre
   };
 
   const dismissResolver = () => {
+    if (Object.keys(queueIds).length) {
+      setResolverVisible(false);
+      return;
+    }
     setDependencyItem(null);
     setQueueIds({});
     setPendingRecipe(null);
   };
 
   useEffect(() => {
-    if (dependencyItem) dialogRef.current?.focus();
-  }, [dependencyItem]);
+    if (dependencyItem && resolverVisible) dialogRef.current?.focus();
+  }, [dependencyItem, resolverVisible]);
 
   useEffect(() => {
     if (!Object.keys(queueIds).length || !pendingRecipe) return;
@@ -426,9 +433,9 @@ export function DiscoverRecipeTab({ onChange, modelGallery, loraGallery, onRefre
                     </span>
                   ) : null}
                   {item.source_url ? (
-                    <a href={item.source_url} target="_blank" rel="noreferrer" aria-label={`Open ${item.title} source`} className="text-dfui-tertiary hover:text-dfui-fg">
+                    <button type="button" onClick={() => void openExternalUrl(item.source_url)} aria-label={`Open ${item.title} source`} className="text-dfui-tertiary hover:text-dfui-fg">
                       <ExternalLink size={11} />
-                    </a>
+                    </button>
                   ) : null}
                 </div>
                 <p className="line-clamp-3 text-[10px] leading-snug text-dfui-tertiary">{prompt || "Prompt unavailable"}</p>
@@ -462,19 +469,19 @@ export function DiscoverRecipeTab({ onChange, modelGallery, loraGallery, onRefre
         </button>
       ) : null}
 
-      {dependencyItem ? (
+      {dependencyItem && resolverVisible ? (
         <div
           ref={dialogRef}
           tabIndex={-1}
           onKeyDown={(event) => {
             if (event.key === "Escape") dismissResolver();
           }}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 outline-none"
+          className="fixed bottom-4 right-4 top-16 z-40 flex w-[min(34rem,calc(100vw-2rem))] outline-none"
           role="dialog"
-          aria-modal="true"
+          aria-modal="false"
           aria-labelledby="recipe-dependencies-title"
         >
-          <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-dfui-border bg-dfui-panel shadow-2xl">
+          <div className="flex w-full flex-col overflow-hidden rounded-xl border border-dfui-border bg-dfui-panel/98 shadow-2xl backdrop-blur-md">
             <div className="flex items-start gap-3 border-b border-dfui-border/60 p-4">
               <AlertTriangle className="mt-0.5 shrink-0 text-amber-300" size={18} />
               <div className="min-w-0 flex-1">
@@ -503,9 +510,9 @@ export function DiscoverRecipeTab({ onChange, modelGallery, loraGallery, onRefre
                       <span className="min-w-0 flex-1 truncate text-xs text-dfui-fg">{dependency.label}</span>
                       {dependency.installed ? <span className="inline-flex items-center gap-1 text-[9px] text-emerald-300"><CheckCircle2 size={10} /> Installed</span> : null}
                       {resource?.source_url ? (
-                        <a href={resource.source_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[9px] text-dfui-accent hover:underline">
+                        <button type="button" onClick={() => void openExternalUrl(resource.source_url)} className="inline-flex items-center gap-1 text-[9px] text-dfui-accent hover:underline">
                           Civitai <ExternalLink size={10} />
-                        </a>
+                        </button>
                       ) : null}
                     </div>
                     <select

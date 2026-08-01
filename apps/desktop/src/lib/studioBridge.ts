@@ -432,6 +432,21 @@ export async function saveRecipeToLibrary(recipeId: string, recipe: Record<strin
   );
 }
 
+export type RecipeLibraryItem = {
+  filename: string;
+  path: string;
+  modified_at: number;
+  recipe: Record<string, unknown>;
+};
+
+export async function listRecipeLibrary() {
+  return bridgeInvoke<{ ok: boolean; root?: string; items: RecipeLibraryItem[]; error?: string }>("recipe_list_library");
+}
+
+export async function deleteRecipeFromLibrary(filename: string) {
+  return bridgeInvoke<{ ok: boolean; filename?: string; error?: string }>("recipe_delete_library", { filename });
+}
+
 export type CivitaiRecipeResource = {
   id: string;
   kind: "model" | "lora" | "other";

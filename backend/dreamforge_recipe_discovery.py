@@ -142,6 +142,8 @@ def _item(
     metadata: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     recipe = recipe_from_metadata(metadata, provider=provider, source_url=source_url)
+    if image_url:
+        recipe.settings["preview_url"] = image_url
     return {
         "id": f"{provider}:{item_id}",
         "provider": provider,

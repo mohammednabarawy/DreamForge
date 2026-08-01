@@ -627,6 +627,8 @@ export function useDreamForge() {
   const finalPreviewAppliedRef = useRef(false);
   const styleBasePromptRef = useRef("");
   const lastStyledPromptRef = useRef("");
+  const styleBaseNegativeRef = useRef("");
+  const lastStyledNegativeRef = useRef("");
 
   const previewSignature = useCallback((url: string) => {
     if (!url.startsWith("data:")) return url;
@@ -1979,9 +1981,14 @@ export function useDreamForge() {
         const prompt = settingsRef.current.prompt === lastStyledPromptRef.current
           ? styleBasePromptRef.current
           : settingsRef.current.prompt;
+        const negativePrompt = settingsRef.current.negative_prompt === lastStyledNegativeRef.current
+          ? styleBaseNegativeRef.current
+          : settingsRef.current.negative_prompt;
         styleBasePromptRef.current = "";
         lastStyledPromptRef.current = "";
-        patchSettings({ style: "none", styles: [], prompt });
+        styleBaseNegativeRef.current = "";
+        lastStyledNegativeRef.current = "";
+        patchSettings({ style: "none", styles: [], prompt, negative_prompt: negativePrompt });
         return;
       }
       if (styleId === settingsRef.current.style) {
@@ -1989,9 +1996,14 @@ export function useDreamForge() {
         const prompt = settingsRef.current.prompt === lastStyledPromptRef.current
           ? styleBasePromptRef.current
           : settingsRef.current.prompt;
+        const negativePrompt = settingsRef.current.negative_prompt === lastStyledNegativeRef.current
+          ? styleBaseNegativeRef.current
+          : settingsRef.current.negative_prompt;
         styleBasePromptRef.current = "";
         lastStyledPromptRef.current = "";
-        patchSettings({ style: "none", styles: [], prompt });
+        styleBaseNegativeRef.current = "";
+        lastStyledNegativeRef.current = "";
+        patchSettings({ style: "none", styles: [], prompt, negative_prompt: negativePrompt });
         return;
       }
       userPickedStyleRef.current = true;
@@ -2020,8 +2032,18 @@ export function useDreamForge() {
         lastStyledPromptRef.current = prompt;
         stylePatch.prompt = prompt;
       }
+      const currentNegative = settingsRef.current.negative_prompt ?? "";
+      const baseNegative = currentNegative === lastStyledNegativeRef.current
+        ? styleBaseNegativeRef.current
+        : currentNegative;
       if (recipe?.negative_prompt) {
+        styleBaseNegativeRef.current = baseNegative;
+        lastStyledNegativeRef.current = recipe.negative_prompt;
         stylePatch.negative_prompt = recipe.negative_prompt;
+      } else if (lastStyledNegativeRef.current) {
+        styleBaseNegativeRef.current = "";
+        lastStyledNegativeRef.current = "";
+        stylePatch.negative_prompt = baseNegative;
       }
 
       let routedModel: string | undefined;

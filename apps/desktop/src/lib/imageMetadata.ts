@@ -7,6 +7,7 @@ export type ImageMetadataImportResult = {
   file_path?: string;
   patch?: Partial<GenerationSettings>;
   parameters?: Record<string, unknown>;
+  recipe?: Record<string, unknown>;
 };
 
 export async function importImageMetadata(

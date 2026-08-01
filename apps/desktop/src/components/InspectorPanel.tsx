@@ -2,6 +2,7 @@ import {
   Boxes,
   ChevronLeft,
   ChevronRight,
+  FileJson,
   Globe,
   Layers,
   LayoutGrid,
@@ -44,6 +45,7 @@ import { LoraStackPanel } from "./LoraStackPanel";
 import { GenerationSettingsPanel } from "./GenerationSettingsPanel";
 import { AutomationPanel } from "./AutomationPanel";
 import { RecipeActions } from "./RecipeActions";
+import { RecipeLibraryTab } from "./RecipeLibraryTab";
 import { DiscoverWorkflowTab } from "./DiscoverWorkflowTab";
 import { DiscoverRecipeTab } from "./DiscoverRecipeTab";
 import {
@@ -68,7 +70,7 @@ import { DEFAULT_MAX_LORA_STACK } from "../lib/loraStack";
 import type { StyleGroup } from "../lib/inventory";
 import { settingsPatchFromRecipe } from "../lib/recipe";
 
-type Tab = "discover_models" | "discover_loras" | "discover_recipes" | "discover_workflows" | "models" | "loras" | "styles" | "settings" | "automation";
+type Tab = "discover_models" | "discover_loras" | "discover_recipes" | "discover_workflows" | "models" | "loras" | "styles" | "recipes" | "settings" | "automation";
 type ModelSort = "recommended" | "name" | "newest" | "largest" | "family";
 
 function formatModelSize(bytes?: number): string {
@@ -410,6 +412,7 @@ export function InspectorPanel({
       models: { label: "Models", icon: Boxes },
       loras: { label: "LoRAs", icon: Layers },
       styles: { label: "Styles", icon: Palette },
+      recipes: { label: "Recipes", icon: FileJson },
       settings: { label: surface === "library" ? "Generate" : "Generation", icon: SlidersHorizontal },
       automation: { label: surface === "library" ? "Automate" : "Batch", icon: LayoutGrid },
     };
@@ -816,9 +819,13 @@ export function InspectorPanel({
           />
         )}
 
+        {tab === "recipes" && (
+          <RecipeLibraryTab onApply={applyRecipeToGenerate} onRevealPath={onRevealPath} modelGallery={modelGallery} loraGallery={loraGallery} />
+        )}
+
         {tab === "settings" && (
           <div className="h-full min-h-0 overflow-y-auto">
-            <RecipeActions settings={settings} onChange={onChange} />
+            <RecipeActions settings={settings} onChange={onChange} onOpenLibrary={() => setTab("recipes")} />
             <GenerationSettingsPanel
               settings={settings}
               onChange={onChange}

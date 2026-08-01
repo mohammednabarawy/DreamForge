@@ -100,7 +100,7 @@ def hidream_o1_dev_resolution(
     w, h = profile[orient]
 
     tier = profile_tier(vram_profile)
-    max_dim = 1024 if tier == "5gb" else (1344 if tier == "8gb" else 1536)
+    max_dim = max(w, h) if vram_profile == "auto" else (1024 if tier == "5gb" else (1344 if tier == "8gb" else 1536))
     if w > max_dim or h > max_dim:
         scale = max_dim / max(w, h)
         w = max(64, int(round(w * scale / 64) * 64))

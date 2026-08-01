@@ -43,6 +43,8 @@ export function settingsPatchFromRecipe(value: unknown): Partial<GenerationSetti
     if (typeof settings.scheduler === "string" && settings.scheduler.trim()) patch.scheduler = settings.scheduler;
     if (finite(settings.width) && Number.isInteger(settings.width) && settings.width >= 64 && settings.width <= 16384) patch.width = settings.width;
     if (finite(settings.height) && Number.isInteger(settings.height) && settings.height >= 64 && settings.height <= 16384) patch.height = settings.height;
+    if (finite(settings.denoise) && settings.denoise >= 0 && settings.denoise <= 1) patch.denoise = settings.denoise;
+    if (finite(settings.clip_skip) && Number.isInteger(settings.clip_skip) && settings.clip_skip >= 1 && settings.clip_skip <= 12) patch.clip_skip = settings.clip_skip;
     if (isVramProfile(String(settings.vram_profile))) {
       patch.vram_profile = settings.vram_profile as GenerationSettings["vram_profile"];
     }

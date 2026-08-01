@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ImagePlus, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ImagePlus, X } from "lucide-react";
 import { readImagePreviewQueued } from "../lib/preview-queue";
 import { basename } from "../lib/referenceImage";
 import { PRO_GENERATE_REFERENCE_ROLES } from "../lib/referenceRole";
@@ -27,6 +27,7 @@ type Props = {
   onAddSlot: (slot: ReferenceSlot) => void;
   onUpdateSlot: (index: number, patch: Partial<ReferenceSlot>) => void;
   onRemoveSlot: (index: number) => void;
+  onMoveSlot?: (index: number, direction: -1 | 1) => void;
 };
 
 function SlotPreview({ path }: { path: string }) {
@@ -162,6 +163,7 @@ export function ReferenceSlotsEditor({
   onAddSlot,
   onUpdateSlot,
   onRemoveSlot,
+  onMoveSlot,
 }: Props) {
   const slots = coerceReferenceSlots(settings, studioMode, maxSlots);
   const extraSlots = slots.slice(1);
@@ -236,6 +238,11 @@ export function ReferenceSlotsEditor({
                         {basename(slot.path)}
                       </p>
                     </div>
+                    <div className="flex shrink-0 items-center gap-0.5">
+                    {onMoveSlot ? <>
+                      <button type="button" disabled={disabled || index <= 1} onClick={() => onMoveSlot(index, -1)} className="rounded p-0.5 text-dfui-muted hover:text-dfui-fg disabled:opacity-30" title="Move image earlier" aria-label={`Move image ${index + 1} earlier`}><ArrowUp size={11} /></button>
+                      <button type="button" disabled={disabled || index >= slots.length - 1} onClick={() => onMoveSlot(index, 1)} className="rounded p-0.5 text-dfui-muted hover:text-dfui-fg disabled:opacity-30" title="Move image later" aria-label={`Move image ${index + 1} later`}><ArrowDown size={11} /></button>
+                    </> : null}
                     <button
                       type="button"
                       disabled={disabled}
@@ -245,6 +252,7 @@ export function ReferenceSlotsEditor({
                     >
                       <X size={11} />
                     </button>
+                    </div>
                   </div>
                   {showRoles ? (
                     <div className="mt-1 flex flex-wrap gap-0.5">

@@ -230,6 +230,8 @@ class DreamForgeRecipe:
             source=str(data.get("source") or ""),
             source_url=str(data.get("source_url") or ""),
             provenance=Provenance.from_dict(data.get("provenance")),
+            created_at=str(data.get("created_at") or _now_iso()),
+            schema_version=str(data.get("schema_version") or RECIPE_SCHEMA_VERSION),
         )
         seed_raw = data.get("seed")
         if seed_raw not in (None, "", "None"):

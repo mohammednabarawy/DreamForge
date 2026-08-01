@@ -1,4 +1,4 @@
-import { AtSign, Brain, Download, LayoutGrid, Play, Sparkles, Square, Wand2 } from "lucide-react";
+import { AtSign, Brain, Download, Focus, LayoutGrid, Maximize2, Minimize2, Play, Sparkles, Square, Wand2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import type { GenerationSettings } from "../lib/tauri-api";
@@ -67,6 +67,8 @@ type Props = {
   activeModelLabel: string;
   referenceModelFamily?: string;
   experience?: UiExperience;
+  focusMode?: boolean;
+  onToggleFocusMode?: () => void;
 };
 
 export function PromptBar({
@@ -105,11 +107,14 @@ export function PromptBar({
   activeModelLabel,
   referenceModelFamily,
   experience = "pro",
+  focusMode = false,
+  onToggleFocusMode,
 }: Props) {
   const simpleExperience = isSimpleExperience(experience);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [promptDragOver, setPromptDragOver] = useState(false);
   const [ideogramLayoutOpen, setIdeogramLayoutOpen] = useState(false);
+  const [promptExpanded, setPromptExpanded] = useState(false);
   const isAgentMode = studioMode === "agent";
   const isIdeogramModel = activeModelLabel.toLowerCase().includes("ideogram");
   const promptText = (settings.prompt ?? "").trim();
@@ -342,6 +347,14 @@ export function PromptBar({
             </button>
           ))}
         </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <button type="button" onClick={() => setPromptExpanded((value) => !value)} aria-pressed={promptExpanded} className="rounded-lg border border-dfui-border/45 p-2 text-dfui-muted hover:border-dfui-accent/40 hover:text-dfui-fg" title={promptExpanded ? "Collapse prompt editor" : "Expand prompt editor"} aria-label={promptExpanded ? "Collapse prompt editor" : "Expand prompt editor"}>
+            {promptExpanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+          </button>
+          {onToggleFocusMode ? <button type="button" onClick={onToggleFocusMode} aria-pressed={focusMode} className={`rounded-lg border p-2 ${focusMode ? "border-dfui-accent/50 bg-dfui-accent/10 text-dfui-accent" : "border-dfui-border/45 text-dfui-muted hover:border-dfui-accent/40 hover:text-dfui-fg"}`} title={focusMode ? "Show History and Inspector" : "Focus on canvas and command area"} aria-label={focusMode ? "Exit focus mode" : "Enter focus mode"}>
+            {focusMode ? <Minimize2 size={13} /> : <Focus size={13} />}
+          </button> : null}
+        </div>
         {!simpleExperience ? (
         <div className="flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-xl border border-dfui-border/45 bg-dfui-bg/30 px-2.5">
           <p className="shrink-0 text-[9px] uppercase tracking-wide text-dfui-muted">
@@ -447,10 +460,10 @@ export function PromptBar({
               value={settings.prompt ?? ""}
               onChange={(e) => onPromptChange(e.target.value)}
               onFocus={() => onInpaintCanvasFocusChange?.(false)}
-              rows={2}
+              rows={promptExpanded ? 7 : 2}
               dir={isArabic ? "rtl" : "ltr"}
               placeholder="Optional enhancement — leave empty for auto restoration prompt"
-              className="df-textarea-glowing min-h-[48px] flex-1 py-1.5 text-xs leading-snug"
+              className={`df-textarea-glowing flex-1 py-1.5 text-xs leading-snug ${promptExpanded ? "min-h-[150px]" : "min-h-[48px]"}`}
               data-df-prompt-input
             />
           ) : (
@@ -461,10 +474,10 @@ export function PromptBar({
               value={settings.prompt ?? ""}
               onChange={(e) => onPromptChange(e.target.value)}
               onFocus={() => onInpaintCanvasFocusChange?.(false)}
-              rows={2}
+              rows={promptExpanded ? 7 : 2}
               dir={isArabic ? "rtl" : "ltr"}
               placeholder={promptPlaceholder}
-              className="df-textarea-glowing min-h-[48px] flex-1 py-1.5 text-xs leading-snug"
+              className={`df-textarea-glowing flex-1 py-1.5 text-xs leading-snug ${promptExpanded ? "min-h-[150px]" : "min-h-[48px]"}`}
               data-df-prompt-input
             />
             {!isAgentMode && studioMode === "generate" && onEnhancePrompt ? (

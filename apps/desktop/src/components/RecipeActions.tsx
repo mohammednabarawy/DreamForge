@@ -1,14 +1,16 @@
 import { useRef, useState } from "react";
-import { Download, FileJson, Image, Upload } from "lucide-react";
+import { Download, FileJson, Image, Library, Upload } from "lucide-react";
 import { pickImageFile } from "../lib/tauri-api";
 import type { GenerationSettings } from "../lib/tauri-api";
 import { importImageMetadata } from "../lib/imageMetadata";
 import { settingsPatchFromRecipe } from "../lib/recipe";
+import { saveRecipeToLibrary } from "../lib/studioBridge";
 export { settingsPatchFromRecipe } from "../lib/recipe";
 
 type Props = {
   settings: GenerationSettings;
   onChange: (patch: Partial<GenerationSettings>) => void;
+  onOpenLibrary?: () => void;
 };
 
 type RecipePayload = {
@@ -24,7 +26,7 @@ type RecipePayload = {
   performance: string;
   styles: string[];
   loras: Array<{ filename: string; weight: number }>;
-  settings: Pick<GenerationSettings, "scheduler" | "width" | "height" | "vram_profile">;
+  settings: Pick<GenerationSettings, "scheduler" | "width" | "height" | "denoise" | "clip_skip" | "vram_profile">;
   source: "local_export";
 };
 
@@ -53,6 +55,8 @@ function toRecipe(settings: GenerationSettings): RecipePayload {
       scheduler: settings.scheduler,
       width: settings.width,
       height: settings.height,
+      denoise: settings.denoise,
+      clip_skip: settings.clip_skip,
       vram_profile: settings.vram_profile,
     },
     source: "local_export",
@@ -65,12 +69,12 @@ function applyRecipe(value: unknown, onChange: Props["onChange"]): string {
   return `${patch.model || "recipe"} loaded`;
 }
 
-export function RecipeActions({ settings, onChange }: Props) {
+export function RecipeActions({ settings, onChange, onOpenLibrary }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [imageBusy, setImageBusy] = useState(false);
   const [message, setMessage] = useState("");
 
-  const save = () => {
+  const exportRecipe = () => {
     const blob = new Blob([JSON.stringify(toRecipe(settings), null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
@@ -81,10 +85,22 @@ export function RecipeActions({ settings, onChange }: Props) {
     setMessage("Recipe exported");
   };
 
+  const saveCurrent = async () => {
+    const recipe = toRecipe(settings);
+    const result = await saveRecipeToLibrary(`local:${Date.now()}`, recipe);
+    if (!result.ok) throw new Error(result.error ?? "Could not save recipe");
+    setMessage(`Saved to Recipe Library: ${result.filename ?? "recipe"}`);
+    onOpenLibrary?.();
+  };
+
   const load = async (file?: File) => {
     if (!file) return;
     try {
-      setMessage(applyRecipe(JSON.parse(await file.text()), onChange));
+      const recipe = JSON.parse(await file.text()) as Record<string, unknown>;
+      const saved = await saveRecipeToLibrary(`import:${file.name}`, recipe);
+      if (!saved.ok) throw new Error(saved.error ?? "Could not save imported recipe");
+      setMessage(`${applyRecipe(recipe, onChange)} · saved to Library`);
+      onOpenLibrary?.();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not load recipe");
     }
@@ -106,7 +122,12 @@ export function RecipeActions({ settings, onChange }: Props) {
         return;
       }
       onChange(result.patch);
-      setMessage("Image metadata imported; review before saving");
+      if (result.recipe) {
+        const saved = await saveRecipeToLibrary(`image:${path.split(/[\\/]/).pop() ?? Date.now()}`, result.recipe);
+        if (!saved.ok) throw new Error(saved.error ?? "Could not save image recipe");
+      }
+      setMessage("Image metadata imported and saved to Recipe Library");
+      onOpenLibrary?.();
     } catch (error) {
       setMessage(`Image import failed: ${String(error)}`);
     } finally {
@@ -116,17 +137,20 @@ export function RecipeActions({ settings, onChange }: Props) {
 
   return (
     <div className="shrink-0 rounded-lg border border-dfui-accent/25 bg-dfui-accent/5 px-2.5 py-2">
-      <div className="flex items-center gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
         <FileJson size={13} className="text-dfui-accent" />
         <span className="flex-1 text-[10px] font-semibold text-dfui-fg">Recipe v2</span>
-        <button type="button" onClick={save} className="inline-flex items-center gap-1 rounded border border-dfui-border/50 px-1.5 py-1 text-[9px] text-dfui-secondary hover:text-dfui-fg">
-          <Download size={11} /> Save
+        <button type="button" onClick={() => void saveCurrent().catch((error) => setMessage(String(error)))} className="inline-flex items-center gap-1 rounded border border-dfui-border/50 px-1.5 py-1 text-[9px] text-dfui-secondary hover:text-dfui-fg">
+          <Library size={11} /> Library
+        </button>
+        <button type="button" onClick={exportRecipe} className="inline-flex items-center gap-1 rounded border border-dfui-border/50 px-1.5 py-1 text-[9px] text-dfui-secondary hover:text-dfui-fg">
+          <Download size={11} /> Export
         </button>
         <button type="button" onClick={() => inputRef.current?.click()} className="inline-flex items-center gap-1 rounded border border-dfui-border/50 px-1.5 py-1 text-[9px] text-dfui-secondary hover:text-dfui-fg">
-          <Upload size={11} /> Recreate
+          <Upload size={11} /> Import
         </button>
         <button type="button" disabled={imageBusy} onClick={() => void importImage()} className="inline-flex items-center gap-1 rounded border border-dfui-border/50 px-1.5 py-1 text-[9px] text-dfui-secondary hover:text-dfui-fg disabled:opacity-50" title="Import known generation metadata from an image">
-          <Image size={11} /> {imageBusy ? "Reading" : "From image"}
+          <Image size={11} /> {imageBusy ? "Reading" : "Image"}
         </button>
         <input ref={inputRef} type="file" accept="application/json,.json" className="hidden" onChange={(event) => void load(event.target.files?.[0])} />
       </div>

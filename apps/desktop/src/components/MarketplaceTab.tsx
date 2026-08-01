@@ -9,6 +9,7 @@ import {
   X,
 } from "lucide-react";
 import { relocateDownloadedModel } from "../lib/studioBridge";
+import { openExternalUrl } from "../lib/externalLinks";
 import {
   type ComputeProfileInfo,
   type DiscoverAsset,
@@ -448,15 +449,15 @@ export function MarketplaceTab({ kind, onRefreshInventory }: Props) {
                   <span className="rounded bg-black/55 px-1.5 py-0.5 font-mono text-[8px] text-white backdrop-blur">
                     {asset.architecture || version.base_model || kind}
                   </span>
-                  <a
-                    href={asset.provenance.source_url}
-                    target="_blank"
-                    rel="noreferrer"
+                  <button
+                    type="button"
+                    onClick={() => void openExternalUrl(asset.provenance.source_url)}
                     className="rounded bg-black/45 p-1 text-white backdrop-blur transition hover:bg-black/70"
                     title="Open in source"
+                    aria-label={`Open ${asset.name} in source`}
                   >
                     <ExternalLink size={12} />
-                  </a>
+                  </button>
                 </div>
                 {unsupported && (
                   <div className="absolute inset-x-1 top-6 rounded border border-amber-500/40 bg-amber-950/70 px-1.5 py-0.5 text-[8px] leading-tight text-amber-200 backdrop-blur">

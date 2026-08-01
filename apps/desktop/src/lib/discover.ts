@@ -4,7 +4,7 @@ const SURFACE_KEY = "dreamforge.discoverLibrary.surface.v1";
 const LIBRARY_TAB_KEY = "dreamforge.discoverLibrary.libraryTab.v1";
 
 export type DiscoverLibrarySurface = "discover" | "library";
-export type DiscoverLibraryTab = "models" | "loras" | "styles" | "settings" | "automation";
+export type DiscoverLibraryTab = "models" | "loras" | "styles" | "recipes" | "settings" | "automation";
 export type DiscoverTab = "discover_models" | "discover_loras" | "discover_recipes" | "discover_workflows";
 const DISCOVER_TAB_KEY = "dreamforge.discoverLibrary.discoverTab.v1";
 
@@ -45,7 +45,7 @@ export function saveDiscoverLibrarySurface(surface: DiscoverLibrarySurface): voi
 export function loadDiscoverLibraryTab(): DiscoverLibraryTab {
   try {
     const tab = localStorage.getItem(LIBRARY_TAB_KEY);
-    return tab === "loras" || tab === "styles" || tab === "settings" || tab === "automation"
+    return tab === "loras" || tab === "styles" || tab === "recipes" || tab === "settings" || tab === "automation"
       ? tab
       : "models";
   } catch {

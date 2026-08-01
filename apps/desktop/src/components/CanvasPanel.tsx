@@ -117,6 +117,8 @@ type Props = {
   onSelectResultCandidate?: (path: string) => void;
   onRetryGeneration?: () => void;
   onUseCandidateAsSource?: (path: string) => void;
+  focusMode?: boolean;
+  onToggleFocusMode?: () => void;
 };
 
 export function CanvasPanel({
@@ -184,6 +186,8 @@ export function CanvasPanel({
   onSelectResultCandidate,
   onRetryGeneration,
   onUseCandidateAsSource,
+  focusMode = false,
+  onToggleFocusMode,
 }: Props) {
   const simpleExperience = isSimpleExperience(experience);
   const [compareMode, setCompareMode] = useState<CompareMode>("after");
@@ -717,7 +721,7 @@ export function CanvasPanel({
             </button>
           </div>
         )}
-        {resultCandidates.length > 1 && !generating && onSelectResultCandidate ? (
+        {resultCandidates.length > 0 && !generating && onSelectResultCandidate ? (
           <ResultTray
             images={resultCandidates}
             activePath={activeCandidatePath ?? undefined}
@@ -816,6 +820,8 @@ export function CanvasPanel({
         activeModelLabel={activeModelLabel}
         referenceModelFamily={referenceModelFamily}
         experience={experience}
+        focusMode={focusMode}
+        onToggleFocusMode={onToggleFocusMode}
       />
       </div>
     </section>

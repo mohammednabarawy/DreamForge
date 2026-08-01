@@ -14,6 +14,7 @@
     "core:window:allow-close",
     "shell:allow-spawn",
     "shell:allow-execute",
-    "notification:default"
+    "notification:default",
+    "opener:allow-open-url"
   ]
 }

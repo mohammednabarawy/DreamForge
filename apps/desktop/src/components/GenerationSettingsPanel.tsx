@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, ClipboardPaste, Copy, Dices, RotateCcw, Save, Shuffle } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ASPECT_GROUP_ACCENT,
@@ -33,6 +33,24 @@ import { CreativeToolboxPanel } from "./CreativeToolboxPanel";
 import { UltimateSDUpscalePanel } from "./UltimateSDUpscalePanel";
 import { AutoEnhancePanel } from "./AutoEnhancePanel";
 import type { EnhanceTarget } from "../lib/autoEnhance";
+
+const GENERATION_PRESETS_KEY = "dreamforge.generate.user-presets.v1";
+const GENERATION_DENSITY_KEY = "dreamforge.generate.control-density.v1";
+type UserGenerationPreset = { name: string; settings: Partial<GenerationSettings> };
+
+function readUserPresets(): UserGenerationPreset[] {
+  try {
+    const value = JSON.parse(localStorage.getItem(GENERATION_PRESETS_KEY) ?? "[]");
+    return Array.isArray(value) ? value.filter((item) => item?.name && item?.settings) : [];
+  } catch {
+    return [];
+  }
+}
+
+function boundedNumber(value: string, min: number, max: number, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;
+}
 
 type Props = {
   settings: GenerationSettings;
@@ -73,35 +91,39 @@ function SettingsSection({
   title,
   subtitle,
   defaultOpen = true,
+  changed = false,
+  onReset,
   children,
 }: {
   title: string;
   subtitle?: string;
   defaultOpen?: boolean;
+  changed?: boolean;
+  onReset?: () => void;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <section className="rounded-lg border border-dfui-border/45 bg-dfui-bg/25">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-2.5 py-2 text-left"
-      >
-        {open ? (
-          <ChevronDown size={14} className="shrink-0 text-dfui-muted" />
-        ) : (
-          <ChevronRight size={14} className="shrink-0 text-dfui-muted" />
-        )}
-        <span className="min-w-0 flex-1">
-          <span className="block text-[10px] font-semibold uppercase tracking-wide text-dfui-muted">
-            {title}
+      <div className="flex items-center">
+        <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left">
+          {open ? <ChevronDown size={14} className="shrink-0 text-dfui-muted" /> : <ChevronRight size={14} className="shrink-0 text-dfui-muted" />}
+          <span className="min-w-0 flex-1">
+            <span className="block text-[10px] font-semibold uppercase tracking-wide text-dfui-muted">{title}{changed ? " · Modified" : ""}</span>
+            {subtitle ? <span className="block text-[10px] leading-snug text-dfui-tertiary">{subtitle}</span> : null}
           </span>
-          {subtitle && (
-            <span className="block text-[10px] leading-snug text-dfui-tertiary">{subtitle}</span>
-          )}
-        </span>
-      </button>
+        </button>
+        {onReset ? (
+          <button
+            type="button"
+            aria-label={`Reset ${title}`}
+            onClick={onReset}
+            className="mr-2 rounded p-1 text-dfui-tertiary hover:bg-dfui-surface hover:text-dfui-fg"
+          >
+            <RotateCcw size={12} />
+          </button>
+        ) : null}
+      </div>
       {open && <div className="space-y-2.5 border-t border-dfui-border/30 px-2.5 pb-2.5 pt-2">{children}</div>}
     </section>
   );
@@ -139,6 +161,12 @@ export function GenerationSettingsPanel({
   onVaryImage,
 }: Props) {
   const [creativeTemplates, setCreativeTemplates] = useState<CreativeTemplateSummary[]>([]);
+  const [controlDensity, setControlDensity] = useState<"basic" | "advanced">(() =>
+    localStorage.getItem(GENERATION_DENSITY_KEY) === "advanced" ? "advanced" : "basic",
+  );
+  const [userPresets, setUserPresets] = useState<UserGenerationPreset[]>(readUserPresets);
+  const [customSize, setCustomSize] = useState(false);
+  const [lockAspect, setLockAspect] = useState(true);
 
   useEffect(() => {
     if (!advancedMode) {
@@ -175,7 +203,12 @@ export function GenerationSettingsPanel({
   const customPerf = isCustomPerformance(performance);
   const aspectGroups = useMemo(() => groupAspectPresets(aspectPresets), [aspectPresets]);
   const activeAspect = settings.aspect_ratio ?? "768x768";
+  const currentWidth = settings.width ?? (Number(activeAspect.split(/[x×]/)[0]) || 768);
+  const currentHeight = settings.height ?? (Number(activeAspect.split(/[x×]/)[1]) || 768);
   const activeModelLower = activeModelLabel.toLowerCase();
+  const activeModelFamily = modelGallery.find((item) =>
+    item.engine_name === settings.model || item.relative_path === settings.model || item.caption === activeModelLabel,
+  )?.family;
   const isIdeogramModel = activeModelLower.includes("ideogram");
   let perfPreview = PERFORMANCE_PREVIEW[performance];
   if (isQwenModel && !customPerf) {
@@ -259,6 +292,7 @@ export function GenerationSettingsPanel({
     studioMode,
     advancedMode,
     activeModelLabel,
+    modelFamily: activeModelFamily,
     isQwenModel,
     showGenerateLikeSettings,
     showEditStrength,
@@ -267,8 +301,77 @@ export function GenerationSettingsPanel({
   const show = (section: Parameters<typeof generationSectionVisible>[0]) =>
     generationSectionVisible(section, tabCtx);
 
+  const setDensity = (density: "basic" | "advanced") => {
+    setControlDensity(density);
+    localStorage.setItem(GENERATION_DENSITY_KEY, density);
+  };
+  const saveCurrentPreset = () => {
+    const name = window.prompt("Preset name", `Preset ${userPresets.length + 1}`)?.trim();
+    if (!name) return;
+    const preset: UserGenerationPreset = {
+      name,
+      settings: {
+        performance: settings.performance,
+        aspect_ratio: settings.aspect_ratio,
+        width: settings.width,
+        height: settings.height,
+        image_number: settings.image_number,
+        steps: settings.steps,
+        cfg_scale: settings.cfg_scale,
+        sampler: settings.sampler,
+        scheduler: settings.scheduler,
+      },
+    };
+    const next = [...userPresets.filter((item) => item.name !== name), preset];
+    setUserPresets(next);
+    localStorage.setItem(GENERATION_PRESETS_KEY, JSON.stringify(next));
+  };
+  const resetRunSettings = () => onChange({
+    performance: "Lightning",
+    aspect_ratio: "768x768",
+    width: undefined,
+    height: undefined,
+    image_number: 1,
+    seed: -1,
+    steps: 20,
+    cfg_scale: 3.5,
+    sampler: undefined,
+    scheduler: undefined,
+  });
+
   return (
     <div className="space-y-2.5">
+      {!show("upscalePanel") ? (
+        <div className="sticky top-0 z-10 space-y-2 rounded-lg border border-dfui-border/60 bg-dfui-panel/95 p-2 shadow-sm backdrop-blur-md">
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="truncate text-[10px] font-semibold text-dfui-fg" title={activeModelLabel}>{activeModelLabel || "Automatic model"}</p>
+              <p className="truncate font-mono text-[9px] text-dfui-tertiary">
+                {performance} · {activeAspect.replace("x", "×")} · {settings.image_number ?? 1} image{(settings.image_number ?? 1) === 1 ? "" : "s"} · seed {seedRandom ? "random" : settings.seed ?? -1}
+              </p>
+            </div>
+            <button type="button" onClick={resetRunSettings} className="rounded p-1.5 text-dfui-muted hover:bg-dfui-surface hover:text-dfui-fg" title="Reset run settings" aria-label="Reset run settings">
+              <RotateCcw size={13} />
+            </button>
+          </div>
+          <div className="flex items-center gap-1">
+            {advancedMode ? (["basic", "advanced"] as const).map((density) => (
+              <button key={density} type="button" aria-pressed={controlDensity === density} onClick={() => setDensity(density)} className={`rounded px-2 py-1 text-[9px] font-semibold uppercase tracking-wide ${controlDensity === density ? "bg-dfui-accent/15 text-dfui-accent" : "text-dfui-muted hover:bg-dfui-surface"}`}>
+                {density}
+              </button>
+            )) : null}
+            <select aria-label="Apply saved generation preset" defaultValue="" onChange={(event) => {
+              const preset = userPresets.find((item) => item.name === event.target.value);
+              if (preset) onChange(preset.settings);
+              event.target.value = "";
+            }} className="df-select ml-auto min-w-0 max-w-32 px-1.5 py-1 text-[9px]">
+              <option value="">Presets…</option>
+              {userPresets.map((preset) => <option key={preset.name} value={preset.name}>{preset.name}</option>)}
+            </select>
+            <button type="button" onClick={saveCurrentPreset} className="rounded p-1.5 text-dfui-muted hover:bg-dfui-surface hover:text-dfui-accent" title="Save current generation preset" aria-label="Save current generation preset"><Save size={12} /></button>
+          </div>
+        </div>
+      ) : null}
       {show("creativeTemplate") && creativeTemplates.length > 0 && (
         <SettingsSection
           title="Creative template"
@@ -346,7 +449,10 @@ export function GenerationSettingsPanel({
             : "Preset for edit / inpaint — advanced unlocks manual sampling"
         }
         defaultOpen
+        changed={performance !== "Lightning" || activeAspect !== "768x768" || (settings.image_number ?? 1) !== 1}
+        onReset={() => onChange({ performance: "Lightning", aspect_ratio: "768x768", width: undefined, height: undefined, image_number: 1 })}
       >
+        {tabCtx.isModernModel ? <p className="rounded-md border border-df-blue/20 bg-df-blue/5 px-2 py-1.5 text-[9px] leading-snug text-dfui-tertiary">{activeModelFamily || activeModelLabel} uses modern guidance; unsupported negative-prompt and CLIP-skip controls are hidden.</p> : null}
         {MODE_AUTO_SUMMARY[studioMode] && (
           <p className="rounded-md border border-[#4a4a4a]/50 bg-[#353535]/80 px-2 py-1.5 font-mono text-[9px] leading-snug text-dfui-tertiary">
             {MODE_AUTO_SUMMARY[studioMode]}
@@ -419,6 +525,37 @@ export function GenerationSettingsPanel({
                 );
               })}
             </div>
+            {controlDensity === "advanced" ? (
+              <div className="rounded-md border border-dfui-border/40 bg-dfui-bg/30 p-2">
+                <div className="mb-1.5 flex items-center justify-between gap-2">
+                  <label className="flex items-center gap-1.5 text-[10px] text-dfui-muted">
+                    <input type="checkbox" checked={customSize} onChange={(event) => setCustomSize(event.target.checked)} className="accent-dfui-accent" /> Custom size
+                  </label>
+                  <div className="flex items-center gap-1">
+                    <button type="button" onClick={() => setLockAspect((value) => !value)} aria-pressed={lockAspect} className={`rounded px-1.5 py-0.5 text-[9px] ${lockAspect ? "bg-dfui-accent/15 text-dfui-accent" : "text-dfui-muted"}`}>Lock ratio</button>
+                    <button type="button" onClick={() => onChange({ width: currentHeight, height: currentWidth, aspect_ratio: `${currentHeight}x${currentWidth}` })} className="rounded p-1 text-dfui-muted hover:bg-dfui-surface hover:text-dfui-fg" title="Swap width and height" aria-label="Swap width and height"><Shuffle size={11} /></button>
+                  </div>
+                </div>
+                {customSize ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="text-[9px] text-dfui-muted">Width
+                      <input type="number" min={256} max={4096} step={64} value={currentWidth} onChange={(event) => {
+                        const width = boundedNumber(event.target.value, 256, 4096, currentWidth);
+                        const height = lockAspect ? Math.max(256, Math.round((width * currentHeight / currentWidth) / 64) * 64) : currentHeight;
+                        onChange({ width, height, aspect_ratio: `${width}x${height}` });
+                      }} className="df-input mt-1 w-full px-2 py-1 font-mono text-[10px]" />
+                    </label>
+                    <label className="text-[9px] text-dfui-muted">Height
+                      <input type="number" min={256} max={4096} step={64} value={currentHeight} onChange={(event) => {
+                        const height = boundedNumber(event.target.value, 256, 4096, currentHeight);
+                        const width = lockAspect ? Math.max(256, Math.round((height * currentWidth / currentHeight) / 64) * 64) : currentWidth;
+                        onChange({ width, height, aspect_ratio: `${width}x${height}` });
+                      }} className="df-input mt-1 w-full px-2 py-1 font-mono text-[10px]" />
+                    </label>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </>
         )}
 
@@ -455,6 +592,11 @@ export function GenerationSettingsPanel({
         title="Prompt & seed"
         subtitle="Guidance scale (CFG) lives under Custom sampling"
         defaultOpen={hasNegative || !seedRandom}
+        changed={hasNegative || !seedRandom}
+        onReset={() => {
+          onChange({ negative_prompt: "", seed: -1 });
+          if (onSaveStudioSettings) void onSaveStudioSettings({ seed_random: true });
+        }}
       >
         {!tabCtx.isModernModel && (
           <label className="block">
@@ -499,10 +641,25 @@ export function GenerationSettingsPanel({
             </label>
           )}
         </div>
+        <div className="flex flex-wrap gap-1">
+          <button type="button" onClick={() => {
+            const seed = Math.floor(Math.random() * 2_147_483_647);
+            void onSaveStudioSettings?.({ seed_random: false });
+            onChange({ seed });
+          }} className="inline-flex items-center gap-1 rounded border border-dfui-border/50 px-2 py-1 text-[9px] text-dfui-muted hover:text-dfui-fg"><Dices size={11} /> Randomize</button>
+          <button type="button" disabled={seedRandom} onClick={() => void navigator.clipboard.writeText(String(settings.seed ?? -1))} className="inline-flex items-center gap-1 rounded border border-dfui-border/50 px-2 py-1 text-[9px] text-dfui-muted hover:text-dfui-fg disabled:opacity-40"><Copy size={11} /> Copy</button>
+          <button type="button" onClick={() => void navigator.clipboard.readText().then((value) => {
+            const seed = boundedNumber(value, 0, 2_147_483_647, -1);
+            if (seed >= 0) {
+              void onSaveStudioSettings?.({ seed_random: false });
+              onChange({ seed });
+            }
+          })} className="inline-flex items-center gap-1 rounded border border-dfui-border/50 px-2 py-1 text-[9px] text-dfui-muted hover:text-dfui-fg"><ClipboardPaste size={11} /> Paste</button>
+        </div>
       </SettingsSection>
       )}
 
-      {show("customSampling") && (
+      {show("customSampling") && controlDensity === "advanced" && (
         <SettingsSection
           title="Custom sampling"
           subtitle={
@@ -511,6 +668,8 @@ export function GenerationSettingsPanel({
               : "Select Custom… in Performance to unlock"
           }
           defaultOpen={customPerf}
+          changed={customPerf}
+          onReset={() => onChange({ performance: "Lightning", steps: 20, cfg_scale: 3.5, sampler: undefined, scheduler: undefined, clip_skip: undefined })}
         >
           {!customPerf ? (
             <div className="space-y-2">
@@ -533,30 +692,11 @@ export function GenerationSettingsPanel({
                 <FieldLabel hint="Guidance scale — prompt adherence (CFG).">
                   Guidance scale (CFG) — {settings.cfg_scale ?? 4}
                 </FieldLabel>
-                <input
-                  type="range"
-                  min={1}
-                  max={12}
-                  step={0.1}
-                  value={settings.cfg_scale ?? 4}
-                  onChange={(e) =>
-                    onChange({ performance: CUSTOM_PERFORMANCE, cfg_scale: Number(e.target.value) })
-                  }
-                  className="mt-1 w-full accent-dfui-accent"
-                />
+                <div className="mt-1 flex items-center gap-2"><input type="range" min={1} max={12} step={0.1} value={settings.cfg_scale ?? 4} onChange={(e) => onChange({ performance: CUSTOM_PERFORMANCE, cfg_scale: Number(e.target.value) })} className="min-w-0 flex-1 accent-dfui-accent" /><input aria-label="Exact CFG value" type="number" min={1} max={12} step={0.1} value={settings.cfg_scale ?? 4} onChange={(e) => onChange({ performance: CUSTOM_PERFORMANCE, cfg_scale: boundedNumber(e.target.value, 1, 12, 4) })} className="df-input w-16 px-1.5 py-1 font-mono text-[10px]" /></div>
               </label>
               <label className="block">
                 <FieldLabel>Steps — {settings.steps ?? 20}</FieldLabel>
-                <input
-                  type="range"
-                  min={4}
-                  max={60}
-                  value={settings.steps ?? 20}
-                  onChange={(e) =>
-                    onChange({ performance: CUSTOM_PERFORMANCE, steps: Number(e.target.value) })
-                  }
-                  className="mt-1 w-full accent-dfui-accent"
-                />
+                <div className="mt-1 flex items-center gap-2"><input type="range" min={4} max={60} value={settings.steps ?? 20} onChange={(e) => onChange({ performance: CUSTOM_PERFORMANCE, steps: Number(e.target.value) })} className="min-w-0 flex-1 accent-dfui-accent" /><input aria-label="Exact step count" type="number" min={4} max={60} value={settings.steps ?? 20} onChange={(e) => onChange({ performance: CUSTOM_PERFORMANCE, steps: boundedNumber(e.target.value, 4, 60, 20) })} className="df-input w-16 px-1.5 py-1 font-mono text-[10px]" /></div>
               </label>
               <div className="grid grid-cols-2 gap-2">
                 <label className="block">
@@ -615,7 +755,7 @@ export function GenerationSettingsPanel({
         </SettingsSection>
       )}
 
-      {show("controlNet") && (
+      {show("controlNet") && controlDensity === "advanced" && (
         <SettingsSection title="ControlNet" subtitle="Structure / pose guidance" defaultOpen={false}>
           <label className="block">
             <FieldLabel>Preset</FieldLabel>
@@ -647,7 +787,7 @@ export function GenerationSettingsPanel({
         </SettingsSection>
       )}
 
-      {show("qwen") && (
+      {show("qwen") && controlDensity === "advanced" && (
         <SettingsSection title="Qwen Image" defaultOpen={false}>
           <label className="block">
             <FieldLabel>Edit graph</FieldLabel>
@@ -743,7 +883,7 @@ export function GenerationSettingsPanel({
         </SettingsSection>
       )}
 
-      {show("promptHelpers") && (
+      {show("promptHelpers") && controlDensity === "advanced" && (
       <SettingsSection title="Prompt helpers" subtitle="Subject, lighting, camera" defaultOpen={false}>
         <label className="block">
           <FieldLabel>Subject</FieldLabel>
@@ -772,91 +912,6 @@ export function GenerationSettingsPanel({
       </SettingsSection>
       )}
 
-      {show("hardware") && (
-      <SettingsSection
-        title="Hardware & limits"
-        subtitle="VRAM tier and batch limits"
-        defaultOpen={false}
-      >
-        <label className="block">
-          <FieldLabel hint="Changing this affects ComfyUI launch flags; restart the GPU engine after switching profiles.">
-            VRAM profile
-          </FieldLabel>
-          <select
-            value={settings.vram_profile ?? "auto"}
-            onChange={(e) =>
-              onChange({
-                vram_profile: e.target.value as GenerationSettings["vram_profile"],
-              })
-            }
-            className="df-select mt-1 w-full px-2.5 py-2 text-xs"
-          >
-            <option value="auto">auto (detect hardware)</option>
-            <optgroup label="Apple Silicon (unified memory)">
-              <option value="mps_24gb">Mac — 24 GB tier</option>
-              <option value="mps_16gb">Mac — 16 GB tier</option>
-              <option value="mps_8gb">Mac — 8 GB tier</option>
-              <option value="mps_4gb">Mac — 4 GB tier (tight)</option>
-            </optgroup>
-            <optgroup label="NVIDIA / discrete GPU">
-              <option value="16gb">16 GB VRAM — recommended / reserve 1 GB</option>
-              <option value="8gb">8 GB VRAM — low VRAM / reserve 0.5 GB</option>
-              <option value="5gb">5 GB VRAM (tight) — low VRAM / reserve 0.5 GB</option>
-              <option value="no_gpu">CPU only — very slow, no GPU</option>
-            </optgroup>
-          </select>
-        </label>
-        {onSaveStudioSettings && studioSettings && (
-          <>
-            <label className="block">
-              <FieldLabel>Max images per run</FieldLabel>
-              <input
-                type="number"
-                min={1}
-                max={50}
-                defaultValue={studioSettings.image_number_max ?? imageNumberMax}
-                onBlur={(e) =>
-                  void onSaveStudioSettings({
-                    image_number_max: Number(e.target.value),
-                  })
-                }
-                className="df-input mt-1 w-full px-2.5 py-1.5 font-mono text-xs"
-              />
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              <label className="block">
-                <FieldLabel>LoRA weight min</FieldLabel>
-                <input
-                  type="number"
-                  step={0.05}
-                  defaultValue={studioSettings.lora_min ?? 0}
-                  onBlur={(e) =>
-                    void onSaveStudioSettings({ lora_min: Number(e.target.value) })
-                  }
-                  className="df-input mt-1 w-full font-mono text-[10px]"
-                />
-              </label>
-              <label className="block">
-                <FieldLabel>LoRA weight max</FieldLabel>
-                <input
-                  type="number"
-                  step={0.05}
-                  defaultValue={studioSettings.lora_max ?? 2}
-                  onBlur={(e) =>
-                    void onSaveStudioSettings({ lora_max: Number(e.target.value) })
-                  }
-                  className="df-input mt-1 w-full font-mono text-[10px]"
-                />
-              </label>
-            </div>
-          </>
-        )}
-        <p className="text-[10px] leading-snug text-dfui-tertiary">
-          Global hardware limits — same profile across all modes. Models, LoRAs, and styles live on
-          sibling inspector tabs.
-        </p>
-      </SettingsSection>
-      )}
     </div>
   );
 }

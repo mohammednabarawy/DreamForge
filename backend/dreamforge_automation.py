@@ -47,6 +47,10 @@ def _list_prompt_files(folder: Path) -> list[Path]:
     return sorted(p for p in folder.glob("*.txt") if p.is_file())
 
 
+def _list_recipe_files(folder: Path) -> list[Path]:
+    return sorted(p for p in folder.glob("*.json") if p.is_file())
+
+
 def _list_input_images(folder: Path) -> list[Path]:
     files: list[Path] = []
     for path in sorted(folder.iterdir()):
@@ -149,6 +153,25 @@ def expand_automation_jobs(spec: dict[str, Any]) -> list[dict[str, Any]]:
             if studio_mode:
                 job["studio_mode"] = studio_mode
             jobs.append({"index": index + 1, "overrides": job, "label": f"recipe-seed-{job['seed']}"})
+
+    elif automation_type == "recipe_folder":
+        folder = spec.get("recipe_folder") or spec.get("input_path")
+        if not folder:
+            return []
+        for recipe_path in _list_recipe_files(Path(str(folder))):
+            recipe = _recipe_settings(recipe_path)
+            if recipe is None:
+                continue
+            index = len(jobs) + 1
+            job = dict(base)
+            job.update(recipe)
+            job.setdefault("seed", random.randint(0, 2**31 - 1))
+            job["image_number"] = 1
+            if template_id:
+                job["template_id"] = template_id
+            if studio_mode:
+                job["studio_mode"] = studio_mode
+            jobs.append({"index": index, "overrides": job, "label": recipe_path.stem})
 
     elif automation_type == "prompt_lines":
         prompt_file = spec.get("prompt_file") or spec.get("input_path")

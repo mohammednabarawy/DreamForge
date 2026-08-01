@@ -12,6 +12,7 @@ import { invokeAutomation, cancelAutomation } from "../lib/tauri-api";
 export type AutomationType =
   | "seed_batch"
   | "recipe_batch"
+  | "recipe_folder"
   | "prompt_lines"
   | "prompt_folder"
   | "input_folder";
@@ -100,6 +101,10 @@ export function useAutomation({
     }
     if (automationType === "recipe_batch") {
       spec.recipe_file = inputPath;
+      spec.input_path = inputPath;
+    }
+    if (automationType === "recipe_folder") {
+      spec.recipe_folder = inputPath;
       spec.input_path = inputPath;
     }
     if (automationType === "prompt_lines") {

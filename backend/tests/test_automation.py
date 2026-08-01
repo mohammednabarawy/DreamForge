@@ -73,3 +73,15 @@ def test_recipe_batch_rejects_non_recipe_file(tmp_path):
     preview = preview_automation({"type": "recipe_batch", "recipe_file": str(path)})
     assert preview["ok"] is False
     assert preview["error"] == "invalid_recipe"
+
+
+def test_recipe_folder_queues_valid_recipes_only(tmp_path):
+    (tmp_path / "01.json").write_text(
+        '{"schema_version":"2.0","positive_prompt":"first","seed":1}',
+        encoding="utf-8",
+    )
+    (tmp_path / "02.json").write_text("{}", encoding="utf-8")
+    jobs = expand_automation_jobs({"type": "recipe_folder", "recipe_folder": str(tmp_path)})
+    assert len(jobs) == 1
+    assert jobs[0]["label"] == "01"
+    assert jobs[0]["overrides"]["prompt"] == "first"

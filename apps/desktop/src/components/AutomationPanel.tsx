@@ -49,6 +49,12 @@ const TYPE_OPTIONS: Array<{
     icon: FileJson,
   },
   {
+    id: "recipe_folder",
+    label: "Recipe queue",
+    hint: "Queue every Recipe v2 JSON in a folder",
+    icon: FolderOpen,
+  },
+  {
     id: "prompt_lines",
     label: "Prompt lines",
     hint: "One .txt file, one line per job",
@@ -190,7 +196,9 @@ export function AutomationPanel({
                 ? "Prompt file"
                 : automation.automationType === "recipe_batch"
                   ? "Recipe v2 file"
-                : "Input folder"}
+                  : automation.automationType === "recipe_folder"
+                    ? "Recipe folder"
+                    : "Input folder"}
             </span>
             <div className="mt-1 flex gap-1.5">
               <input

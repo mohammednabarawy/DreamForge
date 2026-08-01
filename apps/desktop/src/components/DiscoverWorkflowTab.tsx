@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Bookmark, Check, Download, FileSearch, Workflow } from "lucide-react";
 import { pickJsonFile } from "../lib/tauri-api";
-import { analyzeWorkflowCompatibility, compileWorkflowRecipe, type DiscoverWorkflowTemplate, type WorkflowCompatibilityReport, type WorkflowRecipeCompileResult } from "../lib/studioBridge";
+import { analyzeWorkflowCompatibility, compileWorkflowRecipe, saveWorkflowFile, type DiscoverWorkflowTemplate, type WorkflowCompatibilityReport, type WorkflowRecipeCompileResult } from "../lib/studioBridge";
 
 const STORAGE_KEY = "dreamforge.workflowLibrary.v1";
 
@@ -33,6 +33,8 @@ export function DiscoverWorkflowTab({ templates, loading, error }: Props) {
   const [saved, setSaved] = useState<string[]>(() => readSaved());
   const [analysis, setAnalysis] = useState<WorkflowCompatibilityReport | null>(null);
   const [compiled, setCompiled] = useState<WorkflowRecipeCompileResult | null>(null);
+  const [analyzedPath, setAnalyzedPath] = useState("");
+  const [savedPath, setSavedPath] = useState("");
   const [analyzing, setAnalyzing] = useState(false);
   const q = query.trim().toLowerCase();
   const filtered = useMemo(
@@ -51,6 +53,8 @@ export function DiscoverWorkflowTab({ templates, loading, error }: Props) {
   const analyzeLocalWorkflow = async () => {
     const path = await pickJsonFile();
     if (!path) return;
+    setAnalyzedPath(path);
+    setSavedPath("");
     setAnalyzing(true);
     try {
       const report = await analyzeWorkflowCompatibility(path);
@@ -59,6 +63,20 @@ export function DiscoverWorkflowTab({ templates, loading, error }: Props) {
     } catch (error) {
       setAnalysis({ ok: false, state: "INVALID", reason: error instanceof Error ? error.message : String(error) });
       setCompiled(null);
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const saveLocalWorkflow = async () => {
+    if (!analyzedPath) return;
+    setAnalyzing(true);
+    try {
+      const result = await saveWorkflowFile(analyzedPath);
+      if (!result.ok) throw new Error(result.error ?? "Could not save workflow");
+      setSavedPath(result.path ?? result.filename ?? "saved");
+    } catch (error) {
+      setSavedPath(error instanceof Error ? error.message : String(error));
     } finally {
       setAnalyzing(false);
     }
@@ -108,6 +126,12 @@ export function DiscoverWorkflowTab({ templates, loading, error }: Props) {
           </span>
           <span className="ml-1.5 text-dfui-tertiary">{analysis.reason}</span>
           {!!analysis.dependencies?.length && <p className="mt-1 truncate text-dfui-tertiary">Dependencies: {analysis.dependencies.join(", ")}</p>}
+          {analyzedPath && (
+            <button type="button" onClick={() => void saveLocalWorkflow()} disabled={analyzing} className="mt-1 inline-flex items-center gap-1 rounded border border-dfui-border/50 px-1.5 py-1 text-[9px] text-dfui-fg hover:bg-dfui-border/20 disabled:opacity-50">
+              <Download size={10} /> Save safe copy to Library
+            </button>
+          )}
+          {savedPath && <p className="mt-1 truncate text-emerald-200" role="status">{savedPath}</p>}
           {compiled?.can_recreate && (
             <button type="button" onClick={exportRecipe} className="mt-1 inline-flex items-center gap-1 rounded border border-dfui-accent/50 px-1.5 py-1 text-[9px] text-dfui-fg hover:bg-dfui-accent/10">
               <Download size={10} /> Export portable recipe

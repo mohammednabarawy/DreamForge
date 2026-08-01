@@ -565,6 +565,15 @@ def cmd_compile_workflow_recipe(params: dict) -> dict:
     return compile_workflow_recipe(payload)
 
 
+def cmd_save_workflow_file(params: dict) -> dict:
+    from dreamforge_workflow_library import save_workflow_file
+
+    path = str(params.get("path") or "").strip()
+    if not path:
+        return _error("missing_workflow_path")
+    return save_workflow_file(path)
+
+
 def _style_recipe_label(style_id: str, spec: dict) -> str:
     original = str(spec.get("original_name") or "").strip()
     if original:
@@ -1955,6 +1964,7 @@ HANDLERS = {
     "list_workflow_templates": cmd_list_workflow_templates,
     "analyze_workflow_compatibility": cmd_analyze_workflow_compatibility,
     "compile_workflow_recipe": cmd_compile_workflow_recipe,
+    "save_workflow_file": cmd_save_workflow_file,
     "get_ui_defaults": cmd_get_ui_defaults,
     "classify_models": cmd_classify_models,
     "organize_models": cmd_organize_models,

@@ -100,6 +100,7 @@ class TestPhase3BridgeHandlers:
     def test_workflow_compatibility_handler_registered(self):
         assert "analyze_workflow_compatibility" in HANDLERS
         assert "compile_workflow_recipe" in HANDLERS
+        assert "save_workflow_file" in HANDLERS
 
     def test_recipe_discovery_handler_registered(self):
         assert "recipe_discovery_search" in HANDLERS

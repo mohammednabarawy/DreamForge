@@ -327,6 +327,19 @@ export async function compileWorkflowRecipe(path: string) {
   return bridgeInvoke<WorkflowRecipeCompileResult>("compile_workflow_recipe", { path });
 }
 
+export type WorkflowSaveResult = {
+  ok: boolean;
+  path?: string;
+  filename?: string;
+  execution?: "disabled";
+  report?: WorkflowCompatibilityReport;
+  error?: string;
+};
+
+export async function saveWorkflowFile(path: string) {
+  return bridgeInvoke<WorkflowSaveResult>("save_workflow_file", { path });
+}
+
 export type RecipeDiscoveryItem = {
   id: string;
   provider: string;

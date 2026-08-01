@@ -19,12 +19,12 @@ The plan is being delivered incrementally against the existing ComfyUI-backed de
 | 4 — Models & LoRAs discovery UX | Implemented slice | Provider-neutral cards, file variants, architecture gate, compute-aware recommendation, install state, focused tests |
 | 5 — Recipe & Prompt Discovery | Implemented slice | Portable Recipe v2 Save/Load/Recreate, image-metadata import, and browse-only Civitai Images/Lexica metadata cards with Recreate/Save actions |
 | 6 — Styles | Local slice implemented | Offline custom-style store, Fooocus JSON import, normalized architecture/source metadata, and refresh into the existing style picker |
-| 7 — Official workflow discovery | Local slice implemented | Browse-only Discover → Workflows tab backed by the first-party Comfy template registry; templates can be bookmarked locally and never auto-execute |
+| 7 — Official workflow discovery | Implemented slice | Browse-only Discover → Workflows tab, dependency visibility, and fixed-root atomic local workflow import; imported files never auto-execute or install nodes |
 | 8 — Workflow compatibility | Conservative analysis slice implemented | Non-executing analyzer returns exactly `NATIVE`, `ADAPTABLE`, `COMFY_ONLY`, or `INVALID`, extracts dependencies, blocks command/URL/path-traversal signals, and is exposed in Discover → Workflows |
 | 9 — Native workflow execution | Recipe-only slice implemented | High-confidence native graphs compile to portable Recipe v2 and can be exported; no graph is executed or partially translated |
 | 10 — Automation | Implemented slice | Recipe v2 batch/folder/matrix automation, deterministic seed sweeps, previews, cancellation, and export reuse the existing ComfyUI-backed worker |
 
-Verification boundary for this snapshot: the focused metadata/recipe-discovery/automation/recipe/provider/style/workflow/bridge suite passes (131 tests) and the desktop production build passes. The remaining phases are intentionally not marked complete until their end-to-end acceptance criteria are implemented and tested.
+Verification boundary for this snapshot: the focused metadata/recipe-discovery/automation/recipe/provider/style/workflow/bridge suite passes (133 tests) and the desktop production build passes. The remaining phases are intentionally not marked complete until their end-to-end acceptance criteria are implemented and tested.
 
 ---
 

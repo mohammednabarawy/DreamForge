@@ -11,6 +11,7 @@ import { invokeAutomation, cancelAutomation } from "../lib/tauri-api";
 
 export type AutomationType =
   | "seed_batch"
+  | "recipe_batch"
   | "prompt_lines"
   | "prompt_folder"
   | "input_folder";
@@ -52,6 +53,8 @@ export function useAutomation({
   const [automationType, setAutomationType] =
     useState<AutomationType>("seed_batch");
   const [count, setCount] = useState(4);
+  const [seedStart, setSeedStart] = useState("");
+  const [seedStep, setSeedStep] = useState("1");
   const [inputPath, setInputPath] = useState("");
   const [outputDir, setOutputDir] = useState("");
   const [inputFolderMode, setInputFolderMode] = useState<StudioMode>("upscale");
@@ -90,8 +93,14 @@ export function useAutomation({
       studio_mode:
         automationType === "input_folder" ? inputFolderMode : studioMode,
     };
-    if (automationType === "seed_batch") {
+    if (automationType === "seed_batch" || automationType === "recipe_batch") {
       spec.count = count;
+      if (seedStart.trim()) spec.seed_start = Number(seedStart);
+      if (seedStep.trim()) spec.seed_step = Number(seedStep);
+    }
+    if (automationType === "recipe_batch") {
+      spec.recipe_file = inputPath;
+      spec.input_path = inputPath;
     }
     if (automationType === "prompt_lines") {
       spec.prompt_file = inputPath;
@@ -116,6 +125,8 @@ export function useAutomation({
     inputFolderMode,
     inputPath,
     outputDir,
+    seedStart,
+    seedStep,
     studioMode,
   ]);
 
@@ -182,6 +193,8 @@ export function useAutomation({
     onRefreshOutputs,
     onStatus,
     outputDir,
+    seedStart,
+    seedStep,
     preview?.job_count,
   ]);
 
@@ -198,6 +211,10 @@ export function useAutomation({
     automationType,
     setAutomationType,
     count,
+    seedStart,
+    setSeedStart,
+    seedStep,
+    setSeedStep,
     setCount,
     inputPath,
     setInputPath,

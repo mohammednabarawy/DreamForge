@@ -1020,7 +1020,7 @@ def cmd_preview_automation(params: dict) -> dict:
 
     spec = params.get("spec") if isinstance(params.get("spec"), dict) else params
     payload = preview_automation(spec)
-    payload["ok"] = bool(payload.get("job_count", 0) >= 0)
+    payload["ok"] = bool(payload.get("ok", True))
     return payload
 
 

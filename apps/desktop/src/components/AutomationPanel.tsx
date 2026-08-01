@@ -4,6 +4,7 @@ import {
   Play,
   RefreshCw,
   FileText,
+  FileJson,
   Images,
 } from "lucide-react";
 import { useAutomation, type AutomationType } from "../hooks/useAutomation";
@@ -40,6 +41,12 @@ const TYPE_OPTIONS: Array<{
     label: "Seed batch",
     hint: "Same prompt, different seeds",
     icon: LayoutGrid,
+  },
+  {
+    id: "recipe_batch",
+    label: "Recipe batch",
+    hint: "Recipe v2 with a seed sweep",
+    icon: FileJson,
   },
   {
     id: "prompt_lines",
@@ -135,21 +142,44 @@ export function AutomationPanel({
         })}
       </div>
 
-      {automation.automationType === "seed_batch" ? (
-        <label className="block">
-          <span className="text-xs text-dfui-muted">Images to generate</span>
-          <input
-            type="number"
-            min={1}
-            max={64}
-            value={automation.count}
-            disabled={generating}
-            onChange={(e) =>
-              automation.setCount(Math.max(1, Number(e.target.value) || 1))
-            }
-            className="df-input mt-1 w-full px-2.5 py-1.5 font-mono text-xs"
-          />
-        </label>
+      {automation.automationType === "seed_batch" || automation.automationType === "recipe_batch" ? (
+        <div className="grid grid-cols-3 gap-1.5">
+          <label className="col-span-1 block">
+            <span className="text-xs text-dfui-muted">Jobs</span>
+            <input
+              type="number"
+              min={1}
+              max={64}
+              value={automation.count}
+              disabled={generating}
+              onChange={(e) =>
+                automation.setCount(Math.max(1, Number(e.target.value) || 1))
+              }
+              className="df-input mt-1 w-full px-2.5 py-1.5 font-mono text-xs"
+            />
+          </label>
+          <label className="col-span-1 block">
+            <span className="text-xs text-dfui-muted">Seed start</span>
+            <input
+              type="number"
+              value={automation.seedStart}
+              disabled={generating}
+              placeholder="auto"
+              onChange={(e) => automation.setSeedStart(e.target.value)}
+              className="df-input mt-1 w-full px-2.5 py-1.5 font-mono text-xs"
+            />
+          </label>
+          <label className="col-span-1 block">
+            <span className="text-xs text-dfui-muted">Step</span>
+            <input
+              type="number"
+              value={automation.seedStep}
+              disabled={generating}
+              onChange={(e) => automation.setSeedStep(e.target.value)}
+              className="df-input mt-1 w-full px-2.5 py-1.5 font-mono text-xs"
+            />
+          </label>
+        </div>
       ) : null}
 
       {needsInput ? (
@@ -158,6 +188,8 @@ export function AutomationPanel({
             <span className="text-xs text-dfui-muted">
               {automation.automationType === "prompt_lines"
                 ? "Prompt file"
+                : automation.automationType === "recipe_batch"
+                  ? "Recipe v2 file"
                 : "Input folder"}
             </span>
             <div className="mt-1 flex gap-1.5">
@@ -171,7 +203,10 @@ export function AutomationPanel({
                 type="button"
                 disabled={generating}
                 onClick={async () => {
-                  if (automation.automationType === "prompt_lines") {
+                  if (
+                    automation.automationType === "prompt_lines" ||
+                    automation.automationType === "recipe_batch"
+                  ) {
                     const picked = await pickTextFile();
                     if (picked) automation.setInputPath(picked);
                   } else {
@@ -255,6 +290,8 @@ export function AutomationPanel({
         <p className="mt-1 text-xs text-dfui-fg">
           {automation.previewBusy
             ? "Counting jobs…"
+            : automation.preview?.message
+              ? automation.preview.message
             : `${automation.preview?.job_count ?? 0} job(s) queued`}
         </p>
         {automation.preview?.jobs?.length ? (

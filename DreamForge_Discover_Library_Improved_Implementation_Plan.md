@@ -22,9 +22,9 @@ The plan is being delivered incrementally against the existing ComfyUI-backed de
 | 7 — Official workflow discovery | Local slice implemented | Browse-only Discover → Workflows tab backed by the first-party Comfy template registry; templates can be bookmarked locally and never auto-execute |
 | 8 — Workflow compatibility | Conservative analysis slice implemented | Non-executing analyzer returns exactly `NATIVE`, `ADAPTABLE`, `COMFY_ONLY`, or `INVALID`, extracts dependencies, blocks command/URL/path-traversal signals, and is exposed in Discover → Workflows |
 | 9 — Native workflow execution | Recipe-only slice implemented | High-confidence native graphs compile to portable Recipe v2 and can be exported; no graph is executed or partially translated |
-| 10 — Automation | Planned | Full IR/compiler conversion, native execution, and recipe-driven automation remain next |
+| 10 — Automation | Implemented slice | Recipe v2 batch automation, deterministic seed sweeps, prompt/input-folder batches, previews, cancellation, and export reuse the existing ComfyUI-backed worker; matrix/queued-recipe expansion remains next |
 
-Verification boundary for this snapshot: the focused foundation/provider/bridge suite passes (196 tests) and the desktop production build passes. The remaining phases are intentionally not marked complete until their end-to-end acceptance criteria are implemented and tested.
+Verification boundary for this snapshot: the focused automation/workflow/style/bridge suite passes (55 tests) and the desktop production build passes. The remaining phases are intentionally not marked complete until their end-to-end acceptance criteria are implemented and tested.
 
 ---
 
@@ -2207,6 +2207,8 @@ After Library and Recipe systems are stable:
 - batch export.
 
 Automation should consume the same `DreamForgeRecipe`, not invent a separate generation configuration format.
+
+Current implementation slice: `recipe_batch` loads a local Recipe v2 file, merges only populated recipe values with the current validated settings, and expands a controlled seed sweep before dispatching each job through the existing ComfyUI-backed automation worker. Seed batches also accept an explicit start and step for reproducible comparisons. Remote queued-recipe catalogs and full model/LoRA matrix expansion remain follow-up work.
 
 ---
 

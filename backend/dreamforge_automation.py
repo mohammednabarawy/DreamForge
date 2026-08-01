@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import random
 import uuid
 from pathlib import Path
 from typing import Any
+
+from dreamforge_recipe import DreamForgeRecipe
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
 
@@ -52,6 +55,37 @@ def _list_input_images(folder: Path) -> list[Path]:
     return files
 
 
+def _recipe_settings(path: str | Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or payload.get("schema_version") != "2.0":
+            return None
+        recipe = DreamForgeRecipe.from_dict(payload)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+    settings = {
+        key: value
+        for key, value in recipe.settings.items()
+        if key in {"scheduler", "width", "height", "vram_profile"}
+    }
+    fields = {
+        "model": recipe.model,
+        "prompt": recipe.positive_prompt,
+        "negative_prompt": recipe.negative_prompt,
+        "sampler": recipe.sampler,
+        "cfg_scale": recipe.cfg_scale,
+        "steps": recipe.steps,
+        "aspect_ratio": recipe.aspect_ratio,
+        "performance": recipe.performance,
+        "styles": list(recipe.styles),
+        "lora": [f"{item.filename}:{item.weight:g}" for item in recipe.loras if item.filename],
+    }
+    settings.update({key: value for key, value in fields.items() if value not in ("", [], 0)})
+    if recipe.seed is not None:
+        settings["seed"] = recipe.seed
+    return settings
+
+
 def expand_automation_jobs(spec: dict[str, Any]) -> list[dict[str, Any]]:
     """Expand an automation spec into per-job override dicts."""
     automation_type = str(spec.get("type") or spec.get("automation_type") or "seed_batch").strip()
@@ -63,15 +97,58 @@ def expand_automation_jobs(spec: dict[str, Any]) -> list[dict[str, Any]]:
     jobs: list[dict[str, Any]] = []
 
     if automation_type == "seed_batch":
+        try:
+            seed_start = int(spec.get("seed_start")) if spec.get("seed_start") not in (None, "") else None
+        except (TypeError, ValueError):
+            seed_start = None
+        try:
+            raw_step = spec.get("seed_step")
+            seed_step = int(raw_step) if raw_step not in (None, "") else 1
+        except (TypeError, ValueError):
+            seed_step = 1
         for index in range(count):
             job = dict(base)
-            job["seed"] = random.randint(0, 2**31 - 1)
+            job["seed"] = (
+                seed_start + index * seed_step
+                if seed_start is not None
+                else random.randint(0, 2**31 - 1)
+            )
             job["image_number"] = 1
             if template_id:
                 job["template_id"] = template_id
             if studio_mode:
                 job["studio_mode"] = studio_mode
             jobs.append({"index": index + 1, "overrides": job, "label": f"seed-{index + 1}"})
+
+    elif automation_type == "recipe_batch":
+        recipe_path = spec.get("recipe_file") or spec.get("input_path")
+        recipe = _recipe_settings(str(recipe_path)) if recipe_path else None
+        if recipe is None:
+            return []
+        seed_start = spec.get("seed_start")
+        try:
+            seed_start = int(seed_start) if seed_start not in (None, "") else recipe.get("seed")
+        except (TypeError, ValueError):
+            seed_start = recipe.get("seed")
+        try:
+            raw_step = spec.get("seed_step")
+            seed_step = int(raw_step) if raw_step not in (None, "") else 1
+        except (TypeError, ValueError):
+            seed_step = 1
+        for index in range(count):
+            job = dict(base)
+            job.update(recipe)
+            job["seed"] = (
+                seed_start + index * seed_step
+                if seed_start is not None
+                else random.randint(0, 2**31 - 1)
+            )
+            job["image_number"] = 1
+            if template_id:
+                job["template_id"] = template_id
+            if studio_mode:
+                job["studio_mode"] = studio_mode
+            jobs.append({"index": index + 1, "overrides": job, "label": f"recipe-seed-{job['seed']}"})
 
     elif automation_type == "prompt_lines":
         prompt_file = spec.get("prompt_file") or spec.get("input_path")
@@ -139,12 +216,15 @@ def expand_automation_jobs(spec: dict[str, Any]) -> list[dict[str, Any]]:
 
 def preview_automation(spec: dict[str, Any]) -> dict[str, Any]:
     jobs = expand_automation_jobs(spec)
-    return {
+    payload = {
         "ok": True,
         "type": spec.get("type") or spec.get("automation_type"),
         "job_count": len(jobs),
         "jobs": [{"index": j.get("index"), "label": j.get("label")} for j in jobs[:50]],
     }
+    if payload["type"] == "recipe_batch" and not jobs:
+        payload.update(ok=False, error="invalid_recipe", message="Choose a valid DreamForge Recipe v2 JSON file")
+    return payload
 
 
 def run_automation(

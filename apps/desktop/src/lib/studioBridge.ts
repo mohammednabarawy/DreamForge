@@ -872,6 +872,8 @@ export async function resolveCreativeTemplate(args: {
 export type AutomationPreview = {
   ok?: boolean;
   type?: string;
+  error?: string;
+  message?: string;
   job_count?: number;
   jobs?: Array<{ index?: number; label?: string }>;
 };

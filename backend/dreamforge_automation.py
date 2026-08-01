@@ -173,6 +173,52 @@ def expand_automation_jobs(spec: dict[str, Any]) -> list[dict[str, Any]]:
                 job["studio_mode"] = studio_mode
             jobs.append({"index": index, "overrides": job, "label": recipe_path.stem})
 
+    elif automation_type == "recipe_matrix":
+        recipe_path = spec.get("recipe_file") or spec.get("input_path")
+        recipe = _recipe_settings(str(recipe_path)) if recipe_path else None
+        if recipe is None:
+            return []
+        def variants(value: Any, fallback: str = "") -> list[str]:
+            values = value if isinstance(value, list) else str(value or "").split(",")
+            result = [str(item).strip() for item in values if str(item).strip()]
+            return result or ([fallback] if fallback else [""])
+
+        models = variants(spec.get("model_variants"), str(recipe.get("model") or ""))
+        loras = variants(spec.get("lora_variants"), "")
+        try:
+            seed_start = int(spec.get("seed_start")) if spec.get("seed_start") not in (None, "") else recipe.get("seed")
+        except (TypeError, ValueError):
+            seed_start = recipe.get("seed")
+        try:
+            raw_step = spec.get("seed_step")
+            seed_step = int(raw_step) if raw_step not in (None, "") else 1
+        except (TypeError, ValueError):
+            seed_step = 1
+        for model in models:
+            for lora in loras:
+                for variation in range(count):
+                    job = dict(base)
+                    job.update(recipe)
+                    if model:
+                        job["model"] = model
+                    if lora:
+                        job["lora"] = [lora]
+                    seed = (
+                        seed_start + variation * seed_step
+                        if seed_start is not None
+                        else random.randint(0, 2**31 - 1)
+                    )
+                    job["seed"] = seed
+                    job["image_number"] = 1
+                    if template_id:
+                        job["template_id"] = template_id
+                    if studio_mode:
+                        job["studio_mode"] = studio_mode
+                    label = "-".join(part for part in (model, lora, str(seed)) if part)
+                    for char in '<>:"/\\|?*':
+                        label = label.replace(char, "_")
+                    jobs.append({"index": len(jobs) + 1, "overrides": job, "label": label})
+
     elif automation_type == "prompt_lines":
         prompt_file = spec.get("prompt_file") or spec.get("input_path")
         if not prompt_file:

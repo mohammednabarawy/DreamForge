@@ -2208,7 +2208,7 @@ After Library and Recipe systems are stable:
 
 Automation should consume the same `DreamForgeRecipe`, not invent a separate generation configuration format.
 
-Current implementation slice: `recipe_batch` loads a local Recipe v2 file, `recipe_folder` queues valid local Recipe v2 files, and both dispatch through the existing ComfyUI-backed automation worker. Seed batches accept an explicit start and step for reproducible comparisons. Remote queued-recipe catalogs and full model/LoRA matrix expansion remain follow-up work.
+Current implementation slice: `recipe_batch` loads a local Recipe v2 file, `recipe_folder` queues valid local Recipe v2 files, and `recipe_matrix` compares typed model/LoRA variants across a seed sweep. All dispatch through the existing ComfyUI-backed automation worker. Remote queued-recipe catalogs and richer matrix sources remain follow-up work.
 
 ---
 

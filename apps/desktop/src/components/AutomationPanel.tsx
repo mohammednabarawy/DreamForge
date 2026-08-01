@@ -55,6 +55,12 @@ const TYPE_OPTIONS: Array<{
     icon: FolderOpen,
   },
   {
+    id: "recipe_matrix",
+    label: "Recipe matrix",
+    hint: "Compare models and LoRAs from one recipe",
+    icon: LayoutGrid,
+  },
+  {
     id: "prompt_lines",
     label: "Prompt lines",
     hint: "One .txt file, one line per job",
@@ -148,7 +154,7 @@ export function AutomationPanel({
         })}
       </div>
 
-      {automation.automationType === "seed_batch" || automation.automationType === "recipe_batch" ? (
+      {automation.automationType === "seed_batch" || automation.automationType === "recipe_batch" || automation.automationType === "recipe_matrix" ? (
         <div className="grid grid-cols-3 gap-1.5">
           <label className="col-span-1 block">
             <span className="text-xs text-dfui-muted">Jobs</span>
@@ -188,6 +194,31 @@ export function AutomationPanel({
         </div>
       ) : null}
 
+      {automation.automationType === "recipe_matrix" ? (
+        <div className="space-y-2">
+          <label className="block">
+            <span className="text-xs text-dfui-muted">Model variants</span>
+            <input
+              value={automation.modelVariants}
+              disabled={generating}
+              placeholder="model-a.safetensors, model-b.safetensors"
+              onChange={(e) => automation.setModelVariants(e.target.value)}
+              className="df-input mt-1 w-full px-2.5 py-1.5 text-xs"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs text-dfui-muted">LoRA variants</span>
+            <input
+              value={automation.loraVariants}
+              disabled={generating}
+              placeholder="style-a.safetensors:0.8, style-b.safetensors:1"
+              onChange={(e) => automation.setLoraVariants(e.target.value)}
+              className="df-input mt-1 w-full px-2.5 py-1.5 text-xs"
+            />
+          </label>
+        </div>
+      ) : null}
+
       {needsInput ? (
         <div className="space-y-2">
           <label className="block">
@@ -196,6 +227,8 @@ export function AutomationPanel({
                 ? "Prompt file"
                 : automation.automationType === "recipe_batch"
                   ? "Recipe v2 file"
+                  : automation.automationType === "recipe_matrix"
+                    ? "Recipe v2 file"
                   : automation.automationType === "recipe_folder"
                     ? "Recipe folder"
                     : "Input folder"}
@@ -211,10 +244,7 @@ export function AutomationPanel({
                 type="button"
                 disabled={generating}
                 onClick={async () => {
-                  if (
-                    automation.automationType === "prompt_lines" ||
-                    automation.automationType === "recipe_batch"
-                  ) {
+                  if (automation.automationType === "prompt_lines" || automation.automationType === "recipe_batch" || automation.automationType === "recipe_matrix") {
                     const picked = await pickTextFile();
                     if (picked) automation.setInputPath(picked);
                   } else {

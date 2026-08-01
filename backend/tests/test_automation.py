@@ -85,3 +85,26 @@ def test_recipe_folder_queues_valid_recipes_only(tmp_path):
     assert len(jobs) == 1
     assert jobs[0]["label"] == "01"
     assert jobs[0]["overrides"]["prompt"] == "first"
+
+
+def test_recipe_matrix_expands_models_and_loras(tmp_path):
+    recipe_file = tmp_path / "recipe.json"
+    recipe_file.write_text(
+        '{"schema_version":"2.0","model":"base.safetensors","positive_prompt":"subject","seed":5}',
+        encoding="utf-8",
+    )
+    jobs = expand_automation_jobs(
+        {
+            "type": "recipe_matrix",
+            "recipe_file": str(recipe_file),
+            "model_variants": ["a.safetensors", "b.safetensors"],
+            "lora_variants": ["none.safetensors", "style.safetensors:0.7"],
+            "count": 2,
+            "seed_step": 10,
+        }
+    )
+    assert len(jobs) == 8
+    assert jobs[0]["overrides"]["model"] == "a.safetensors"
+    assert jobs[0]["overrides"]["lora"] == ["none.safetensors"]
+    assert jobs[1]["overrides"]["seed"] == 15
+    assert jobs[-1]["overrides"]["model"] == "b.safetensors"

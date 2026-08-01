@@ -13,6 +13,7 @@ export type AutomationType =
   | "seed_batch"
   | "recipe_batch"
   | "recipe_folder"
+  | "recipe_matrix"
   | "prompt_lines"
   | "prompt_folder"
   | "input_folder";
@@ -56,6 +57,8 @@ export function useAutomation({
   const [count, setCount] = useState(4);
   const [seedStart, setSeedStart] = useState("");
   const [seedStep, setSeedStep] = useState("1");
+  const [modelVariants, setModelVariants] = useState("");
+  const [loraVariants, setLoraVariants] = useState("");
   const [inputPath, setInputPath] = useState("");
   const [outputDir, setOutputDir] = useState("");
   const [inputFolderMode, setInputFolderMode] = useState<StudioMode>("upscale");
@@ -94,7 +97,11 @@ export function useAutomation({
       studio_mode:
         automationType === "input_folder" ? inputFolderMode : studioMode,
     };
-    if (automationType === "seed_batch" || automationType === "recipe_batch") {
+    if (
+      automationType === "seed_batch" ||
+      automationType === "recipe_batch" ||
+      automationType === "recipe_matrix"
+    ) {
       spec.count = count;
       if (seedStart.trim()) spec.seed_start = Number(seedStart);
       if (seedStep.trim()) spec.seed_step = Number(seedStep);
@@ -106,6 +113,12 @@ export function useAutomation({
     if (automationType === "recipe_folder") {
       spec.recipe_folder = inputPath;
       spec.input_path = inputPath;
+    }
+    if (automationType === "recipe_matrix") {
+      spec.recipe_file = inputPath;
+      spec.input_path = inputPath;
+      spec.model_variants = modelVariants.split(",").map((item) => item.trim()).filter(Boolean);
+      spec.lora_variants = loraVariants.split(",").map((item) => item.trim()).filter(Boolean);
     }
     if (automationType === "prompt_lines") {
       spec.prompt_file = inputPath;
@@ -130,6 +143,8 @@ export function useAutomation({
     inputFolderMode,
     inputPath,
     outputDir,
+    modelVariants,
+    loraVariants,
     seedStart,
     seedStep,
     studioMode,
@@ -192,6 +207,8 @@ export function useAutomation({
     automationType,
     buildSpec,
     count,
+    loraVariants,
+    modelVariants,
     generating,
     inputPath,
     onBeforeRun,
@@ -220,6 +237,10 @@ export function useAutomation({
     setSeedStart,
     seedStep,
     setSeedStep,
+    modelVariants,
+    setModelVariants,
+    loraVariants,
+    setLoraVariants,
     setCount,
     inputPath,
     setInputPath,

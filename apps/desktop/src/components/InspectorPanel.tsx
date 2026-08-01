@@ -42,10 +42,19 @@ import { MarketplaceTab } from "./MarketplaceTab";
 import { LoraStackPanel } from "./LoraStackPanel";
 import { GenerationSettingsPanel } from "./GenerationSettingsPanel";
 import { AutomationPanel } from "./AutomationPanel";
+import { RecipeActions } from "./RecipeActions";
 import {
   aggregateLoraKeywords,
   type StudioSettings,
 } from "../lib/studioBridge";
+import {
+  loadDiscoverLibrarySurface,
+  loadDiscoverLibraryTab,
+  saveDiscoverLibrarySurface,
+  saveDiscoverLibraryTab,
+  type DiscoverLibrarySurface,
+  type DiscoverLibraryTab,
+} from "../lib/discover";
 import { DEFAULT_MAX_LORA_STACK } from "../lib/loraStack";
 import type { StyleGroup } from "../lib/inventory";
 
@@ -141,10 +150,23 @@ export function InspectorPanel({
   onBeforeAutomationRun,
   onRevealPath,
 }: Props) {
-  const [tab, setTab] = useState<Tab>("models");
+  const [surface, setSurface] = useState<DiscoverLibrarySurface>(() => loadDiscoverLibrarySurface());
+  const [libraryTab, setLibraryTab] = useState<DiscoverLibraryTab>(() => loadDiscoverLibraryTab());
   const [styleFilter, setStyleFilter] = useState("");
   const [modelFamily, setModelFamily] = useState("all");
   const [modelSort, setModelSort] = useState<ModelSort>("recommended");
+
+  const tab: Tab = surface === "discover" ? "discover" : libraryTab;
+  const setTab = useCallback((next: Tab) => {
+    if (next === "discover") return;
+    setLibraryTab(next);
+    saveDiscoverLibraryTab(next);
+  }, []);
+
+  const switchSurface = useCallback((next: DiscoverLibrarySurface) => {
+    setSurface(next);
+    saveDiscoverLibrarySurface(next);
+  }, []);
 
   const showEditStrength = Boolean(settings.input_image) || ["kontext", "inpaint", "img2img", "qwen_edit"].includes(settings.edit_type ?? "");
   const isQwenModel = (settings.model ?? activeModelLabel ?? "").toLowerCase().includes("qwen");
@@ -328,17 +350,19 @@ export function InspectorPanel({
       models: { label: "Models", icon: Boxes },
       loras: { label: "LoRAs", icon: Layers },
       styles: { label: "Styles", icon: Palette },
-      settings: { label: "Generation", icon: SlidersHorizontal },
-      automation: { label: "Batch", icon: LayoutGrid },
+      settings: { label: surface === "library" ? "Generate" : "Generation", icon: SlidersHorizontal },
+      automation: { label: surface === "library" ? "Automate" : "Batch", icon: LayoutGrid },
     };
-    const ids = inspectorTabsForMode({
-      studioMode,
-      simpleInspectorLocked,
-      powerUserInspector,
-      isEditFamily,
-      isInpaint,
-      isUpscale,
-    });
+    const ids: Tab[] = surface === "discover"
+      ? ["discover"]
+      : inspectorTabsForMode({
+          studioMode,
+          simpleInspectorLocked,
+          powerUserInspector,
+          isEditFamily,
+          isInpaint,
+          isUpscale,
+        });
     return ids.map((id) => ({ id, ...tabMeta[id] }));
   }, [
     isEditFamily,
@@ -347,6 +371,7 @@ export function InspectorPanel({
     powerUserInspector,
     simpleInspectorLocked,
     studioMode,
+    surface,
   ]);
 
   const tabScrollRef = useRef<HTMLDivElement>(null);
@@ -468,68 +493,89 @@ export function InspectorPanel({
 
   return (
     <aside className="flex h-full min-h-0 min-w-0 flex-col glass-panel rounded-none border-y-0 border-r-0">
-      <div className="relative flex items-stretch border-b border-dfui-border/40 bg-dfui-panel/40 backdrop-blur-md">
-        {canScrollTabsLeft && (
-          <>
-            <div
-              className="pointer-events-none absolute left-8 top-0 z-[1] h-full w-6 bg-gradient-to-r from-dfui-panel/95 to-transparent"
-              aria-hidden
-            />
+      <div className="shrink-0 border-b border-dfui-border/40 bg-dfui-panel/40 backdrop-blur-md">
+        <div className="flex gap-1 px-2 pt-2" role="tablist" aria-label="Asset workspace">
+          {(["discover", "library"] as DiscoverLibrarySurface[]).map((item) => (
             <button
+              key={item}
               type="button"
-              aria-label="Show previous tabs"
-              onClick={() => scrollTabs(-1)}
-              className="relative z-[2] flex w-8 shrink-0 items-center justify-center text-dfui-secondary transition hover:bg-dfui-surface-hover/60 hover:text-dfui-fg"
-            >
-              <ChevronLeft size={16} strokeWidth={2.25} />
-            </button>
-          </>
-        )}
-        <div
-          ref={tabScrollRef}
-          className="df-tab-scroll flex min-w-0 flex-1 gap-1 overflow-x-auto scroll-smooth px-2 py-2"
-        >
-          {tabs.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              type="button"
-              data-tab-id={id}
-              onClick={() => setTab(id)}
-              className={`flex shrink-0 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition-all duration-200 ${
-                tab === id ? "df-tab-active" : "df-tab"
+              role="tab"
+              aria-selected={surface === item}
+              onClick={() => switchSurface(item)}
+              className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[10px] font-semibold transition ${
+                surface === item
+                  ? "border border-dfui-accent/60 bg-dfui-accent/15 text-dfui-fg"
+                  : "border border-transparent text-dfui-muted hover:border-dfui-border/50 hover:text-dfui-fg"
               }`}
             >
-              <Icon size={14} />
-              {label}
-              {id === "styles" && activeStyleId && activeStyleId !== "none" && (
-                <span className="rounded-full bg-dfui-accent/20 px-1.5 font-mono text-[9px] text-dfui-accent">
-                  1
-                </span>
-              )}
-              {id === "loras" && activeLoras.length > 0 && (
-                <span className="rounded-full bg-dfui-accent/20 px-1.5 font-mono text-[9px] text-dfui-accent">
-                  {activeLoras.length}
-                </span>
-              )}
+              {item === "discover" ? <Globe size={12} /> : <Boxes size={12} />}
+              {item === "discover" ? "Discover" : "Library"}
             </button>
           ))}
         </div>
-        {canScrollTabsRight && (
-          <>
-            <button
-              type="button"
-              aria-label="Show more tabs"
-              onClick={() => scrollTabs(1)}
-              className="relative z-[2] flex w-8 shrink-0 items-center justify-center text-dfui-secondary transition hover:bg-dfui-surface-hover/60 hover:text-dfui-fg"
-            >
-              <ChevronRight size={16} strokeWidth={2.25} />
-            </button>
-            <div
-              className="pointer-events-none absolute right-8 top-0 z-[1] h-full w-6 bg-gradient-to-l from-dfui-panel/95 to-transparent"
-              aria-hidden
-            />
-          </>
-        )}
+        <div className="relative flex items-stretch">
+          {canScrollTabsLeft && (
+            <>
+              <div
+                className="pointer-events-none absolute left-8 top-0 z-[1] h-full w-6 bg-gradient-to-r from-dfui-panel/95 to-transparent"
+                aria-hidden
+              />
+              <button
+                type="button"
+                aria-label="Show previous tabs"
+                onClick={() => scrollTabs(-1)}
+                className="relative z-[2] flex w-8 shrink-0 items-center justify-center text-dfui-secondary transition hover:bg-dfui-surface-hover/60 hover:text-dfui-fg"
+              >
+                <ChevronLeft size={16} strokeWidth={2.25} />
+              </button>
+            </>
+          )}
+          <div
+            ref={tabScrollRef}
+            className="df-tab-scroll flex min-w-0 flex-1 gap-1 overflow-x-auto scroll-smooth px-2 py-2"
+          >
+            {tabs.map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                type="button"
+                data-tab-id={id}
+                onClick={() => setTab(id)}
+                className={`flex shrink-0 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition-all duration-200 ${
+                  tab === id ? "df-tab-active" : "df-tab"
+                }`}
+              >
+                <Icon size={14} />
+                {label}
+                {id === "styles" && activeStyleId && activeStyleId !== "none" && (
+                  <span className="rounded-full bg-dfui-accent/20 px-1.5 font-mono text-[9px] text-dfui-accent">
+                    1
+                  </span>
+                )}
+                {id === "loras" && activeLoras.length > 0 && (
+                  <span className="rounded-full bg-dfui-accent/20 px-1.5 font-mono text-[9px] text-dfui-accent">
+                    {activeLoras.length}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+          {canScrollTabsRight && (
+            <>
+              <button
+                type="button"
+                aria-label="Show more tabs"
+                onClick={() => scrollTabs(1)}
+                className="relative z-[2] flex w-8 shrink-0 items-center justify-center text-dfui-secondary transition hover:bg-dfui-surface-hover/60 hover:text-dfui-fg"
+              >
+                <ChevronRight size={16} strokeWidth={2.25} />
+              </button>
+              <div
+                className="pointer-events-none absolute right-8 top-0 z-[1] h-full w-6 bg-gradient-to-l from-dfui-panel/95 to-transparent"
+                aria-hidden
+              />
+            </>
+          )}
+        </div>
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3 text-sm">
@@ -685,6 +731,7 @@ export function InspectorPanel({
 
         {tab === "settings" && (
           <div className="h-full min-h-0 overflow-y-auto">
+            <RecipeActions settings={settings} onChange={onChange} />
             <GenerationSettingsPanel
               settings={settings}
               onChange={onChange}

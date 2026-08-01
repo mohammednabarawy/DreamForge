@@ -1575,6 +1575,282 @@ def cmd_get_starter_pack_items(_params: dict) -> dict:
     return {"status": "success", "items": items}
 
 
+def cmd_get_compute_profile(params: dict) -> dict:
+    """Phase 1: current machine compute profile + VRAM info."""
+    from dreamforge_compute_profile import detect_compute_profile
+
+    profile = detect_compute_profile(str(params.get("vram_profile") or "auto"))
+    return {"ok": True, "profile": profile.to_dict()}
+
+
+def cmd_asset_registry_list(params: dict) -> dict:
+    """Phase 1: list assets in the local AssetRegistry."""
+    from dreamforge_asset_registry import AssetRegistry
+
+    registry = AssetRegistry()
+    try:
+        kind = params.get("kind")
+        limit = int(params.get("limit") or 500)
+        offset = int(params.get("offset") or 0)
+        assets = registry.list_assets(kind=kind, limit=limit, offset=offset)
+        return {
+            "ok": True,
+            "assets": [asset.to_dict() for asset in assets],
+            "count": len(assets),
+            "total": registry.count_assets(),
+        }
+    finally:
+        registry.close()
+
+
+def cmd_asset_registry_scan(params: dict) -> dict:
+    """Phase 1: scan a model folder and register local files by SHA256."""
+    from dreamforge_asset_registry import AssetRegistry, AssetScanner
+    from dreamforge_assets import AssetKind
+
+    folder = params.get("folder")
+    if not folder:
+        return _error("missing_folder")
+    kind = AssetKind.from_string(params.get("kind"))
+    registry = AssetRegistry()
+    try:
+        scanner = AssetScanner(registry)
+        result = scanner.scan_folder(
+            folder,
+            kind=kind,
+            force_hash=bool(params.get("force_hash")),
+        )
+        return {"ok": True, **result.to_dict()}
+    finally:
+        registry.close()
+
+
+def cmd_asset_registry_resolve(params: dict) -> dict:
+    """Phase 1: resolve a logical asset to a local file path (or needs_download)."""
+    from dreamforge_asset_registry import AssetRegistry, AssetResolver
+
+    asset_id = params.get("asset_id")
+    sha256 = params.get("sha256") or ""
+    registry = AssetRegistry()
+    try:
+        asset = registry.get_asset(asset_id) if asset_id else None
+        if asset is None and sha256:
+            matches = registry.assets_by_sha256(sha256)
+            asset = matches[0] if matches else None
+        resolver = AssetResolver(registry)
+        return {"ok": True, **resolver.resolve(asset, sha256=sha256)}
+    finally:
+        registry.close()
+
+
+def cmd_asset_registry_dedupe(params: dict) -> dict:
+    """Phase 1: check whether a SHA256 is already installed (duplicate detection)."""
+    from dreamforge_asset_registry import AssetRegistry
+
+    sha256 = str(params.get("sha256") or "").strip().lower()
+    if not sha256:
+        return _error("missing_sha256")
+    registry = AssetRegistry()
+    try:
+        record = registry.file_by_sha256(sha256)
+        if record is None:
+            return {"ok": True, "known": False}
+        local = bool(record.get("local_path"))
+        return {
+            "ok": True,
+            "known": True,
+            "local": local,
+            "local_path": record.get("local_path") or "",
+            "filename": record.get("filename") or "",
+            "asset_ids": [asset.id for asset in registry.assets_by_sha256(sha256)],
+        }
+    finally:
+        registry.close()
+
+
+def cmd_recipe_validate(params: dict) -> dict:
+    """Phase 1: validate/normalize a DreamForgeRecipe v2 payload."""
+    from dreamforge_recipe import DreamForgeRecipe
+
+    recipe = DreamForgeRecipe.from_dict(params.get("recipe") or {})
+    return {
+        "ok": True,
+        "recipe": recipe.to_dict(),
+    }
+
+
+def cmd_recipe_export(params: dict) -> dict:
+    """Phase 1: normalize a recipe and return its portable JSON (for save/export)."""
+    from dreamforge_recipe import DreamForgeRecipe
+
+    recipe = DreamForgeRecipe.from_dict(params.get("recipe") or {})
+    if not recipe.model and not recipe.positive_prompt:
+        return _error("empty_recipe")
+    return {"ok": True, "recipe": recipe.to_dict()}
+
+
+def cmd_recipe_from_style(params: dict) -> dict:
+    """Phase 1: build a recipe from an existing STYLE_RECIPES entry."""
+    from dreamforge_recipe import DreamForgeRecipe
+
+    recipe_id = params.get("recipe_id")
+    if not recipe_id:
+        return _error("missing_recipe_id")
+    from dreamforge_style_recipes import STYLE_RECIPES
+
+    style_recipe = STYLE_RECIPES.get(recipe_id)
+    if style_recipe is None:
+        return _error("unknown_recipe", recipe_id=recipe_id)
+    recipe = DreamForgeRecipe.from_style_recipe(
+        recipe_id,
+        style_recipe,
+        prompt=str(params.get("prompt") or ""),
+    )
+    return {"ok": True, "recipe": recipe.to_dict()}
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Discovery, Provider, Download, Credential handlers
+# ---------------------------------------------------------------------------
+
+
+def cmd_provider_list(params: dict) -> dict:
+    """Phase 3: list registered providers with credential status."""
+    from dreamforge_provider_registry import default_provider_registry
+
+    return default_provider_registry().info()
+
+
+def cmd_discovery_search(params: dict) -> dict:
+    """Phase 3: search across enabled providers (parallel, cached)."""
+    from dreamforge_discovery_service import DiscoveryService
+
+    svc = DiscoveryService()
+    return svc.search(
+        query=str(params.get("query") or ""),
+        kind=str(params.get("kind") or ""),
+        limit=int(params.get("limit") or 20),
+        page=int(params.get("page") or 1),
+        nsfw=bool(params.get("nsfw")),
+        sort=str(params.get("sort") or "relevance"),
+        provider_ids=params.get("provider_ids") or None,
+    )
+
+
+def cmd_discovery_cache_invalidate(params: dict) -> dict:
+    """Phase 3: clear discovery response cache."""
+    from dreamforge_discovery_cache import invalidate
+
+    provider_id = params.get("provider_id") or None
+    removed = invalidate(provider_id)
+    return {"ok": True, "removed": removed}
+
+
+def cmd_discover_supported_architectures(params: dict) -> dict:
+    """Phase 4: architectures the local engine can run (compatibility gate)."""
+    from dreamforge_capability_registry import CapabilityRegistry
+
+    registry = CapabilityRegistry()
+    architectures = list(registry.supported_architectures)
+    return {
+        "ok": True,
+        "architectures": architectures,
+        "count": len(architectures),
+    }
+
+
+def cmd_discover_recommend_file_variants(params: dict) -> dict:
+    """Phase 4: compute-aware file-variant recommendation for one asset."""
+    from dreamforge_compute_profile import recommend_file_variants_from_dict
+
+    asset = params.get("asset")
+    if not isinstance(asset, dict) or not asset:
+        return _error("missing_asset")
+    vram_profile = str(params.get("vram_profile") or "auto")
+    return recommend_file_variants_from_dict(asset, vram_profile)
+
+
+def cmd_credential_status(params: dict) -> dict:
+    """Phase 3: get redacted credential status (never exposes secrets)."""
+    from dreamforge_credentials import provider_credential_status
+
+    return provider_credential_status()
+
+
+def cmd_credential_set(params: dict) -> dict:
+    """Phase 3: store or clear a provider credential."""
+    from dreamforge_credentials import set_provider_credential
+
+    provider = str(params.get("provider") or "")
+    secret = str(params.get("secret") or "")
+    if not provider:
+        return _error("missing_provider")
+    return set_provider_credential(provider, secret)
+
+
+def cmd_download_enqueue(params: dict) -> dict:
+    """Phase 3: add an item to the persistent download queue."""
+    from dreamforge_download_manager import get_download_manager
+
+    url = str(params.get("url") or "")
+    if not url:
+        return _error("missing_url")
+    mgr = get_download_manager()
+    return mgr.enqueue(
+        url=url,
+        category=str(params.get("category") or "checkpoints"),
+        filename=str(params.get("filename") or ""),
+        expected_sha256=str(params.get("expected_sha256") or ""),
+        provider=str(params.get("provider") or ""),
+        provider_asset_id=str(params.get("provider_asset_id") or ""),
+        provider_version_id=str(params.get("provider_version_id") or ""),
+    )
+
+
+def cmd_download_queue_status(params: dict) -> dict:
+    """Phase 3: return current download queue state."""
+    from dreamforge_download_manager import get_download_manager
+
+    return get_download_manager().queue_status()
+
+
+def cmd_download_pause(params: dict) -> dict:
+    """Phase 3: pause an active download."""
+    from dreamforge_download_manager import get_download_manager
+
+    item_id = str(params.get("item_id") or "")
+    if not item_id:
+        return _error("missing_item_id")
+    return get_download_manager().pause(item_id)
+
+
+def cmd_download_resume(params: dict) -> dict:
+    """Phase 3: resume a paused or failed download."""
+    from dreamforge_download_manager import get_download_manager
+
+    item_id = str(params.get("item_id") or "")
+    if not item_id:
+        return _error("missing_item_id")
+    return get_download_manager().resume(item_id)
+
+
+def cmd_download_cancel(params: dict) -> dict:
+    """Phase 3: cancel a download."""
+    from dreamforge_download_manager import get_download_manager
+
+    item_id = str(params.get("item_id") or "")
+    if not item_id:
+        return _error("missing_item_id")
+    return get_download_manager().cancel(item_id)
+
+
+def cmd_download_clear_completed(params: dict) -> dict:
+    """Phase 3: remove all terminal items from the download queue."""
+    from dreamforge_download_manager import get_download_manager
+
+    return get_download_manager().clear_completed()
+
+
 HANDLERS = {
     "ping": cmd_ping,
     "get_health": cmd_get_health,
@@ -1642,6 +1918,27 @@ HANDLERS = {
     "check_model_health": cmd_check_model_health,
     "run_system_repair": cmd_run_system_repair,
     "get_starter_pack_items": cmd_get_starter_pack_items,
+    "get_compute_profile": cmd_get_compute_profile,
+    "asset_registry_list": cmd_asset_registry_list,
+    "asset_registry_scan": cmd_asset_registry_scan,
+    "asset_registry_resolve": cmd_asset_registry_resolve,
+    "asset_registry_dedupe": cmd_asset_registry_dedupe,
+    "recipe_validate": cmd_recipe_validate,
+    "recipe_export": cmd_recipe_export,
+    "recipe_from_style": cmd_recipe_from_style,
+    "provider_list": cmd_provider_list,
+    "discovery_search": cmd_discovery_search,
+    "discovery_cache_invalidate": cmd_discovery_cache_invalidate,
+    "credential_status": cmd_credential_status,
+    "credential_set": cmd_credential_set,
+    "download_enqueue": cmd_download_enqueue,
+    "download_queue_status": cmd_download_queue_status,
+    "download_pause": cmd_download_pause,
+    "download_resume": cmd_download_resume,
+    "download_cancel": cmd_download_cancel,
+    "download_clear_completed": cmd_download_clear_completed,
+    "discover_supported_architectures": cmd_discover_supported_architectures,
+    "discover_recommend_file_variants": cmd_discover_recommend_file_variants,
     **STUDIO_HANDLERS,
 }
 

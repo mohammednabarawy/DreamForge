@@ -301,6 +301,20 @@ export async function listWorkflowTemplates() {
   }>("list_workflow_templates", {});
 }
 
+export type WorkflowCompatibilityReport = {
+  ok: boolean;
+  state?: "NATIVE" | "ADAPTABLE" | "COMFY_ONLY" | "INVALID";
+  format?: string;
+  reason?: string;
+  dependencies?: string[];
+  security?: { safe?: boolean; blocked?: boolean; reasons?: string[] };
+  error?: string;
+};
+
+export async function analyzeWorkflowCompatibility(path: string) {
+  return bridgeInvoke<WorkflowCompatibilityReport>("analyze_workflow_compatibility", { path });
+}
+
 export function analyzeIdentityFaces(path: string): Promise<IdentityFaceAnalysis> {
   return bridgeInvoke<IdentityFaceAnalysis>("analyze_identity_faces", { path });
 }

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
-import { Bookmark, Check, Workflow } from "lucide-react";
-import type { DiscoverWorkflowTemplate } from "../lib/studioBridge";
+import { Bookmark, Check, FileSearch, Workflow } from "lucide-react";
+import { pickJsonFile } from "../lib/tauri-api";
+import { analyzeWorkflowCompatibility, type DiscoverWorkflowTemplate, type WorkflowCompatibilityReport } from "../lib/studioBridge";
 
 const STORAGE_KEY = "dreamforge.workflowLibrary.v1";
 
@@ -30,6 +31,8 @@ type Props = {
 export function DiscoverWorkflowTab({ templates, loading, error }: Props) {
   const [query, setQuery] = useState("");
   const [saved, setSaved] = useState<string[]>(() => readSaved());
+  const [analysis, setAnalysis] = useState<WorkflowCompatibilityReport | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
   const q = query.trim().toLowerCase();
   const filtered = useMemo(
     () => templates.filter((item) => !q || `${item.label} ${item.summary} ${item.operation}`.toLowerCase().includes(q)),
@@ -42,6 +45,19 @@ export function DiscoverWorkflowTab({ templates, loading, error }: Props) {
       saveSaved(next);
       return next;
     });
+  };
+
+  const analyzeLocalWorkflow = async () => {
+    const path = await pickJsonFile();
+    if (!path) return;
+    setAnalyzing(true);
+    try {
+      setAnalysis(await analyzeWorkflowCompatibility(path));
+    } catch (error) {
+      setAnalysis({ ok: false, state: "INVALID", reason: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setAnalyzing(false);
+    }
   };
 
   return (
@@ -63,6 +79,23 @@ export function DiscoverWorkflowTab({ templates, loading, error }: Props) {
         className="df-input shrink-0 px-2.5 py-1.5 text-xs"
         aria-label="Search workflow templates"
       />
+      <button
+        type="button"
+        onClick={() => void analyzeLocalWorkflow()}
+        disabled={analyzing}
+        className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded border border-dfui-border/50 px-2 py-1.5 text-[10px] text-dfui-secondary hover:text-dfui-fg disabled:opacity-50"
+      >
+        <FileSearch size={12} /> {analyzing ? "Analyzing…" : "Analyze local workflow"}
+      </button>
+      {analysis && (
+        <div className="shrink-0 rounded border border-dfui-border/50 bg-dfui-bg/30 px-2 py-1.5 text-[9px]" role="status">
+          <span className={`font-semibold ${analysis.state === "NATIVE" ? "text-emerald-300" : analysis.state === "INVALID" ? "text-red-300" : "text-amber-200"}`}>
+            {analysis.state ?? "INVALID"}
+          </span>
+          <span className="ml-1.5 text-dfui-tertiary">{analysis.reason}</span>
+          {!!analysis.dependencies?.length && <p className="mt-1 truncate text-dfui-tertiary">Dependencies: {analysis.dependencies.join(", ")}</p>}
+        </div>
+      )}
       {error && <p className="rounded border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-[10px] text-red-200">{error}</p>}
       <div className="df-gallery-pane space-y-2">
         {loading && <p className="py-8 text-center text-xs text-dfui-muted">Loading workflow templates…</p>}

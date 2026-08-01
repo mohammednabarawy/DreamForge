@@ -20,7 +20,8 @@ The plan is being delivered incrementally against the existing ComfyUI-backed de
 | 5 — Recipe & Prompt Discovery | Local slice implemented | Portable Recipe v2 Save/Load/Recreate actions in Library → Generate; online Civitai Images/Lexica discovery remains next |
 | 6 — Styles | Local slice implemented | Offline custom-style store, Fooocus JSON import, normalized architecture/source metadata, and refresh into the existing style picker |
 | 7 — Official workflow discovery | Local slice implemented | Browse-only Discover → Workflows tab backed by the first-party Comfy template registry; templates can be bookmarked locally and never auto-execute |
-| 8–10 | Planned | Remote official index/downloads, workflow compiler/execution, and automation expansion remain next |
+| 8 — Workflow compatibility | Conservative analysis slice implemented | Non-executing analyzer returns exactly `NATIVE`, `ADAPTABLE`, `COMFY_ONLY`, or `INVALID`, extracts dependencies, blocks command/URL/path-traversal signals, and is exposed in Discover → Workflows |
+| 9–10 | Planned | Full IR/compiler conversion, native workflow execution, and recipe-driven automation remain next |
 
 Verification boundary for this snapshot: the focused foundation/provider/bridge suite passes (196 tests) and the desktop production build passes. The remaining phases are intentionally not marked complete until their end-to-end acceptance criteria are implemented and tested.
 

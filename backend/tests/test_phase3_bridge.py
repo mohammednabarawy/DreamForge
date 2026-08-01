@@ -96,3 +96,6 @@ class TestPhase3BridgeHandlers:
 
     def test_workflow_template_handler_registered(self):
         assert "list_workflow_templates" in HANDLERS
+
+    def test_workflow_compatibility_handler_registered(self):
+        assert "analyze_workflow_compatibility" in HANDLERS

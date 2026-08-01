@@ -541,6 +541,18 @@ def cmd_list_workflow_templates(_params: dict) -> dict:
     return {"ok": True, "templates": templates, "count": len(templates)}
 
 
+def cmd_analyze_workflow_compatibility(params: dict) -> dict:
+    from dreamforge_workflow_compatibility import analyze_workflow, analyze_workflow_file
+
+    path = str(params.get("path") or "").strip()
+    if path:
+        return analyze_workflow_file(path)
+    payload = params.get("workflow")
+    if not isinstance(payload, dict):
+        return {"ok": True, "state": "INVALID", "format": "unknown", "reason": "workflow or path is required"}
+    return analyze_workflow(payload)
+
+
 def _style_recipe_label(style_id: str, spec: dict) -> str:
     original = str(spec.get("original_name") or "").strip()
     if original:
@@ -1916,6 +1928,7 @@ HANDLERS = {
     "import_fooocus_styles": cmd_import_fooocus_styles,
     "delete_custom_style": cmd_delete_custom_style,
     "list_workflow_templates": cmd_list_workflow_templates,
+    "analyze_workflow_compatibility": cmd_analyze_workflow_compatibility,
     "get_ui_defaults": cmd_get_ui_defaults,
     "classify_models": cmd_classify_models,
     "organize_models": cmd_organize_models,

@@ -2331,12 +2331,18 @@ export function useDreamForge() {
         meta?.studioMode ??
         ((appConfig?.ui.studio_mode ?? "generate") as StudioMode);
       let sanitized = sanitizeEditFamilySettings(preparedSettings, studioMode);
-      const resolvedCustomTool = resolveCustomTool(
-        appConfig?.custom_tools,
-        sanitized.custom_tool_id,
-      );
-      if (resolvedCustomTool) {
-        sanitized = { ...sanitized, custom_tool_id: resolvedCustomTool.id };
+      if (studioMode === "toolbox") {
+        const resolvedCustomTool = resolveCustomTool(
+          appConfig?.custom_tools,
+          sanitized.custom_tool_id,
+        );
+        if (resolvedCustomTool) {
+          sanitized = { ...sanitized, custom_tool_id: resolvedCustomTool.id };
+        }
+      } else {
+        // A toolbox selection can survive in React state after switching tabs.
+        // Never let it hijack normal Generate/Edit/Agent submissions.
+        sanitized = { ...sanitized, custom_tool_id: undefined };
       }
       sanitized = await enforceCreativeTaskSettingsRemote(sanitized, {
         studioMode,

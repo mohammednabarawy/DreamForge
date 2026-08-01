@@ -553,6 +553,18 @@ def cmd_analyze_workflow_compatibility(params: dict) -> dict:
     return analyze_workflow(payload)
 
 
+def cmd_compile_workflow_recipe(params: dict) -> dict:
+    from dreamforge_workflow_compiler import compile_workflow_file, compile_workflow_recipe
+
+    path = str(params.get("path") or "").strip()
+    if path:
+        return compile_workflow_file(path)
+    payload = params.get("workflow")
+    if not isinstance(payload, dict):
+        return {"ok": True, "can_recreate": False, "missing": ["workflow or path"]}
+    return compile_workflow_recipe(payload)
+
+
 def _style_recipe_label(style_id: str, spec: dict) -> str:
     original = str(spec.get("original_name") or "").strip()
     if original:
@@ -1929,6 +1941,7 @@ HANDLERS = {
     "delete_custom_style": cmd_delete_custom_style,
     "list_workflow_templates": cmd_list_workflow_templates,
     "analyze_workflow_compatibility": cmd_analyze_workflow_compatibility,
+    "compile_workflow_recipe": cmd_compile_workflow_recipe,
     "get_ui_defaults": cmd_get_ui_defaults,
     "classify_models": cmd_classify_models,
     "organize_models": cmd_organize_models,

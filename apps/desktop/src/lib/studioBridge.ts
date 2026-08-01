@@ -315,6 +315,18 @@ export async function analyzeWorkflowCompatibility(path: string) {
   return bridgeInvoke<WorkflowCompatibilityReport>("analyze_workflow_compatibility", { path });
 }
 
+export type WorkflowRecipeCompileResult = {
+  ok: boolean;
+  can_recreate?: boolean;
+  missing?: string[];
+  recipe?: Record<string, unknown>;
+  report?: WorkflowCompatibilityReport;
+};
+
+export async function compileWorkflowRecipe(path: string) {
+  return bridgeInvoke<WorkflowRecipeCompileResult>("compile_workflow_recipe", { path });
+}
+
 export function analyzeIdentityFaces(path: string): Promise<IdentityFaceAnalysis> {
   return bridgeInvoke<IdentityFaceAnalysis>("analyze_identity_faces", { path });
 }

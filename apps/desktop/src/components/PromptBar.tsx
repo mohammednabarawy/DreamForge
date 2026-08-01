@@ -128,7 +128,15 @@ export function PromptBar({
     !generating &&
     !describeImageBusy &&
     Boolean(onDescribeImage);
-  const primaryActionLabel = "Generate";
+  const rawImageCount = Number(settings.image_number ?? 1);
+  const requestedImageCount = Math.min(
+    imageNumberMax,
+    Math.max(1, Math.round(Number.isFinite(rawImageCount) ? rawImageCount : 1)),
+  );
+  const primaryActionLabel =
+    studioMode === "generate" && requestedImageCount > 1
+      ? `Generate ${requestedImageCount}`
+      : "Generate";
   const simpleBatchCount = Math.min(4, Math.max(2, imageNumberMax >= 4 ? 4 : imageNumberMax));
   const showSimpleBatch =
     simpleExperience &&
@@ -210,6 +218,11 @@ export function PromptBar({
           ? activeModelLabel
           : `Selected: ${activeModelLabel}`;
   const modes = studioModesForExperience(experience);
+  const promptLabel = isAgentMode
+    ? "Instruction"
+    : studioMode === "upscale"
+      ? "Enhancement prompt"
+      : "Prompt";
 
   const isArabic = useMemo(
     () => /[\u0600-\u06FF]/.test(settings.prompt ?? ""),
@@ -259,7 +272,7 @@ export function PromptBar({
 
   return (
     <div
-      className={`df-command-deck relative shrink-0 border-t border-dfui-border/60 bg-dfui-panel/90 px-3 py-2 backdrop-blur-glass transition-colors ${
+      className={`df-command-deck relative shrink-0 border-t border-dfui-border/70 bg-gradient-to-b from-dfui-panel/95 to-dfui-bg/95 px-3 py-2.5 shadow-[0_-12px_36px_rgba(0,0,0,0.28)] backdrop-blur-glass transition-colors ${
         promptDragOver ? "ring-1 ring-inset ring-df-blue/30" : ""
       }`}
       onDragEnterCapture={(event) => {
@@ -310,18 +323,19 @@ export function PromptBar({
           ))}
         </ul>
       )}
-      <motion.div className="df-command-route-row mb-1.5 flex min-w-0 items-center gap-2">
-        <div className="flex min-w-0 shrink-0 items-center gap-1 overflow-x-auto rounded-lg border border-dfui-border/45 bg-dfui-bg/35 p-1">
+      <motion.div className="df-command-route-row mb-2 flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 shrink-0 items-center gap-1 overflow-x-auto rounded-xl border border-dfui-border/55 bg-dfui-bg/45 p-1" role="group" aria-label="Creation mode">
           {modes.map((mode) => (
             <button
               key={mode.id}
               type="button"
               onClick={() => onStudioModeChange(mode.id)}
               disabled={generating}
-              className={`min-h-8 shrink-0 rounded-md px-2.5 text-[10px] font-medium transition-colors ${
+              aria-pressed={studioMode === mode.id}
+              className={`min-h-8 shrink-0 rounded-lg border px-3 text-[10px] font-semibold transition-all ${
                 studioMode === mode.id
-                  ? "bg-dfui-accent/20 text-dfui-accent"
-                  : "text-dfui-muted hover:bg-dfui-surface hover:text-dfui-fg"
+                  ? "border-dfui-accent/45 bg-dfui-accent/15 text-dfui-accent shadow-[0_0_16px_rgba(247,148,30,0.08)]"
+                  : "border-transparent text-dfui-muted hover:border-dfui-border/60 hover:bg-dfui-surface hover:text-dfui-fg"
               } disabled:opacity-60`}
             >
               {mode.label}
@@ -329,11 +343,11 @@ export function PromptBar({
           ))}
         </div>
         {!simpleExperience ? (
-        <div className="flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-lg border border-dfui-border/45 bg-dfui-bg/30 px-2">
+        <div className="flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-xl border border-dfui-border/45 bg-dfui-bg/30 px-2.5">
           <p className="shrink-0 text-[9px] uppercase tracking-wide text-dfui-muted">
             {studioMode === "generate" ? "Model" : "Route"}
           </p>
-          <p className="truncate font-mono text-[10px] text-dfui-accent" title={activeRouteLabel}>
+          <p className="truncate font-mono text-[10px] font-medium text-df-blue" title={activeRouteLabel}>
             {activeRouteLabel}
           </p>
         </div>
@@ -392,7 +406,7 @@ export function PromptBar({
         </div>
       )}
       <div className="df-command-main-grid">
-        <div className="min-w-0 self-stretch">
+        <div className="df-reference-panel min-w-0 self-stretch">
           <ReferenceImageControl
             settings={settings}
             modelFamily={referenceModelFamily}
@@ -416,9 +430,20 @@ export function PromptBar({
             compact
           />
         </div>
-        <div className="flex min-w-0 flex-col gap-1">
+        <div className="df-prompt-panel flex min-w-0 flex-col gap-1.5">
+          <div className="flex min-h-4 items-center justify-between gap-2 px-0.5">
+            <label htmlFor="df-generation-prompt" className="text-[10px] font-semibold uppercase tracking-[0.12em] text-dfui-secondary">
+              {promptLabel}
+            </label>
+            <div className="flex items-center gap-2 text-[9px] text-dfui-muted">
+              <span>{(settings.prompt ?? "").length.toLocaleString()} characters</span>
+              <kbd className="hidden rounded border border-dfui-border/60 bg-dfui-bg/50 px-1.5 py-0.5 font-mono text-[8px] text-dfui-tertiary lg:inline-flex">Ctrl ↵</kbd>
+            </div>
+          </div>
           {studioMode === "upscale" ? (
             <textarea
+              id="df-generation-prompt"
+              aria-label={promptLabel}
               value={settings.prompt ?? ""}
               onChange={(e) => onPromptChange(e.target.value)}
               onFocus={() => onInpaintCanvasFocusChange?.(false)}
@@ -431,6 +456,8 @@ export function PromptBar({
           ) : (
           <div className="flex min-w-0 items-stretch gap-1.5">
             <textarea
+              id="df-generation-prompt"
+              aria-label={promptLabel}
               value={settings.prompt ?? ""}
               onChange={(e) => onPromptChange(e.target.value)}
               onFocus={() => onInpaintCanvasFocusChange?.(false)}
@@ -455,9 +482,10 @@ export function PromptBar({
                       : "Enter a prompt to enhance"
                 }
                 aria-label="Enhance prompt"
-                className="inline-flex h-[48px] w-8 shrink-0 items-center justify-center rounded-lg border border-dfui-border/60 bg-dfui-bg/40 text-dfui-muted transition-colors hover:border-df-blue/45 hover:text-df-blue disabled:cursor-not-allowed disabled:opacity-45"
+                className="inline-flex h-[48px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-dfui-border/60 bg-dfui-bg/40 px-2 text-dfui-muted transition-colors hover:border-df-blue/45 hover:bg-df-blue/5 hover:text-df-blue disabled:cursor-not-allowed disabled:opacity-45"
               >
                 <Wand2 size={15} className={enhancePromptBusy ? "animate-pulse" : ""} />
+                <span className="df-enhance-label text-[10px] font-semibold">{enhancePromptBusy ? "Enhancing" : "Enhance"}</span>
               </motion.button>
             ) : null}
           </div>
@@ -466,11 +494,13 @@ export function PromptBar({
             <IdeogramJsonPreview prompt={settings.prompt ?? ""} enabled={isIdeogramModel} />
           ) : null}
           <div className="df-prompt-action-row flex min-h-8 items-center justify-between gap-2">
-            <p className="truncate text-[10px] text-dfui-muted xl:hidden">
-              {agentHint ??
-                (promptDragOver
-                  ? "Drop to attach as reference image"
-                  : "@mentions · drag history image to prompt bar")}
+            <p className={`min-w-0 truncate text-[10px] ${!canRunPrimary && generateBlockReason ? "text-amber-200" : "text-dfui-muted"}`} role={!canRunPrimary && generateBlockReason ? "status" : undefined}>
+              {!canRunPrimary && generateBlockReason
+                ? generateBlockReason
+                : agentHint ??
+                  (promptDragOver
+                    ? "Drop to attach as reference image"
+                    : "@mentions · drag history image to prompt bar")}
             </p>
             <div className="ml-auto flex shrink-0 flex-wrap justify-end gap-1.5">
               {isIdeogramModel && !isAgentMode && studioMode === "generate" ? (
@@ -611,7 +641,7 @@ export function PromptBar({
                     onClick={onGenerate}
                     disabled={!canRunPrimary}
                     title={generateButtonTitle}
-                    className="inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-gradient-to-r from-df-orange to-df-orange-deep px-3.5 text-xs font-bold text-white transition-all disabled:cursor-not-allowed disabled:opacity-50"
+                    className="inline-flex min-h-9 min-w-[108px] items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-df-orange to-df-orange-deep px-4 text-xs font-bold text-white shadow-[0_8px_22px_rgba(247,148,30,0.18)] transition-all disabled:cursor-not-allowed disabled:shadow-none disabled:opacity-50"
                   >
                     <Play size={13} fill="currentColor" />
                     {primaryActionLabel}

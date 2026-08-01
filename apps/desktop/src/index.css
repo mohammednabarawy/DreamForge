@@ -170,11 +170,21 @@ body {
 
 .df-command-main-grid {
   display: grid;
-  grid-template-columns: minmax(11rem, 14rem) minmax(0, 1fr);
-  gap: 0.5rem;
+  grid-template-columns: minmax(11rem, 14.5rem) minmax(0, 1fr);
+  gap: 0.625rem;
 }
 
-@container (max-width: 440px) {
+.df-enhance-label {
+  display: none;
+}
+
+@container (min-width: 760px) {
+  .df-enhance-label {
+    display: inline;
+  }
+}
+
+@container (max-width: 560px) {
   .df-command-route-row {
     flex-wrap: wrap;
   }
@@ -183,6 +193,16 @@ body {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .df-prompt-panel {
+    order: 1;
+  }
+
+  .df-reference-panel {
+    order: 2;
+  }
+}
+
+@container (max-width: 440px) {
   .df-prompt-action-row {
     align-items: flex-start;
     flex-direction: column;

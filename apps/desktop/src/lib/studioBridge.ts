@@ -279,6 +279,28 @@ export async function deleteCustomStyle(styleId: string) {
   );
 }
 
+export type DiscoverWorkflowTemplate = {
+  id: string;
+  label: string;
+  operation: string;
+  mode: string;
+  summary: string;
+  builder: string;
+  node_pattern?: string[];
+  required_inputs?: string[];
+  required_models?: string[];
+  required_node_packs?: string[];
+  security_note?: string;
+};
+
+export async function listWorkflowTemplates() {
+  return bridgeInvoke<{
+    ok: boolean;
+    templates?: DiscoverWorkflowTemplate[];
+    error?: string;
+  }>("list_workflow_templates", {});
+}
+
 export function analyzeIdentityFaces(path: string): Promise<IdentityFaceAnalysis> {
   return bridgeInvoke<IdentityFaceAnalysis>("analyze_identity_faces", { path });
 }

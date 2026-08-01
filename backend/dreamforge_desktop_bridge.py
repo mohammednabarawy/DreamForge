@@ -533,6 +533,14 @@ def cmd_delete_custom_style(params: dict) -> dict:
     return delete_custom_style(str(params.get("style_id") or ""))
 
 
+def cmd_list_workflow_templates(_params: dict) -> dict:
+    """Phase 7: browse first-party workflow templates without executing them."""
+    from dreamforge_workflow_planner import list_workflow_templates
+
+    templates = list_workflow_templates()
+    return {"ok": True, "templates": templates, "count": len(templates)}
+
+
 def _style_recipe_label(style_id: str, spec: dict) -> str:
     original = str(spec.get("original_name") or "").strip()
     if original:
@@ -1907,6 +1915,7 @@ HANDLERS = {
     "list_styles": cmd_list_styles,
     "import_fooocus_styles": cmd_import_fooocus_styles,
     "delete_custom_style": cmd_delete_custom_style,
+    "list_workflow_templates": cmd_list_workflow_templates,
     "get_ui_defaults": cmd_get_ui_defaults,
     "classify_models": cmd_classify_models,
     "organize_models": cmd_organize_models,

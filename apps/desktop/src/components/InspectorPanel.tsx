@@ -43,9 +43,12 @@ import { LoraStackPanel } from "./LoraStackPanel";
 import { GenerationSettingsPanel } from "./GenerationSettingsPanel";
 import { AutomationPanel } from "./AutomationPanel";
 import { RecipeActions } from "./RecipeActions";
+import { DiscoverWorkflowTab } from "./DiscoverWorkflowTab";
 import {
   aggregateLoraKeywords,
   importFooocusStyles,
+  listWorkflowTemplates,
+  type DiscoverWorkflowTemplate,
   type StudioSettings,
 } from "../lib/studioBridge";
 import {
@@ -53,13 +56,16 @@ import {
   loadDiscoverLibraryTab,
   saveDiscoverLibrarySurface,
   saveDiscoverLibraryTab,
+  loadDiscoverTab,
+  saveDiscoverTab,
   type DiscoverLibrarySurface,
   type DiscoverLibraryTab,
+  type DiscoverTab,
 } from "../lib/discover";
 import { DEFAULT_MAX_LORA_STACK } from "../lib/loraStack";
 import type { StyleGroup } from "../lib/inventory";
 
-type Tab = "discover" | "models" | "loras" | "styles" | "settings" | "automation";
+type Tab = "discover" | "discover_workflows" | "models" | "loras" | "styles" | "settings" | "automation";
 type ModelSort = "recommended" | "name" | "newest" | "largest" | "family";
 
 function formatModelSize(bytes?: number): string {
@@ -153,13 +159,21 @@ export function InspectorPanel({
 }: Props) {
   const [surface, setSurface] = useState<DiscoverLibrarySurface>(() => loadDiscoverLibrarySurface());
   const [libraryTab, setLibraryTab] = useState<DiscoverLibraryTab>(() => loadDiscoverLibraryTab());
+  const [discoverTab, setDiscoverTab] = useState<DiscoverTab>(() => loadDiscoverTab());
+  const [workflowTemplates, setWorkflowTemplates] = useState<DiscoverWorkflowTemplate[]>([]);
+  const [workflowLoading, setWorkflowLoading] = useState(false);
+  const [workflowError, setWorkflowError] = useState<string | null>(null);
   const [styleFilter, setStyleFilter] = useState("");
   const [modelFamily, setModelFamily] = useState("all");
   const [modelSort, setModelSort] = useState<ModelSort>("recommended");
 
-  const tab: Tab = surface === "discover" ? "discover" : libraryTab;
+  const tab: Tab = surface === "discover" ? discoverTab : libraryTab;
   const setTab = useCallback((next: Tab) => {
-    if (next === "discover") return;
+    if (next === "discover" || next === "discover_workflows") {
+      setDiscoverTab(next);
+      saveDiscoverTab(next);
+      return;
+    }
     setLibraryTab(next);
     saveDiscoverLibraryTab(next);
   }, []);
@@ -174,6 +188,28 @@ export function InspectorPanel({
     if (!result.ok) throw new Error(result.error ?? "Style import failed");
     await onRefreshInventory();
   }, [onRefreshInventory]);
+
+  useEffect(() => {
+    if (surface !== "discover" || discoverTab !== "discover_workflows") return;
+    let alive = true;
+    setWorkflowLoading(true);
+    setWorkflowError(null);
+    void listWorkflowTemplates()
+      .then((result) => {
+        if (!alive) return;
+        if (!result.ok) throw new Error(result.error ?? "Could not load workflow templates");
+        setWorkflowTemplates(result.templates ?? []);
+      })
+      .catch((error) => {
+        if (alive) setWorkflowError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        if (alive) setWorkflowLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [discoverTab, surface]);
 
   const showEditStrength = Boolean(settings.input_image) || ["kontext", "inpaint", "img2img", "qwen_edit"].includes(settings.edit_type ?? "");
   const isQwenModel = (settings.model ?? activeModelLabel ?? "").toLowerCase().includes("qwen");
@@ -354,6 +390,7 @@ export function InspectorPanel({
   const tabs: { id: Tab; label: string; icon: typeof Boxes }[] = useMemo(() => {
     const tabMeta: Record<Tab, { label: string; icon: typeof Boxes }> = {
       discover: { label: "Discover", icon: Globe },
+      discover_workflows: { label: "Workflows", icon: LayoutGrid },
       models: { label: "Models", icon: Boxes },
       loras: { label: "LoRAs", icon: Layers },
       styles: { label: "Styles", icon: Palette },
@@ -361,7 +398,7 @@ export function InspectorPanel({
       automation: { label: surface === "library" ? "Automate" : "Batch", icon: LayoutGrid },
     };
     const ids: Tab[] = surface === "discover"
-      ? ["discover"]
+      ? ["discover", "discover_workflows"]
       : inspectorTabsForMode({
           studioMode,
           simpleInspectorLocked,
@@ -399,10 +436,10 @@ export function InspectorPanel({
   }, [tab, tabs]);
 
   useEffect(() => {
-    if (isUpscale && tab !== "settings" && tab !== "models" && tab !== "discover") {
+    if (surface === "library" && isUpscale && tab !== "settings" && tab !== "models") {
       setTab("settings");
     }
-  }, [isUpscale, tab]);
+  }, [isUpscale, surface, tab]);
 
   useEffect(() => {
     const el = tabScrollRef.current;
@@ -590,6 +627,14 @@ export function InspectorPanel({
           <MarketplaceTab
             civitaiApiKey={civitaiApiKey}
             onRefreshInventory={onRefreshInventory}
+          />
+        )}
+
+        {tab === "discover_workflows" && (
+          <DiscoverWorkflowTab
+            templates={workflowTemplates}
+            loading={workflowLoading}
+            error={workflowError}
           />
         )}
 

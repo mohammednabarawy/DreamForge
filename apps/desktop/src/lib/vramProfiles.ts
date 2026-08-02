@@ -3,17 +3,21 @@
 export type VramProfile =
   | "auto"
   | "16gb"
+  | "24gb"
+  | "32gb"
+  | "12gb"
   | "8gb"
   | "5gb"
   | "no_gpu"
   | "mps_24gb"
+  | "mps_32gb"
   | "mps_16gb"
   | "mps_8gb"
   | "mps_4gb"
   | "mps";
 
-const MAC_PROFILES: VramProfile[] = ["mps_24gb", "mps_16gb", "mps_8gb", "mps_4gb"];
-const CUDA_PROFILES: VramProfile[] = ["16gb", "8gb", "5gb", "no_gpu"];
+const MAC_PROFILES: VramProfile[] = ["mps_32gb", "mps_24gb", "mps_16gb", "mps_8gb", "mps_4gb"];
+const CUDA_PROFILES: VramProfile[] = ["32gb", "24gb", "16gb", "12gb", "8gb", "5gb", "no_gpu"];
 
 export function isVramProfile(value: string): value is VramProfile {
   return (
@@ -25,13 +29,17 @@ export function isVramProfile(value: string): value is VramProfile {
 }
 
 export const CUDA_VRAM_OPTIONS: { value: VramProfile; label: string }[] = [
+  { value: "32gb", label: "32 GB+ — NVIDIA / discrete" },
+  { value: "24gb", label: "24 GB — NVIDIA / discrete" },
   { value: "16gb", label: "16 GB — NVIDIA / discrete" },
+  { value: "12gb", label: "12 GB" },
   { value: "8gb", label: "8 GB" },
   { value: "5gb", label: "5 GB (tight VRAM)" },
   { value: "no_gpu", label: "CPU only" },
 ];
 
 export const MAC_VRAM_OPTIONS: { value: VramProfile; label: string }[] = [
+  { value: "mps_32gb", label: "32 GB+ unified (Max / Ultra)" },
   { value: "mps_24gb", label: "24 GB unified (M2/M3/M4 Max, 32 GB RAM)" },
   { value: "mps_16gb", label: "16 GB unified (M1/M2/M3 Pro, 16–18 GB RAM)" },
   { value: "mps_8gb", label: "8 GB unified (base M-series, ~8–12 GB RAM)" },
@@ -45,6 +53,7 @@ export function vramProfileFromHardware(
 ): VramProfile {
   if (mpsAvailable) {
     if (vramGb != null) {
+      if (vramGb >= 30) return "mps_32gb";
       if (vramGb >= 22) return "mps_24gb";
       if (vramGb >= 14) return "mps_16gb";
       if (vramGb >= 10) return "mps_8gb";
@@ -53,8 +62,11 @@ export function vramProfileFromHardware(
     return "mps_8gb";
   }
   if (vramGb == null) return "16gb";
+  if (vramGb >= 30) return "32gb";
+  if (vramGb >= 22) return "24gb";
   if (vramGb >= 14) return "16gb";
-  if (vramGb >= 9) return "8gb";
+  if (vramGb >= 10.5) return "12gb";
+  if (vramGb >= 7) return "8gb";
   return "5gb";
 }
 
@@ -75,8 +87,8 @@ export function resolveVramProfile(
   return vramProfileFromHardware(vramGb, mpsAvailable);
 }
 
-const MAC_ORDER: VramProfile[] = ["mps_24gb", "mps_16gb", "mps_8gb", "mps_4gb"];
-const CUDA_ORDER: VramProfile[] = ["16gb", "8gb", "5gb", "no_gpu"];
+const MAC_ORDER: VramProfile[] = ["mps_32gb", "mps_24gb", "mps_16gb", "mps_8gb", "mps_4gb"];
+const CUDA_ORDER: VramProfile[] = ["32gb", "24gb", "16gb", "12gb", "8gb", "5gb", "no_gpu"];
 
 /** Step down one profile for OOM repair actions. */
 export function lowerVramProfile(current: VramProfile | undefined): VramProfile {

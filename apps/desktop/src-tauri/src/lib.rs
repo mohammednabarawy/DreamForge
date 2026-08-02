@@ -711,6 +711,15 @@ struct AppState {
     vram_gb: Arc<Mutex<Option<f64>>>,
     cuda_available: Arc<Mutex<Option<bool>>>,
     mps_available: Arc<Mutex<Option<bool>>>,
+    hardware_class: Arc<Mutex<Option<String>>>,
+    compute_backend: Arc<Mutex<Option<String>>>,
+    support_level: Arc<Mutex<Option<String>>>,
+    gpu_architecture: Arc<Mutex<Option<String>>>,
+    detection_confidence: Arc<Mutex<Option<String>>>,
+    detection_warnings: Arc<Mutex<Vec<String>>>,
+    fallback_reason: Arc<Mutex<Option<String>>>,
+    launch_args: Arc<Mutex<Option<Vec<String>>>>,
+    optimization_env: Arc<Mutex<Option<Value>>>,
     last_generation_progress: Arc<Mutex<Option<Value>>>,
     /// UI VRAM preset (`auto`, `mps_16gb`, `16gb`, …) for worker spawn.
     desktop_vram_profile: Arc<Mutex<String>>,
@@ -724,7 +733,9 @@ struct AppState {
 
 fn profile_tier_for(profile: &str) -> &'static str {
     match profile.trim().to_lowercase().as_str() {
-        "mps_24gb" | "mps_16gb" | "16gb" => "16gb",
+        "mps_32gb" | "mps_24gb" | "24gb" | "32gb" => "24gb",
+        "mps_16gb" | "16gb" => "16gb",
+        "12gb" => "12gb",
         "mps_8gb" | "mps" | "8gb" => "8gb",
         _ => "5gb",
     }
@@ -742,6 +753,9 @@ fn resolve_vram_profile(
     }
     if mps_available == Some(true) {
         if let Some(gb) = vram_gb {
+            if gb >= 30.0 {
+                return "mps_32gb".to_string();
+            }
             if gb >= 22.0 {
                 return "mps_24gb".to_string();
             }
@@ -756,8 +770,17 @@ fn resolve_vram_profile(
         return "mps_8gb".to_string();
     }
     if let Some(gb) = vram_gb {
+        if gb >= 30.0 {
+            return "32gb".to_string();
+        }
+        if gb >= 22.0 {
+            return "24gb".to_string();
+        }
         if gb >= 14.0 {
             return "16gb".to_string();
+        }
+        if gb >= 10.5 {
+            return "12gb".to_string();
         }
         if gb >= 9.0 {
             return "8gb".to_string();
@@ -1693,6 +1716,58 @@ fn handle_worker_event(app: &AppHandle, state: &AppState, value: &Value, emit_bo
                     *g = Some(mps);
                 }
             }
+            if let Some(class) = value.get("hardware_class").and_then(|v| v.as_str()) {
+                if let Ok(mut g) = state.hardware_class.lock() {
+                    *g = Some(class.to_string());
+                }
+            }
+            if let Some(backend) = value.get("backend").and_then(|v| v.as_str()) {
+                if let Ok(mut g) = state.compute_backend.lock() {
+                    *g = Some(backend.to_string());
+                }
+            }
+            if let Some(level) = value.get("support_level").and_then(|v| v.as_str()) {
+                if let Ok(mut g) = state.support_level.lock() {
+                    *g = Some(level.to_string());
+                }
+            }
+            if let Some(architecture) = value.get("gpu_architecture") {
+                if let Ok(mut g) = state.gpu_architecture.lock() {
+                    *g = Some(architecture.to_string().trim_matches('"').to_string());
+                }
+            }
+            if let Some(confidence) = value.get("confidence").and_then(|v| v.as_str()) {
+                if let Ok(mut g) = state.detection_confidence.lock() {
+                    *g = Some(confidence.to_string());
+                }
+            }
+            if let Some(warnings) = value.get("warnings").and_then(|v| v.as_array()) {
+                if let Ok(mut g) = state.detection_warnings.lock() {
+                    *g = warnings
+                        .iter()
+                        .filter_map(|v| v.as_str().map(ToString::to_string))
+                        .collect();
+                }
+            }
+            if let Some(reason) = value.get("fallback_reason").and_then(|v| v.as_str()) {
+                if let Ok(mut g) = state.fallback_reason.lock() {
+                    *g = Some(reason.to_string());
+                }
+            }
+            if let Some(args) = value.get("launch_args").and_then(|v| v.as_array()) {
+                if let Ok(mut g) = state.launch_args.lock() {
+                    *g = Some(
+                        args.iter()
+                            .filter_map(|v| v.as_str().map(ToString::to_string))
+                            .collect(),
+                    );
+                }
+            }
+            if let Some(env) = value.get("optimization_env") {
+                if let Ok(mut g) = state.optimization_env.lock() {
+                    *g = Some(env.clone());
+                }
+            }
             if let Some(hint) = value.get("vram_profile_hint").and_then(|v| v.as_str()) {
                 if let Ok(mut slot) = state.resolved_vram_profile.lock() {
                     *slot = Some(hint.to_string());
@@ -1716,6 +1791,15 @@ fn handle_worker_event(app: &AppHandle, state: &AppState, value: &Value, emit_bo
                     "gpu_name": value.get("gpu_name"),
                     "vram_gb": value.get("vram_gb"),
                     "mps_available": value.get("mps_available"),
+                    "hardware_class": value.get("hardware_class"),
+                    "backend": value.get("backend"),
+                    "support_level": value.get("support_level"),
+                    "gpu_architecture": value.get("gpu_architecture"),
+                    "confidence": value.get("confidence"),
+                    "warnings": value.get("warnings"),
+                    "fallback_reason": value.get("fallback_reason"),
+                    "launch_args": value.get("launch_args"),
+                    "optimization_env": value.get("optimization_env"),
                     "vram_profile_hint": value
                         .get("vram_profile_hint")
                         .cloned()
@@ -1757,6 +1841,29 @@ fn handle_worker_event(app: &AppHandle, state: &AppState, value: &Value, emit_bo
                 }
             }
             emit_preview_from_event(app, value);
+        }
+        "benchmark_finished" => {
+            let job_id = value.get("job_id").and_then(|v| v.as_str()).unwrap_or("");
+            clear_generation_if_current(state, job_id);
+            let success = value.get("success") == Some(&Value::Bool(true));
+            let result = value.get("result").cloned().unwrap_or(Value::Null);
+            let error = if success {
+                Value::Null
+            } else {
+                result
+                    .get("error")
+                    .cloned()
+                    .unwrap_or_else(|| json!("hardware_benchmark_failed"))
+            };
+            let _ = app.emit(
+                "hardware-benchmark-finished",
+                json!({
+                    "job_id": job_id,
+                    "success": success,
+                    "error": error,
+                    "result": result,
+                }),
+            );
         }
         "finished" => {
             let job_id = value
@@ -3371,6 +3478,61 @@ async fn invoke_generation(
 }
 
 #[tauri::command]
+async fn invoke_hardware_benchmark(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    params: Value,
+) -> Result<Value, String> {
+    {
+        let guard = state.generation.lock().map_err(|e| e.to_string())?;
+        if guard.is_some() {
+            return Err("generation_in_progress: Wait for the current GPU job to finish.".into());
+        }
+    }
+
+    let root = agent_root();
+    ensure_gpu_backend_ready(&app, &root, state.inner()).await?;
+    let job_id = Uuid::new_v4().to_string();
+    let log_path = dreamforge_logs_dir(&root).join(format!("{job_id}.log"));
+    {
+        let mut guard = state.generation.lock().map_err(|e| e.to_string())?;
+        *guard = Some(ActiveGeneration {
+            job_id: job_id.clone(),
+            log_path: log_path.clone(),
+        });
+    }
+
+    let worker_guard = state.worker.lock().map_err(|e| e.to_string())?;
+    let worker = worker_guard
+        .as_ref()
+        .ok_or_else(|| "GPU worker not running".to_string())?;
+    let mut stdin = worker.stdin.lock().map_err(|e| e.to_string())?;
+    let request = json!({
+        "cmd": "benchmark",
+        "job_id": job_id,
+        "params": params,
+    });
+    let dispatch_error = match writeln!(stdin, "{request}") {
+        Ok(()) => stdin.flush().err(),
+        Err(err) => Some(err),
+    };
+    drop(stdin);
+    drop(worker_guard);
+    if let Some(err) = dispatch_error {
+        clear_generation_if_current(state.inner(), &job_id);
+        clear_dead_worker(state.inner());
+        set_engine_health(&app, state.inner(), "dead");
+        return Err(format!("worker_pipe_closed: {err}"));
+    }
+
+    Ok(json!({
+        "job_id": job_id,
+        "status": "started",
+        "log_path": log_path.to_string_lossy(),
+    }))
+}
+
+#[tauri::command]
 async fn invoke_automation(
     app: AppHandle,
     state: State<'_, Arc<AppState>>,
@@ -3879,6 +4041,23 @@ async fn get_engine_status(state: State<'_, Arc<AppState>>) -> Result<Value, Str
     let vram_gb = state.vram_gb.lock().ok().and_then(|g| *g);
     let cuda_available = state.cuda_available.lock().ok().and_then(|g| *g);
     let mps_available = state.mps_available.lock().ok().and_then(|g| *g);
+    let hardware_class = state.hardware_class.lock().ok().and_then(|g| g.clone());
+    let compute_backend = state.compute_backend.lock().ok().and_then(|g| g.clone());
+    let support_level = state.support_level.lock().ok().and_then(|g| g.clone());
+    let gpu_architecture = state.gpu_architecture.lock().ok().and_then(|g| g.clone());
+    let detection_confidence = state
+        .detection_confidence
+        .lock()
+        .ok()
+        .and_then(|g| g.clone());
+    let detection_warnings = state
+        .detection_warnings
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let fallback_reason = state.fallback_reason.lock().ok().and_then(|g| g.clone());
+    let launch_args = state.launch_args.lock().ok().and_then(|g| g.clone());
+    let optimization_env = state.optimization_env.lock().ok().and_then(|g| g.clone());
     let resolved_vram_profile = state
         .resolved_vram_profile
         .lock()
@@ -3905,6 +4084,15 @@ async fn get_engine_status(state: State<'_, Arc<AppState>>) -> Result<Value, Str
         "vram_gb": vram_gb,
         "cuda_available": cuda_available,
         "mps_available": mps_available,
+        "hardware_class": hardware_class,
+        "backend": compute_backend,
+        "support_level": support_level,
+        "gpu_architecture": gpu_architecture,
+        "confidence": detection_confidence,
+        "warnings": detection_warnings,
+        "fallback_reason": fallback_reason,
+        "launch_args": launch_args,
+        "optimization_env": optimization_env,
         "desktop_vram_profile": desktop_vram_profile,
         "resolved_vram_profile": resolved_vram_profile,
         "bridge_health": serde_json::Value::Null,
@@ -4026,6 +4214,15 @@ pub fn run() {
             vram_gb: Arc::new(Mutex::new(None)),
             cuda_available: Arc::new(Mutex::new(None)),
             mps_available: Arc::new(Mutex::new(None)),
+            hardware_class: Arc::new(Mutex::new(None)),
+            compute_backend: Arc::new(Mutex::new(None)),
+            support_level: Arc::new(Mutex::new(None)),
+            gpu_architecture: Arc::new(Mutex::new(None)),
+            detection_confidence: Arc::new(Mutex::new(None)),
+            detection_warnings: Arc::new(Mutex::new(Vec::new())),
+            fallback_reason: Arc::new(Mutex::new(None)),
+            launch_args: Arc::new(Mutex::new(None)),
+            optimization_env: Arc::new(Mutex::new(None)),
             last_generation_progress: Arc::new(Mutex::new(None)),
             desktop_vram_profile: Arc::new(Mutex::new(String::from("auto"))),
             resolved_vram_profile: Arc::new(Mutex::new(None)),
@@ -4062,6 +4259,7 @@ pub fn run() {
             pick_folder,
             read_live_preview,
             invoke_generation,
+            invoke_hardware_benchmark,
             free_worker_vram,
             generation_status,
             read_job_log,

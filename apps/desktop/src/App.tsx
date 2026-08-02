@@ -18,6 +18,7 @@ import { useDreamForge } from "./hooks/useDreamForge";
 import { shouldHideGlobalStatusForProgress } from "./lib/studioProgress";
 import { engineBootFailureError } from "./lib/errors";
 import { getSetupGateStatus } from "./lib/runtimeSetup";
+import { runHardwareBenchmark } from "./lib/tauri-api";
 
 export default function App() {
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
@@ -334,6 +335,19 @@ function DreamForgeStudio() {
         onSaveStudioSettings={(patch) => void mc.saveStudioSettings(patch)}
         generationSettings={mc.settings}
         onGenerationSettingsChange={mc.patchSettings}
+        gpuName={mc.gpuName}
+        vramGb={mc.vramGb}
+        hardwareClass={mc.hardwareClass}
+        computeBackend={mc.computeBackend}
+        supportLevel={mc.supportLevel}
+        launchArgs={mc.launchArgs}
+        gpuArchitecture={mc.gpuArchitecture}
+        detectionConfidence={mc.detectionConfidence}
+        detectionWarnings={mc.detectionWarnings}
+        fallbackReason={mc.fallbackReason}
+        onRunHardwareBenchmark={async () => {
+          await runHardwareBenchmark({ runs: 5, steps: 4 });
+        }}
         userStyleProfile={mc.userStyleProfile}
         userStyleProfilePath={mc.userStyleProfilePath}
         onUserStyleMemoryEnabledChange={(enabled) =>

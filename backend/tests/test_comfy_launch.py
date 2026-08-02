@@ -114,6 +114,9 @@ def test_dynamic_vram_includes_fast_and_attention(monkeypatch):
     monkeypatch.setenv("DREAMFORGE_VRAM_PROFILE", "16gb")
     monkeypatch.setenv("DREAMFORGE_COMFY_FAST", "fp16_accumulation")
     monkeypatch.setenv("DREAMFORGE_COMFY_ATTENTION", "auto")
+    monkeypatch.setenv("DREAMFORGE_COMFY_BACKEND", "cuda")
+    monkeypatch.setenv("DREAMFORGE_COMFY_FAST_BENCHMARK_OK", "1")
+    monkeypatch.setenv("DREAMFORGE_COMPUTE_CAPABILITY", "8.9")
     monkeypatch.setattr("dreamforge_comfy_launch.cuda_total_vram_gb", lambda: 15.9)
     monkeypatch.setattr("dreamforge_comfy_launch.platform.system", lambda: "Windows")
     monkeypatch.setattr(
@@ -160,7 +163,21 @@ def test_fast_args_default(monkeypatch):
     from dreamforge_comfy_launch import fast_args
 
     monkeypatch.delenv("DREAMFORGE_COMFY_FAST", raising=False)
+    monkeypatch.setenv("DREAMFORGE_COMFY_BACKEND", "cuda")
+    monkeypatch.delenv("DREAMFORGE_FAST_BENCHMARK_OK", raising=False)
+    monkeypatch.delenv("DREAMFORGE_COMFY_FAST_BENCHMARK_OK", raising=False)
+    assert fast_args() == []
+    monkeypatch.setenv("DREAMFORGE_COMFY_FAST_BENCHMARK_OK", "1")
+    monkeypatch.setenv("DREAMFORGE_COMPUTE_CAPABILITY", "8.9")
     assert fast_args() == ["--fast", "fp16_accumulation"]
+
+
+def test_fast_args_disabled_for_non_nvidia_backend(monkeypatch):
+    from dreamforge_comfy_launch import fast_args
+
+    monkeypatch.delenv("DREAMFORGE_COMFY_FAST", raising=False)
+    monkeypatch.setenv("DREAMFORGE_COMFY_BACKEND", "rocm")
+    assert fast_args() == []
 
 
 def test_attention_flag_prefers_sage(monkeypatch):
@@ -171,7 +188,42 @@ def test_attention_flag_prefers_sage(monkeypatch):
         "dreamforge_comfy_launch._module_available",
         lambda name: name in {"sageattention", "flash_attn"},
     )
+    monkeypatch.setenv("DREAMFORGE_COMFY_BACKEND", "cuda")
+    monkeypatch.setenv("DREAMFORGE_COMFY_FAST_BENCHMARK_OK", "1")
+    monkeypatch.setenv("DREAMFORGE_COMPUTE_CAPABILITY", "8.9")
     assert attention_flag() == "--use-sage-attention"
+
+
+def test_attention_auto_requires_benchmark_gate(monkeypatch):
+    from dreamforge_comfy_launch import attention_flag
+
+    monkeypatch.setenv("DREAMFORGE_COMFY_ATTENTION", "auto")
+    monkeypatch.setenv("DREAMFORGE_COMFY_BACKEND", "cuda")
+    monkeypatch.delenv("DREAMFORGE_COMFY_FAST_BENCHMARK_OK", raising=False)
+    monkeypatch.setattr("dreamforge_comfy_launch._module_available", lambda name: True)
+    assert attention_flag() is None
+
+
+def test_selected_cuda_device_reaches_launch_args(monkeypatch):
+    from dreamforge_comfy_launch import apply_runtime_optimization_env, comfy_launch_extra_args
+
+    monkeypatch.setattr(
+        "dreamforge_gpu_detect.detect_gpu",
+        lambda: {
+            "backend": "cuda",
+            "hardware_class": "nvidia_24gb_plus",
+            "selected_device_index": 1,
+            "detection_sources": ["torch.cuda"],
+        },
+    )
+    monkeypatch.setattr("dreamforge_comfy_launch.mps_available", lambda: False)
+    monkeypatch.setattr("dreamforge_comfy_launch.cuda_total_vram_gb", lambda: 24.0)
+    monkeypatch.setattr("dreamforge_comfy_launch.supports_dynamic_vram", lambda: False)
+    monkeypatch.setenv("DREAMFORGE_COMFY_FAST", "off")
+    monkeypatch.setenv("DREAMFORGE_COMFY_DEVICE_INDEX", "restore-after-test")
+    apply_runtime_optimization_env()
+    args = comfy_launch_extra_args()
+    assert args[args.index("--cuda-device") + 1] == "1"
 
 
 def test_attention_flag_off(monkeypatch):

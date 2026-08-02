@@ -63,6 +63,17 @@ def test_vram_estimator_architecture_and_variant():
     assert unknown["base_mb"] == 0
 
 
+def test_vram_estimator_keeps_weights_constant_and_adds_workflow_overhead():
+    estimator = VramEstimator()
+    baseline = estimator.estimate_for_architecture("flux", width=512, height=512, detail=True)
+    large = estimator.estimate_for_architecture("flux", width=2048, height=2048, detail=True, batch=2, vae_mb=1024)
+    assert large["model_mb"] == int(ARCHITECTURE_VRAM_MB["flux"] * 0.8)
+    assert large["estimated_mb"] > baseline["estimated_mb"]
+    unknown = estimator.estimate_for_architecture("future_arch", detail=True, workflow_overhead_mb=900)
+    assert unknown["estimated_mb"] == 900
+    assert unknown["unknown_architecture"] is True
+
+
 def _asset(architecture, variant="", local_path=""):
     return DreamForgeAsset(
         id="civitai:1",

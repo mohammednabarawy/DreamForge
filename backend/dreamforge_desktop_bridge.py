@@ -1915,7 +1915,7 @@ def cmd_discover_recommend_file_variants(params: dict) -> dict:
     if not isinstance(asset, dict) or not asset:
         return _error("missing_asset")
     vram_profile = str(params.get("vram_profile") or "auto")
-    return recommend_file_variants_from_dict(asset, vram_profile)
+    return recommend_file_variants_from_dict(asset, vram_profile, workflow=params.get("workflow") or {})
 
 
 def cmd_credential_status(params: dict) -> dict:

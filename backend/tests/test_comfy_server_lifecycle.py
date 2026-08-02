@@ -142,6 +142,29 @@ def test_restart_managed_comfy_server_stops_then_starts(monkeypatch):
     assert starts == [55.0]
 
 
+def test_ensure_comfy_running_restarts_when_launch_policy_changes(monkeypatch):
+    import dreamforge_comfy_server as mod
+
+    server = mod.ManagedComfyServer(mod.ComfyServerConfig(extra_args=("--highvram",)))
+    monkeypatch.setattr(mod, "_DEFAULT_SERVER", server)
+    monkeypatch.setattr(server, "discard_dead_process", lambda: None)
+    monkeypatch.setattr(server, "is_serving", lambda: True)
+    monkeypatch.setattr(mod, "_comfy_launch_extra_args", lambda: ("--lowvram",))
+    calls = []
+    monkeypatch.setattr(
+        mod,
+        "restart_managed_comfy_server",
+        lambda **kwargs: calls.append(kwargs) or server,
+    )
+
+    assert mod.ensure_comfy_running(timeout_s=42.0) is server
+    assert calls == [{
+        "timeout_s": 42.0,
+        "reason": "launch_policy_changed",
+        "extra_args": ("--lowvram",),
+    }]
+
+
 def test_managed_comfy_attaches_to_existing_dreamforge_server(monkeypatch):
     import dreamforge_comfy_server as mod
 

@@ -49,6 +49,7 @@ from dreamforge_errors import (
 )
 from dreamforge_progress import gpu_telemetry
 from dreamforge_vram_profiles import apply_desktop_vram_env
+from dreamforge_comfy_launch import apply_runtime_optimization_env, comfy_launch_extra_args
 from dreamforge_worker_ipc import (
     configure_stdio,
     emit,
@@ -87,6 +88,7 @@ def _shutdown_worker(events_path: Path, *, reason: str = "shutdown") -> None:
 
 
 def serve() -> None:
+    global _generation_active
     configure_stdio()
     register_managed_comfy_shutdown()
     install_worker_signal_handlers()
@@ -107,6 +109,7 @@ def serve() -> None:
     # worker.log is captured by the desktop shell from this process's stderr pipe.
 
     resolved_profile = apply_desktop_vram_env()
+    apply_runtime_optimization_env()
     emit(
         {
             "type": "boot_progress",
@@ -126,6 +129,17 @@ def serve() -> None:
             timeout_s=120.0,
         )
         telemetry = gpu_telemetry()
+        telemetry["launch_args"] = list(comfy_launch_extra_args())
+        telemetry["optimization_env"] = {
+            key: os.environ.get(key)
+            for key in (
+                "DREAMFORGE_COMFY_BACKEND",
+                "DREAMFORGE_HARDWARE_CLASS",
+                "PYTORCH_ENABLE_MPS_FALLBACK",
+                "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
+            )
+            if os.environ.get(key) is not None
+        }
         emit(
             {
                 "type": "ready",
@@ -212,8 +226,61 @@ def serve() -> None:
                 except Exception as exc:
                     err = from_exception(exc, job_id=job_id)
                     emit(err, events_path)
+            elif cmd == "benchmark":
+                with _generation_lock:
+                    if _generation_active:
+                        emit(
+                            {
+                                "type": "benchmark_finished",
+                                "job_id": job_id,
+                                "success": False,
+                                "result": generation_in_progress(job_id=job_id),
+                            },
+                            events_path,
+                        )
+                        continue
+                    _generation_active = True
+                params = req.get("params") or {}
+                try:
+                    from dreamforge_hardware_benchmark import run_generation_benchmark
+
+                    result = run_generation_benchmark(
+                        model=params.get("model"),
+                        runs=params.get("runs", 5),
+                        steps=params.get("steps", 4),
+                        width=params.get("width", 512),
+                        height=params.get("height", 512),
+                    )
+                    success = bool(
+                        result.get("generation_executed")
+                        and not result.get("error")
+                        and result.get("summary", {}).get("all_outputs_valid")
+                    )
+                    emit(
+                        {
+                            "type": "benchmark_finished",
+                            "job_id": job_id,
+                            "success": success,
+                            "result": result,
+                        },
+                        events_path,
+                    )
+                except Exception as exc:
+                    err = from_exception(exc, job_id=job_id)
+                    emit(
+                        {
+                            "type": "benchmark_finished",
+                            "job_id": job_id,
+                            "success": False,
+                            "result": {"generation_executed": False, **err},
+                        },
+                        events_path,
+                    )
+                    traceback.print_exc(file=sys.stderr)
+                finally:
+                    with _generation_lock:
+                        _generation_active = False
             elif cmd == "generate":
-                global _generation_active
                 with _generation_lock:
                     if _generation_active:
                         emit(generation_in_progress(job_id=job_id), events_path)

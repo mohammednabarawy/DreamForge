@@ -59,9 +59,9 @@ _DYNAMIC_RESERVE: Final[dict[str, float]] = {
     "5gb": 0.6,
 }
 
-# Default --fast optimizations. fp16_accumulation is a stable, well-tested speed
-# win on modern NVIDIA (Ada/Blackwell). Override with DREAMFORGE_COMFY_FAST
-# (comma list, "all", or "off"/"none"/"0").
+# --fast is experimental and quality-affecting. It is only selected
+# automatically after an explicit benchmark gate; users can still opt in with
+# DREAMFORGE_COMFY_FAST.
 _DEFAULT_FAST_FEATURES: Final[tuple[str, ...]] = ("fp16_accumulation",)
 
 
@@ -70,7 +70,8 @@ def cuda_total_vram_gb() -> float | None:
         import torch
 
         if torch.cuda.is_available():
-            return float(torch.cuda.get_device_properties(0).total_memory) / (1024**3)
+            index = int(os.environ.get("DREAMFORGE_COMFY_DEVICE_INDEX") or 0)
+            return float(torch.cuda.get_device_properties(index).total_memory) / (1024**3)
     except Exception:
         return None
     return None
@@ -132,13 +133,15 @@ def attention_flag() -> str | None:
     Respects DREAMFORGE_COMFY_ATTENTION (sage|flash|auto|off).
     """
     pref = (os.environ.get("DREAMFORGE_COMFY_ATTENTION") or "auto").strip().lower()
+    if pref in {"", "auto"} and os.environ.get("DREAMFORGE_COMFY_BACKEND") == "rocm":
+        return "--use-pytorch-cross-attention"
     if pref in {"off", "none", "0", "false"}:
         return None
     if pref in {"sage", "sageattention"} and _module_available("sageattention"):
         return "--use-sage-attention"
     if pref in {"flash", "flashattention", "flash_attn"} and _module_available("flash_attn"):
         return "--use-flash-attention"
-    if pref in {"", "auto"}:
+    if pref in {"", "auto"} and fast_benchmark_gate():
         if _module_available("sageattention"):
             return "--use-sage-attention"
         if _module_available("flash_attn"):
@@ -150,13 +153,27 @@ def fast_features() -> tuple[str, ...]:
     """--fast optimizations to enable, or empty if disabled."""
     raw = os.environ.get("DREAMFORGE_COMFY_FAST")
     if raw is None:
-        return _DEFAULT_FAST_FEATURES
+        return _DEFAULT_FAST_FEATURES if fast_benchmark_gate() else ()
     value = raw.strip().lower()
     if value in {"off", "none", "0", "false", ""}:
         return ()
     if value in {"all", "1", "true"}:
         return ()  # sentinel handled by caller -> bare "--fast" enables everything
     return tuple(part.strip() for part in raw.split(",") if part.strip())
+
+
+def fast_benchmark_gate() -> bool:
+    """Return true only for an explicitly validated modern CUDA policy."""
+    if os.environ.get("DREAMFORGE_COMFY_BACKEND", "").lower() != "cuda":
+        return False
+    if os.environ.get("DREAMFORGE_COMFY_FAST_BENCHMARK_OK", "").strip().lower() not in {"1", "true", "yes"}:
+        return False
+    raw = (os.environ.get("DREAMFORGE_COMPUTE_CAPABILITY") or "").split(".", 1)
+    try:
+        capability = float(f"{int(raw[0])}.{int(raw[1])}") if len(raw) == 2 else 0.0
+    except ValueError:
+        capability = 0.0
+    return capability >= 8.0
 
 
 def fast_args() -> list[str]:
@@ -240,9 +257,19 @@ def comfy_launch_extra_args() -> tuple[str, ...]:
 
     if mps_available():
         mac_tier = profile if profile.startswith("mps_") else detect_mac_vram_profile()
-        if mac_tier in {"mps_24gb", "mps_16gb"}:
-            return ("--highvram",)
-        return ("--lowvram", "--reserve-vram", "0.75")
+        reserve = "2.5" if mac_tier in {"mps_32gb", "mps_24gb"} else "2" if mac_tier == "mps_16gb" else "1.5"
+        # MPS uses unified memory; --highvram can starve the OS and is not a
+        # useful analogue of CUDA highvram. Let Comfy's smart offload decide.
+        return ("--reserve-vram", reserve)
+
+    device_index = os.environ.get("DREAMFORGE_COMFY_DEVICE_INDEX")
+    device_args = ["--cuda-device", device_index] if device_index is not None else []
+
+    if os.environ.get("DREAMFORGE_COMFY_BACKEND") == "rocm":
+        tier = comfy_memory_tier(profile)
+        reserve = reserve_vram_gb(tier=tier, is_windows=platform.system() == "Windows")
+        args = [*device_args, "--lowvram", "--reserve-vram", _format_reserve_gb(reserve), "--use-pytorch-cross-attention"]
+        return tuple(args)
 
     tier = comfy_memory_tier(profile)
     is_windows = platform.system() == "Windows"
@@ -252,7 +279,7 @@ def comfy_launch_extra_args() -> tuple[str, ...]:
         # --lowvram (no-op here) or --highvram/--disable-dynamic-vram (would turn
         # Dynamic VRAM off). --reserve-vram feeds aimdo's headroom target.
         reserve = reserve_vram_gb(tier=tier, is_windows=is_windows, dynamic=True)
-        args = ["--reserve-vram", _format_reserve_gb(reserve)]
+        args = [*device_args, "--reserve-vram", _format_reserve_gb(reserve)]
         args.extend(_speed_args())
         return tuple(args)
 
@@ -260,8 +287,8 @@ def comfy_launch_extra_args() -> tuple[str, ...]:
     mode = comfy_launch_memory_mode(tier, is_windows=is_windows)
     if mode == "normalvram":
         # Emit no memory flags so ComfyUI uses its default smart memory mgmt.
-        return tuple(_speed_args())
-    args = []
+        return tuple([*device_args, *_speed_args()])
+    args = list(device_args)
     if mode == "highvram":
         args.append("--highvram")
     elif mode == "lowvram":
@@ -270,6 +297,32 @@ def comfy_launch_extra_args() -> tuple[str, ...]:
     args.extend(("--reserve-vram", _format_reserve_gb(reserve)))
     args.extend(_speed_args())
     return tuple(args)
+
+
+def apply_runtime_optimization_env() -> dict[str, str]:
+    """Export conservative backend knobs before the managed Comfy child starts."""
+    try:
+        from dreamforge_gpu_detect import detect_gpu
+
+        detected = detect_gpu()
+    except Exception:
+        detected = {}
+    backend = str(detected.get("backend") or "cpu")
+    os.environ["DREAMFORGE_COMFY_BACKEND"] = backend
+    os.environ["DREAMFORGE_HARDWARE_CLASS"] = str(detected.get("hardware_class") or "cpu_only")
+    sources = set(detected.get("detection_sources") or ())
+    selected_index = detected.get("selected_device_index")
+    if backend in {"cuda", "rocm"} and selected_index is not None and sources.intersection({"torch.cuda", "nvidia-smi"}):
+        os.environ["DREAMFORGE_COMFY_DEVICE_INDEX"] = str(int(selected_index))
+    else:
+        os.environ.pop("DREAMFORGE_COMFY_DEVICE_INDEX", None)
+    if detected.get("compute_capability"):
+        os.environ["DREAMFORGE_COMPUTE_CAPABILITY"] = str(detected["compute_capability"])
+    if backend == "mps":
+        os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+    elif backend == "rocm":
+        os.environ.setdefault("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL", "1")
+    return {k: os.environ[k] for k in ("DREAMFORGE_COMFY_BACKEND", "DREAMFORGE_HARDWARE_CLASS")}
 
 
 def comfy_launch_summary() -> str:

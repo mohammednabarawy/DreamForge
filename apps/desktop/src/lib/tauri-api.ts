@@ -45,11 +45,15 @@ export type GenerationSettings = {
   lora?: string[];
   vram_profile?:
     | "auto"
+    | "32gb"
+    | "24gb"
     | "16gb"
+    | "12gb"
     | "8gb"
     | "5gb"
     | "no_gpu"
     | "mps_24gb"
+    | "mps_32gb"
     | "mps_16gb"
     | "mps_8gb"
     | "mps_4gb"
@@ -888,6 +892,15 @@ export type EngineStatus = {
   vram_gb?: number | null;
   cuda_available?: boolean | null;
   mps_available?: boolean | null;
+  backend?: string | null;
+  hardware_class?: string | null;
+  support_level?: string | null;
+  gpu_architecture?: string | null;
+  confidence?: string | null;
+  warnings?: string[];
+  fallback_reason?: string | null;
+  launch_args?: string[] | null;
+  optimization_env?: Record<string, string> | null;
   desktop_vram_profile?: string;
   resolved_vram_profile?: string | null;
   bridge_health?: Record<string, unknown>;
@@ -1023,6 +1036,42 @@ export async function downloadModel(params: {
   minBytes?: number | null;
 }) {
   return invoke<void>("download_model", params);
+}
+
+export async function runHardwareBenchmark(params: Record<string, unknown> = {}) {
+  let finish!: (payload: { job_id: string; success: boolean; error?: string; result?: Record<string, unknown> }) => void;
+  const completed = new Promise<Parameters<typeof finish>[0]>((resolve) => {
+    finish = resolve;
+  });
+  const unlisten = await safeListen<Parameters<typeof finish>[0]>(
+    "hardware-benchmark-finished",
+    (event) => finish(event.payload),
+  );
+  const unlistenWorkerFailure = await safeListen<{ error?: string; message?: string }>(
+    "worker-failed",
+    (event) => finish({
+      job_id: "",
+      success: false,
+      error: event.payload.message ?? event.payload.error ?? "GPU worker failed during benchmark",
+    }),
+  );
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const started = await invoke<{ job_id: string }>("invoke_hardware_benchmark", { params });
+    const result = await Promise.race([
+      completed,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("Hardware benchmark timed out")), 30 * 60 * 1000);
+      }),
+    ]);
+    if (!result.success) throw new Error(result.error ?? "Hardware benchmark failed");
+    if (result.job_id !== started.job_id) throw new Error("Hardware benchmark result mismatch");
+    return result.result ?? {};
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    unlisten();
+    unlistenWorkerFailure();
+  }
 }
 
 export async function pickWorkflowFile(): Promise<string | null> {

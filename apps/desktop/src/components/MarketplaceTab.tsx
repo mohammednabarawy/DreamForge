@@ -36,6 +36,7 @@ type Props = {
   civitaiApiKey: string;
   kind: DiscoverKind;
   onRefreshInventory: () => void;
+  workflow?: { width?: number; height?: number; batch?: number };
 };
 
 type DiscoverKind = "checkpoint" | "lora";
@@ -78,7 +79,7 @@ function formatVariant(variant: string) {
     .join(" ");
 }
 
-export function MarketplaceTab({ kind, onRefreshInventory }: Props) {
+export function MarketplaceTab({ kind, onRefreshInventory, workflow }: Props) {
   const [query, setQuery] = useState("");
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<string>("all");
@@ -100,6 +101,12 @@ export function MarketplaceTab({ kind, onRefreshInventory }: Props) {
   const queryRef = useRef("");
   const pageRef = useRef(1);
   const cursorsRef = useRef<Record<string, string>>({});
+  const recommendationWorkflow = useMemo(
+    () => ({ width: workflow?.width, height: workflow?.height, batch: workflow?.batch ?? 1 }),
+    [workflow?.width, workflow?.height, workflow?.batch],
+  );
+
+  useEffect(() => setRecommendations({}), [recommendationWorkflow]);
 
   useEffect(() => {
     void listProviders()
@@ -192,7 +199,7 @@ export function MarketplaceTab({ kind, onRefreshInventory }: Props) {
     let cancelled = false;
     assets.forEach((asset) => {
       if (cancelled || asset.id in recommendations) return;
-      void recommendFileVariants(asset, compute?.vram_profile ?? "auto")
+      void recommendFileVariants(asset, compute?.vram_profile ?? "auto", recommendationWorkflow)
         .then((res) => {
           if (cancelled || !res.ok) return;
           setRecommendations((prev) => ({
@@ -205,7 +212,7 @@ export function MarketplaceTab({ kind, onRefreshInventory }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [assets, compute?.vram_profile, recommendations]);
+  }, [assets, compute?.vram_profile, recommendations, recommendationWorkflow]);
 
   const selectedFile = useCallback(
     (asset: DiscoverAsset) => {

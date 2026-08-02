@@ -41,6 +41,17 @@ type Props = {
   onInstallStarterPack?: () => void | Promise<void>;
   generationSettings?: GenerationSettings;
   onGenerationSettingsChange?: (patch: Partial<GenerationSettings>) => void;
+  gpuName?: string | null;
+  vramGb?: number | null;
+  hardwareClass?: string | null;
+  computeBackend?: string | null;
+  supportLevel?: string | null;
+  launchArgs?: string[];
+  gpuArchitecture?: string | null;
+  detectionConfidence?: string | null;
+  detectionWarnings?: string[];
+  fallbackReason?: string | null;
+  onRunHardwareBenchmark?: () => void | Promise<void>;
 };
 
 export function AppSettingsModal({
@@ -63,6 +74,17 @@ export function AppSettingsModal({
   onInstallStarterPack,
   generationSettings,
   onGenerationSettingsChange,
+  gpuName,
+  vramGb,
+  hardwareClass,
+  computeBackend,
+  supportLevel,
+  launchArgs = [],
+  gpuArchitecture,
+  detectionConfidence,
+  detectionWarnings = [],
+  fallbackReason,
+  onRunHardwareBenchmark,
 }: Props) {
   const [civitaiKey, setCivitaiKey] = useState("");
   const [agentProvider, setAgentProvider] = useState("ollama");
@@ -73,6 +95,8 @@ export function AppSettingsModal({
   const [autoEnhance, setAutoEnhance] = useState(false);
   const [enhanceStrength, setEnhanceStrength] = useState<"balanced" | "minimal" | "rich">("balanced");
   const [useFlufferizer, setUseFlufferizer] = useState(true);
+  const [benchmarkBusy, setBenchmarkBusy] = useState(false);
+  const [benchmarkMessage, setBenchmarkMessage] = useState<string | null>(null);
 
   const [pathCheckpoints, setPathCheckpoints] = useState("");
   const [pathLoras, setPathLoras] = useState("");
@@ -988,12 +1012,28 @@ export function AppSettingsModal({
             {studioSettings && (
               <section className="space-y-3 rounded-lg border border-dfui-border/40 p-3">
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-dfui-muted">Generation engine & limits</p>
+                <div className="rounded-md bg-dfui-surface/50 px-2.5 py-2 text-[10px] text-dfui-tertiary">
+                  <span className="font-semibold text-dfui-secondary">Detected hardware:</span>{" "}
+                  {gpuName ?? "CPU fallback"}{vramGb != null ? ` · ${vramGb.toFixed(1)} GB` : ""}{computeBackend ? ` · ${computeBackend}` : ""}
+                  {hardwareClass ? <span className="text-dfui-muted"> · {hardwareClass.replaceAll("_", " ")}</span> : null}
+                  {gpuArchitecture ? <span className="text-dfui-muted"> · arch {gpuArchitecture}</span> : null}
+                  {detectionConfidence ? <span className="text-dfui-muted"> · {detectionConfidence} confidence</span> : null}
+                  {supportLevel === "experimental" ? <span className="ml-1 text-amber-300">(experimental backend)</span> : null}
+                  {launchArgs.length ? <p className="mt-1 truncate font-mono text-[9px] text-dfui-muted" title={launchArgs.join(" ")}>Policy: {launchArgs.join(" ")}</p> : null}
+                  {fallbackReason ? <p className="mt-1 text-[9px] text-amber-200">Fallback: {fallbackReason}</p> : null}
+                  {detectionWarnings.length ? <ul className="mt-1 list-disc pl-4 text-[9px] text-amber-200">{detectionWarnings.slice(0, 3).map((warning) => <li key={warning}>{warning}</li>)}</ul> : null}
+                </div>
                 {generationSettings && onGenerationSettingsChange ? <label className="block">
                   <span className="text-[10px] font-medium text-dfui-tertiary">VRAM profile</span>
                   <select value={generationSettings.vram_profile ?? "auto"} onChange={(event) => onGenerationSettingsChange({ vram_profile: event.target.value as GenerationSettings["vram_profile"] })} className="df-select mt-1 w-full px-2.5 py-2 text-xs">
-                    <option value="auto">Auto detect</option><option value="16gb">16 GB</option><option value="8gb">8 GB</option><option value="5gb">5 GB</option><option value="no_gpu">CPU only</option><option value="mps_24gb">Mac 24 GB</option><option value="mps_16gb">Mac 16 GB</option><option value="mps_8gb">Mac 8 GB</option><option value="mps_4gb">Mac 4 GB</option>
+                    <option value="auto">Auto detect</option><option value="32gb">32 GB+ NVIDIA/AMD</option><option value="24gb">24 GB NVIDIA/AMD</option><option value="16gb">16 GB NVIDIA/AMD</option><option value="12gb">12 GB</option><option value="8gb">8 GB</option><option value="5gb">4–6 GB (tight VRAM)</option><option value="no_gpu">CPU only</option><option value="mps_32gb">Mac 32 GB+ unified</option><option value="mps_24gb">Mac 24 GB unified</option><option value="mps_16gb">Mac 16 GB unified</option><option value="mps_8gb">Mac 8 GB unified</option><option value="mps_4gb">Mac 4 GB unified</option>
                   </select>
                 </label> : null}
+                {generationSettings && onGenerationSettingsChange ? <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => onGenerationSettingsChange({ vram_profile: "auto" })} className="rounded-md border border-dfui-border/60 px-2.5 py-1 text-[10px] text-dfui-secondary hover:border-dfui-accent/40">Reset to detected</button>
+                  {onRunHardwareBenchmark ? <button type="button" disabled={benchmarkBusy} onClick={async () => { setBenchmarkBusy(true); setBenchmarkMessage(null); try { await onRunHardwareBenchmark(); setBenchmarkMessage("Benchmark complete. Results used the current safe hardware policy."); } catch (error) { setBenchmarkMessage(error instanceof Error ? error.message : "Benchmark failed"); } finally { setBenchmarkBusy(false); } }} className="rounded-md border border-dfui-accent/40 px-2.5 py-1 text-[10px] text-dfui-accent hover:bg-dfui-accent/10 disabled:opacity-50">{benchmarkBusy ? "Benchmarking…" : "Run hardware benchmark"}</button> : null}
+                </div> : null}
+                {benchmarkMessage ? <p className="text-[9px] text-dfui-tertiary">{benchmarkMessage}</p> : null}
                 {onSaveStudioSettings ? <div className="grid grid-cols-3 gap-2">
                   <label className="text-[10px] text-dfui-tertiary">Max images<input type="number" min={1} max={50} defaultValue={studioSettings.image_number_max ?? 8} onBlur={(event) => void onSaveStudioSettings({ image_number_max: Number(event.target.value) })} className="df-input mt-1 w-full px-2 py-1 font-mono text-[10px]" /></label>
                   <label className="text-[10px] text-dfui-tertiary">LoRA min<input type="number" step={0.05} defaultValue={studioSettings.lora_min ?? 0} onBlur={(event) => void onSaveStudioSettings({ lora_min: Number(event.target.value) })} className="df-input mt-1 w-full px-2 py-1 font-mono text-[10px]" /></label>

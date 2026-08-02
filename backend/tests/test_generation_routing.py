@@ -1184,6 +1184,10 @@ def test_cli_runtime_marks_explicit_sampling_custom(monkeypatch):
         "dreamforge_comfy_server.boot_managed_comfy_server",
         lambda: None,
     )
+    monkeypatch.setattr(
+        "dreamforge_comfy_launch.apply_runtime_optimization_env",
+        lambda: {},
+    )
 
     class FakeEngine:
         @staticmethod

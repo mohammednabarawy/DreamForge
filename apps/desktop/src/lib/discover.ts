@@ -352,10 +352,12 @@ export async function supportedArchitectures(): Promise<string[]> {
 export async function recommendFileVariants(
   asset: DiscoverAsset,
   vramProfile = "auto",
+  workflow: Record<string, number | undefined> = {},
 ): Promise<RecommendationResult> {
   return bridgeInvoke<RecommendationResult>("discover_recommend_file_variants", {
     asset,
     vram_profile: vramProfile,
+    workflow,
   });
 }
 

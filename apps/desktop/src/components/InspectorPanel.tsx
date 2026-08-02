@@ -649,6 +649,11 @@ export function InspectorPanel({
             civitaiApiKey={civitaiApiKey}
             kind={tab === "discover_loras" ? "lora" : "checkpoint"}
             onRefreshInventory={onRefreshInventory}
+            workflow={{
+              width: settings.width,
+              height: settings.height,
+              batch: settings.batch_size ?? 1,
+            }}
           />
         )}
 

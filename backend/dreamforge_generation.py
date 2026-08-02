@@ -29,6 +29,31 @@ from _paths import BACKEND_ROOT, COMFY_ROOT, COMFY_STAGING_DIR, OUTPUTS_ROOT, PR
 _RUNTIME_READY = False
 
 
+def _generation_hardware_snapshot() -> dict:
+    """Persist the effective hardware policy alongside each reproducible job."""
+    try:
+        from dreamforge_gpu_detect import detect_gpu
+        from dreamforge_comfy_launch import comfy_launch_extra_args
+
+        detected = detect_gpu()
+        return {
+            "vendor": detected.get("vendor"),
+            "backend": detected.get("backend"),
+            "hardware_class": detected.get("hardware_class"),
+            "vram_gb": detected.get("vram_gb"),
+            "free_vram_mb": detected.get("free_vram_mb"),
+            "recommended_profile": detected.get("recommended_profile"),
+            "support_level": detected.get("support_level"),
+            "confidence": detected.get("confidence"),
+            "gpu_architecture": detected.get("gpu_architecture"),
+            "compute_capability": detected.get("compute_capability"),
+            "fallback_reason": detected.get("fallback_reason"),
+            "launch_args": list(comfy_launch_extra_args()),
+        }
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
 # Encourage CUDA's caching allocator to release fragmented blocks back to the
 # driver: this is the single biggest knob for OOM resilience on Windows and is
 # the Fooocus/Forge recommendation.  Users can still override via env.
@@ -1376,6 +1401,48 @@ def _free_comfy_vram_for_retry(client) -> None:
     time.sleep(0.5)
 
 
+_POLICY_HINTS_PATH = BACKEND_ROOT / "settings" / "hardware_policy_hints.json"
+
+
+def _hardware_policy_hint_key(model_family: str | None) -> str:
+    try:
+        from dreamforge_gpu_detect import detect_gpu
+
+        gpu = detect_gpu()
+        return "|".join(str(gpu.get(key) or "unknown") for key in (
+            "vendor", "device_name", "backend", "driver_info", "torch_version"
+        )) + f"|{model_family or 'unknown'}"
+    except Exception:
+        return f"unknown|{model_family or 'unknown'}"
+
+
+def _load_policy_hint(model_family: str | None) -> str | None:
+    try:
+        payload = json.loads(_POLICY_HINTS_PATH.read_text(encoding="utf-8"))
+        profile = payload.get(_hardware_policy_hint_key(model_family), {}).get("profile")
+        return str(profile) if profile else None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def _save_policy_hint(model_family: str | None, profile: str) -> None:
+    try:
+        _POLICY_HINTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            payload = json.loads(_POLICY_HINTS_PATH.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            payload = {}
+        payload[_hardware_policy_hint_key(model_family)] = {
+            "profile": profile,
+            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        temp = _POLICY_HINTS_PATH.with_suffix(".tmp")
+        temp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        os.replace(temp, _POLICY_HINTS_PATH)
+    except OSError:
+        pass
+
+
 def _comfy_job_unload_models(*, cn_type: str | None, comfy_mode: str | None) -> bool:
     mode = str(comfy_mode or cn_type or "").lower()
     return mode == "upscale"
@@ -1426,14 +1493,17 @@ def _run_comfy_workflow_with_retry(
     sample_steps: int,
     stream_sink,
     on_event,
+    model_family: str | None = None,
 ):
     from dreamforge_comfy_client import ComfyExecutionError, ComfyHungError, is_comfy_oom_error
 
     last_exc: BaseException | None = None
+    current_client = client
+    safer_profile: str | None = None
     for attempt in range(2):
         try:
-            return _run_comfy_workflow_once(
-                client,
+            result = _run_comfy_workflow_once(
+                current_client,
                 prompt_graph,
                 streaming=streaming,
                 job_id=job_id,
@@ -1441,6 +1511,9 @@ def _run_comfy_workflow_with_retry(
                 stream_sink=stream_sink,
                 on_event=on_event,
             )
+            if safer_profile:
+                _save_policy_hint(model_family, safer_profile)
+            return current_client, *result
         except (ComfyExecutionError, ComfyHungError, TimeoutError) as exc:
             last_exc = exc
             if attempt == 0 and is_comfy_oom_error(exc):
@@ -1451,10 +1524,24 @@ def _run_comfy_workflow_with_retry(
                         "job_id": job_id,
                         "phase": "sampling",
                         "progress": 0,
-                        "message": "GPU memory full — freeing VRAM and retrying once…",
+                        "message": "GPU memory full — switching to a safer VRAM policy and restarting ComfyUI…",
                     },
                 )
-                _free_comfy_vram_for_retry(client)
+                from dreamforge_comfy_launch import comfy_launch_extra_args
+                from dreamforge_comfy_server import restart_managed_comfy_server
+                from dreamforge_vram_profiles import apply_desktop_vram_env, lower_vram_profile
+
+                safer_profile = lower_vram_profile(os.environ.get("DREAMFORGE_VRAM_PROFILE"))
+                os.environ["DREAMFORGE_VRAM_PROFILE"] = safer_profile
+                os.environ["DREAMFORGE_COMFY_FAST"] = "off"
+                apply_desktop_vram_env(safer_profile)
+                server = restart_managed_comfy_server(
+                    timeout_s=120.0,
+                    reason=f"oom_safe_retry:{model_family or 'unknown'}",
+                    extra_args=comfy_launch_extra_args(),
+                )
+                from dreamforge_comfy_client import ComfyClient
+                current_client = ComfyClient(server.base_url)
                 continue
             raise
     if last_exc is not None:
@@ -2199,6 +2286,14 @@ def run_generation(
                 emit_event(stream_sink, err)
                 return {"status": "error", **err}
 
+        if str(getattr(job, "vram_profile", "auto") or "auto") == "auto":
+            learned_profile = _load_policy_hint(model_family)
+            if learned_profile:
+                os.environ["DREAMFORGE_VRAM_PROFILE"] = learned_profile
+                os.environ["DREAMFORGE_COMFY_FAST"] = "off"
+                from dreamforge_vram_profiles import apply_desktop_vram_env
+
+                apply_desktop_vram_env(learned_profile)
         server = ensure_comfy_running(timeout_s=60.0)
         client = ComfyClient(server.base_url)
 
@@ -3082,7 +3177,7 @@ def run_generation(
                 pass
 
         if streaming:
-            _res, node = _run_comfy_workflow_with_retry(
+            client, _res, node = _run_comfy_workflow_with_retry(
                 client,
                 prompt_graph,
                 streaming=True,
@@ -3090,9 +3185,10 @@ def run_generation(
                 sample_steps=sample_steps,
                 stream_sink=stream_sink,
                 on_event=_comfy_stream_event,
+                model_family=model_family,
             )
         else:
-            _res, node = _run_comfy_workflow_with_retry(
+            client, _res, node = _run_comfy_workflow_with_retry(
                 client,
                 prompt_graph,
                 streaming=False,
@@ -3100,6 +3196,7 @@ def run_generation(
                 sample_steps=sample_steps,
                 stream_sink=stream_sink,
                 on_event=None,
+                model_family=model_family,
             )
         outputs = node.get("outputs") or {}
         comfy_images: list[str] = []
@@ -3473,6 +3570,7 @@ def run_generation(
                 "seed": seed,
                 "model": model,
                 "settings": settings,
+                "hardware": _generation_hardware_snapshot(),
                 "routing": routing,
                 "workflow_source": getattr(job, "workflow_source", None),
                 "final_edit_request": final_request,

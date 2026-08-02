@@ -1085,7 +1085,9 @@ def process_single(base_args, data=None):
     import json
     from pathlib import Path
 
+    from dreamforge_comfy_launch import apply_runtime_optimization_env
     from dreamforge_comfy_server import boot_managed_comfy_server
+    from dreamforge_vram_profiles import apply_desktop_vram_env
     from dreamforge_engine import DreamForgeEngine
 
     payload = dict(data or {})
@@ -1118,6 +1120,8 @@ def process_single(base_args, data=None):
         params["execute_workflow_plan"] = True
 
     os.environ.setdefault("DREAMFORGE_USE_COMFY_SERVER", "1")
+    apply_desktop_vram_env(str(params.get("vram_profile") or "auto"))
+    apply_runtime_optimization_env()
     boot_managed_comfy_server()
     return DreamForgeEngine.execute_job(params, stream_sink=params.get("stream_file"))
 
@@ -1225,10 +1229,7 @@ def main():
     if args.json:
         sys.stdout = sys.stderr
 
-    from dreamforge_comfy_server import boot_managed_comfy_server
-
     os.environ.setdefault("DREAMFORGE_USE_COMFY_SERVER", "1")
-    boot_managed_comfy_server()
 
     results = []
     if args.batch:

@@ -548,6 +548,14 @@ export function useDreamForge() {
   const [gpuName, setGpuName] = useState<string | null>(null);
   const [vramGb, setVramGb] = useState<number | null>(null);
   const [mpsAvailable, setMpsAvailable] = useState<boolean | null>(null);
+  const [hardwareClass, setHardwareClass] = useState<string | null>(null);
+  const [computeBackend, setComputeBackend] = useState<string | null>(null);
+  const [supportLevel, setSupportLevel] = useState<string | null>(null);
+  const [launchArgs, setLaunchArgs] = useState<string[]>([]);
+  const [gpuArchitecture, setGpuArchitecture] = useState<string | null>(null);
+  const [detectionConfidence, setDetectionConfidence] = useState<string | null>(null);
+  const [detectionWarnings, setDetectionWarnings] = useState<string[]>([]);
+  const [fallbackReason, setFallbackReason] = useState<string | null>(null);
   const [lastError, setLastError] = useState<FriendlyError | null>(null);
   const [warnings, setWarnings] = useState<FriendlyError[]>([]);
   const [modelDependencies, setModelDependencies] = useState<{
@@ -1209,6 +1217,10 @@ export function useDreamForge() {
     }).then((u) => unsubs.push(() => u()));
     void onWorkerReady((p) => {
       if (p.gpu_name) setGpuName(p.gpu_name);
+      if ((p as { gpu_architecture?: string }).gpu_architecture) setGpuArchitecture(String((p as { gpu_architecture?: string }).gpu_architecture));
+      if ((p as { confidence?: string }).confidence) setDetectionConfidence((p as { confidence?: string }).confidence ?? null);
+      if (Array.isArray((p as { warnings?: string[] }).warnings)) setDetectionWarnings((p as { warnings?: string[] }).warnings ?? []);
+      if ((p as { fallback_reason?: string }).fallback_reason) setFallbackReason((p as { fallback_reason?: string }).fallback_reason ?? null);
       if (p.vram_gb != null) setVramGb(p.vram_gb);
       const mps =
         (p as { mps_available?: boolean }).mps_available ?? mpsAvailable;
@@ -1435,6 +1447,14 @@ export function useDreamForge() {
     if (s.gpu_name) setGpuName(s.gpu_name);
     if (s.vram_gb != null) setVramGb(s.vram_gb);
     if (s.mps_available != null) setMpsAvailable(s.mps_available);
+    if (s.hardware_class) setHardwareClass(s.hardware_class);
+    if (s.backend) setComputeBackend(s.backend);
+    if (s.support_level) setSupportLevel(s.support_level);
+    if (s.launch_args) setLaunchArgs(s.launch_args);
+    if (s.gpu_architecture) setGpuArchitecture(s.gpu_architecture);
+    if (s.confidence) setDetectionConfidence(s.confidence);
+    if (Array.isArray(s.warnings)) setDetectionWarnings(s.warnings);
+    if (s.fallback_reason) setFallbackReason(s.fallback_reason);
     const comfyUp = isComfyServerReady(s);
     if (comfyUp) {
       const resolved = resolveVramProfile(
@@ -4620,6 +4640,14 @@ export function useDreamForge() {
     gpuName,
     vramGb,
     mpsAvailable,
+    hardwareClass,
+    computeBackend,
+    supportLevel,
+    launchArgs,
+    gpuArchitecture,
+    detectionConfidence,
+    detectionWarnings,
+    fallbackReason,
     workerLogTail,
     restarting,
     runRestartEngine,

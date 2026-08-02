@@ -42,3 +42,18 @@ jobs:
         run: |
           npm ci
           npm run build
+
+  hardware-policy-fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend test dependencies
+        run: pip install -r backend/requirements-dev.txt
+      - name: Validate every hardware policy fixture
+        working-directory: backend
+        run: |
+          python -m dreamforge_hardware_benchmark
+          python -m pytest tests/test_gpu_detect.py tests/test_comfy_launch.py tests/test_hardware_benchmark.py -q

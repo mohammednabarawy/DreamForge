@@ -835,6 +835,15 @@ def ensure_comfy_running(*, timeout_s: float = 60.0) -> ManagedComfyServer:
     """Ensure the default managed Comfy server is up (idempotent)."""
     server = get_default_comfy_server()
     server.discard_dead_process()
+    desired_args = _comfy_launch_extra_args()
+    if tuple(server.config.extra_args or ()) != desired_args:
+        if server.is_serving():
+            return restart_managed_comfy_server(
+                timeout_s=timeout_s,
+                reason="launch_policy_changed",
+                extra_args=desired_args,
+            )
+        server.config.extra_args = desired_args
     if not server.is_serving():
         ensure_dreamforge_extra_model_paths(COMFY_ROOT)
         server.start(timeout_s=float(timeout_s))
@@ -857,9 +866,11 @@ def recover_managed_comfy_server(*, timeout_s: float = 90.0, reason: str = "") -
     return server
 
 
-def restart_managed_comfy_server(*, timeout_s: float = 90.0, reason: str = "") -> ManagedComfyServer:
+def restart_managed_comfy_server(*, timeout_s: float = 90.0, reason: str = "", extra_args: tuple[str, ...] | None = None) -> ManagedComfyServer:
     """Stop and start the managed Comfy subprocess (worker stays alive)."""
     server = get_default_comfy_server()
+    if extra_args is not None:
+        server.config.extra_args = tuple(extra_args)
     if reason:
         print(
             f"[DreamForge] Restarting managed ComfyUI ({reason})",

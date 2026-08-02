@@ -100,26 +100,16 @@ def generation_label(phase: str, message: str | None = None, step: int | None = 
 
 def gpu_telemetry() -> dict:
     try:
-        import torch
+        from dreamforge_gpu_detect import detect_gpu
 
-        if torch.cuda.is_available():
-            props = torch.cuda.get_device_properties(0)
-            return {
-                "cuda_available": True,
-                "gpu_name": torch.cuda.get_device_name(0),
-                "vram_gb": round(float(props.total_memory) / (1024**3), 1),
-            }
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            from dreamforge_vram_profiles import _system_ram_gb, detect_mac_vram_profile
-
-            ram_gb = _system_ram_gb()
-            return {
-                "cuda_available": False,
-                "mps_available": True,
-                "gpu_name": "Apple MPS",
-                "vram_gb": round(ram_gb, 1) if ram_gb is not None else None,
-                "vram_profile_hint": detect_mac_vram_profile(),
-            }
+        detected = detect_gpu()
+        return {
+            **detected,
+            "cuda_available": detected.get("backend") in {"cuda", "rocm"},
+            "mps_available": detected.get("backend") == "mps",
+            "gpu_name": detected.get("device_name"),
+            "vram_gb": detected.get("vram_gb"),
+            "vram_profile_hint": detected.get("recommended_profile"),
+        }
     except Exception:
-        pass
-    return {"cuda_available": False, "gpu_name": None, "vram_gb": None}
+        return {"cuda_available": False, "mps_available": False, "gpu_name": None, "vram_gb": None}

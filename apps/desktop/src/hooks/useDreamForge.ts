@@ -119,7 +119,6 @@ import {
   type ModelGalleryItem,
   type ModelDependencyItem,
   type UiDefaults,
-  type RepairAction,
 } from "../lib/tauri-api";
 import { clearThumbnailCache } from "../lib/thumbnail-cache";
 import {
@@ -233,56 +232,11 @@ import {
 } from "../lib/workflowPlanActions";
 import { isEditFamilyMode } from "../lib/generationReadiness";
 import {
-  companionItemsFromActions,
-  companionItemsFromErrorDetails,
   customNodeItemsFromActions,
-  isDownloadableCompanionItem,
+  mergeAllCompanionMissing,
   isWorkflowModelItem,
 } from "../lib/companionAssets";
 import { resolveCustomTool } from "../lib/customTools";
-
-function dependencyKey(item: ModelDependencyItem): string {
-  return `${item.id ?? ""}|${item.url ?? ""}|${item.filename ?? ""}|${item.relative ?? ""}|${item.expected_path ?? ""}`;
-}
-
-function mergeDependencyItems(...groups: Array<ModelDependencyItem[] | undefined>): ModelDependencyItem[] {
-  const merged: ModelDependencyItem[] = [];
-  const keys = new Set<string>();
-  for (const group of groups) {
-    for (const item of group ?? []) {
-      if (!isDownloadableCompanionItem(item)) continue;
-      const key = dependencyKey(item);
-      if (keys.has(key)) continue;
-      keys.add(key);
-      merged.push(item);
-    }
-  }
-  return merged;
-}
-
-function mergeAllCompanionMissing(args: {
-  modelMissing: ModelDependencyItem[];
-  studioMissing: ModelDependencyItem[];
-  taskWorkflowMissing: ModelDependencyItem[];
-  customToolWorkflowMissing?: ModelDependencyItem[];
-  agentPlan?: { readiness?: { recommended_actions?: RepairAction[] } } | null;
-  lastError?: FriendlyError | null;
-  skipBaseModelCompanions?: boolean;
-}): ModelDependencyItem[] {
-  return mergeDependencyItems(
-    args.skipBaseModelCompanions ? [] : args.modelMissing,
-    args.studioMissing,
-    args.taskWorkflowMissing,
-    args.customToolWorkflowMissing ?? [],
-    companionItemsFromActions(args.agentPlan?.readiness?.recommended_actions),
-    companionItemsFromErrorDetails(args.lastError?.details),
-    companionItemsFromActions(args.lastError?.failureReport?.repair_actions),
-    companionItemsFromActions(
-      (args.lastError?.details?.recommended_actions as RepairAction[] | undefined) ?? [],
-    ),
-    customNodeItemsFromActions(args.lastError?.failureReport?.repair_actions),
-  );
-}
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value ? (value as Record<string, unknown>) : undefined;
@@ -2386,7 +2340,7 @@ export function useDreamForge() {
         setStatus("Select a base model");
         return false;
       }
-      const mergedMissingCount = mergeAllCompanionMissing({
+      const mergedMissing = mergeAllCompanionMissing({
         modelMissing: modelDependencies.missing,
         studioMissing: studioResources.missing,
         taskWorkflowMissing: taskWorkflowDependencies.missing,
@@ -2394,9 +2348,11 @@ export function useDreamForge() {
           ? customToolDependencies.missing
           : [],
         agentPlan: agentPlanRef.current,
+        settingsSnapshot: computePlanSettingsSnapshot(sanitized, studioMode),
         lastError,
         skipBaseModelCompanions: Boolean(sanitized.custom_tool_id?.trim()),
-      }).length;
+      });
+      const mergedMissingCount = mergedMissing.length;
       const readiness = computeGenerateReadiness({
         workerReady,
         generating: generatingRef.current,
@@ -2423,6 +2379,12 @@ export function useDreamForge() {
             describeError({
               code: "missing_model_dependencies",
               message: readiness.reason,
+              details: {
+                missing: mergedMissing,
+                model: sanitized.model,
+                studio_mode: studioMode,
+                source: "readiness",
+              },
             }),
           );
           await promptMissingCompanionsDownloadRef.current?.();
@@ -3410,6 +3372,7 @@ export function useDreamForge() {
         taskWorkflowMissing: taskWorkflowDependencies.missing,
         customToolWorkflowMissing: customToolDependencies.missing,
         agentPlan,
+        settingsSnapshot: planSettingsSnapshot,
         lastError,
         skipBaseModelCompanions,
       }).length;
@@ -3447,6 +3410,7 @@ export function useDreamForge() {
       taskWorkflowDependencies,
       customToolDependencies,
       agentPlan,
+      planSettingsSnapshot,
       lastError,
       modelGalleryAll,
       studioMode,
@@ -3465,11 +3429,13 @@ export function useDreamForge() {
         taskWorkflowMissing: taskWorkflowDependencies.missing,
         customToolWorkflowMissing: customToolDependencies.missing,
         agentPlan,
+        settingsSnapshot: planSettingsSnapshot,
         lastError,
         skipBaseModelCompanions,
       }),
     [
       agentPlan,
+      planSettingsSnapshot,
       lastError,
       modelDependencies.missing,
       studioResources.missing,
@@ -4141,6 +4107,7 @@ export function useDreamForge() {
       customToolWorkflowMissing:
         studioMode === "toolbox" ? customToolDependencies.missing : [],
       agentPlan: plan,
+      settingsSnapshot: computePlanSettingsSnapshot(settingsRef.current, studioMode),
       lastError,
       skipBaseModelCompanions,
     });

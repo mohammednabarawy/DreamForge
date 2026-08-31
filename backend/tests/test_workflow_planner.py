@@ -439,3 +439,39 @@ def test_upscale_normal_no_warning():
     warnings = blueprint.get("warnings") or []
     assert not any("low VRAM" in w for w in warnings)
 
+
+
+def test_krea_edit_planner_checks_selected_assets_not_flux_defaults(monkeypatch):
+    import json
+    import dreamforge_workflow_planner as planner
+    import dreamforge_cli_inventory as inventory
+    monkeypatch.setattr(planner, "_inventory_categories", lambda: {})
+    monkeypatch.setattr(planner, "custom_node_pack_present", lambda pack: True)
+    monkeypatch.setattr(inventory, "resolve_generation_model", lambda name: {"name": name, "family": "krea2"})
+    missing = []
+    monkeypatch.setattr(inventory, "check_model_dependencies", lambda model: list(missing))
+    monkeypatch.setattr(inventory, "companion_file_present", lambda *args, **kwargs: True)
+    settings = {"model": "../diffusion_models/Krea2_Turbo_convrot_int8mixed.safetensors",
+                "prompt": "change the shirt color", "input_image": "source.png",
+                "edit_type": "auto", "style": "image_edit", "performance": "Lightning"}
+    for operation in ("edit_image", "style_transfer", "face_edit", "reference_guidance", "remove_object"):
+        result = planner.build_live_workflow_blueprint(settings["prompt"], operations=[operation],
+                                                       has_image=True, current_settings=settings)
+        assert result["template_ids"] == ["krea2_edit"]
+        assert result["readiness"]["ready"]
+        assert "kontext" not in json.dumps(result).lower()
+    missing.append({"id": "clip_krea2_qwen3vl_4b", "relative": "text_encoders/qwen3vl_4b_fp8_scaled.safetensors"})
+    monkeypatch.setattr(inventory, "companion_file_present", lambda *args, **kwargs: False)
+    result = planner.build_live_workflow_blueprint(settings["prompt"], operations=["edit_image"],
+                                                   has_image=True, current_settings=settings)
+    assert not result["readiness"]["ready"]
+    assert set(result["readiness"]["missing_models"]) == {"clip_krea2_qwen3vl_4b", "lora_krea2_identity_edit_v1_2"}
+    actions = result["readiness"]["recommended_actions"]
+    assert [a["action"] for a in actions] == ["download_model_companions"]
+    assert len(actions[0]["missing"]) == 2
+    assert all(item["url"] for item in actions[0]["missing"])
+    monkeypatch.setattr(inventory, "resolve_generation_model", lambda name: None)
+    result = planner.build_live_workflow_blueprint(settings["prompt"], operations=["edit_image"],
+                                                   has_image=True, current_settings=settings)
+    assert result["readiness"]["missing_models"] == ["krea2_unet"]
+    assert not result["readiness"]["ready"]

@@ -82,6 +82,18 @@ TEMPLATE_REGISTRY: dict[str, WorkflowTemplateSpec] = {
         krita_alignment="Matches Krita AI Diffusion managed Comfy/Kontext recipe and split UNET+CLIP+VAE loading.",
         research_basis=["krita_ai_diffusion", "ComfyUI_examples:flux_kontext", "workflow_research:flux"],
     ),
+    "krea2_edit": WorkflowTemplateSpec(
+        id="krea2_edit", label="Krea 2 Identity Edit", operation="edit_image", mode="edit",
+        summary="Krea 2 grounded source/reference editing with Identity Edit v1.2.",
+        builder="comfy_krea2_edit",
+        node_pattern=["UNETLoader", "CLIPLoader", "VAELoader", "LoraLoaderModelOnly",
+                      "LoadImage", "VAEEncode", "EmptySD3LatentImage", "Krea2EditModelPatch",
+                      "Krea2EditGroundedEncode", "KSampler", "VAEDecode", "SaveImage"],
+        required_inputs=["input_image", "prompt", "model"], optional_inputs=["reference_images"],
+        required_models=["krea2_unet", "clip_krea2_qwen3vl_4b", "vae_qwen_image",
+                         "lora_krea2_identity_edit_v1_2"],
+        required_node_packs=["comfyui-krea2edit"],
+    ),
     "qwen_image_edit": WorkflowTemplateSpec(
         id="qwen_image_edit",
         label="Qwen Image Edit",
@@ -453,6 +465,7 @@ def template_ids_for_operations(
     has_mask: bool = False,
     strict_inpaint: bool = False,
     qwen_edit: bool = False,
+    krea_edit: bool = False,
     photo_restore: bool = False,
     portrait_master: bool = False,
 ) -> list[str]:
@@ -461,13 +474,14 @@ def template_ids_for_operations(
     if photo_restore:
         return ["photo_restore"]
     ids: list[str] = []
+    contextual_edit = "krea2_edit" if krea_edit else "qwen_image_edit" if qwen_edit else "flux_kontext_edit"
     for op in operations:
         if op == "generate_image":
             ids.append("txt2img_basic")
         elif op in ("edit_image", "style_transfer", "face_edit"):
-            ids.append("qwen_image_edit" if has_image and qwen_edit else "flux_kontext_edit" if has_image else "txt2img_basic")
+            ids.append(contextual_edit if has_image else "txt2img_basic")
         elif op in ("remove_object", "inpaint"):
-            ids.append("inpaint_repair" if has_mask or strict_inpaint else "flux_kontext_edit")
+            ids.append("inpaint_repair" if has_mask or strict_inpaint else contextual_edit)
         elif op == "outpaint":
             ids.append("outpaint_canvas_extend")
         elif op == "upscale":
@@ -477,7 +491,7 @@ def template_ids_for_operations(
         elif op == "controlnet_structure":
             ids.append("controlnet_structure")
         elif op == "reference_guidance":
-            ids.append("reference_ipadapter" if not has_image else "qwen_image_edit" if qwen_edit else "flux_kontext_edit")
+            ids.append("reference_ipadapter" if not has_image else contextual_edit)
         elif op == "composite_layers":
             ids.append("area_composition")
         elif op == "face_detail":
@@ -496,7 +510,9 @@ def build_live_workflow_blueprint(
     has_references: bool = False,
     current_settings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    from dreamforge_cli_inventory import infer_model_family
     settings = current_settings or {}
+    model_name = str(settings.get("model") or settings.get("base_model") or settings.get("engine_name") or settings.get("relative_path") or "")
     strict_inpaint = _strict_inpaint_requested(settings)
     qwen_edit = _qwen_edit_requested(settings)
     photo_restore = str(settings.get("edit_task") or "").lower() == "photo_restore"
@@ -513,6 +529,7 @@ def build_live_workflow_blueprint(
         has_mask=has_mask,
         strict_inpaint=strict_inpaint,
         qwen_edit=qwen_edit,
+        krea_edit=infer_model_family(model_name) == "krea2",
         photo_restore=photo_restore,
         portrait_master=portrait_master,
     )
@@ -679,7 +696,19 @@ def assess_workflow_readiness(
         if not _input_present(item, settings, has_image=has_image, has_mask=has_mask, has_references=has_references)
     ]
     missing_models: list[str] = []
-    
+    model_companions: list[dict[str, Any]] = []
+    if "krea2_edit" in template_ids:
+        from dreamforge_cli_inventory import check_studio_resources, resolve_generation_model
+        model_name = str(settings.get("model") or settings.get("base_model") or settings.get("engine_name") or settings.get("relative_path") or "")
+        if not resolve_generation_model(model_name):
+            missing_models.append("krea2_unet")
+        else:
+            model_companions = [
+                {**item, "resource": item["id"]}
+                for item in check_studio_resources("edit", model_name=model_name)
+            ]
+            missing_models.extend(item["id"] for item in model_companions)
+
     def _has_capable_model(cats: tuple[str, ...], allowed_fams: list[str]) -> bool:
         try:
             from dreamforge_cli_inventory import infer_model_family
@@ -751,6 +780,7 @@ def assess_workflow_readiness(
         optional_nodes=optional_nodes,
         template_ids=template_ids,
         current_settings=settings,
+        model_companions=model_companions,
     )
     identity_actions = [
         action
@@ -779,6 +809,7 @@ def _recommended_actions(
     optional_nodes: list[str],
     template_ids: list[str],
     current_settings: dict[str, Any] | None = None,
+    model_companions: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     actions: list[dict[str, Any]] = []
     settings = current_settings or {}
@@ -812,6 +843,7 @@ def _recommended_actions(
         template_ids=template_ids,
         current_settings=settings,
     )
+    companion_entries.extend(model_companions or [])
     if companion_entries:
         actions.append(
             {

@@ -320,6 +320,10 @@ def resolve_creative_task(
 
 
 
+    from dreamforge_identity import clear_legacy_identity_settings
+
+    merged = clear_legacy_identity_settings({**merged, "studio_mode": mode})
+
     changed = {
 
         key: merged[key]

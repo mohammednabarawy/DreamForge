@@ -24,7 +24,7 @@ import {
 import type { GenerationSettings } from "../lib/tauri-api";
 import { pickImageFile } from "../lib/tauri-api";
 import type { StudioMode } from "../lib/model-selection";
-import { IdentitySlotControls, ReferenceSlotsEditor } from "./ReferenceSlotsEditor";
+import { ReferenceSlotsEditor } from "./ReferenceSlotsEditor";
 import {
   appendReferenceSlot,
   coerceReferenceSlots,
@@ -35,11 +35,6 @@ import {
   updateReferenceSlotAt,
 } from "../lib/referenceSlots";
 import { maxReferenceImagesForFamily } from "../lib/multiImageCompose";
-import {
-  isIdentityPreservationActive,
-  patchForKeepFace,
-} from "../lib/identityPreserve";
-
 type Props = {
   settings: GenerationSettings;
   modelFamily?: string;
@@ -121,13 +116,6 @@ export function ReferenceImageControl({
     Boolean(attachedPath) &&
     Boolean(onAttachExtra) &&
     !showMultiSlots;
-
-  const showKeepFace =
-    !simpleExperience &&
-    studioMode === "generate" &&
-    Boolean(attachedPath) &&
-    Boolean(onPatchSettings);
-  const keepFaceActive = isIdentityPreservationActive(settings);
 
   const applyReferenceRole = (role: ReferenceRole) => {
     if (!attachedPath || !onPatchSettings) return;
@@ -480,88 +468,6 @@ export function ReferenceImageControl({
           </span>
         </label>
       )}
-      {showKeepFace && (
-        <label
-          className="mx-2.5 mb-2 flex items-center justify-between gap-2 rounded-md border border-dfui-border/35 bg-dfui-bg/35 px-2 py-1.5"
-          title="Route to Kontext or Qwen Edit to keep the same face/character in a new scene"
-        >
-          <span className="text-[10px] text-dfui-muted">Keep face / character</span>
-          <input
-            type="checkbox"
-            disabled={disabled}
-            checked={keepFaceActive}
-            onChange={(e) => onPatchSettings?.(patchForKeepFace(e.target.checked, settings))}
-            className="h-3.5 w-3.5 accent-df-blue"
-          />
-        </label>
-      )}
-      {showKeepFace && keepFaceActive && referenceSlots[0] && onPatchSettings && (
-        <div className="mx-2.5 mb-2 rounded-md border border-df-blue/20 bg-df-blue/5 px-2 py-1.5">
-          <IdentitySlotControls
-            slot={referenceSlots[0]}
-            disabled={disabled}
-            onUpdate={(slotPatch) => {
-              const patch = updateReferenceSlotAt(settings, 0, slotPatch, studioMode, maxSlots);
-              if (patch) {
-                onPatchSettings({
-                  ...patch,
-                  ...(slotPatch.character_id
-                    ? {
-                        preserve_character: true,
-                        face_preservation: true,
-                        identity_mode: "preserve_face",
-                        identity_verify: true,
-                        identity_retry: true,
-                        identity_similarity_threshold:
-                          settings.identity_similarity_threshold ?? 0.35,
-                      }
-                    : {}),
-                });
-              }
-            }}
-          />
-          <label className="mt-1.5 flex items-center justify-between gap-2 text-[9px] text-dfui-muted">
-            <span title="Compare face embeddings locally after generation and retry once with FaceID when available">
-              Verify likeness + one retry
-            </span>
-            <input
-              type="checkbox"
-              disabled={disabled}
-              checked={Boolean(settings.identity_verify)}
-              onChange={(event) =>
-                onPatchSettings({
-                  identity_verify: event.target.checked,
-                  identity_retry: event.target.checked,
-                })
-              }
-              className="h-3.5 w-3.5 accent-df-blue"
-            />
-          </label>
-          {settings.identity_verify && (
-            <label className="mt-1 flex items-center gap-2 text-[8px] text-dfui-muted">
-              <span className="w-14">Similarity</span>
-              <input
-                type="range"
-                min={0.2}
-                max={0.7}
-                step={0.01}
-                disabled={disabled}
-                value={settings.identity_similarity_threshold ?? 0.35}
-                onChange={(event) =>
-                  onPatchSettings({ identity_similarity_threshold: Number(event.target.value) })
-                }
-                className="h-1 min-w-0 flex-1 accent-df-blue"
-              />
-              <span className="w-7 text-right font-mono">
-                {(settings.identity_similarity_threshold ?? 0.35).toFixed(2)}
-              </span>
-            </label>
-          )}
-          <p className="mt-1 text-[8px] leading-snug text-dfui-tertiary">
-            Runs locally. Face embeddings are used in memory and are never saved.
-          </p>
-        </div>
-      )}
       {showMultiSlots && activeReferenceRole === "image_prompt" && onPatchSettings && (
         <label
           className="mx-2.5 mb-2 flex items-center gap-2 rounded-md border border-dfui-border/35 bg-dfui-bg/35 px-2 py-1.5"
@@ -604,20 +510,7 @@ export function ReferenceImageControl({
           }}
           onUpdateSlot={(index, slotPatch) => {
             const patch = updateReferenceSlotAt(settings, index, slotPatch, studioMode, maxSlots);
-            if (patch) {
-              onPatchSettings?.({
-                ...patch,
-                ...(slotPatch.character_id
-                  ? {
-                      preserve_character: true,
-                      face_preservation: true,
-                      identity_mode: "preserve_face",
-                      identity_verify: true,
-                      identity_retry: true,
-                    }
-                  : {}),
-              });
-            }
+            if (patch) onPatchSettings?.(patch);
           }}
           onRemoveSlot={(index) => onPatchSettings?.(removeReferenceSlotAt(settings, index, studioMode, maxSlots))}
           onMoveSlot={(index, direction) => {

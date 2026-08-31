@@ -331,32 +331,13 @@ export function EditFamilySettingsPanel({
 
         {!isInpaint && activeTask !== "photo_restore" && (
           <>
-            <label className="inline-flex items-center gap-1.5 text-[11px] text-[#cccccc]">
-              <input
-                type="checkbox"
-                checked={Boolean(settings.face_preservation)}
-                onChange={(e) =>
-                  onChange({
-                    face_preservation: e.target.checked,
-                    preserve_character: e.target.checked ? settings.preserve_character : undefined,
-                    identity_mode: e.target.checked ? "preserve_face" : undefined,
-                  })
-                }
-                className="h-3.5 w-3.5 accent-[#6a9955]"
-              />
-              Face guidance
-            </label>
-            <p className="text-[10px] leading-snug text-[#777777]">
-              Preserve face via Kontext/Qwen identity routing (not legacy FaceID weights).
-            </p>
             <div>
               <p className="mb-1.5 text-[10px] leading-snug text-[#777777]">
                 Preservation hints — what to keep from the source image during edit.
               </p>
-              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
+              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                 {(
                   [
-                    ["preserve_character", "Character"],
                     ["preserve_style", "Style"],
                     ["preserve_text", "Text"],
                   ] as const

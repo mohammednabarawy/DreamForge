@@ -1,9 +1,6 @@
-import type { GenerationSettings, ModelGalleryItem } from "./tauri-api";
+import type { GenerationSettings } from "./tauri-api";
 import { readImagePreview } from "./tauri-api";
-import {
-  selectIdentityGenerateModel,
-  type StudioMode,
-} from "./model-selection";
+import type { StudioMode } from "./model-selection";
 import { sanitizeSettingsForStudioMode } from "./routeResolution";
 import { referenceRoleFromAttach, type ReferenceRole } from "./referenceRole";
 import { qwenEdit2511LightningPatch } from "./qwenEditDefaults";
@@ -46,9 +43,9 @@ export function referencePanelSubtitle(studioMode: StudioMode): string {
   }
   if (studioMode === "upscale") return "Image to upscale or restore";
   if (studioMode === "edit") {
-    return "Source and extra references route by model (Kontext, Qwen, IP-Adapter, img2img)";
+    return "Source and extra references use the selected edit model (Krea 2, Kontext, Qwen, img2img)";
   }
-  return "Attach references — routing follows model and role (face, style, structure)";
+  return "Attach references — routing follows model and role (image prompt, restyle, structure)";
 }
 
 export function referenceAttachedLabel(
@@ -191,14 +188,6 @@ export type GenerateReferencePatchOptions = {
   modelFamily?: string;
 };
 
-function buildGenerateReferenceImg2imgPatch(
-  imagePath: string,
-  shared: Partial<GenerationSettings>,
-  modelFamily?: string,
-): Partial<GenerationSettings> {
-  return buildRestyleReferencePatch(imagePath, shared, modelFamily);
-}
-
 /** Generate-tab restyle / img2img reference (keeps workflow on Create). */
 export function buildRestyleReferencePatch(
   imagePath: string,
@@ -309,79 +298,19 @@ export function buildReferenceRolePatch(
   return buildReferenceImagePatch(path, "reference", outputFor, options.modelFamily, studioMode);
 }
 
-export function buildGenerateIdentityReferencePatch(
+/** Attach a Generate reference without changing the selected model or sampling. */
+export function buildGenerateReferencePatch(
   path: string,
-  gallery: ModelGalleryItem[],
   outputFor: (suffix: string) => string,
   options: GenerateReferencePatchOptions = {},
 ): Partial<GenerationSettings> {
-  const imagePath = typeof path === "string" ? path : "";
-  const userPickedModel = Boolean(options.userPickedModel);
-  const modelFamily = (options.modelFamily ?? "").toLowerCase();
-  const shared: Partial<GenerationSettings> = {
+  return buildRestyleReferencePatch(path, {
     upscale_image: undefined,
     inpaint_mask_path: undefined,
-    preserve_character: true,
     workflow_mode: "generate",
     style: "none",
     output: outputFor("gen"),
-  };
-
-  if (userPickedModel && options.currentModel?.trim()) {
-    return {
-      ...buildGenerateReferenceImg2imgPatch(imagePath, shared, modelFamily),
-      model: options.currentModel.trim(),
-    };
-  }
-
-  const routed = selectIdentityGenerateModel(gallery);
-  if (!routed) {
-    const patch = buildGenerateReferenceImg2imgPatch(imagePath, shared, modelFamily);
-    if (options.currentModel?.trim()) {
-      patch.model = options.currentModel.trim();
-    }
-    return patch;
-  }
-
-  if (routed.route === "kontext") {
-    return {
-      ...shared,
-      reference_role: "restyle",
-      model: routed.engine_name,
-      input_image: imagePath,
-      reference_image: imagePath,
-      face_preservation: true,
-      identity_mode: "preserve_face",
-      edit_type: "kontext",
-      edit_strength: 0.92,
-      cn_selection: "None",
-      cn_type: "None",
-      steps: 20,
-    };
-  }
-
-  if (routed.route === "qwen_edit") {
-    return {
-      ...shared,
-      reference_role: "restyle",
-      model: routed.engine_name,
-      input_image: imagePath,
-      reference_image: imagePath,
-      face_preservation: true,
-      identity_mode: "preserve_face",
-      ...qwenEdit2511LightningPatch(),
-      edit_type: "qwen_edit",
-      edit_strength: 1.0,
-      cn_selection: "None",
-      cn_type: "None",
-    };
-  }
-
-  const patch = buildGenerateReferenceImg2imgPatch(imagePath, shared, modelFamily);
-  if (options.currentModel?.trim()) {
-    patch.model = options.currentModel.trim();
-  }
-  return patch;
+  }, options.modelFamily);
 }
 
 export function buildClearReferenceImagePatch(): Partial<GenerationSettings> {

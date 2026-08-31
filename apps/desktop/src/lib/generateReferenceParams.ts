@@ -52,6 +52,18 @@ export function applyExplicitReferenceRoleParams(
     return { params };
   }
 
+  if ((role === "restyle" || role === "image_prompt") && refPath &&
+      (modelFamily === "flux_kontext" || modelFamily === "qwen_image_edit")) {
+    return { params: applyEditFamilyReferenceRoleParams({
+      ...params,
+      input_image: refPath,
+      reference_role: "source_edit",
+      workflow_mode: "generate",
+      references: params.references?.map((slot, index) =>
+        index === 0 ? { ...slot, role: "source_edit" } : slot),
+    }, studioMode, modelFamily) };
+  }
+
   if (role === "image_prompt") {
     if (!ipReady && !modelUsesNativeImagePrompt(modelFamily)) {
       return {

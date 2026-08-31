@@ -108,7 +108,7 @@ def test_apply_identity_kontext_patch(monkeypatch):
     assert job.model == "flux1-dev-kontext_fp8_scaled.safetensors"
 
 
-def test_apply_identity_preserves_edit_studio_mode(monkeypatch):
+def test_apply_identity_preserves_custom_edit_workflow(monkeypatch):
     monkeypatch.setattr(
         "dreamforge_identity.resolve_identity_route",
         lambda job, **kwargs: {
@@ -119,6 +119,7 @@ def test_apply_identity_preserves_edit_studio_mode(monkeypatch):
     )
     job = SimpleNamespace(
         studio_mode="edit",
+        custom_tool_id="legacy_identity_workflow",
         preserve_character=True,
         input_image="/tmp/face.png",
     )
@@ -312,3 +313,54 @@ def test_pick_faceid_checkpoint_returns_none_when_empty(monkeypatch):
     )
     assert _pick_faceid_checkpoint() is None
 
+
+@pytest.mark.parametrize("studio_mode", ["generate", "edit"])
+@pytest.mark.parametrize("family", ["krea2", "flux_kontext", "qwen_image_edit"])
+def test_native_studio_compile_drops_legacy_identity_without_changing_model(monkeypatch, studio_mode, family):
+    from dreamforge_cli_direct import _compile_job
+    from dreamforge_references import apply_reference_slots_to_job
+
+    model = {"name": family + ".safetensors", "engine_name": family + ".safetensors", "family": family}
+    monkeypatch.setitem(_compile_job.__globals__, "_resolve_model", lambda *args: model)
+    monkeypatch.setattr("dreamforge_identity._pick_kontext_checkpoint", lambda: pytest.fail("legacy model routing ran"))
+    monkeypatch.setattr("dreamforge_identity._face_embeddings", lambda path: pytest.fail("face analysis ran"))
+    payload = {
+        "studio_mode": studio_mode, "model": model["name"], "prompt": "same person with a blue shirt",
+        "input_image": "source.png", "reference_role": "source_edit", "steps": 13, "cfg_scale": 2.5,
+        "width": 608, "height": 768, "seed": 42, "identity_mode": "ipadapter_faceid",
+        "preserve_character": True, "face_preservation": True, "identity_verify": True,
+        "identity_retry": True, "identity_face_index": 1, "identity_similarity_threshold": 0.6,
+        "ipadapter_model": "ip-adapter-faceid.bin", "workflow_mode": "ipadapter_faceid",
+        "lora": ["krea2_identity_edit_v1_2.safetensors:0.75"],
+        "references": [{"path": "source.png", "role": "source_edit", "character_id": "character_a", "face_index": 1},
+                       {"path": "subject.png", "role": "image_prompt", "character_region": "left"}],
+    }
+    job, selected, prompt, _, width, height, _ = _compile_job(SimpleNamespace(), payload)
+    ref_patch = apply_reference_slots_to_job(job)
+    assert not ref_patch.get("character_binding_prompt")
+    assert apply_identity_to_job(job, model_family=family) == {}
+    assert selected == model and job.model == model["name"]
+    assert prompt == payload["prompt"] and (width, height, job.steps, job.cfg_scale, job.seed) == (608, 768, 13, 2.5, 42)
+    assert job.lora == payload["lora"]
+    assert not any((job.preserve_character, job.face_preservation, job.identity_mode, job.identity_verify, job.identity_retry))
+    assert job.ipadapter_model is None and job.identity_face_index is None
+    assert [slot["path"] for slot in job.references] == ["source.png", "subject.png"]
+    assert verify_identity_outputs(job, ["result.png"]) == {"status": "disabled"}
+    assert build_identity_retry_params(job, payload, {"status": "failed"})[0] is None
+    # Even direct callers passing stale flags or natural-language likeness requests cannot reactivate it.
+    assert resolve_identity_route(SimpleNamespace(**payload), model_family=family) == {"route": "none"}
+    assert verify_identity_outputs(SimpleNamespace(**payload), ["result.png"]) == {"status": "disabled"}
+    assert payload["references"][0]["character_id"] == "character_a"
+
+
+def test_identity_cleanup_keeps_toolbox_custom_workflows_and_photo_restore():
+    from dreamforge_identity import clear_legacy_identity_settings
+
+    saved = {"identity_mode": "ipadapter_faceid", "identity_verify": True, "face_preservation": True,
+             "references": [{"path": "source.png", "character_id": "character_a", "face_index": 1}]}
+    for context in ({"studio_mode": "toolbox"}, {"studio_mode": "inpaint"},
+                    {"studio_mode": "edit", "custom_tool_id": "legacy_workflow"}, {}):
+        params = {**saved, **context}
+        assert clear_legacy_identity_settings(params) == params
+    restore = clear_legacy_identity_settings({**saved, "studio_mode": "edit", "edit_task": "photo_restore"})
+    assert restore["face_preservation"] and not restore["identity_verify"]

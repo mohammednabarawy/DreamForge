@@ -219,28 +219,30 @@ export function resolveIdentityRoute(
   return { route: "img2img" };
 }
 
-export function patchForKeepFace(
-  enabled: boolean,
+/** Retired identity controls must not survive a saved Generate/Edit request. */
+export function clearLegacyIdentitySettings(
   settings: GenerationSettings,
-): Partial<GenerationSettings> {
-  if (!enabled) {
-    return {
-      preserve_character: false,
-      face_preservation: false,
-      identity_mode: undefined,
-      identity_verify: false,
-      identity_retry: false,
-    };
-  }
+  studioMode: string,
+): GenerationSettings {
+  if (studioMode !== "generate" && studioMode !== "edit") return settings;
+  const wasFaceId = settings.workflow_mode === "ipadapter_faceid";
+  const referenceRole = wasFaceId
+    ? studioMode === "edit" ? "source_edit" : "restyle"
+    : settings.reference_role;
   return {
-    preserve_character: true,
-    face_preservation: true,
-    identity_verify: true,
-    identity_retry: true,
-    identity_similarity_threshold: settings.identity_similarity_threshold ?? 0.35,
-    identity_mode: settings.identity_mode === "ipadapter_faceid"
-      ? "ipadapter_faceid"
-      : "preserve_face",
+    ...settings,
+    preserve_character: false,
+    // Photo Restore uses this field for its separate Impact Pack detail pass.
+    face_preservation: studioMode === "edit" && settings.edit_task === "photo_restore"
+      ? settings.face_preservation : false,
+    identity_mode: undefined,
+    identity_verify: false,
+    identity_retry: false,
+    identity_similarity_threshold: undefined,
+    workflow_mode: wasFaceId ? studioMode : settings.workflow_mode,
+    reference_role: referenceRole,
+    references: settings.references?.map(({ character_id, character_region, face_index, ...slot }, index) =>
+      wasFaceId && index === 0 ? { ...slot, role: referenceRole! } : slot),
   };
 }
 
@@ -254,11 +256,14 @@ export function applyIdentityAtSubmit(
     imagePromptMissing?: ModelDependencyItem[];
   } = {},
 ): GenerationSettings {
+  const studioMode = (options.studioMode ?? "generate").toLowerCase();
+  if (studioMode === "generate" || studioMode === "edit") {
+    return clearLegacyIdentitySettings(settings, studioMode);
+  }
   if (settings.vary_amount || settings.enhance_auto_fix || settings.enhance_target) {
     return settings;
   }
-  const studioMode = (options.studioMode ?? "generate").toLowerCase();
-  if (studioMode !== "generate" && studioMode !== "agent") {
+  if (studioMode !== "agent") {
     return settings;
   }
   if (!isIdentityPreservationActive(settings)) {

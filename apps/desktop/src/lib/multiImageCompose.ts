@@ -1,5 +1,6 @@
 import type { StudioMode } from "./model-selection";
 import { selectIdentityGenerateModel } from "./model-selection";
+import { buildEditRoutingPatch } from "./editModel";
 import { coerceReferenceSlots, MAX_REFERENCE_SLOTS } from "./referenceSlots";
 import { isIdentityPreservationActive } from "./identityPreserve";
 import type { GenerationSettings, ModelGalleryItem } from "./tauri-api";
@@ -52,29 +53,34 @@ export function multiImageComposeActive(
   return Boolean(selectIdentityGenerateModel(gallery));
 }
 
-/**
- * Route 2+ attached images through Qwen/Kontext multi-image edit at submit.
- *
- * Reuses the identity pipeline (`applyIdentityAtSubmit`) by flagging identity
- * preservation, which switches to the installed Qwen/Kontext model, sets the
- * first image as the base, and forwards the remaining images as references the
- * prompt can address as "image 2", "image 3".
- */
+/** Route composition directly; attaching images does not enable identity verification. */
 export function applyMultiImageComposeAtSubmit(
   settings: GenerationSettings,
   studioMode: StudioMode,
   gallery: ModelGalleryItem[],
 ): GenerationSettings {
-  if (isIdentityPreservationActive(settings)) return settings;
   if (!multiImageComposeActive(settings, studioMode, gallery)) return settings;
+  const selected = gallery.find(item => item.engine_name === settings.model);
+  // Native reference models already handle composition; keep the user's choice.
+  if (["hidream_o1", "flux_kontext", "qwen_image_edit"].includes(selected?.family ?? "")) {
+    return settings;
+  }
+  const routed = selectIdentityGenerateModel(gallery);
+  const model = gallery.find(item => item.engine_name === routed?.engine_name);
+  if (!model) return settings;
+  const slots = coerceReferenceSlots(settings, studioMode);
+  const patch = buildEditRoutingPatch(model);
   return {
     ...settings,
-    preserve_character: true,
-    face_preservation: true,
-    identity_mode:
-      settings.identity_mode === "ipadapter_faceid"
-        ? "ipadapter_faceid"
-        : "preserve_face",
+    ...patch,
+    model: model.engine_name,
+    steps: settings.steps ?? patch.steps,
+    edit_strength: settings.edit_strength ?? 1,
+    input_image: slots[0].path,
+    reference_image: slots[0].path,
+    reference_role: "source_edit",
+    workflow_mode: "generate",
+    references: slots.map((slot, index) => ({ ...slot, role: index === 0 ? "source_edit" : "image_prompt" })),
   };
 }
 
@@ -82,7 +88,7 @@ export function applyMultiImageComposeAtSubmit(
  * Resolve the family the reference images will actually run through.
  *
  * A Generate job can be authored against a Flux/SDXL model yet auto-route to a
- * Qwen edit model at submit (identity preserve or 2+ compose images). Callers
+ * Qwen edit model at submit (2+ compose images, or legacy Agent identity requests). Callers
  * that gate reference counts or labels need that resolved family, not just the
  * model the user happened to pick.
  */
@@ -92,13 +98,12 @@ export function resolveReferenceModelFamily(
   gallery: ModelGalleryItem[],
   selectedFamily: string,
 ): string {
-  if (selectedFamily === "krea2" && studioMode === "edit") return "krea2";
-  if (selectedFamily === "qwen_image_edit") return "qwen_image_edit";
+  if (selectedFamily === "krea2" && studioMode === "edit") return selectedFamily;
+  if (["hidream_o1", "flux_kontext", "qwen_image_edit"].includes(selectedFamily)) return selectedFamily;
   const routed = selectIdentityGenerateModel(gallery);
   if (routed?.family === "qwen_image_edit") {
-    const isKeepFace = isIdentityPreservationActive(settings);
-    const composeCount = composeReferenceCount(settings, studioMode);
-    if (isKeepFace || composeCount >= 2) {
+    const isKeepFace = studioMode === "agent" && isIdentityPreservationActive(settings);
+    if (isKeepFace || multiImageComposeActive(settings, studioMode, gallery)) {
       return "qwen_image_edit";
     }
   }

@@ -15,7 +15,6 @@ import {
   type ReferenceSlot,
 } from "../lib/referenceSlots";
 import { pickImageFile } from "../lib/tauri-api";
-import { analyzeIdentityFaces, type IdentityFaceAnalysis } from "../lib/studioBridge";
 import type { StudioMode } from "../lib/model-selection";
 
 type Props = {
@@ -53,105 +52,6 @@ function SlotPreview({ path }: { path: string }) {
     );
   }
   return <img src={url} alt="" className="h-full w-full object-cover" />;
-}
-
-export function IdentitySlotControls({
-  slot,
-  disabled = false,
-  onUpdate,
-}: {
-  slot: ReferenceSlot;
-  disabled?: boolean;
-  onUpdate: (patch: Partial<ReferenceSlot>) => void;
-}) {
-  const [analysis, setAnalysis] = useState<IdentityFaceAnalysis | null>(null);
-  useEffect(() => {
-    if (!slot.character_id) {
-      setAnalysis(null);
-      return;
-    }
-    let cancelled = false;
-    void analyzeIdentityFaces(slot.path)
-      .then((result) => {
-        if (!cancelled) setAnalysis(result);
-      })
-      .catch(() => {
-        if (!cancelled) setAnalysis(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [slot.character_id, slot.path]);
-
-  return (
-    <div className="mt-1.5 grid grid-cols-2 gap-1">
-      <label className="text-[8px] text-dfui-muted">
-        Character
-        <select
-          disabled={disabled}
-          value={slot.character_id ?? ""}
-          onChange={(event) =>
-            onUpdate({
-              character_id: event.target.value || undefined,
-              character_region: event.target.value ? slot.character_region ?? "auto" : undefined,
-              face_index: event.target.value ? slot.face_index : undefined,
-            })
-          }
-          className="mt-0.5 w-full rounded border border-dfui-border/50 bg-dfui-bg px-1 py-0.5 text-[9px] text-dfui-fg"
-        >
-          <option value="">Not a character</option>
-          {(["a", "b", "c", "d"] as const).map((id) => (
-            <option key={id} value={`character_${id}`}>
-              Character {id.toUpperCase()}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="text-[8px] text-dfui-muted">
-        Position
-        <select
-          disabled={disabled || !slot.character_id}
-          value={slot.character_region ?? "auto"}
-          onChange={(event) =>
-            onUpdate({
-              character_region: event.target.value as ReferenceSlot["character_region"],
-            })
-          }
-          className="mt-0.5 w-full rounded border border-dfui-border/50 bg-dfui-bg px-1 py-0.5 text-[9px] text-dfui-fg disabled:opacity-50"
-        >
-          <option value="auto">Auto</option>
-          <option value="left">Left</option>
-          <option value="center">Center</option>
-          <option value="right">Right</option>
-        </select>
-      </label>
-      {slot.character_id && analysis?.ok && analysis.count > 1 ? (
-        <label className="col-span-2 text-[8px] text-dfui-muted">
-          Face in this image
-          <select
-            disabled={disabled}
-            value={slot.face_index ?? ""}
-            onChange={(event) =>
-              onUpdate({
-                face_index: event.target.value === "" ? undefined : Number(event.target.value),
-              })
-            }
-            className="mt-0.5 w-full rounded border border-dfui-border/50 bg-dfui-bg px-1 py-0.5 text-[9px] text-dfui-fg"
-          >
-            <option value="">Auto (largest face)</option>
-            {analysis.faces.map((face) => (
-              <option key={face.index} value={face.index}>
-                Face {face.index + 1}{face.recommended ? " — recommended" : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : null}
-      {slot.character_id && analysis?.ok && analysis.count === 0 ? (
-        <p className="col-span-2 text-[8px] text-amber-300">No clear face detected; the full image will be used.</p>
-      ) : null}
-    </div>
-  );
 }
 
 export function ReferenceSlotsEditor({
@@ -284,13 +184,6 @@ export function ReferenceSlotsEditor({
                   ) : null}
                 </div>
               </div>
-              {showRoles ? (
-                <IdentitySlotControls
-                  slot={slot}
-                  disabled={disabled}
-                  onUpdate={(patch) => onUpdateSlot(index, patch)}
-                />
-              ) : null}
               {showRoles && slotSupportsWeightControls(slot.role) ? (
                 <label className="mt-1.5 flex items-center gap-2 text-[8px] text-dfui-muted">
                   <span className="w-10">Weight</span>

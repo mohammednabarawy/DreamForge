@@ -1,6 +1,7 @@
 import { isEditFamilyMode, type StudioMode } from "./model-selection";
 import type { GenerationSettings } from "./tauri-api";
 import { inferReferenceRole } from "./referenceRole";
+import { clearLegacyIdentitySettings } from "./identityPreserve";
 
 export type { ReferenceRole } from "./referenceRole";
 export {
@@ -125,7 +126,7 @@ export function sanitizeSettingsForStudioMode(
   studioMode: StudioMode,
   settings: GenerationSettings,
 ): GenerationSettings {
-  const next = { ...settings };
+  const next = { ...clearLegacyIdentitySettings(settings, studioMode) };
   if (studioMode !== "toolbox") next.custom_tool_id = undefined;
 
   if (isEditFamilyMode(studioMode)) {

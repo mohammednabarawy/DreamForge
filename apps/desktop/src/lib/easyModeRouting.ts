@@ -2,9 +2,8 @@ import type { ModelGalleryItem, ModelDependencyItem } from "./tauri-api";
 import type { StudioMode } from "./model-selection";
 import type { GenerateReferencePatchOptions } from "./referenceImage";
 import {
-  buildGenerateIdentityReferencePatch,
+  buildGenerateReferencePatch,
   buildImagePromptReferencePatch,
-  buildRestyleReferencePatch,
 } from "./referenceImage";
 import { routeBadgeLabel } from "./referenceRole";
 import type { GenerationSettings } from "./tauri-api";
@@ -82,8 +81,9 @@ export function buildEasyCreateReferencePatch(
     imagePromptMissing?: ModelDependencyItem[];
   } = {},
 ): Partial<GenerationSettings> {
-  const role =
-    options.ipAdapterReady === true
+  const role = options.modelFamily === "krea2"
+    ? "restyle"
+    : options.ipAdapterReady === true
       ? "image_prompt"
       : options.ipAdapterReady === false
         ? "restyle"
@@ -97,7 +97,6 @@ export function buildEasyCreateReferencePatch(
   const shared = {
     upscale_image: undefined,
     inpaint_mask_path: undefined,
-    preserve_character: true,
     style: "none" as const,
     output: outputFor("gen"),
   };
@@ -106,23 +105,11 @@ export function buildEasyCreateReferencePatch(
     return {
       ...buildImagePromptReferencePatch(path, outputFor),
       ...shared,
-      model: options.userPickedModel ? options.currentModel?.trim() : undefined,
+      ...(options.currentModel?.trim() ? { model: options.currentModel.trim() } : {}),
     };
   }
 
-  if (options.userPickedModel && options.currentModel?.trim()) {
-    return {
-      ...buildRestyleReferencePatch(path, shared, options.modelFamily),
-      model: options.currentModel.trim(),
-      workflow_mode: "generate",
-    };
-  }
-
-  return {
-    ...buildGenerateIdentityReferencePatch(path, gallery, outputFor, options),
-    reference_role: "restyle",
-    workflow_mode: "generate",
-  };
+  return buildGenerateReferencePatch(path, outputFor, options);
 }
 
 export function easyRouteSummary(

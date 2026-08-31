@@ -517,6 +517,9 @@ def _compile_job(base_args, data=None):
     if getattr(job, "base_model", None) and not getattr(job, "model", None):
         job.model = job.base_model
     apply_recipe_defaults(job)
+    from dreamforge_identity import clear_legacy_identity_settings
+
+    job = SimpleNamespace(**clear_legacy_identity_settings(vars(job)))
     style_key = str(getattr(job, "style", "none") or "none").strip().lower()
     if style_key in ("", "none"):
         job.style = "none"

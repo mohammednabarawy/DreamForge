@@ -179,7 +179,7 @@ import {
 import {
   appendExtraReferencePath,
   buildClearReferenceImagePatch,
-  buildGenerateIdentityReferencePatch,
+  buildGenerateReferencePatch,
   buildReferenceImagePatch,
   defaultReferenceEditStrength,
   referenceModeForStudio,
@@ -2376,6 +2376,7 @@ export function useDreamForge() {
         selectedImage: selected?.images?.[0],
         userPickedModel: userPickedModelRef.current,
       });
+      sanitized = sanitizeSettingsForStudioMode(studioMode, sanitized);
       const prompt = (sanitized.prompt ?? "").trim();
       if (!prompt && studioMode !== "upscale") {
         setStatus("Enter a prompt before generating");
@@ -2458,7 +2459,6 @@ export function useDreamForge() {
       };
       const activeModel = findGalleryModel(modelGalleryAll, params.model ?? "");
       const modelFamily = (activeModel?.family ?? "").toLowerCase();
-      params = applyMultiImageComposeAtSubmit(params, studioMode, modelGalleryAll);
       const routed = applyExplicitReferenceRoleParams(
         params,
         studioMode,
@@ -2474,6 +2474,7 @@ export function useDreamForge() {
       params = applyVaryAmountAtSubmit(params);
       params = applyUpscalePresetAtSubmit(params);
       params = applyReferencesAtSubmit(params, studioMode);
+      params = applyMultiImageComposeAtSubmit(params, studioMode, modelGalleryAll);
       params = applyAutoEnhanceAtSubmit(params);
       params = applyIdentityAtSubmit(params, modelGalleryAll, {
         studioMode,
@@ -2494,6 +2495,7 @@ export function useDreamForge() {
         selectedImage: selected?.images?.[0],
         userPickedModel: userPickedModelRef.current,
       });
+      params = sanitizeSettingsForStudioMode(studioMode, params);
       params = applyHiDreamPerformanceAtSubmit(
         params,
         modelFamily,
@@ -3533,9 +3535,8 @@ export function useDreamForge() {
                   imagePromptMissing: imagePromptResources.missing,
                 },
               )
-            : buildGenerateIdentityReferencePatch(
+            : buildGenerateReferencePatch(
                 resolved,
-                modelGalleryAll,
                 outputFor,
                 {
                   currentModel: settingsRef.current.model,

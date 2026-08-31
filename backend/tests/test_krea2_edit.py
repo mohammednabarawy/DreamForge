@@ -27,7 +27,7 @@ def test_krea2_edit_route_and_graph():
         result = apply_task_routing(settings, "edit", [MODEL], user_picked_model=True).patch
         assert result["model"] == MODEL["name"] and result["edit_type"] == "auto"
         assert (result["steps"], result["cfg_scale"], result["width"], result["height"]) == (13, 2.5, 768, 1024)
-        job = SimpleNamespace(**result, workflow_mode="edit", studio_mode="edit", preserve_character=True)
+        job = SimpleNamespace(**result, workflow_mode="edit", studio_mode="edit", reference_role="source_edit", preserve_character=True)
         apply_identity_to_job(job, model_family="krea2")
         assert job.model == MODEL["name"] and job.reference_role == "source_edit"
         route = resolve_input_routing(job, model=MODEL, model_family="krea2", studio_mode="edit")

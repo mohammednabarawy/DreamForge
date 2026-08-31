@@ -18,6 +18,44 @@ FACEID_DEFAULT_WEIGHT = 0.75
 IDENTITY_SIMILARITY_THRESHOLD = 0.35
 
 
+def uses_native_edit_controls(settings: dict[str, Any]) -> bool:
+    """Normal desktop Generate/Edit no longer opt into the legacy identity stack."""
+    return (
+        str(settings.get("studio_mode") or "").strip().lower() in {"generate", "edit"}
+        and not str(settings.get("custom_tool_id") or "").strip()
+    )
+
+
+def clear_legacy_identity_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    if not uses_native_edit_controls(settings):
+        return settings
+    out = dict(settings)
+    for key in ("preserve_character", "identity_verify", "identity_retry"):
+        out[key] = False
+    # Photo Restore shares this field with its separate Impact Pack detail pass.
+    if not (out.get("studio_mode") == "edit" and out.get("edit_task") == "photo_restore"):
+        out["face_preservation"] = False
+    for key in ("identity_mode", "identity_similarity_threshold", "identity_face_index",
+                "identity_retry_attempted", "_identity_reference_path", "_identity_retry_internal"):
+        out[key] = None
+    was_faceid = out.get("workflow_mode") == "ipadapter_faceid"
+    if was_faceid:
+        out["workflow_mode"] = str(out["studio_mode"]).strip().lower()
+        out["reference_role"] = "source_edit" if out["workflow_mode"] == "edit" else "restyle"
+    if "faceid" in str(out.get("ipadapter_model") or "").lower().replace("-", "").replace("_", ""):
+        out["ipadapter_model"] = None
+    if isinstance(out.get("references"), list):
+        out["references"] = [
+            {key: value for key, value in slot.items()
+             if key not in {"character_id", "character_region", "face_index"}}
+            if isinstance(slot, dict) else slot
+            for slot in out["references"]
+        ]
+        if was_faceid and out["references"] and isinstance(out["references"][0], dict):
+            out["references"][0]["role"] = out["reference_role"]
+    return out
+
+
 def analyze_reference_faces(path: str) -> dict[str, Any]:
     """Detect selectable faces locally; no pixels or embeddings are retained."""
     try:
@@ -164,7 +202,7 @@ def _face_embeddings(path: str) -> list[Any]:
 
 def verify_identity_outputs(job, images: list[str]) -> dict[str, Any]:
     """Compare the selected reference face with outputs using local embeddings."""
-    if not bool(getattr(job, "identity_verify", False)):
+    if uses_native_edit_controls(vars(job)) or not bool(getattr(job, "identity_verify", False)):
         return {"status": "disabled"}
     reference = str(
         getattr(job, "_identity_reference_path", None) or _reference_path(job)
@@ -306,6 +344,8 @@ def normalize_identity_mode(value: Any) -> str | None:
 
 
 def is_identity_preservation_job(job) -> bool:
+    if uses_native_edit_controls(vars(job)):
+        return False
     return bool(
         getattr(job, "preserve_character", False)
         or getattr(job, "face_preservation", False)
@@ -483,6 +523,8 @@ def build_identity_retry_params(
     verification: dict[str, Any],
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     """Build one FaceID retry when the first native edit misses the likeness target."""
+    if uses_native_edit_controls(vars(job)):
+        return None, {"eligible": False, "reason": "legacy identity controls disabled"}
     if verification.get("status") != "failed":
         return None, {"eligible": False, "reason": "verification did not fail"}
     if not bool(getattr(job, "identity_retry", False)):

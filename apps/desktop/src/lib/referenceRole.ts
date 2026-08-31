@@ -94,7 +94,7 @@ export function routeBadgeLabel(
   modelFamily?: string,
 ): string | null {
   if (
-    (studioMode === "generate" || studioMode === "agent") &&
+    studioMode === "agent" &&
     isIdentityPreservationActive(settings) &&
     Boolean(
       settings.input_image?.trim() ||

@@ -190,20 +190,6 @@ def parse_comfy_startup_url(line: str) -> str | None:
     return url.rstrip("/")
 
 
-def _read_comfy_url_from_log(log_path: Path, *, tail_lines: int = 80) -> str | None:
-    if not log_path.is_file():
-        return None
-    try:
-        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return None
-    for line in reversed(lines[-tail_lines:]):
-        url = parse_comfy_startup_url(line)
-        if url:
-            return url
-    return None
-
-
 def _comfy_pidfile_path() -> Path:
     return _COMFY_PIDFILE
 
@@ -362,15 +348,14 @@ def _localhost_listening_pids(port: int) -> list[int]:
 def _pids_running_comfy_main(comfy_root: Path | None = None) -> list[int]:
     root = Path(comfy_root or COMFY_ROOT).resolve()
     main_py = (root / "main.py").resolve()
-    root_token = str(root).replace("'", "''")
     main_token = str(main_py).replace("'", "''")
     pids: list[int] = []
 
     if os.name == "nt":
         ps_cmd = (
             "Get-CimInstance Win32_Process | "
-            "Where-Object { $_.CommandLine -like '*main.py*' -and "
-            f"($_.CommandLine -like '*{root_token}*' -or $_.CommandLine -like '*ComfyUI*') }} | "
+            "Where-Object { $_.Name -like 'python*' -and $_.CommandLine -like '*main.py*' -and "
+            f"$_.CommandLine -like '*{main_token}*' }} | "
             "Select-Object -ExpandProperty ProcessId"
         )
         try:
@@ -405,7 +390,7 @@ def _pids_running_comfy_main(comfy_root: Path | None = None) -> list[int]:
         pid_str, args = parts
         if "main.py" not in args:
             continue
-        if str(main_py) not in args and str(root) not in args and "ComfyUI" not in args:
+        if str(main_py) not in args:
             continue
         try:
             pids.append(int(pid_str))
@@ -423,24 +408,6 @@ def _find_foreign_comfy_pids(*, exclude_pids: set[int] | None = None) -> list[in
         if pid not in exclude:
             found.add(pid)
 
-    for port in range(_COMFY_DEFAULT_PORT, _COMFY_DEFAULT_PORT + _COMFY_PORT_SCAN_RANGE):
-        if not _is_port_open(port, host="127.0.0.1"):
-            continue
-        if not _is_comfy_http_server(port, host="127.0.0.1"):
-            continue
-        for pid in _localhost_listening_pids(port):
-            if pid not in exclude:
-                found.add(pid)
-
-    path = _comfy_pidfile_path()
-    if path.is_file():
-        try:
-            pid = int(path.read_text(encoding="utf-8").strip())
-            if pid not in exclude:
-                found.add(pid)
-        except (OSError, ValueError):
-            pass
-
     return sorted(found)
 
 
@@ -457,7 +424,7 @@ def cleanup_all_foreign_comfy_servers(
     force: bool = True,
     exclude_pids: set[int] | None = None,
 ) -> list[int]:
-    """Stop every local ComfyUI instance so DreamForge can own the managed server."""
+    """Stop leftover processes from this managed checkout, never other Comfy installs."""
     killed: list[int] = []
     for pid in _find_foreign_comfy_pids(exclude_pids=exclude_pids):
         if not _process_alive(pid):
@@ -465,10 +432,10 @@ def cleanup_all_foreign_comfy_servers(
         _terminate_process_tree(pid, force=force)
         killed.append(pid)
     _clear_comfy_pidfile()
-    _wait_for_ports_closed(
-        range(_COMFY_DEFAULT_PORT, _COMFY_DEFAULT_PORT + _COMFY_PORT_SCAN_RANGE),
-        timeout_s=12.0 if killed else 1.0,
-    )
+    # Wait for our processes, not for ports belonging to another application.
+    deadline = time.monotonic() + 12.0
+    while killed and time.monotonic() < deadline and any(_process_alive(pid) for pid in killed):
+        time.sleep(0.1)
     return killed
 
 
@@ -662,10 +629,12 @@ class ManagedComfyServer:
             self.pid = int(self.proc.pid)
             _write_comfy_pidfile(self.pid)
 
+            proc = self.proc
+
             def _pump_output() -> None:
-                assert self.proc is not None and self.proc.stdout is not None
+                assert proc is not None and proc.stdout is not None
                 with open(log_path, "a", encoding="utf-8", errors="replace") as log:
-                    for chunk in iter(self.proc.stdout.readline, b""):
+                    for chunk in iter(proc.stdout.readline, b""):
                         try:
                             log.write(chunk.decode("utf-8", errors="replace"))
                             log.flush()
@@ -681,23 +650,12 @@ class ManagedComfyServer:
             while time.time() < deadline:
                 if self.proc and self.proc.poll() is not None:
                     raise RuntimeError(f"ComfyUI server exited early with code {self.proc.returncode}")
-                if log_path.is_file():
-                    parsed = _read_comfy_url_from_log(log_path)
-                    if parsed:
-                        try:
-                            from urllib.parse import urlparse
-
-                            hostport = urlparse(parsed).netloc
-                            if hostport and ":" in hostport:
-                                _host, _port = hostport.rsplit(":", 1)
-                                if _host in (self.config.host, self.config.listen, "127.0.0.1", "localhost"):
-                                    self.config.port = int(_port)
-                        except ValueError:
-                            pass
-                if _is_port_open(self.config.port, host=self.config.host):
+                # Probe this launch's actual API, never a previous URL in the append-only log.
+                if _is_comfy_http_server(self.config.port, host=self.config.host):
                     return
                 time.sleep(0.25)
-            raise TimeoutError(f"ComfyUI server did not open port {self.config.port} within {timeout_s}s")
+            self.stop(force=True)
+            raise TimeoutError(f"ComfyUI API did not become ready on port {self.config.port} within {timeout_s}s")
 
     def stop(self, timeout_s: float = 10.0, *, force: bool = False) -> None:
         if self._attached_external and not force:

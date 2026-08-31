@@ -42,7 +42,7 @@ def test_register_managed_comfy_shutdown_is_idempotent(monkeypatch):
     assert calls.count("register") == 1
 
 
-def test_find_foreign_comfy_pids_uses_http_probe_and_main_py(monkeypatch):
+def test_cleanup_targets_only_managed_checkout_not_other_comfy_listeners(monkeypatch):
     import dreamforge_comfy_server as mod
 
     monkeypatch.setattr(mod, "_pids_running_comfy_main", lambda _root=None: [111])
@@ -52,7 +52,7 @@ def test_find_foreign_comfy_pids_uses_http_probe_and_main_py(monkeypatch):
     monkeypatch.setattr(mod, "_comfy_pidfile_path", lambda: Path("/nonexistent/pid"))
 
     pids = mod._find_foreign_comfy_pids(exclude_pids={os.getpid()})
-    assert pids == [111, 222]
+    assert pids == [111]
 
 
 def test_cleanup_all_foreign_comfy_servers_kills_and_clears_pidfile(tmp_path, monkeypatch):
@@ -61,7 +61,7 @@ def test_cleanup_all_foreign_comfy_servers_kills_and_clears_pidfile(tmp_path, mo
     pidfile = tmp_path / "comfy.server.pid"
     monkeypatch.setattr(mod, "_COMFY_PIDFILE", pidfile)
     monkeypatch.setattr(mod, "_find_foreign_comfy_pids", lambda **kwargs: [4242])
-    monkeypatch.setattr(mod, "_process_alive", lambda pid: pid == 4242)
+    monkeypatch.setattr(mod, "_process_alive", lambda pid: pid == 4242 and not terminated)
     terminated: list[int] = []
     monkeypatch.setattr(mod, "_terminate_process_tree", lambda pid, force=True: terminated.append(pid))
     monkeypatch.setattr(mod, "_wait_for_ports_closed", lambda *_args, **_kwargs: None)
@@ -211,3 +211,34 @@ def test_managed_comfy_attaches_via_pidfile_when_main_py_scan_misses(monkeypatch
     assert attached is True
     assert server.pid == 5151
     assert "8188" in message
+
+
+def test_start_ignores_old_log_port_and_waits_for_current_api(tmp_path, monkeypatch):
+    import io
+    import dreamforge_comfy_server as mod
+
+    (tmp_path / "main.py").write_text("", encoding="utf-8")
+    log = tmp_path / "comfy.log"
+    log.write_text("To see the GUI go to: http://127.0.0.1:8188\n", encoding="utf-8")
+    monkeypatch.setattr(mod, "COMFY_ROOT", tmp_path)
+    monkeypatch.setattr(mod, "_COMFY_PIDFILE", tmp_path / "comfy.pid")
+    monkeypatch.setattr(mod, "write_dreamforge_extra_model_paths_config", lambda root: tmp_path / "models.yaml")
+    monkeypatch.setattr(mod, "cleanup_all_foreign_comfy_servers", lambda **kwargs: [])
+    monkeypatch.setattr(mod, "register_managed_comfy_shutdown", lambda: None)
+    monkeypatch.setattr(mod, "_is_port_open", lambda *args, **kwargs: False)
+    monkeypatch.setattr(mod.time, "sleep", lambda seconds: None)
+    class Process:
+        pid = 4242
+        stdout = io.BytesIO(b"")
+        def poll(self): return None
+    monkeypatch.setattr(mod.subprocess, "Popen", lambda **kwargs: Process())
+    server = mod.ManagedComfyServer(mod.ComfyServerConfig(port=8189, log_path=log))
+    monkeypatch.setattr(server, "_try_attach_existing_comfy", lambda: (False, ""))
+    probes = []
+    def ready(port, **kwargs):
+        probes.append(port)
+        return len(probes) == 2
+    monkeypatch.setattr(mod, "_is_comfy_http_server", ready)
+    server.start(timeout_s=1)
+    assert probes == [8189, 8189]
+    assert server.base_url == "http://127.0.0.1:8189"

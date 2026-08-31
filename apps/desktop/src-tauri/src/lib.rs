@@ -39,7 +39,7 @@ const WORKER_BOOT_POLL_MS: u64 = 500;
 const WORKER_SHUTDOWN_TIMEOUT_MS: u64 = 15_000;
 const WORKER_SHUTDOWN_DURING_GEN_MS: u64 = 120_000;
 const WORKER_SHUTDOWN_POLL_MS: u64 = 100;
-const COMFY_HEALTH_URL: &str = "http://127.0.0.1:8188/queue";
+const COMFY_DEFAULT_URL: &str = "http://127.0.0.1:8188";
 const COMFY_HEALTH_TIMEOUT_MS: u64 = 1_200;
 /// Wait for ComfyUI HTTP after worker "ready" before treating startup as failed.
 const COMFY_BOOT_WAIT_MS: u64 = 120_000;
@@ -598,18 +598,16 @@ fn spawn_worker_exit_watcher(
             .and_then(|mut c| c.try_wait().ok().flatten())
             .is_some();
         if exited {
+            let Ok(_lifecycle) = state.worker_lifecycle.lock() else {
+                break;
+            };
+            if !is_current_worker(&state, &child) {
+                break;
+            }
             drain_worker_events_file(&app, &state, &events_path);
             let was_ready = state.worker_ready.lock().map(|r| *r).unwrap_or(false);
-            clear_dead_worker(&state);
-            let intentional_stop = state.worker_stopping.load(Ordering::SeqCst)
-                || state
-                    .engine_health
-                    .lock()
-                    .map(|h| {
-                        let h = h.as_str();
-                        h == "restarting" || h == "booting"
-                    })
-                    .unwrap_or(false);
+            clear_dead_worker(&state, &child);
+            let intentional_stop = state.worker_stopping.load(Ordering::SeqCst);
 
             if !was_ready {
                 if !intentional_stop {
@@ -699,6 +697,7 @@ struct AppState {
     /// Serializes bridge sidecar startup (prevents duplicate spawns during boot).
     bridge_start: Mutex<()>,
     worker_ready: Arc<Mutex<bool>>,
+    comfy_url: Mutex<String>,
     /// Bytes already consumed from worker.events (primary IPC on Windows).
     worker_events_offset: Arc<Mutex<u64>>,
     last_boot_message: Arc<Mutex<String>>,
@@ -738,6 +737,45 @@ fn profile_tier_for(profile: &str) -> &'static str {
         "12gb" => "12gb",
         "mps_8gb" | "mps" | "8gb" => "8gb",
         _ => "5gb",
+    }
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        AppState {
+            watcher: Mutex::new(None),
+            preview_watcher: Mutex::new(None),
+            generation: Arc::new(Mutex::new(None)),
+            worker: Mutex::new(None),
+            sidecar: Mutex::new(None),
+            bridge_start: Mutex::new(()),
+            worker_ready: Arc::new(Mutex::new(false)),
+            comfy_url: Mutex::new(COMFY_DEFAULT_URL.to_string()),
+            worker_events_offset: Arc::new(Mutex::new(0)),
+            last_boot_message: Arc::new(Mutex::new(String::from("Starting GPU engine…"))),
+            last_boot_phase: Arc::new(Mutex::new(String::from("starting"))),
+            worker_boot_started: Arc::new(Mutex::new(None)),
+            engine_health: Arc::new(Mutex::new(String::from("booting"))),
+            worker_auto_restarts: Arc::new(Mutex::new(0)),
+            gpu_name: Arc::new(Mutex::new(None)),
+            vram_gb: Arc::new(Mutex::new(None)),
+            cuda_available: Arc::new(Mutex::new(None)),
+            mps_available: Arc::new(Mutex::new(None)),
+            hardware_class: Arc::new(Mutex::new(None)),
+            compute_backend: Arc::new(Mutex::new(None)),
+            support_level: Arc::new(Mutex::new(None)),
+            gpu_architecture: Arc::new(Mutex::new(None)),
+            detection_confidence: Arc::new(Mutex::new(None)),
+            detection_warnings: Arc::new(Mutex::new(Vec::new())),
+            fallback_reason: Arc::new(Mutex::new(None)),
+            launch_args: Arc::new(Mutex::new(None)),
+            optimization_env: Arc::new(Mutex::new(None)),
+            last_generation_progress: Arc::new(Mutex::new(None)),
+            desktop_vram_profile: Arc::new(Mutex::new(String::from("auto"))),
+            resolved_vram_profile: Arc::new(Mutex::new(None)),
+            worker_lifecycle: Mutex::new(()),
+            worker_stopping: Arc::new(AtomicBool::new(false)),
+        }
     }
 }
 
@@ -1358,22 +1396,33 @@ fn set_engine_health(app: &AppHandle, state: &AppState, health: &str) {
     }
 }
 
-async fn comfy_http_ready(timeout: Duration) -> bool {
-    let client = match reqwest::Client::builder().timeout(timeout).build() {
+async fn comfy_http_ready(state: &AppState, timeout: Duration) -> bool {
+    let client = match reqwest::Client::builder()
+        .no_proxy()
+        .timeout(timeout)
+        .build()
+    {
         Ok(client) => client,
         Err(_) => return false,
     };
     client
-        .get(COMFY_HEALTH_URL)
+        .get(format!(
+            "{}/queue",
+            state
+                .comfy_url
+                .lock()
+                .map(|url| url.clone())
+                .unwrap_or_else(|_| COMFY_DEFAULT_URL.to_string())
+        ))
         .send()
         .await
         .map(|response| response.status().is_success())
         .unwrap_or(false)
 }
 
-async fn comfy_http_ready_with_retries(timeout: Duration, attempts: u32) -> bool {
+async fn comfy_http_ready_with_retries(state: &AppState, timeout: Duration, attempts: u32) -> bool {
     for attempt in 0..attempts {
-        if comfy_http_ready(timeout).await {
+        if comfy_http_ready(state, timeout).await {
             return true;
         }
         if attempt + 1 < attempts {
@@ -1427,11 +1476,11 @@ fn engine_still_booting(state: &Arc<AppState>) -> bool {
         .unwrap_or(false)
 }
 
-async fn wait_for_comfy_http_ready(max_wait: Duration) -> bool {
+async fn wait_for_comfy_http_ready(state: &AppState, max_wait: Duration) -> bool {
     let poll_ms = COMFY_BOOT_POLL_MS.max(100);
     let polls = (max_wait.as_millis() / poll_ms as u128).max(1) as u32;
     for attempt in 0..polls {
-        if comfy_http_ready(Duration::from_millis(COMFY_HEALTH_TIMEOUT_MS)).await {
+        if comfy_http_ready(state, Duration::from_millis(COMFY_HEALTH_TIMEOUT_MS)).await {
             return true;
         }
         if attempt + 1 < polls {
@@ -1481,7 +1530,7 @@ async fn recover_comfy_subprocess(
         }),
     );
     recover_comfy_via_worker(state, reason)?;
-    if wait_for_comfy_http_ready(Duration::from_millis(COMFY_BOOT_WAIT_MS)).await {
+    if wait_for_comfy_http_ready(state, Duration::from_millis(COMFY_BOOT_WAIT_MS)).await {
         if let Ok(mut ready) = state.worker_ready.lock() {
             *ready = true;
         }
@@ -1504,7 +1553,7 @@ async fn require_comfy_server_ready(state: &Arc<AppState>) -> Result<(), String>
                 .into(),
         );
     }
-    if comfy_http_ready(Duration::from_millis(COMFY_HEALTH_TIMEOUT_MS)).await {
+    if comfy_http_ready(state, Duration::from_millis(COMFY_HEALTH_TIMEOUT_MS)).await {
         return Ok(());
     }
     if engine_still_booting(state) {
@@ -1684,6 +1733,11 @@ fn handle_worker_event(app: &AppHandle, state: &AppState, value: &Value, emit_bo
             }
         }
         "ready" => {
+            if let Some(url) = value.get("comfy_url").and_then(|v| v.as_str()) {
+                if let Ok(mut current) = state.comfy_url.lock() {
+                    *current = url.trim_end_matches('/').to_string();
+                }
+            }
             if let Ok(mut ready) = worker_ready.lock() {
                 *ready = true;
             }
@@ -2186,13 +2240,35 @@ fn gpu_worker_alive(worker: &GpuWorker) -> bool {
         .is_none()
 }
 
-fn clear_dead_worker(state: &AppState) {
+fn is_current_worker(state: &AppState, child: &Arc<Mutex<Child>>) -> bool {
+    state
+        .worker
+        .lock()
+        .map(|worker| {
+            worker
+                .as_ref()
+                .map(|worker| Arc::ptr_eq(&worker._child, child))
+                .unwrap_or(false)
+        })
+        .unwrap_or(false)
+}
+
+fn clear_dead_worker(state: &AppState, child: &Arc<Mutex<Child>>) -> bool {
+    let Ok(mut worker) = state.worker.lock() else {
+        return false;
+    };
+    if !worker
+        .as_ref()
+        .map(|worker| Arc::ptr_eq(&worker._child, child))
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    *worker = None;
     if let Ok(mut ready) = state.worker_ready.lock() {
         *ready = false;
     }
-    if let Ok(mut guard) = state.worker.lock() {
-        *guard = None;
-    }
+    true
 }
 
 fn clear_generation_if_current(state: &AppState, job_id: &str) {
@@ -2222,8 +2298,12 @@ fn drain_worker_events_file(app: &AppHandle, state: &AppState, events_path: &Pat
         return already_ready;
     };
 
+    let end = content.rfind('\n').map(|index| index + 1).unwrap_or(0);
+    if *offset > end as u64 {
+        *offset = 0;
+    }
     let start = *offset as usize;
-    let new_part = &content[start..];
+    let new_part = &content[start..end];
     let mut saw_ready = already_ready;
     for line in new_part.lines() {
         let line = line.trim();
@@ -2239,7 +2319,7 @@ fn drain_worker_events_file(app: &AppHandle, state: &AppState, events_path: &Pat
             handle_worker_event(app, state, &value, true);
         }
     }
-    *offset = content.len() as u64;
+    *offset = end as u64;
     drop(offset);
 
     if !saw_ready && !state.worker_ready.lock().map(|r| *r).unwrap_or(false) {
@@ -2308,6 +2388,12 @@ fn spawn_worker_events_poller(
     events_path: PathBuf,
 ) {
     std::thread::spawn(move || loop {
+        let Ok(lifecycle) = state.worker_lifecycle.lock() else {
+            break;
+        };
+        if !is_current_worker(&state, &child) {
+            break;
+        }
         drain_worker_events_file(&app, &state, &events_path);
         let exited = child
             .lock()
@@ -2343,6 +2429,7 @@ fn spawn_worker_events_poller(
         } else {
             500
         };
+        drop(lifecycle);
         std::thread::sleep(Duration::from_millis(sleep_ms));
     });
 }
@@ -2352,11 +2439,14 @@ fn spawn_boot_timeout_watcher(
     state: Arc<AppState>,
     child: Arc<Mutex<Child>>,
     worker_log: PathBuf,
-    events_path: PathBuf,
+    _events_path: PathBuf,
 ) {
     std::thread::spawn(move || {
         let polls = WORKER_BOOT_TIMEOUT_MS / WORKER_BOOT_POLL_MS;
         for _ in 0..polls {
+            if !is_current_worker(&state, &child) {
+                return;
+            }
             // spawn_worker_events_poller drains worker.events — avoid duplicate IO here.
             if state.worker_ready.lock().map(|r| *r).unwrap_or(false) {
                 return;
@@ -2367,12 +2457,17 @@ fn spawn_boot_timeout_watcher(
                 .and_then(|mut c| c.try_wait().ok().flatten())
                 .is_some();
             if exited {
-                drain_worker_events_file(&app, &state, &events_path);
                 return;
             }
             std::thread::sleep(Duration::from_millis(WORKER_BOOT_POLL_MS));
         }
         if state.worker_ready.lock().map(|r| *r).unwrap_or(false) {
+            return;
+        }
+        let Ok(_lifecycle) = state.worker_lifecycle.lock() else {
+            return;
+        };
+        if !is_current_worker(&state, &child) {
             return;
         }
         let tail = tail_log_file(&worker_log, LOG_TAIL_CHARS);
@@ -2433,6 +2528,11 @@ fn generation_in_progress(state: &AppState) -> bool {
 }
 
 fn stop_gpu_worker(state: &AppState) -> Result<(), String> {
+    let _lifecycle = state.worker_lifecycle.lock().map_err(|e| e.to_string())?;
+    stop_gpu_worker_inner(state)
+}
+
+fn stop_gpu_worker_inner(state: &AppState) -> Result<(), String> {
     state.worker_stopping.store(true, Ordering::SeqCst);
 
     reset_worker_runtime_state(state);
@@ -2519,11 +2619,11 @@ async fn ensure_gpu_backend_ready(
     let worker_ready = state.worker_ready.lock().map(|r| *r).unwrap_or(false);
 
     if worker_alive && worker_ready {
-        if comfy_http_ready(Duration::from_millis(COMFY_HEALTH_TIMEOUT_MS)).await {
+        if comfy_http_ready(state, Duration::from_millis(COMFY_HEALTH_TIMEOUT_MS)).await {
             return Ok(());
         }
         if engine_still_booting(state)
-            && wait_for_comfy_http_ready(Duration::from_millis(COMFY_BOOT_WAIT_MS)).await
+            && wait_for_comfy_http_ready(state, Duration::from_millis(COMFY_BOOT_WAIT_MS)).await
         {
             return Ok(());
         }
@@ -2555,11 +2655,11 @@ async fn ensure_gpu_backend_ready(
         wait_for_worker_ready(app, state).await?;
     }
 
-    if wait_for_comfy_http_ready(Duration::from_millis(COMFY_BOOT_WAIT_MS)).await {
+    if wait_for_comfy_http_ready(state, Duration::from_millis(COMFY_BOOT_WAIT_MS)).await {
         return Ok(());
     }
 
-    if comfy_http_ready(Duration::from_millis(COMFY_HEALTH_TIMEOUT_MS * 2)).await {
+    if comfy_http_ready(state, Duration::from_millis(COMFY_HEALTH_TIMEOUT_MS * 2)).await {
         return Ok(());
     }
 
@@ -2597,7 +2697,7 @@ fn start_gpu_worker_inner(
         }
     }
     // Stale handle (process exited) — shut down cleanly before respawn.
-    stop_gpu_worker(state)?;
+    stop_gpu_worker_inner(state)?;
 
     let _ = app.emit("worker-status", json!({ "status": "booting" }));
     let mut guard = state.worker.lock().map_err(|e| e.to_string())?;
@@ -3416,11 +3516,17 @@ async fn invoke_generation(
         Err(err) => Some(err),
     };
     drop(stdin);
+    let dispatched_child = Arc::clone(&worker._child);
     drop(worker_guard);
     if let Some(err) = dispatch_error {
         stop_live_preview_watch(state.inner());
         clear_generation_if_current(state.inner(), &job_id);
-        clear_dead_worker(state.inner());
+        let _lifecycle = state.worker_lifecycle.lock().map_err(|e| e.to_string())?;
+        if !clear_dead_worker(state.inner(), &dispatched_child) {
+            return Err(format!(
+                "worker_pipe_closed: previous worker was replaced: {err}"
+            ));
+        }
         set_engine_health(&app, state.inner(), "dead");
         let message = format!(
             "GPU worker pipe closed before the job could start: {err}. Restart the GPU engine and retry."
@@ -3517,10 +3623,16 @@ async fn invoke_hardware_benchmark(
         Err(err) => Some(err),
     };
     drop(stdin);
+    let dispatched_child = Arc::clone(&worker._child);
     drop(worker_guard);
     if let Some(err) = dispatch_error {
         clear_generation_if_current(state.inner(), &job_id);
-        clear_dead_worker(state.inner());
+        let _lifecycle = state.worker_lifecycle.lock().map_err(|e| e.to_string())?;
+        if !clear_dead_worker(state.inner(), &dispatched_child) {
+            return Err(format!(
+                "worker_pipe_closed: previous worker was replaced: {err}"
+            ));
+        }
         set_engine_health(&app, state.inner(), "dead");
         return Err(format!("worker_pipe_closed: {err}"));
     }
@@ -3603,11 +3715,17 @@ async fn invoke_automation(
         Err(err) => Some(err),
     };
     drop(stdin);
+    let dispatched_child = Arc::clone(&worker._child);
     drop(worker_guard);
     if let Some(err) = dispatch_error {
         stop_live_preview_watch(state.inner());
         clear_generation_if_current(state.inner(), &job_id);
-        clear_dead_worker(state.inner());
+        let _lifecycle = state.worker_lifecycle.lock().map_err(|e| e.to_string())?;
+        if !clear_dead_worker(state.inner(), &dispatched_child) {
+            return Err(format!(
+                "worker_pipe_closed: previous worker was replaced: {err}"
+            ));
+        }
         set_engine_health(&app, state.inner(), "dead");
         let message = format!(
             "GPU worker pipe closed before the automation could start: {err}. Restart the GPU engine and retry."
@@ -3929,10 +4047,14 @@ async fn download_model(
 /// This command only reads that already-mutated state from mutexes.
 #[tauri::command]
 async fn get_engine_status(state: State<'_, Arc<AppState>>) -> Result<Value, String> {
+    engine_status_snapshot(state.inner()).await
+}
+
+async fn engine_status_snapshot(state: &Arc<AppState>) -> Result<Value, String> {
     let root = agent_root();
     let events_path = worker_events_path(&root);
 
-    let worker_alive = worker_child_alive(state.inner());
+    let worker_alive = worker_child_alive(state);
     let worker_registered = state.worker.lock().map(|g| g.is_some()).unwrap_or(false);
     let ready = state.worker_ready.lock().map(|g| *g).unwrap_or(false);
 
@@ -3944,6 +4066,7 @@ async fn get_engine_status(state: State<'_, Arc<AppState>>) -> Result<Value, Str
         .lock()
         .map(|p| is_asset_prep_boot_phase(p.as_str()))
         .unwrap_or(false);
+    let generation_running = generation_in_progress(state);
     if ui_ready {
         let probe_timeout = if asset_prep_in_progress {
             Duration::from_millis(COMFY_HEALTH_TIMEOUT_MS)
@@ -3951,24 +4074,15 @@ async fn get_engine_status(state: State<'_, Arc<AppState>>) -> Result<Value, Str
             Duration::from_millis(450)
         };
         let probe_attempts = if asset_prep_in_progress { 1 } else { 3 };
-        comfy_ready = comfy_http_ready_with_retries(probe_timeout, probe_attempts).await;
+        // Active jobs report failures via the worker/WebSocket. Model loading can
+        // temporarily block Comfy's HTTP loop; do not interrupt it with a false crash.
+        comfy_ready = generation_running
+            || comfy_http_ready_with_retries(state, probe_timeout, probe_attempts).await;
         // During asset prep the bridge may intentionally restart ComfyUI; a transient
         // HTTP miss must not flip the worker into a false-dead state.
         if !comfy_ready && !asset_prep_in_progress {
             stale_comfy_ready = true;
             ui_ready = false;
-            if let Ok(mut ready_guard) = state.worker_ready.lock() {
-                *ready_guard = false;
-            }
-            if let Ok(mut health_guard) = state.engine_health.lock() {
-                *health_guard = "dead".to_string();
-            }
-            if let Ok(mut phase) = state.last_boot_phase.lock() {
-                *phase = "failed".to_string();
-            }
-            if let Ok(mut last) = state.last_boot_message.lock() {
-                *last = "Managed ComfyUI stopped responding — click Restart GPU engine".to_string();
-            }
         }
     }
 
@@ -3997,7 +4111,8 @@ async fn get_engine_status(state: State<'_, Arc<AppState>>) -> Result<Value, Str
             .map(|m| m.clone())
             .unwrap_or_default()
     } else if stale_comfy_ready {
-        "Managed ComfyUI stopped responding — click Restart GPU engine".to_string()
+        "Waiting for managed ComfyUI to respond — restart GPU engine if it stays unavailable"
+            .to_string()
     } else if !worker_alive && worker_registered {
         "GPU worker stopped — click Restart GPU engine".to_string()
     } else {
@@ -4072,6 +4187,7 @@ async fn get_engine_status(state: State<'_, Arc<AppState>>) -> Result<Value, Str
         "ready": ui_ready,
         "events_ready": ready,
         "comfy_ready": comfy_ready,
+        "comfy_url": state.comfy_url.lock().map(|url| url.clone()).unwrap_or_default(),
         "worker_running": worker_registered,
         "worker_alive": worker_alive,
         "health": health,
@@ -4167,7 +4283,7 @@ async fn restart_gpu_worker(
             .lock()
             .map_err(|e| e.to_string())?;
         set_engine_health(&app, state.inner(), "restarting");
-        stop_gpu_worker(state.inner())?;
+        stop_gpu_worker_inner(state.inner())?;
         let _ = app.emit("worker-status", json!({ "status": "booting" }));
         start_gpu_worker_inner(app.clone(), &root, state.inner())?;
     }
@@ -4196,39 +4312,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        .manage(Arc::new(AppState {
-            watcher: Mutex::new(None),
-            preview_watcher: Mutex::new(None),
-            generation: Arc::new(Mutex::new(None)),
-            worker: Mutex::new(None),
-            sidecar: Mutex::new(None),
-            bridge_start: Mutex::new(()),
-            worker_ready: Arc::new(Mutex::new(false)),
-            worker_events_offset: Arc::new(Mutex::new(0)),
-            last_boot_message: Arc::new(Mutex::new(String::from("Starting GPU engine…"))),
-            last_boot_phase: Arc::new(Mutex::new(String::from("starting"))),
-            worker_boot_started: Arc::new(Mutex::new(None)),
-            engine_health: Arc::new(Mutex::new(String::from("booting"))),
-            worker_auto_restarts: Arc::new(Mutex::new(0)),
-            gpu_name: Arc::new(Mutex::new(None)),
-            vram_gb: Arc::new(Mutex::new(None)),
-            cuda_available: Arc::new(Mutex::new(None)),
-            mps_available: Arc::new(Mutex::new(None)),
-            hardware_class: Arc::new(Mutex::new(None)),
-            compute_backend: Arc::new(Mutex::new(None)),
-            support_level: Arc::new(Mutex::new(None)),
-            gpu_architecture: Arc::new(Mutex::new(None)),
-            detection_confidence: Arc::new(Mutex::new(None)),
-            detection_warnings: Arc::new(Mutex::new(Vec::new())),
-            fallback_reason: Arc::new(Mutex::new(None)),
-            launch_args: Arc::new(Mutex::new(None)),
-            optimization_env: Arc::new(Mutex::new(None)),
-            last_generation_progress: Arc::new(Mutex::new(None)),
-            desktop_vram_profile: Arc::new(Mutex::new(String::from("auto"))),
-            resolved_vram_profile: Arc::new(Mutex::new(None)),
-            worker_lifecycle: Mutex::new(()),
-            worker_stopping: Arc::new(AtomicBool::new(false)),
-        }))
+        .manage(Arc::new(AppState::default()))
         .invoke_handler(tauri::generate_handler![
             get_paths,
             get_inventory,
@@ -4336,4 +4420,112 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod worker_lifecycle_tests {
+    use super::*;
+    use std::net::TcpListener;
+
+    fn waiting_worker() -> GpuWorker {
+        #[cfg(windows)]
+        let mut command = {
+            let mut c = Command::new("cmd");
+            c.args(["/C", "more"]);
+            c.creation_flags(CREATE_NO_WINDOW);
+            c
+        };
+        #[cfg(not(windows))]
+        let mut command = Command::new("cat");
+        let mut child = command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        GpuWorker {
+            _child: Arc::new(Mutex::new(child)),
+            stdin: Mutex::new(stdin),
+        }
+    }
+
+    #[test]
+    fn delayed_old_worker_exit_cannot_close_replacement_pipe() {
+        let state = AppState::default();
+        let old = waiting_worker();
+        let old_child = Arc::clone(&old._child);
+        old_child.lock().unwrap().kill().unwrap();
+        old_child.lock().unwrap().wait().unwrap();
+        drop(old);
+        let new = waiting_worker();
+        let new_child = Arc::clone(&new._child);
+        *state.worker.lock().unwrap() = Some(new);
+        *state.worker_ready.lock().unwrap() = true;
+        // Reproduce the delayed exit callback after restart replaced the worker.
+        assert!(!clear_dead_worker(&state, &old_child));
+        assert!(*state.worker_ready.lock().unwrap());
+        assert!(is_current_worker(&state, &new_child));
+        {
+            let worker = state.worker.lock().unwrap();
+            writeln!(
+                worker.as_ref().unwrap().stdin.lock().unwrap(),
+                "still connected"
+            )
+            .unwrap();
+        }
+        new_child.lock().unwrap().kill().unwrap();
+        new_child.lock().unwrap().wait().unwrap();
+        assert!(clear_dead_worker(&state, &new_child));
+        assert!(!*state.worker_ready.lock().unwrap());
+        assert!(state.worker.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn transient_http_failure_recovers_without_restart_and_busy_jobs_stay_ready() {
+        let state = Arc::new(AppState::default());
+        let worker = waiting_worker();
+        let child = Arc::clone(&worker._child);
+        *state.worker.lock().unwrap() = Some(worker);
+        *state.worker_ready.lock().unwrap() = true;
+        *state.engine_health.lock().unwrap() = "alive".into();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        *state.comfy_url.lock().unwrap() = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            // First status request fails its three probes; the next one recovers.
+            for attempt in 0..4 {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut request = [0u8; 2048];
+                socket.read(&mut request).unwrap();
+                let status = if attempt < 3 {
+                    "503 Service Unavailable"
+                } else {
+                    "200 OK"
+                };
+                write!(
+                    socket,
+                    "HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                )
+                .unwrap();
+            }
+        });
+        let unavailable = engine_status_snapshot(&state).await.unwrap();
+        assert_eq!(unavailable["comfy_ready"], false);
+        assert!(*state.worker_ready.lock().unwrap());
+        assert_eq!(*state.engine_health.lock().unwrap(), "alive");
+        let recovered = engine_status_snapshot(&state).await.unwrap();
+        assert_eq!(recovered["comfy_ready"], true);
+        assert_eq!(recovered["ready"], true);
+        server.join().unwrap();
+        *state.generation.lock().unwrap() = Some(ActiveGeneration {
+            job_id: "loading-model".into(),
+            log_path: PathBuf::new(),
+        });
+        assert_eq!(engine_status_snapshot(&state).await.unwrap()["ready"], true);
+        child.lock().unwrap().kill().unwrap();
+        child.lock().unwrap().wait().unwrap();
+        clear_dead_worker(&state, &child);
+    }
 }

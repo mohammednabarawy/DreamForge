@@ -250,6 +250,8 @@ def serve() -> None:
                         steps=params.get("steps", 4),
                         width=params.get("width", 512),
                         height=params.get("height", 512),
+                        compare_attention=bool(params.get("compare_attention")),
+                        input_image=params.get("input_image"),
                     )
                     success = bool(
                         result.get("generation_executed")

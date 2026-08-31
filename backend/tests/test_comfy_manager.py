@@ -206,6 +206,8 @@ def test_make_progress_sink_writes_jsonl(tmp_path):
 
 def test_run_cm_cli_streams_lines(monkeypatch):
     from dreamforge_comfy_manager import _run_cm_cli
+    from contextlib import nullcontext
+    monkeypatch.setattr("dreamforge_embedded_python.protected_gpu_install", lambda python: nullcontext({}))
 
     class FakeStdout:
         def __init__(self):

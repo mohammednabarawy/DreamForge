@@ -723,6 +723,7 @@ export type StudioResourceItem = {
 export async function checkStudioResources(
   studioMode: string,
   upscaleMethod?: string,
+  model?: string,
 ) {
   return bridgeInvoke<{
     missing: StudioResourceItem[];
@@ -731,6 +732,7 @@ export async function checkStudioResources(
   }>("check_studio_resources", {
     studio_mode: studioMode,
     upscale_method: upscaleMethod ?? null,
+    model: model ?? null,
   });
 }
 
@@ -770,6 +772,7 @@ export async function relocateDownloadedModel(args: {
 export async function downloadStudioResources(
   studioMode: string,
   upscaleMethod?: string,
+  model?: string,
 ) {
   return bridgeInvoke<{
     status?: string;
@@ -778,6 +781,7 @@ export async function downloadStudioResources(
   }>("download_studio_resources", {
     studio_mode: studioMode,
     upscale_method: upscaleMethod ?? null,
+    model: model ?? null,
   });
 }
 

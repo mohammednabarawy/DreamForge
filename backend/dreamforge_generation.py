@@ -54,10 +54,10 @@ def _generation_hardware_snapshot() -> dict:
         return {"error": str(exc)}
 
 
-# Encourage CUDA's caching allocator to release fragmented blocks back to the
-# driver: this is the single biggest knob for OOM resilience on Windows and is
-# the Fooocus/Forge recommendation.  Users can still override via env.
-os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+# Windows Torch builds do not support expandable segments. Leave the allocator
+# default there; explicit user configuration stays authoritative on every OS.
+if sys.platform != "win32":
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 from dreamforge_errors import (
     disk_full,
@@ -1501,6 +1501,7 @@ def _run_comfy_workflow_with_retry(
     stream_sink,
     on_event,
     model_family: str | None = None,
+    allow_attention_retry: bool = True,
 ):
     from dreamforge_comfy_client import ComfyExecutionError, ComfyHungError, is_comfy_oom_error
 
@@ -1536,7 +1537,7 @@ def _run_comfy_workflow_with_retry(
                 "comfy_kitchen/sage_attention.py", "int8 attention requires",
                 "comfy kitchen attention is unavailable",
             ))
-            if attempt == 0 and kitchen_error and not is_comfy_oom_error(exc):
+            if attempt == 0 and allow_attention_retry and kitchen_error and not is_comfy_oom_error(exc):
                 from dreamforge_comfy_launch import comfy_launch_extra_args
                 from dreamforge_comfy_server import get_default_comfy_server, restart_managed_comfy_server
 
@@ -1546,6 +1547,9 @@ def _run_comfy_workflow_with_retry(
                         "type": "progress", "job_id": job_id, "phase": "sampling", "progress": 0,
                         "message": "Kitchen attention could not run this workflow. Retrying with PyTorch attention; generation settings are unchanged.",
                     })
+                    for graph_node in prompt_graph.values():
+                        if graph_node.get("class_type") == "ModelAttentionBackend":
+                            graph_node["inputs"]["attention"] = "pytorch attention"
                     os.environ["DREAMFORGE_COMFY_ATTENTION"] = "pytorch"
                     server = restart_managed_comfy_server(
                         timeout_s=120.0, reason="kitchen_attention_fallback",
@@ -1554,7 +1558,11 @@ def _run_comfy_workflow_with_retry(
                     from dreamforge_comfy_client import ComfyClient
                     current_client = ComfyClient(server.base_url)
                     continue
-            if attempt == 0 and is_comfy_oom_error(exc):
+            dynamic_failure = "vbar allocation failed" in error_text or "vbar oom" in error_text
+            if attempt == 0 and allow_attention_retry and (is_comfy_oom_error(exc) or dynamic_failure):
+                from dreamforge_comfy_server import get_default_comfy_server
+                if get_default_comfy_server()._attached_external:
+                    raise  # Never restart a server this worker does not own.
                 emit_event(
                     stream_sink,
                     {
@@ -1562,17 +1570,21 @@ def _run_comfy_workflow_with_retry(
                         "job_id": job_id,
                         "phase": "sampling",
                         "progress": 0,
-                        "message": "GPU memory full — switching to a safer VRAM policy and restarting ComfyUI…",
+                        "message": ("Dynamic VRAM allocation failed — retrying with legacy VRAM handling; image settings are unchanged."
+                                    if dynamic_failure else "GPU memory full — switching to a safer VRAM policy and restarting ComfyUI…"),
                     },
                 )
                 from dreamforge_comfy_launch import comfy_launch_extra_args
                 from dreamforge_comfy_server import restart_managed_comfy_server
                 from dreamforge_vram_profiles import apply_desktop_vram_env, lower_vram_profile
 
-                safer_profile = lower_vram_profile(os.environ.get("DREAMFORGE_VRAM_PROFILE"))
-                os.environ["DREAMFORGE_VRAM_PROFILE"] = safer_profile
+                if dynamic_failure:
+                    os.environ["DREAMFORGE_DISABLE_DYNAMIC_VRAM"] = "1"
+                else:
+                    safer_profile = lower_vram_profile(os.environ.get("DREAMFORGE_VRAM_PROFILE"))
+                    os.environ["DREAMFORGE_VRAM_PROFILE"] = safer_profile
+                    apply_desktop_vram_env(safer_profile)
                 os.environ["DREAMFORGE_COMFY_FAST"] = "off"
-                apply_desktop_vram_env(safer_profile)
                 server = restart_managed_comfy_server(
                     timeout_s=120.0,
                     reason=f"oom_safe_retry:{model_family or 'unknown'}",
@@ -3034,17 +3046,21 @@ def run_generation(
                 object_info = {}
             from dreamforge_comfy_launch import apply_small_image_attention_policy
 
-            if apply_small_image_attention_policy(
+            if getattr(job, "_benchmark_attention", None) and getattr(server, "_attached_external", True):
+                raise RuntimeError("Attention optimization requires DreamForge's managed ComfyUI.")
+            applied_attention = apply_small_image_attention_policy(
                 prompt_graph, mode=comfy_mode, family=model_family,
                 width=int(settings["width"]), height=int(settings["height"]),
                 kitchen_enabled=not getattr(server, "_attached_external", True) and "--use-ck-attention" in server.config.extra_args,
-                object_info=object_info,
-            ):
+                object_info=object_info, model=model,
+                requested=getattr(job, "_benchmark_attention", None),
+            )
+            if applied_attention:
                 comfy_workflow_class_types = sorted({*comfy_workflow_class_types, "ModelAttentionBackend"})
-                settings["attention_backend"] = "pytorch"
+                settings["attention_backend"] = applied_attention
                 emit_event(stream_sink, {
                     "type": "progress", "job_id": job_id, "phase": "preflight", "progress": 5,
-                    "message": "Using PyTorch attention for this small SD image (automatic performance policy).",
+                    "message": f"Using {applied_attention} attention for this workflow (measured or safe performance policy).",
                 })
             missing_workflow_nodes = sorted(
                 node_type
@@ -3256,6 +3272,7 @@ def run_generation(
                 stream_sink=stream_sink,
                 on_event=_comfy_stream_event,
                 model_family=model_family,
+                **({"allow_attention_retry": False} if getattr(job, "_benchmark_attention", None) else {}),
             )
         else:
             client, _res, node = _run_comfy_workflow_with_retry(
@@ -3267,6 +3284,7 @@ def run_generation(
                 stream_sink=stream_sink,
                 on_event=None,
                 model_family=model_family,
+                **({"allow_attention_retry": False} if getattr(job, "_benchmark_attention", None) else {}),
             )
         outputs = node.get("outputs") or {}
         comfy_images: list[str] = []

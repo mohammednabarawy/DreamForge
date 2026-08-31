@@ -1302,14 +1302,15 @@ export function useDreamForge() {
     }).then((u) => unsubs.push(() => u()));
     void onWorkerFailed((p) => {
       setWorkerReady(false);
+      workerReadyRef.current = false;
       setEngineState("failed");
       const tail = p.log_tail ?? "";
       if (tail) setWorkerLogTail(tail);
       else void refreshWorkerLog();
-      const friendly = describeError(p);
+      const friendly = describeError({ ...p, code: p.code ?? "worker_boot_failed" });
       setLastError(friendly);
       setStatus(shortErrorLine(friendly));
-      setBootMessage(friendly.title);
+      setBootMessage(friendly.message);
     }).then((u) => unsubs.push(() => u()));
     void onOutputsChanged(() => debouncedRefreshWhileGenerating()).then((u) =>
       unsubs.push(() => u()),
@@ -1498,6 +1499,7 @@ export function useDreamForge() {
               ? ` — ${s.gpu_name}`
               : "";
       setStatus(`Engine ready — live GPU preview enabled${gpuHint}`);
+      setLastError((previous) => previous?.code === "worker_boot_failed" ? null : previous);
       setWorkerLogTail("");
       return;
     }
@@ -3241,6 +3243,7 @@ export function useDreamForge() {
     void checkStudioResources(
       mode,
       mode === "upscale" ? settings.upscale_method ?? undefined : undefined,
+      settingsRef.current.model || undefined,
     )
       .then((res) => {
         if (cancelled) return;
@@ -3258,6 +3261,7 @@ export function useDreamForge() {
   }, [
     appConfig?.ui.studio_mode,
     settings.upscale_method,
+    settings.model,
     companionDownloadPhase,
   ]);
 
@@ -3796,6 +3800,7 @@ export function useDreamForge() {
             mode === "upscale"
               ? settingsRef.current.upscale_method ?? undefined
               : undefined,
+            settingsRef.current.model || undefined,
           );
           studioMissing = (studioRes.missing ?? []) as ModelDependencyItem[];
           setStudioResources({
@@ -4117,6 +4122,7 @@ export function useDreamForge() {
           studioMode === "upscale"
             ? settingsRef.current.upscale_method ?? undefined
             : undefined,
+          settingsRef.current.model || undefined,
         );
         studioMissing = (studioRes.missing ?? []) as ModelDependencyItem[];
         setStudioResources({
@@ -4290,6 +4296,7 @@ export function useDreamForge() {
             studioMode === "upscale"
               ? settingsRef.current.upscale_method ?? undefined
               : undefined,
+            settingsRef.current.model || undefined,
           );
           setStudioResources({
             ready: studioRes.ready ?? (studioRes.missing?.length ?? 0) === 0,
@@ -4326,6 +4333,7 @@ export function useDreamForge() {
                 studioMode === "upscale"
                   ? settingsRef.current.upscale_method ?? undefined
                   : undefined,
+                settingsRef.current.model || undefined,
               );
               setStudioResources({
                 ready: studioRes.ready ?? (studioRes.missing?.length ?? 0) === 0,
@@ -4500,6 +4508,7 @@ export function useDreamForge() {
             mode === "upscale"
               ? settingsRef.current.upscale_method ?? undefined
               : undefined,
+            settingsRef.current.model || undefined,
           );
           setStudioResources({
             ready: studioRes.ready ?? (studioRes.missing?.length ?? 0) === 0,

@@ -345,8 +345,17 @@ function DreamForgeStudio() {
         detectionConfidence={mc.detectionConfidence}
         detectionWarnings={mc.detectionWarnings}
         fallbackReason={mc.fallbackReason}
-        onRunHardwareBenchmark={async () => {
-          await runHardwareBenchmark({ runs: 5, steps: 4 });
+        onRunHardwareBenchmark={async (compareAttention = false) => {
+          if (mc.generating) throw new Error("Wait for the current generation to finish.");
+          const aspect = mc.settings.aspect_ratio?.match(/^(\d+)\s*[x×]\s*(\d+)$/i);
+          const result = await runHardwareBenchmark({ runs: 5, steps: 4,
+            ...(compareAttention ? { compare_attention: true, model: mc.settings.model,
+              width: mc.settings.width ?? Number(aspect?.[1] ?? 512), height: mc.settings.height ?? Number(aspect?.[2] ?? 512),
+              input_image: mc.studioMode === "edit" ? mc.settings.input_image : undefined } : {}),
+          });
+          return result.selected_attention
+            ? `Measured ${String(result.selected_attention)} attention selected for this model and size. Manual backend choices remain unchanged.`
+            : "Benchmark complete. Results used the current safe hardware policy.";
         }}
         userStyleProfile={mc.userStyleProfile}
         userStyleProfilePath={mc.userStyleProfilePath}

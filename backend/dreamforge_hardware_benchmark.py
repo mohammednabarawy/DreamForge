@@ -8,6 +8,11 @@ bucket without pretending a fixture run is a real GPU benchmark. Use
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib.metadata
+import platform
+import tempfile
+from functools import lru_cache
 import json
 import math
 import statistics
@@ -124,12 +129,15 @@ def _sample_peak_memory(stop: threading.Event, peaks: dict[str, int]) -> None:
         stop.wait(0.1)
 
 
-def run_generation_benchmark(*, model: str | None = None, runs: int = 5, steps: int = 4, width: int = 512, height: int = 512) -> dict:
+def run_generation_benchmark(*, model: str | None = None, runs: int = 5, steps: int = 4, width: int = 512, height: int = 512, compare_attention: bool = False, attention_backend: str | None = None, input_image: str | None = None) -> dict:
     """Run one warm-up plus measured generations on the detected host."""
     from dreamforge_generation import run_generation
     from dreamforge_comfy_launch import comfy_launch_extra_args
     from dreamforge_gpu_detect import detect_gpu
 
+    if compare_attention:
+        return run_attention_benchmark(model=model, runs=runs, steps=steps, width=width,
+                                       height=height, input_image=input_image)
     model_name = _benchmark_model(model)
     if not model_name:
         return {"generation_executed": False, "error": "no_installed_generation_model"}
@@ -139,12 +147,17 @@ def run_generation_benchmark(*, model: str | None = None, runs: int = 5, steps: 
         width=width, height=height, aspect_ratio=f"{width}x{height}", steps=steps,
         cfg_scale=5.0, sampler="euler", scheduler="normal", seed=424242,
         vram_profile="auto", performance="Custom...", style="none", styles=[],
-        batch_size=1, output_dir=None, output=None, edit_type="txt2img",
+        prompt_enhancer="none", use_comfy_server=True, user_picked_model=True,
+        batch_size=1, output_dir=None, output=None, edit_type="auto" if input_image else "txt2img",
+        input_image=input_image, workflow_mode="edit" if input_image else "generate",
+        studio_mode="edit" if input_image else "generate", _benchmark_attention=attention_backend,
     )
     samples: list[dict] = []
     peaks = {"vram_mb": 0, "ram_mb": 0}
 
     def run_once(label: str) -> dict:
+        # Distinct seeds force actual sampling; both backends use the same sequence.
+        args.seed = 424242 + (int(label) if label.isdigit() else 0)
         telemetry: list[dict] = []
         stop_sampling = threading.Event()
         sampler = threading.Thread(
@@ -155,7 +168,7 @@ def run_generation_benchmark(*, model: str | None = None, runs: int = 5, steps: 
         started = time.perf_counter()
         sampler.start()
         try:
-            result = run_generation(args, {"model": model_name, "prompt": args.prompt, "width": width, "height": height, "steps": steps, "seed": args.seed}, stream_sink=telemetry.append, job_id=f"hardware-benchmark-{label}")
+            result = run_generation(args, {"model": model_name, "prompt": args.prompt, "width": width, "height": height, "steps": steps, "seed": args.seed}, stream_sink=telemetry.append, job_id=f"hardware-benchmark-{attention_backend or 'auto'}-{time.time_ns()}-{label}")
         except Exception as exc:
             result = {"status": "error", "error": str(exc)}
         finally:
@@ -174,7 +187,12 @@ def run_generation_benchmark(*, model: str | None = None, runs: int = 5, steps: 
                     valid.append(image.size == (width, height) and image.getbbox() is not None)
             except (OSError, ValueError):
                 valid.append(False)
-        return {"label": label, "elapsed_s": round(elapsed, 4), "status": result.get("status") if isinstance(result, dict) else "error", "output_valid": bool(paths) and all(valid), "outputs": paths, "events": len(telemetry)}
+        actual_attention = result.get("settings", {}).get("attention_backend") if isinstance(result, dict) else None
+        valid_backend = attention_backend is None or actual_attention == attention_backend
+        return {"label": label, "elapsed_s": round(elapsed, 4), "status": result.get("status") if isinstance(result, dict) else "error",
+                "output_valid": bool(paths) and all(valid) and valid_backend, "outputs": paths,
+                "attention_backend": actual_attention, "seed": args.seed, "events": len(telemetry),
+                "error": (result.get("message") or result.get("error")) if result.get("status") != "success" else None}
 
     warmup = run_once("warmup")
     if warmup.get("status") != "success":
@@ -189,17 +207,128 @@ def run_generation_benchmark(*, model: str | None = None, runs: int = 5, steps: 
     }
 
 
+
+def _attention_cache_path() -> Path:
+    from dreamforge_runtime_paths import build_runtime_layout
+    return build_runtime_layout().runtime_dir / "attention-benchmarks.json"
+
+
+
+@lru_cache(maxsize=1)
+def _attention_driver_version() -> str:
+    try:
+        result = subprocess.run(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
+                                capture_output=True, text=True, timeout=5,
+                                **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}))
+        return result.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return "unknown"
+
+def _attention_key(model: dict, mode: str, width: int, height: int) -> str:
+    import torch
+    from _paths import COMFY_ROOT
+    from dreamforge_preflight import _resolve_model_path
+    index = int(os.environ.get("DREAMFORGE_COMFY_DEVICE_INDEX") or 0)
+    props = torch.cuda.get_device_properties(index)
+    path = _resolve_model_path(model)
+    if path is None:
+        raise ValueError("Benchmark model file is missing")
+    packages = {name: importlib.metadata.version(name) for name in ("torch", "comfy-kitchen", "comfy-aimdo")}
+    core = Path(COMFY_ROOT)
+    files = {name: (core / name).stat().st_mtime_ns for name in (
+        "main.py", "requirements.txt", "comfy/ldm/modules/attention.py",
+    )}
+    payload = [platform.platform(), platform.python_version(), index, props.name,
+               str(getattr(props, "uuid", "")), props.total_memory, torch.version.cuda, _attention_driver_version(),
+               packages, files, str(path.resolve()), path.stat().st_size, path.stat().st_mtime_ns,
+               mode, int(width), int(height),
+               {name: os.environ.get(name) for name in (
+                   "DREAMFORGE_DISABLE_DYNAMIC_VRAM", "DREAMFORGE_COMFY_FAST",
+               )}]
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def measured_attention_backend(model: dict, mode: str, width: int, height: int) -> str | None:
+    path = _attention_cache_path()
+    if not path.is_file():
+        return None
+    try:
+        record = json.loads(path.read_text(encoding="utf-8")).get(_attention_key(model, mode, width, height), {})
+        backend = record.get("backend")
+        return backend if backend in {"pytorch", "kitchen"} else None
+    except (OSError, ValueError, TypeError, AttributeError, RuntimeError, importlib.metadata.PackageNotFoundError):
+        return None
+
+
+def run_attention_benchmark(*, model: str | None, runs: int, steps: int,
+                            width: int, height: int, input_image: str | None = None) -> dict:
+    from dreamforge_comfy_server import get_default_comfy_server
+    from dreamforge_comfy_launch import _kitchen_attention_usable
+    from dreamforge_cli_inventory import resolve_generation_model
+    server = get_default_comfy_server()
+    if server._attached_external:
+        raise RuntimeError("Attention optimization requires DreamForge's managed ComfyUI.")
+    index = int(os.environ.get("DREAMFORGE_COMFY_DEVICE_INDEX") or 0)
+    if not _kitchen_attention_usable(index):
+        raise RuntimeError("Kitchen attention is unavailable on this GPU/runtime; keeping the existing policy.")
+    model_name = _benchmark_model(model)
+    selected = resolve_generation_model(model_name) if model_name else None
+    if not selected:
+        raise ValueError("Select an installed model to benchmark")
+    if input_image and selected.get("family") != "krea2":
+        raise ValueError("Edit attention benchmarking currently supports Krea 2; use text-to-image for other models.")
+    mode = "krea2_edit" if input_image else "txt2img"
+    key = _attention_key(selected, mode, width, height)
+    results = {}
+    for backend in ("pytorch", "kitchen"):
+        result = run_generation_benchmark(model=model_name, runs=max(3, runs), steps=steps,
+                                         width=width, height=height, attention_backend=backend,
+                                         input_image=input_image)
+        results[backend] = result
+        if (result.get("error") or not result.get("summary", {}).get("all_outputs_valid")
+                or not result.get("warmup", {}).get("output_valid")):
+            return {"generation_executed": True, "error": f"{backend}_benchmark_failed", "backends": results}
+    if _attention_key(selected, mode, width, height) != key:
+        raise RuntimeError("Runtime/model changed during benchmarking; results were not applied.")
+    pt = results["pytorch"]["summary"]["median_s"]
+    ck = results["kitchen"]["summary"]["median_s"]
+    winner = "kitchen" if ck < pt * 0.95 else "pytorch"
+    # Require a measured >5% win; ties keep full-precision SDPA.
+    record = {"backend": winner, "model": model_name, "mode": mode, "width": width, "height": height,
+              "pytorch_median_s": pt, "kitchen_median_s": ck, "created_at": time.time(), "backends": results}
+    path = _attention_cache_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        records = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        records = {}
+    if not isinstance(records, dict):
+        records = {}
+    records[key] = record
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+        json.dump(records, handle, indent=2)
+    try:
+        os.replace(handle.name, path)
+    finally:
+        Path(handle.name).unlink(missing_ok=True)
+    return {"generation_executed": True, "model": model_name, "selected_attention": winner,
+            "summary": {"all_outputs_valid": True, "pytorch_median_s": pt, "kitchen_median_s": ck},
+            "backends": results}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", help="write JSON results to a file")
     parser.add_argument("--run-generation", action="store_true", help="run one warm-up and measured generations on this host")
+    parser.add_argument("--compare-attention", action="store_true", help="measure and save Kitchen/PyTorch selection")
+    parser.add_argument("--input-image", help="source for Krea edit benchmarking")
     parser.add_argument("--model")
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--steps", type=int, default=4)
     parser.add_argument("--width", type=int, default=512)
     parser.add_argument("--height", type=int, default=512)
     args = parser.parse_args()
-    if args.run_generation and os.environ.get("DREAMFORGE_BENCHMARK_REEXEC") != "1":
+    if (args.run_generation or args.compare_attention) and os.environ.get("DREAMFORGE_BENCHMARK_REEXEC") != "1":
         try:
             from _paths import PYTHON_EXE
 
@@ -215,8 +344,12 @@ def main() -> None:
         except (ImportError, OSError):
             pass
     results = run_policy_benchmark()
-    if args.run_generation:
-        payload_data = {"results": results, "generation": run_generation_benchmark(model=args.model, runs=args.runs, steps=args.steps, width=args.width, height=args.height)}
+    if args.run_generation or args.compare_attention:
+        from dreamforge_comfy_launch import apply_runtime_optimization_env
+        from dreamforge_comfy_server import register_managed_comfy_shutdown
+        apply_runtime_optimization_env()
+        register_managed_comfy_shutdown()
+        payload_data = {"results": results, "generation": run_generation_benchmark(model=args.model, runs=args.runs, steps=args.steps, width=args.width, height=args.height, compare_attention=args.compare_attention, input_image=args.input_image)}
     else:
         payload_data = {"results": results}
     payload = json.dumps(payload_data, indent=2)

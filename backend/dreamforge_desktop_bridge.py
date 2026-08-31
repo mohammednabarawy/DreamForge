@@ -866,6 +866,7 @@ def cmd_check_studio_resources(params: dict) -> dict:
     missing = check_studio_resources(
         str(studio_mode),
         upscale_method=params.get("upscale_method"),
+        **({"model_name": str(params["model"])} if params.get("model") else {}),
     )
     return {
         "ok": True,
@@ -957,6 +958,7 @@ def cmd_download_studio_resources(params: dict) -> dict:
     payload = download_studio_resources(
         str(studio_mode),
         upscale_method=params.get("upscale_method"),
+        **({"model_name": str(params["model"])} if params.get("model") else {}),
     )
     payload["ok"] = payload.get("status") != "error" or bool(payload.get("results"))
     return payload

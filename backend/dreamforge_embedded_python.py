@@ -8,6 +8,9 @@ DreamForge keeps the portable CPython tree at the install root, e.g.
 from __future__ import annotations
 
 import os
+import json
+import tempfile
+from contextlib import contextmanager
 import shutil
 import subprocess
 import sys
@@ -276,11 +279,8 @@ def install_dreamforge_python_stack(
     req_file = BACKEND_ROOT / "requirements_versions.txt"
     if req_file.is_file():
         _report(progress, "Installing DreamForge Python requirements…")
-        _run(
-            [str(python), "-m", "pip", "install", "-r", str(req_file)],
-            cwd=BACKEND_ROOT,
-            progress=progress,
-        )
+        from dreamforge_bootstrap import _pip_install
+        _pip_install(python, ["-r", str(req_file)], cwd=BACKEND_ROOT, progress=progress)
 
     if skip_torch_bootstrap:
         return
@@ -318,3 +318,70 @@ def embedded_python_status(install_root: Path | None = None) -> dict[str, str | 
         "ready": exe.is_file(),
         "dir_name": EMBED_DIR_NAME,
     }
+
+
+_GPU_STACK_PROBE = r"""
+import importlib, importlib.metadata as md, json, os
+packages = ("torch", "torchvision", "torchaudio", "sageattention", "nunchaku", "xformers", "triton", "triton-windows")
+versions, working = {}, {}
+for name in packages:
+    try:
+        versions[name] = md.version(name)
+    except md.PackageNotFoundError:
+        continue
+    try:
+        module = importlib.import_module("triton" if name == "triton-windows" else name)
+        working[name] = True
+        if name == "torch" and module.cuda.is_available():
+            index = int(os.environ.get("DREAMFORGE_COMFY_DEVICE_INDEX") or 0)
+            value = module.ones((8, 8), device=f"cuda:{index}")
+            working["gpu"] = bool(module.isfinite(value @ value).all())
+    except Exception:
+        working[name] = False
+print(json.dumps({"versions": versions, "working": working}))
+"""
+
+
+def gpu_stack_snapshot(python: Path) -> dict:
+    output = subprocess.check_output([str(python), "-c", _GPU_STACK_PROBE],
+                                     text=True, **_subprocess_kwargs())
+    return json.loads(output.strip().splitlines()[-1])
+
+
+def _pip_conflicts(python: Path) -> set[str]:
+    result = subprocess.run([str(python), "-m", "pip", "check"], capture_output=True,
+                            text=True, **_subprocess_kwargs())
+    if result.returncode not in (0, 1) or (result.returncode and not result.stdout.strip()):
+        raise RuntimeError("Cannot check installed dependencies; repair pip before installing packages.")
+    return set(result.stdout.splitlines()) if result.returncode else set()
+
+
+@contextmanager
+def protected_gpu_install(python: Path):
+    """Constrain existing compiled GPU packages and reject new installation regressions."""
+    before = gpu_stack_snapshot(python)
+    conflicts = _pip_conflicts(python)
+    with tempfile.TemporaryDirectory(prefix="dreamforge-pip-") as folder:
+        constraints = Path(folder) / "gpu-constraints.txt"
+        existing = os.environ.get("PIP_CONSTRAINT", "").strip()
+        lines = [f"{name}=={version}" for name, version in before["versions"].items()]
+        constraints.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        env = dict(os.environ)
+        # Manager's child pip processes must inherit the same protection.
+        if existing:
+            # A single real path may contain spaces; otherwise preserve pip's file list.
+            existing_files = [existing] if Path(existing).is_file() else existing.split()
+            includes = "".join(f'-c "{item}"\n' for item in existing_files)
+            constraints.write_text(includes + constraints.read_text(encoding="utf-8"), encoding="utf-8")
+        env["PIP_CONSTRAINT"] = str(constraints)
+        yield env
+        after = gpu_stack_snapshot(python)
+        changed = [name for name, version in before["versions"].items()
+                   if after["versions"].get(name) != version]
+        broken = [name for name, ok in before["working"].items()
+                  if ok and not after["working"].get(name)]
+        new_conflicts = _pip_conflicts(python) - conflicts
+        if changed or broken or new_conflicts:
+            raise RuntimeError("Dependency validation failed; installation was not marked ready. "
+                               f"Changed GPU packages: {changed}; failed probes: {broken}; "
+                               f"new conflicts: {sorted(new_conflicts)}")

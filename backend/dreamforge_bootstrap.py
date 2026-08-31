@@ -6,6 +6,7 @@ import io
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -13,7 +14,7 @@ import time
 import urllib.error
 import urllib.request
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
 from dreamforge_bootstrap_markers import (
@@ -107,58 +108,103 @@ def _download_file(
 
 
 def extract_github_zip(payload: bytes, dest: Path) -> None:
-    """Extract a GitHub commit archive zip into ``dest`` (repository root)."""
-    dest.mkdir(parents=True, exist_ok=True)
+    """Validate GitHub archive paths and extract into a private staging directory."""
+    dest = dest.resolve()
     with zipfile.ZipFile(io.BytesIO(payload)) as zf:
-        top_levels = {name.split("/", 1)[0] for name in zf.namelist() if name.strip()}
-        if len(top_levels) != 1:
-            zf.extractall(dest)
-            return
-        root = next(iter(top_levels))
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            zf.extractall(tmp_path)
-            extracted = tmp_path / root
-            for child in extracted.iterdir():
-                target = dest / child.name
-                if target.exists():
-                    if target.is_dir():
-                        shutil.rmtree(target)
-                    else:
-                        target.unlink()
-                shutil.move(str(child), str(target))
+        entries = [entry for entry in zf.infolist() if not entry.is_dir()]
+        roots = {entry.filename.split("/", 1)[0] for entry in entries}
+        if not entries or len(roots) != 1 or any("/" not in e.filename for e in entries):
+            raise ValueError("Expected a non-empty GitHub repository archive")
+        seen = set()
+        for entry in entries:
+            parts = PurePosixPath(entry.filename).parts
+            if (entry.filename.startswith("/") or ".." in parts or "\\" in entry.filename
+                    or ":" in entry.filename or stat.S_ISLNK(entry.external_attr >> 16)):
+                raise ValueError(f"Unsafe archive entry: {entry.filename}")
+            relative = Path(*parts[1:])
+            if relative.parts[0].casefold() in {".git", ".dreamforge_archive_pin"}:
+                raise ValueError(f"Reserved archive entry: {entry.filename}")
+            key = str(relative).casefold()
+            if key in seen or not (dest / relative).resolve().is_relative_to(dest):
+                raise ValueError(f"Duplicate or unsafe archive entry: {entry.filename}")
+            seen.add(key)
+        dest.mkdir(parents=True, exist_ok=True)
+        for entry in entries:
+            target = dest.joinpath(*PurePosixPath(entry.filename).parts[1:])
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(entry) as source, target.open("wb") as output:
+                shutil.copyfileobj(source, output)
 
 
 def checkout_github_commit(
-    repo_url: str,
-    commit: str,
-    dest: Path,
-    *,
-    progress: ProgressCallback = None,
-    label: str | None = None,
+    repo_url: str, commit: str, dest: Path, *,
+    progress: ProgressCallback = None, label: str | None = None,
 ) -> Path:
-    """Download a pinned GitHub commit without requiring Git."""
+    """Stage archives, preserve user data, and roll back failed file replacements."""
     dest = dest.resolve()
     name = label or dest.name
-    if dest.is_dir() and any(dest.iterdir()):
-        marker = dest / ".dreamforge_archive_pin"
-        if marker.is_file() and marker.read_text(encoding="utf-8").strip() == commit:
-            return dest
-
-    url = _github_archive_url(repo_url, commit)
+    marker = dest / ".dreamforge_archive_pin"
+    if marker.is_file() and marker.read_text(encoding="utf-8").strip() == commit:
+        return dest
+    # Never overlay a Git checkout after a failed fetch/checkout or a dirty-tree error.
+    if (dest / ".git").exists():
+        raise RuntimeError(f"Git update failed for {name}; existing checkout preserved. Repair Git and retry.")
     _report(progress, f"Downloading {name} ({commit[:12]})…")
     try:
-        payload = _download_bytes(url, timeout=300.0)
-    except urllib.error.HTTPError as exc:
-        raise RuntimeError(f"Download failed for {name}: HTTP {exc.code}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Download failed for {name}: {exc.reason}") from exc
-
-    if dest.is_dir():
-        shutil.rmtree(dest)
-    dest.mkdir(parents=True, exist_ok=True)
-    extract_github_zip(payload, dest)
-    (dest / ".dreamforge_archive_pin").write_text(f"{commit}\n", encoding="utf-8")
+        payload = _download_bytes(_github_archive_url(repo_url, commit), timeout=300.0)
+    except (urllib.error.HTTPError, urllib.error.URLError) as exc:
+        raise RuntimeError(f"Download failed for {name}: {exc}") from exc
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=f".{dest.name}-update-", dir=dest.parent) as folder:
+        stage = Path(folder).resolve()
+        extract_github_zip(payload, stage)
+        files = sorted(path.relative_to(stage) for path in stage.rglob("*") if path.is_file())
+        is_comfy = repo_url.rstrip("/").removesuffix(".git").lower().endswith("/comfyui")
+        if is_comfy and not (stage / "main.py").is_file():
+            raise ValueError("ComfyUI archive has no main.py")
+        protected = {"models", "custom_nodes", "input", "output", "user", "temp"}
+        files = [path for path in files if not (is_comfy and
+                 ((path.parts[0] in protected and (dest / path.parts[0]).exists())
+                  or (path.name.startswith("extra_model_paths") and (dest / path).exists())))]
+        (stage / ".dreamforge_archive_pin").write_text(commit + "\n", encoding="utf-8")
+        files.append(Path(".dreamforge_archive_pin"))
+        backup = dest.parent / ".dreamforge-backups" / f"{dest.name}-{time.time_ns()}"
+        changed: list[tuple[Path, bool]] = []
+        created_dirs: list[Path] = []
+        # Validate every destination before replacing any file (including junctions).
+        for relative in files:
+            target = dest / relative
+            if target.resolve() != target or not target.resolve().is_relative_to(dest) or target.is_dir():
+                raise ValueError(f"Unsafe update destination: {target}")
+        try:
+            for relative in files:
+                target, saved = dest / relative, backup / relative
+                existed = target.is_file()
+                if existed:
+                    saved.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(target, saved)
+                missing_dirs = []
+                parent = target.parent
+                while not parent.exists():
+                    missing_dirs.append(parent)
+                    parent = parent.parent
+                for parent in reversed(missing_dirs):
+                    parent.mkdir()
+                    created_dirs.append(parent)
+                changed.append((relative, existed))
+                os.replace(stage / relative, target)
+        except Exception:
+            for relative, existed in reversed(changed):
+                target = dest / relative
+                if existed:
+                    os.replace(backup / relative, target)
+                else:
+                    target.unlink(missing_ok=True)
+            for directory in reversed(created_dirs):
+                directory.rmdir()
+            raise
+        if backup.exists():
+            _report(progress, f"Previous replaced files retained at {backup}")
     _report(progress, f"Installed {name}.")
     return dest
 
@@ -283,7 +329,10 @@ def _pip_install(
     kwargs: dict = {}
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    subprocess.check_call(cmd, cwd=str(cwd) if cwd else None, **kwargs)
+    from dreamforge_embedded_python import protected_gpu_install
+    with protected_gpu_install(python) as env:
+        subprocess.check_call([*cmd, "--dry-run"], cwd=str(cwd) if cwd else None, env=env, **kwargs)
+        subprocess.check_call(cmd, cwd=str(cwd) if cwd else None, env=env, **kwargs)
 
 
 def _verify_python_import(python: Path, module: str) -> None:

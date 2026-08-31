@@ -51,7 +51,7 @@ type Props = {
   detectionConfidence?: string | null;
   detectionWarnings?: string[];
   fallbackReason?: string | null;
-  onRunHardwareBenchmark?: () => void | Promise<void>;
+  onRunHardwareBenchmark?: (compareAttention?: boolean) => void | string | Promise<void | string>;
 };
 
 export function AppSettingsModal({
@@ -1031,8 +1031,23 @@ export function AppSettingsModal({
                 </label> : null}
                 {generationSettings && onGenerationSettingsChange ? <div className="flex flex-wrap gap-2">
                   <button type="button" onClick={() => onGenerationSettingsChange({ vram_profile: "auto" })} className="rounded-md border border-dfui-border/60 px-2.5 py-1 text-[10px] text-dfui-secondary hover:border-dfui-accent/40">Reset to detected</button>
-                  {onRunHardwareBenchmark ? <button type="button" disabled={benchmarkBusy} onClick={async () => { setBenchmarkBusy(true); setBenchmarkMessage(null); try { await onRunHardwareBenchmark(); setBenchmarkMessage("Benchmark complete. Results used the current safe hardware policy."); } catch (error) { setBenchmarkMessage(error instanceof Error ? error.message : "Benchmark failed"); } finally { setBenchmarkBusy(false); } }} className="rounded-md border border-dfui-accent/40 px-2.5 py-1 text-[10px] text-dfui-accent hover:bg-dfui-accent/10 disabled:opacity-50">{benchmarkBusy ? "Benchmarking…" : "Run hardware benchmark"}</button> : null}
+                  {onRunHardwareBenchmark ? [false, true].map((compare) => (
+                    <button key={String(compare)} type="button" disabled={benchmarkBusy}
+                      onClick={async () => {
+                        setBenchmarkBusy(true); setBenchmarkMessage(null);
+                        try {
+                          const message = await onRunHardwareBenchmark(compare);
+                          setBenchmarkMessage(message || "Benchmark complete.");
+                        } catch (error) {
+                          setBenchmarkMessage(error instanceof Error ? error.message : "Benchmark failed");
+                        } finally { setBenchmarkBusy(false); }
+                      }}
+                      className="rounded-md border border-dfui-accent/40 px-2.5 py-1 text-[10px] text-dfui-accent hover:bg-dfui-accent/10 disabled:opacity-50">
+                      {benchmarkBusy ? "Benchmarking…" : compare ? "Optimize attention" : "Run hardware benchmark"}
+                    </button>
+                  )) : null}
                 </div> : null}
+                <p className="text-[9px] text-dfui-tertiary">Optimize attention renders matched samples for the selected model and size. It saves an automatic backend choice; manual choices and sampling settings stay unchanged.</p>
                 {benchmarkMessage ? <p className="text-[9px] text-dfui-tertiary">{benchmarkMessage}</p> : null}
                 {onSaveStudioSettings ? <div className="grid grid-cols-3 gap-2">
                   <label className="text-[10px] text-dfui-tertiary">Max images<input type="number" min={1} max={50} defaultValue={studioSettings.image_number_max ?? 8} onBlur={(event) => void onSaveStudioSettings({ image_number_max: Number(event.target.value) })} className="df-input mt-1 w-full px-2 py-1 font-mono text-[10px]" /></label>

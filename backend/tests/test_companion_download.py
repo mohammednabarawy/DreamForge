@@ -341,6 +341,7 @@ def test_split_companions_by_tier():
 
 
 def test_ensure_creative_task_ready_auto_downloads_tier_a(monkeypatch):
+    monkeypatch.setattr("dreamforge_workflow_planner.missing_custom_node_pack_entries", lambda *a, **kw: [])
     tier_a = enrich_missing_dependency(
         {
             "id": "upscaler_omnisr_2x",
@@ -375,6 +376,7 @@ def test_ensure_creative_task_ready_auto_downloads_tier_a(monkeypatch):
 
 
 def test_ensure_creative_task_ready_auto_downloads_tier_b_when_requested(monkeypatch):
+    monkeypatch.setattr("dreamforge_workflow_planner.missing_custom_node_pack_entries", lambda *a, **kw: [])
     tier_b = enrich_missing_dependency(
         {
             "id": "pid_flux1_4k_model",

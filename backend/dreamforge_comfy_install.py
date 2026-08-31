@@ -36,9 +36,14 @@ def _git_checkout(url: str, dest: Path, name: str, commit: str) -> None:
         subprocess.check_call(["git", "clone", url, str(dest)])
     else:
         subprocess.check_call(["git", "-C", str(dest), "remote", "set-url", "origin", url])
+    dirty = subprocess.check_output(
+        ["git", "-C", str(dest), "status", "--porcelain", "--untracked-files=no"], text=True,
+    ).strip()
+    if dirty:
+        raise RuntimeError(f"{name} has local edits; update stopped without changing them.")
     subprocess.check_call(["git", "-C", str(dest), "fetch", "origin", "--tags"])
     if commit:
-        subprocess.check_call(["git", "-C", str(dest), "reset", "--hard"])
+        subprocess.check_call(["git", "-C", str(dest), "update-ref", "refs/dreamforge/previous", "HEAD"])
         try:
             subprocess.check_call(["git", "-C", str(dest), "checkout", commit])
         except subprocess.CalledProcessError:
@@ -58,7 +63,7 @@ def ensure_comfyui_checkout(*, progress: ProgressCallback = None) -> Path:
 
     if comfy_dir.is_dir() and any(comfy_dir.iterdir()) and current == target:
         pin_marker = comfy_dir / ".dreamforge_archive_pin"
-        if pin_marker.is_file() or _git_repo_is_at_commit(comfy_dir, str(target)):
+        if (pin_marker.is_file() and pin_marker.read_text(encoding="utf-8").strip() == target) or _git_repo_is_at_commit(comfy_dir, str(target)):
             return comfy_dir
 
     _report(progress, f"Updating ComfyUI to {target[:12]}…")
@@ -98,13 +103,8 @@ def ensure_comfyui_python_deps(*, progress: ProgressCallback = None) -> None:
     if not req_file.is_file():
         return
     _report(progress, "Installing ComfyUI Python dependencies…")
-    kwargs: dict = {}
-    if os.name == "nt":
-        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    subprocess.check_call(
-        [str(python), "-m", "pip", "install", "--quiet", "-r", str(req_file)],
-        **kwargs,
-    )
+    from dreamforge_bootstrap import _pip_install
+    _pip_install(python, ["--quiet", "-r", str(req_file)], progress=progress)
     write_comfy_deps_marker(comfy_dir, runtime_identity)
 
 

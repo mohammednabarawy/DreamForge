@@ -697,7 +697,10 @@ function bootFailureMessage(bootMessage?: string, workerLogTail?: string): strin
   const trimmedBoot = bootMessage?.trim();
   const tail = workerLogTail?.trim();
   if (tail) {
-    const lastLine = tail.split("\n").filter(Boolean).pop()?.trim() ?? "";
+    // Python warnings include an indented source line; neither is a failure cause.
+    const lastLine = tail.split("\n").filter((line) =>
+      line.trim() && !/^\s/.test(line) && !/\b\w*Warning:/.test(line)
+    ).pop()?.trim() ?? "";
     if (/Using existing ComfyUI|Connected to existing ComfyUI/i.test(tail)) {
       return (
         "DreamForge found a healthy ComfyUI instance but the GPU worker exited before " +

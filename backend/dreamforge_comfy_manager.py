@@ -257,24 +257,27 @@ def _run_cm_cli(
     python = Path(_paths.PYTHON_EXE)
     cmd = [str(python), str(cli), *args]
     _report(progress, f"ComfyUI-Manager: {' '.join(args)}")
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-        **_subprocess_kwargs(),
-    )
-    captured: list[str] = []
-    assert proc.stdout is not None
-    for line in proc.stdout:
-        text = line.rstrip()
-        if text:
-            captured.append(text)
-            _report(progress, text)
-    returncode = proc.wait()
-    stdout = "\n".join(captured)
-    return subprocess.CompletedProcess(cmd, returncode, stdout=stdout, stderr="")
+    from dreamforge_embedded_python import protected_gpu_install
+    with protected_gpu_install(python) as install_env:
+        proc = subprocess.Popen(
+            cmd,
+            env=install_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            **_subprocess_kwargs(),
+        )
+        captured: list[str] = []
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            text = line.rstrip()
+            if text:
+                captured.append(text)
+                _report(progress, text)
+        returncode = proc.wait()
+        stdout = "\n".join(captured)
+        return subprocess.CompletedProcess(cmd, returncode, stdout=stdout, stderr="")
 
 
 def install_packs_via_manager(

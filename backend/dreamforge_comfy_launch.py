@@ -22,6 +22,8 @@ from functools import lru_cache
 from pathlib import Path
 import os
 import platform
+import subprocess
+import sys
 from typing import Final
 
 from dreamforge_vram_profiles import (
@@ -131,7 +133,28 @@ def _module_available(name: str) -> bool:
 
 @lru_cache(maxsize=4)
 def _kitchen_attention_usable(device_index: int) -> bool:
-    """Probe the installed kernel once per device, without changing generation RNG."""
+    """Bound optional native/JIT startup work without risking the worker process."""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-s", "-c",
+             "from dreamforge_comfy_launch import _probe_kitchen_attention; "
+             "import sys; sys.exit(0 if _probe_kitchen_attention(int(sys.argv[1])) else 1)",
+             str(device_index)],
+            cwd=str(Path(__file__).resolve().parent),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=60, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if result.returncode == 0:
+            return True
+        reason = result.stderr.strip()[-1000:] or f"probe exited with code {result.returncode}"
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        reason = str(exc)
+    logging.getLogger(__name__).warning("Kitchen attention probe failed; using standard attention: %s", reason)
+    return False
+
+
+def _probe_kitchen_attention(device_index: int) -> bool:
+    """Exercise installed kernels in the disposable probe process."""
     try:
         from _paths import COMFY_ROOT
         import torch
@@ -309,6 +332,8 @@ def comfy_launch_extra_args() -> tuple[str, ...]:
 
     device_index = os.environ.get("DREAMFORGE_COMFY_DEVICE_INDEX")
     device_args = ["--cuda-device", device_index] if device_index is not None else []
+    if os.environ.get("DREAMFORGE_DISABLE_DYNAMIC_VRAM"):
+        device_args.append("--disable-dynamic-vram")
 
     if os.environ.get("DREAMFORGE_COMFY_BACKEND") == "rocm":
         tier = comfy_memory_tier(profile)
@@ -383,28 +408,46 @@ def comfy_launch_summary() -> str:
 
 def apply_small_image_attention_policy(graph: dict, *, mode: str, family: str,
                                        width: int, height: int, kitchen_enabled: bool,
-                                       object_info: dict) -> bool:
-    """Keep small SD text-to-image jobs on native SDPA, without restarting Comfy.
-
-    Matched RTX 5060 Ti runs showed no gain from kitchen at these sizes.
-    Explicit backend choices and user-authored attention patches remain authoritative.
-    """
+                                       object_info: dict, model: dict | None = None,
+                                       requested: str | None = None) -> str | None:
+    """Apply a measured native attention choice; explicit user choices stay authoritative."""
     pref = (os.environ.get("DREAMFORGE_COMFY_ATTENTION") or "auto").strip().lower()
-    if (pref not in {"", "auto"} or not kitchen_enabled or mode != "txt2img"
-            or family not in {"sd15", "sdxl"} or min(width, height) <= 0
-            or width * height > 768 * 768 or "ModelAttentionBackend" not in object_info
-            or any(n.get("class_type") == "ModelAttentionBackend" for n in graph.values())):
-        return False
+    if mode == "custom_tool" or any(n.get("class_type") == "ModelAttentionBackend" for n in graph.values()):
+        return None
+    if requested not in {None, "pytorch", "kitchen"}:
+        raise ValueError("Unsupported benchmark attention backend")
+    if not requested and (pref not in {"", "auto"} or not kitchen_enabled):
+        return None
+    backend = requested
+    if not backend and model:
+        from dreamforge_hardware_benchmark import measured_attention_backend
+        backend = measured_attention_backend(model, mode, width, height)
+    if not backend and mode == "txt2img" and family in {"sd15", "sdxl"} and 0 < min(width, height) and width * height <= 768 * 768:
+        backend = "pytorch"
+    if not backend:
+        return None
+    node_info = object_info.get("ModelAttentionBackend")
+    if node_info is None:
+        if requested:
+            raise RuntimeError("ComfyUI lacks the native attention selector; benchmark cannot run.")
+        return None
+    attention = "comfy kitchen attention" if backend == "kitchen" else "pytorch attention"
+    choices = node_info.get("input", {}).get("required", {}).get("attention", [[]])[0]
+    if backend == "kitchen" and attention not in choices:
+        if requested:
+            raise RuntimeError("ComfyUI did not register Kitchen attention; benchmark cannot run.")
+        return None
     next_id = max([int(key) for key in graph if str(key).isdigit()] + [0]) + 1
     changed = False
     for node in list(graph.values()):
         if node.get("class_type") != "KSampler":
             continue
-        model = node["inputs"]["model"]
         graph[str(next_id)] = {"class_type": "ModelAttentionBackend", "inputs": {
-            "model": model, "attention": "pytorch attention",
+            "model": node["inputs"]["model"], "attention": attention,
         }}
         node["inputs"]["model"] = [str(next_id), 0]
         next_id += 1
         changed = True
-    return changed
+    if requested and not changed:
+        raise RuntimeError("This workflow has no supported sampler for attention benchmarking.")
+    return backend if changed else None

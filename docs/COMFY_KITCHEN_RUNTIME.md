@@ -59,3 +59,33 @@ These are two warm samples per case; small timing differences are not statistica
 Live execution passed for SD 1.5, SDXL, Krea FP8 edits, the supplied Krea ConvRot INT8 checkpoint with Identity Edit LoRA, masked editing with upload/crop/stitch, restyle, Flux Schnell, ControlNet, Ultimate SD Upscale, and outpaint. Generation paths used the real app pipeline; the last three additional branch tests used DreamForge's native graph builders and shared execution boundary. The initial low-denoise outpaint smoke left underfilled borders; a separate 20-step full-denoise render filled them, without changing any app defaults. Output previews were inspected; this is not a claim that every prompt or every model produces an ideal image.
 
 Visuals: `attention-comparison.jpg`, `workflow-comparison.jpg`, `kitchen-outpaint-full.png`. See [Krea workflow review](KREA2_EDIT_WORKFLOW_REVIEW.md) for the original graph findings and reference mapping.
+
+## Follow-up reliability improvements
+
+Archive updates now validate a staged download before replacing installed files. Existing ComfyUI models, custom nodes, inputs, outputs, user files, and extra model path configuration are preserved. Replaced files are backed up under the engine parent directory's `.dreamforge-backups`; caught replacement failures restore prior files. Git updates refuse tracked local edits and retain `refs/dreamforge/previous`. This is file replacement rollback, not a power-loss transaction or a complete Python-environment rollback.
+
+Dependency installs constrain the installed Torch, torchvision, torchaudio, Sage, Nunchaku, xformers and Triton versions. The shared pip installer resolves a dry run first; Manager child installers inherit the constraints. Before/after import and GPU probes plus `pip check` reject new regressions without marking setup ready. Existing dependency conflicts remain reported separately. Non-GPU dependencies are still installed in place.
+
+Edit resource checks now follow the selected model. Krea Edit checks and offers the pinned Identity Edit v1.2 LoRA and its custom node pack; selecting another edit family does not request Krea assets. The desktop test command and CI now run the existing readiness tests plus edit routing and boot diagnostic regressions.
+
+### Measured attention selection
+
+Settings > Hardware > Optimize attention runs matched full generations for the selected model and size: one warm-up and five measured samples per backend. Seeds differ across samples and match between backends, avoiding cached sampler results. All outputs and the requested native backend must validate; forced benchmark runs do not retry with another attention or OOM policy. Kitchen needs a median win above 5%; otherwise PyTorch wins. The cached choice is keyed by GPU, driver, runtime package versions/core file timestamps, model file identity, mode and dimensions. Changed runtime/model keys stop using the old result. Manual backend choices, custom-tool graphs, existing attention patches and generation settings remain authoritative. Edit benchmarking currently supports Krea 2.
+
+The live optimizer check rendered three measured samples plus a warm-up per backend for SD 1.5 at 512 x 512, four steps: PyTorch median **2.8489 s**, Kitchen **3.2537 s**. It selected PyTorch; a subsequent automatic run confirmed that selection. These short measurements do not establish an overall speedup or image-quality equivalence.
+
+### Worker startup repair
+
+The reported allocator warning was not an exception: the worker event log subsequently contained a Kitchen-enabled `ready` event. The GUI had used the indented source line printed by the warning as its failure message. Boot diagnostics now retain the real boot cause, and a confirmed healthy engine clears a stale boot failure.
+
+DreamForge no longer sets `expandable_segments:True` by default on Windows (the installed Torch build does not support it); explicit user allocator configuration remains untouched. The Kitchen kernel check now runs in a hidden disposable Python process with a **60-second timeout**. A timeout or native crash falls back to the standard attention policy instead of blocking or terminating the worker. This retains kernel correctness checks without unbounded native/JIT work in the IPC worker.
+
+The isolated GPU probe passed in **7.98 s**. The complete worker attachment, ready event and graceful shutdown passed in **13.42 s**, without the allocator warning or stopping the user's existing server. This is a real worker boot against a running managed ComfyUI, not a fresh ComfyUI cold-start timing. See the [upstream allocator tests](https://github.com/pytorch/pytorch/blob/main/test/test_cuda_expandable_segments.py) and [Kitchen source](https://github.com/Comfy-Org/comfy-kitchen).
+
+Final follow-up checks: **1,124 backend tests passed, 3 skipped** (absent carousel fixtures); **12 desktop tests passed**; TypeScript/Vite production build passed with existing bundle warnings. The production npm audit reported zero vulnerabilities.
+
+### Dynamic VRAM allocation recovery
+
+A final live render exposed `CLIPTextEncode: VBAR allocation failed` in comfy-aimdo despite the worker being ready. The common generation retry boundary now recognizes this specific allocation failure and retries once with legacy VRAM handling for the worker session, without changing the prompt graph, seed, dimensions or sampling settings. The shared launcher now passes `--disable-dynamic-vram` when its existing override is set; merely selecting `--lowvram` did not disable Dynamic VRAM in the new runtime. Both ordinary OOM and VBAR recovery leave externally attached servers alone. Forced attention benchmarks still do not retry under a different memory policy, and changing the dynamic-VRAM/fast policy invalidates old attention measurements.
+
+The recovery policy was GPU-tested in an isolated temporary managed server: Kitchen remained enabled alongside `--disable-dynamic-vram --lowvram --reserve-vram 3`. A warm-up and a distinct-seed measured render both completed; the measured full app call took **4.697 s**. The finished 512 x 512 sample was visually inspected. The original user's ComfyUI process was left running. Automatic VBAR error-to-restart control flow was verified by regression test; the real render verified the resulting legacy configuration. Restart the existing GPU worker once to load all updated launcher code.

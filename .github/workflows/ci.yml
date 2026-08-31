@@ -41,6 +41,7 @@ jobs:
         working-directory: apps/desktop
         run: |
           npm ci
+          npm test
           npm run build
 
   hardware-policy-fixtures:

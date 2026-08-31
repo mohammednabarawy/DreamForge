@@ -869,21 +869,33 @@ def ensure_model_companions_downloaded(
     }
 
 
-def check_studio_resources(studio_mode: str, *, upscale_method: str | None = None) -> list[dict]:
+def check_studio_resources(studio_mode: str, *, upscale_method: str | None = None, model_name: str | None = None) -> list[dict]:
     """Missing upscaler/inpaint assets for studio tabs (Krita catalog)."""
     try:
         from dreamforge_krita_resources import check_studio_resources as _check
         from dreamforge_companion_download import enrich_missing_dependency as enrich
     except ImportError:
         return []
-    missing = _check(studio_mode, upscale_method=upscale_method)
+    if studio_mode.lower() == "edit" and model_name:
+        model = resolve_generation_model(model_name)
+        if not model:
+            raise ValueError(f"Selected edit model is not installed: {model_name}")
+        missing = check_model_dependencies(model)
+        if model.get("family") == "krea2":
+            requirement = {"id": "lora_krea2_identity_edit_v1_2",
+                           "relative": "loras/krea2_identity_edit_v1_2.safetensors",
+                           "note": "Required Krea 2 Identity Edit v1.2 LoRA (Edit only)."}
+            if not companion_file_present(requirement, min_bytes=1600 * 1024 * 1024):
+                missing.append({**requirement, "expected_path": str(_dependency_path(requirement["relative"]))})
+    else:
+        missing = _check(studio_mode, upscale_method=upscale_method)
     return [enrich(item) for item in missing]
 
 
-def download_studio_resources(studio_mode: str, *, upscale_method: str | None = None) -> dict:
+def download_studio_resources(studio_mode: str, *, upscale_method: str | None = None, model_name: str | None = None) -> dict:
     from dreamforge_companion_download import download_missing_companions
 
-    missing = check_studio_resources(studio_mode, upscale_method=upscale_method)
+    missing = check_studio_resources(studio_mode, upscale_method=upscale_method, **({"model_name": model_name} if model_name else {}))
     if not missing:
         return {"status": "ok", "results": [], "errors": [], "downloaded": 0, "skipped": 0}
     return download_missing_companions(missing)

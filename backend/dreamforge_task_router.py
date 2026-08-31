@@ -72,6 +72,8 @@ def edit_routing_patch(
     item = find_gallery_item(gallery, engine_name) or {}
     family = str(item.get("family") or "").lower()
     patch = edit_routing_for_model(item, family)
+    if family == "krea2":
+        return patch
     pref = str(preferred_edit_type or "").lower()
     if pref == "qwen_edit":
         return {

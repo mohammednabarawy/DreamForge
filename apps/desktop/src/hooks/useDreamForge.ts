@@ -3607,7 +3607,7 @@ export function useDreamForge() {
           modelGalleryAll,
           baseFamily,
         );
-        const maxSlots = maxReferenceImagesForFamily(resolvedFamily);
+        const maxSlots = maxReferenceImagesForFamily(resolvedFamily, studioMode);
         const patch = appendReferenceSlot(
           settingsRef.current,
           {

@@ -213,6 +213,13 @@ def edit_routing_for_model(model: dict | None, model_family: str = "") -> dict[s
             "steps": 20,
         }
     fam = (model_family or (model or {}).get("family") or "").lower()
+    if fam == "krea2":
+        return {
+            "edit_type": "auto",
+            "edit_strength": 1.0,
+            "cn_selection": "None",
+            "cn_type": "None",
+        }
     if fam == "ideogram4":
         return {
             "edit_type": "kontext",

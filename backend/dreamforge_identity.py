@@ -534,6 +534,8 @@ def resolve_identity_route(job, *, model_family: str | None = None) -> dict[str,
 
     mode = normalize_identity_mode(getattr(job, "identity_mode", None)) or "preserve_face"
     family = (model_family or "").lower()
+    if family == "krea2" and _studio_mode(job) == "edit" and mode in {"preserve_face", "auto"}:
+        return {"route": "krea2_edit", "reference_image": ref}
 
     if mode == "ipadapter_faceid":
         assets = faceid_assets_available()
@@ -665,7 +667,7 @@ def _faceid_patch(ref: str, assets: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def apply_identity_to_job(job) -> dict[str, Any]:
+def apply_identity_to_job(job, *, model_family: str | None = None) -> dict[str, Any]:
     """Route identity-preservation jobs to Kontext/Qwen or gated FaceID."""
     if getattr(job, "vary_amount", None):
         return {}
@@ -676,7 +678,7 @@ def apply_identity_to_job(job) -> dict[str, Any]:
 
     plan = resolve_identity_route(
         job,
-        model_family=str(getattr(job, "model_family", None) or ""),
+        model_family=model_family or str(getattr(job, "model_family", None) or ""),
     )
     if plan.get("route") == "none":
         return {}
@@ -689,7 +691,9 @@ def apply_identity_to_job(job) -> dict[str, Any]:
     studio = _studio_mode(job)
     out: dict[str, Any] = {}
 
-    if route == "ipadapter_faceid":
+    if route == "krea2_edit":
+        out = _edit_studio_identity_patch(ref, edit_type="auto", edit_strength=1.0)
+    elif route == "ipadapter_faceid":
         out = _faceid_patch(ref, plan)
     elif studio == "edit" and route == "kontext":
         out = _edit_studio_identity_patch(

@@ -7,6 +7,7 @@ def _no_speed_flags(monkeypatch):
     monkeypatch.setenv("DREAMFORGE_COMFY_FAST", "off")
     monkeypatch.setenv("DREAMFORGE_COMFY_ATTENTION", "off")
     monkeypatch.setattr("dreamforge_comfy_launch.mps_available", lambda: False)
+    monkeypatch.setattr("dreamforge_comfy_launch._kitchen_attention_usable", lambda index: False)
 
 
 def _force_legacy(monkeypatch):
@@ -194,7 +195,7 @@ def test_attention_flag_prefers_sage(monkeypatch):
     assert attention_flag() == "--use-sage-attention"
 
 
-def test_attention_auto_requires_benchmark_gate(monkeypatch):
+def test_sage_flash_auto_requires_benchmark_gate(monkeypatch):
     from dreamforge_comfy_launch import attention_flag
 
     monkeypatch.setenv("DREAMFORGE_COMFY_ATTENTION", "auto")
@@ -232,3 +233,24 @@ def test_attention_flag_off(monkeypatch):
     monkeypatch.setenv("DREAMFORGE_COMFY_ATTENTION", "off")
     monkeypatch.setattr("dreamforge_comfy_launch._module_available", lambda name: True)
     assert attention_flag() is None
+
+
+def test_kitchen_attention_selection_and_safe_fallback(monkeypatch):
+    from dreamforge_comfy_launch import attention_flag
+
+    monkeypatch.setenv("DREAMFORGE_COMFY_BACKEND", "cuda")
+    monkeypatch.setenv("DREAMFORGE_COMFY_DEVICE_INDEX", "1")
+    monkeypatch.setenv("DREAMFORGE_COMFY_ATTENTION", "auto")
+    monkeypatch.setattr("dreamforge_comfy_launch._module_available", lambda name: True)
+    monkeypatch.setattr("dreamforge_comfy_launch._kitchen_attention_usable", lambda index: index == 1)
+    assert attention_flag() == "--use-ck-attention"
+    monkeypatch.setenv("DREAMFORGE_COMFY_ATTENTION", "pytorch")
+    assert attention_flag() == "--use-pytorch-cross-attention"
+    monkeypatch.setenv("DREAMFORGE_COMFY_ATTENTION", "sage")
+    assert attention_flag() == "--use-sage-attention"
+    monkeypatch.setenv("DREAMFORGE_COMFY_ATTENTION", "kitchen")
+    monkeypatch.setattr("dreamforge_comfy_launch._kitchen_attention_usable", lambda index: False)
+    assert attention_flag() == "--use-pytorch-cross-attention"
+    monkeypatch.setenv("DREAMFORGE_COMFY_BACKEND", "rocm")
+    monkeypatch.setattr("dreamforge_comfy_launch._kitchen_attention_usable", lambda index: True)
+    assert attention_flag() == "--use-pytorch-cross-attention"

@@ -886,6 +886,11 @@ def comfy_workflow_mode(
         if cn == "inpaint":
             return "inpaint"
         family = (model_family or "").lower()
+        if family == "krea2" and (
+            mode_key in {"edit", "krea2_edit"}
+            or (mode_key != "generate" and edit != "img2img")
+        ):
+            return "krea2_edit"
         if family == "qwen_image_edit" or edit == "qwen_edit":
             return "qwen_edit"
         if checkpoint_is_flux_kontext(model, model_family):

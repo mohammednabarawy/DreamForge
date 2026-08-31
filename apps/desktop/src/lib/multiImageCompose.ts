@@ -92,6 +92,7 @@ export function resolveReferenceModelFamily(
   gallery: ModelGalleryItem[],
   selectedFamily: string,
 ): string {
+  if (selectedFamily === "krea2" && studioMode === "edit") return "krea2";
   if (selectedFamily === "qwen_image_edit") return "qwen_image_edit";
   const routed = selectIdentityGenerateModel(gallery);
   if (routed?.family === "qwen_image_edit") {
@@ -105,7 +106,8 @@ export function resolveReferenceModelFamily(
 }
 
 /** Max reference images a resolved family supports (Qwen Edit Plus caps at 3). */
-export function maxReferenceImagesForFamily(family: string): number {
+export function maxReferenceImagesForFamily(family: string, studioMode: StudioMode = "edit"): number {
+  if (family === "krea2" && studioMode === "edit") return 2;
   return family === "qwen_image_edit"
     ? QWEN_EDIT_MAX_REFERENCES
     : MAX_REFERENCE_SLOTS;

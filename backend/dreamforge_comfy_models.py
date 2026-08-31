@@ -365,6 +365,7 @@ def resolve_comfy_model_loader_args(
     *,
     model: dict[str, Any],
     model_family: str,
+    krea2_edit: bool = False,
 ) -> dict[str, Any]:
     """Return workflow args with Comfy-valid loader names (unet/clip/vae/checkpoint)."""
     object_info = client.object_info()
@@ -551,6 +552,17 @@ def resolve_comfy_model_loader_args(
                 "ComfyUI is too old for Krea 2 — CLIPLoader does not list type 'krea2'. "
                 "Update to ComfyUI v0.26.0+, then restart the GPU engine."
             )
+        if krea2_edit:
+            lora_name = "krea2_identity_edit_v1_2.safetensors"
+            choices = _object_info_options(object_info, "LoraLoaderModelOnly", "lora_name")
+            edit_lora = _basename_match(lora_name, choices)
+            if edit_lora:
+                args["krea2_edit_lora"] = edit_lora
+            else:
+                problems.append(
+                    f"Krea 2 Edit requires {lora_name} in models/loras. "
+                    "Install the v1.2 Identity Edit LoRA and restart the GPU engine."
+                )
         on_disk = _krea2_companion_basenames_on_disk(family)
         clip_choices = _object_info_options(object_info, "CLIPLoader", "clip_name")
         clip_choices += _object_info_options(object_info, "CLIPLoaderGGUF", "clip_name")

@@ -48,6 +48,9 @@ function editPanelTitle(
   isInpaint: boolean,
 ): string {
   if (isInpaint) return "Flux Fill inpaint";
+  if (modelGallery.some((item) => item.engine_name === settings.model && item.family === "krea2")) {
+    return "Krea 2 Identity Edit";
+  }
   const editType = (settings.edit_type ?? "").toLowerCase();
   if (editType === "qwen_edit") return "Qwen Image Edit";
   if (editType === "kontext") return "Flux Kontext edit";
@@ -109,6 +112,7 @@ export function EditFamilySettingsPanel({
   };
 
   const panelTitle = editPanelTitle(settings, modelGallery, isInpaint);
+  const isKreaEdit = panelTitle === "Krea 2 Identity Edit";
   const hardMask = Boolean(settings.inpaint_hard_mask);
   const editStrengthLabel =
     settings.edit_strength == null
@@ -143,7 +147,14 @@ export function EditFamilySettingsPanel({
       </div>
 
       <div className="space-y-3 px-2.5 py-2.5">
-        {showEditStrength && (
+        {isKreaEdit && (
+          <p className="text-[10px] leading-relaxed text-dfui-muted">
+            Identity Edit v1.2 is applied automatically at 0.75 strength; adjust it in LoRAs.
+            Attach the source/scene first and an optional subject second.
+            Uses full denoise and an empty negative prompt. Turbo: try 8 steps, CFG 1, Euler/simple.
+          </p>
+        )}
+        {showEditStrength && !isKreaEdit && (
           <label className="block">
             <FieldLabel hint="How strongly the edit changes the source image.">
               denoise / edit strength — {editStrengthLabel}

@@ -130,7 +130,7 @@ GENERATION_RECIPES: dict[str, dict[str, Any]] = {
 # Pinned Comfy/custom-node SHAs aligned with Krita AI Diffusion 1.50.0 resources.py
 COMFY_INSTALL_RECIPE: dict[str, Any] = {
     "comfy_url": "https://github.com/Comfy-Org/ComfyUI.git",
-    "comfy_version": "f6c162ddcfbd7eefb39c06fe5b8d4c46e8d09f40",  # v0.26.0 (Krea 2)
+    "comfy_version": "12d5279438bfefc058a269eae805ceab6047777f",  # v0.34.0 (Krea 2 ConvRot + kitchen attention)
     "krita_resources_version": "1.50.0",
     "required_custom_nodes": [
         {
@@ -181,6 +181,13 @@ COMFY_INSTALL_RECIPE: dict[str, Any] = {
         },
     ],
     "optional_custom_nodes": [
+        {
+            "id": "comfyui-krea2edit",
+            "url": "https://github.com/lbouaraba/comfyui-krea2edit",
+            "version": "86f886dac23013d88996e3a2e99093ba44d322fb",
+            "reason": "Krea 2 Identity Edit v1.2 grounded instructions and source references.",
+            "nodes": ["Krea2EditModelPatch", "Krea2EditGroundedEncode"],
+        },
         {
             "id": "ComfyUI-GGUF",
             "url": "https://github.com/city96/ComfyUI-GGUF",

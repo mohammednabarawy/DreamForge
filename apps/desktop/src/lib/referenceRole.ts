@@ -121,6 +121,7 @@ export function routeBadgeLabel(
     case "source_edit":
       if (family.includes("kontext")) return "Editing with Flux Kontext";
       if (family === "qwen_image_edit") return "Editing with Qwen Edit";
+      if (family === "krea2") return "Editing with Krea 2 Identity Edit";
       return "Editing source image";
     case "inpaint":
       return "Inpainting region";

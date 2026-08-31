@@ -539,6 +539,7 @@ def _build_comfy_prompt_graph(
     model_loader_args: dict | None = None,
     qwen_reference_filenames: list[str] | None = None,
     kontext_reference_filenames: list[str] | None = None,
+    krea2_reference_filenames: list[str] | None = None,
     client=None,
     input_path: str | None = None,
     extra_reference_paths: list[str] | None = None,
@@ -585,6 +586,7 @@ def _build_comfy_prompt_graph(
         comfy_qwen_image_txt2img,
         comfy_krea2_txt2img,
         comfy_krea2_img2img,
+        comfy_krea2_edit,
         comfy_flux_img2img,
         comfy_pid_flux_upscale,
         comfy_hidream_o1_dev_txt2img,
@@ -1041,6 +1043,11 @@ def _build_comfy_prompt_graph(
                 graph = comfy_flux_fill_inpaint(inpaint_args)
             else:
                 graph = comfy_inpaint_basic(inpaint_args)
+        elif mode == "krea2_edit":
+            graph = comfy_krea2_edit({
+                **common,
+                "images": [input_filename, *(krea2_reference_filenames or [])],
+            })
         elif mode == "kontext":
             kontext_args = {
                 **loader_args,
@@ -1516,6 +1523,37 @@ def _run_comfy_workflow_with_retry(
             return current_client, *result
         except (ComfyExecutionError, ComfyHungError, TimeoutError) as exc:
             last_exc = exc
+            # Kitchen has stricter shape/dtype limits than SDPA. Retry only errors
+            # from its attention path, never unrelated quantized-model failures.
+            messages = getattr(exc, "details", {}).get("status", {}).get("messages", [])
+            traces = [str(line) for message in messages
+                      if isinstance(message, (list, tuple)) and len(message) == 2
+                      and message[0] == "execution_error" and isinstance(message[1], dict)
+                      for line in message[1].get("traceback", [])]
+            error_text = (str(exc) + "\n".join(traces)).lower().replace("\\", "/")
+            kitchen_error = any(token in error_text for token in (
+                "attention_comfy_kitchen", "comfy_kitchen.int8_attention",
+                "comfy_kitchen/sage_attention.py", "int8 attention requires",
+                "comfy kitchen attention is unavailable",
+            ))
+            if attempt == 0 and kitchen_error and not is_comfy_oom_error(exc):
+                from dreamforge_comfy_launch import comfy_launch_extra_args
+                from dreamforge_comfy_server import get_default_comfy_server, restart_managed_comfy_server
+
+                managed = get_default_comfy_server()
+                if not managed._attached_external and "--use-ck-attention" in managed.config.extra_args:
+                    emit_event(stream_sink, {
+                        "type": "progress", "job_id": job_id, "phase": "sampling", "progress": 0,
+                        "message": "Kitchen attention could not run this workflow. Retrying with PyTorch attention; generation settings are unchanged.",
+                    })
+                    os.environ["DREAMFORGE_COMFY_ATTENTION"] = "pytorch"
+                    server = restart_managed_comfy_server(
+                        timeout_s=120.0, reason="kitchen_attention_fallback",
+                        extra_args=comfy_launch_extra_args(),
+                    )
+                    from dreamforge_comfy_client import ComfyClient
+                    current_client = ComfyClient(server.base_url)
+                    continue
             if attempt == 0 and is_comfy_oom_error(exc):
                 emit_event(
                     stream_sink,
@@ -1652,7 +1690,7 @@ def run_generation(
             return {"status": "error", **err}
         from dreamforge_identity import apply_identity_to_job
 
-        identity_patch = apply_identity_to_job(job)
+        identity_patch = apply_identity_to_job(job, model_family=str(model.get("family") or ""))
         if identity_patch.get("identity_error"):
             err = invalid_request(str(identity_patch["identity_error"]), job_id=job_id)
             emit_event(stream_sink, err)
@@ -2297,11 +2335,16 @@ def run_generation(
         server = ensure_comfy_running(timeout_s=60.0)
         client = ComfyClient(server.base_url)
 
+        krea2_instruction_edit = model_family == "krea2" and resolve_comfy_workflow_mode(
+            route, model=model, model_family=model_family, input_filename=input_path,
+        ) == "krea2_edit"
+
         def _resolve_loaders():
             return resolve_comfy_model_loader_args(
                 client,
                 model=model,
                 model_family=model_family,
+                **({"krea2_edit": True} if krea2_instruction_edit else {}),
             )
 
         try:
@@ -2366,6 +2409,7 @@ def run_generation(
         reference_stitch_filename = None
         qwen_reference_filenames: list[str] = []
         kontext_reference_filenames: list[str] = []
+        krea2_reference_filenames: list[str] = []
         extra_reference_paths = _coerce_reference_image_paths(job)
         if (
             str(getattr(job, "edit_task", "") or "").strip().lower() == "cutout_compose"
@@ -2373,7 +2417,6 @@ def run_generation(
             and extra_reference_paths
         ):
             try:
-                from PIL import Image
                 from dreamforge_paths import resolve_image_path_or_raise
                 from dreamforge_comfy_workflows import compute_cutout_layout
 
@@ -2391,23 +2434,35 @@ def run_generation(
                 job._cutout_layout = {"x": x, "y": y, "target_w": tw, "target_h": th}
             except Exception:
                 pass
+        if krea2_instruction_edit and len(extra_reference_paths) > 1:
+            from dreamforge_errors import invalid_request
+
+            err = invalid_request(
+                "Krea 2 Edit supports two images total: source/scene first, optional subject second. "
+                "Remove extra references or select Qwen Edit for three images.",
+                job_id=job_id,
+            )
+            emit_event(stream_sink, err)
+            return {"status": "error", **err}
         if extra_reference_paths and input_path:
-            if model_family == "qwen_image_edit":
+            if model_family == "qwen_image_edit" or krea2_instruction_edit:
                 try:
                     from dreamforge_paths import resolve_image_path_or_raise
 
-                    for ref_path in extra_reference_paths[:2]:
+                    for ref_index, ref_path in enumerate(extra_reference_paths[:2]):
                         resolved = resolve_image_path_or_raise(str(ref_path))
-                        ref_local_name = Path(resolved).name
+                        ref_local_name = (
+                            f"{job_id}_krea2_ref_{ref_index}{Path(resolved).suffix}"
+                            if krea2_instruction_edit else Path(resolved).name
+                        )
                         ref_upload = client.upload_image(
                             image_bytes=Path(resolved).read_bytes(),
                             filename=ref_local_name,
                             folder_type="input",
                             overwrite=True,
                         )
-                        qwen_reference_filenames.append(
-                            str(ref_upload.get("name") or ref_local_name)
-                        )
+                        target_filenames = krea2_reference_filenames if krea2_instruction_edit else qwen_reference_filenames
+                        target_filenames.append(str(ref_upload.get("name") or ref_local_name))
                 except OSError as exc:
                     err = invalid_input_image(
                         f"reference image: {exc}",
@@ -2931,6 +2986,7 @@ def run_generation(
                 model_loader_args=resolved_loaders,
                 qwen_reference_filenames=qwen_reference_filenames or None,
                 kontext_reference_filenames=kontext_reference_filenames or None,
+                krea2_reference_filenames=krea2_reference_filenames or None,
                 client=client,
                 input_path=input_path,
                 extra_reference_paths=_coerce_reference_image_paths(job),
@@ -2976,6 +3032,20 @@ def run_generation(
                 object_info = client.object_info(timeout_s=30.0)
             except Exception:
                 object_info = {}
+            from dreamforge_comfy_launch import apply_small_image_attention_policy
+
+            if apply_small_image_attention_policy(
+                prompt_graph, mode=comfy_mode, family=model_family,
+                width=int(settings["width"]), height=int(settings["height"]),
+                kitchen_enabled=not getattr(server, "_attached_external", True) and "--use-ck-attention" in server.config.extra_args,
+                object_info=object_info,
+            ):
+                comfy_workflow_class_types = sorted({*comfy_workflow_class_types, "ModelAttentionBackend"})
+                settings["attention_backend"] = "pytorch"
+                emit_event(stream_sink, {
+                    "type": "progress", "job_id": job_id, "phase": "preflight", "progress": 5,
+                    "message": "Using PyTorch attention for this small SD image (automatic performance policy).",
+                })
             missing_workflow_nodes = sorted(
                 node_type
                 for node_type in comfy_workflow_class_types
@@ -3049,7 +3119,7 @@ def run_generation(
                         )
                     except Exception:
                         pass
-            if missing_workflow_nodes and comfy_mode == "custom_tool":
+            if missing_workflow_nodes and comfy_mode in {"custom_tool", "krea2_edit"}:
                 from dreamforge_workflow_planner import (
                     resolve_pack_ids_for_nodes,
                     _custom_node_directory_present,
@@ -3121,7 +3191,7 @@ def run_generation(
                         )
                         server = restart_managed_comfy_server(
                             timeout_s=90.0,
-                            reason="custom_tool_nodes",
+                            reason=f"{comfy_mode}_nodes",
                         )
                         client = ComfyClient(server.base_url)
                         object_info = client.object_info(timeout_s=30.0)

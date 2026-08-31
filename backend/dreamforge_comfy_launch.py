@@ -10,13 +10,16 @@ The flag set adapts to the *installed* hardware and PyTorch build:
 * Older PyTorch (< 2.8) or non-NVIDIA falls back to the legacy memory modes
   (``--lowvram`` streaming on tight Windows tiers, ``--highvram`` on big cards).
 
-Optional speed flags (``--fast`` and Sage/Flash attention) are added whenever the
-hardware/libraries support them, regardless of the memory mode.
+Kitchen attention is GPU-probed before automatic selection. Experimental
+``--fast`` and Sage/Flash auto-selection remain behind the benchmark gate.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import logging
+from functools import lru_cache
+from pathlib import Path
 import os
 import platform
 from typing import Final
@@ -126,17 +129,59 @@ def _module_available(name: str) -> bool:
         return False
 
 
-def attention_flag() -> str | None:
-    """Pick an installed accelerated attention backend (Sage preferred, then Flash).
+@lru_cache(maxsize=4)
+def _kitchen_attention_usable(device_index: int) -> bool:
+    """Probe the installed kernel once per device, without changing generation RNG."""
+    try:
+        from _paths import COMFY_ROOT
+        import torch
+        import comfy_kitchen
 
-    ComfyUI's attention options are mutually exclusive, so we return at most one.
-    Respects DREAMFORGE_COMFY_ATTENTION (sage|flash|auto|off).
+        # An external/older checkout may not understand the new CLI flag yet.
+        cli = Path(COMFY_ROOT) / "comfy" / "cli_args.py"
+        if "--use-ck-attention" not in cli.read_text(encoding="utf-8"):
+            return False
+        device = torch.device("cuda", device_index)
+        if torch.version.cuda is None or not comfy_kitchen.int8_attention_is_available(device):
+            return False
+        with torch.inference_mode():
+            dtypes = [torch.float16]
+            if torch.cuda.get_device_capability(device) >= (8, 0):
+                dtypes.append(torch.bfloat16)
+            for dtype in dtypes:
+                q = torch.arange(4096, device=device, dtype=torch.float32).sin().reshape(1, 1, 64, 64).to(dtype)
+                for mask in (None, torch.ones((64, 64), device=device, dtype=torch.bool).tril()):
+                    out = comfy_kitchen.int8_attention(q, q, q, attn_mask=mask)
+                    baseline = torch.nn.functional.scaled_dot_product_attention(q, q, q, attn_mask=mask)
+                    if not torch.isfinite(out).all() or not torch.allclose(out, baseline, atol=0.05, rtol=0.05):
+                        return False
+        return True
+    except Exception as exc:
+        logging.getLogger(__name__).warning("Kitchen attention unavailable; using the standard backend: %s", exc)
+        return False
+
+
+def attention_flag() -> str | None:
+    """Select one backend; kitchen auto-selection requires a successful GPU probe.
+
+    DREAMFORGE_COMFY_ATTENTION accepts kitchen/ck, pytorch, sage, flash, auto, off.
     """
     pref = (os.environ.get("DREAMFORGE_COMFY_ATTENTION") or "auto").strip().lower()
-    if pref in {"", "auto"} and os.environ.get("DREAMFORGE_COMFY_BACKEND") == "rocm":
+    backend = os.environ.get("DREAMFORGE_COMFY_BACKEND")
+    if pref in {"pytorch", "torch", "sdpa"} or (pref in {"", "auto"} and backend == "rocm"):
         return "--use-pytorch-cross-attention"
     if pref in {"off", "none", "0", "false"}:
         return None
+    if pref in {"", "auto", "kitchen", "ck", "comfy-kitchen"}:
+        if backend == "cuda" and _module_available("comfy_kitchen"):
+            try:
+                device_index = int(os.environ.get("DREAMFORGE_COMFY_DEVICE_INDEX") or 0)
+                if _kitchen_attention_usable(device_index):
+                    return "--use-ck-attention"
+            except ValueError:
+                pass
+        if pref not in {"", "auto"}:
+            return "--use-pytorch-cross-attention"
     if pref in {"sage", "sageattention"} and _module_available("sageattention"):
         return "--use-sage-attention"
     if pref in {"flash", "flashattention", "flash_attn"} and _module_available("flash_attn"):
@@ -334,3 +379,32 @@ def comfy_launch_summary() -> str:
     if not args:
         return f"ComfyUI memory mode: default ({dyn}, {vram_note})"
     return f"ComfyUI memory mode: {', '.join(args)} ({dyn}, {vram_note})"
+
+
+def apply_small_image_attention_policy(graph: dict, *, mode: str, family: str,
+                                       width: int, height: int, kitchen_enabled: bool,
+                                       object_info: dict) -> bool:
+    """Keep small SD text-to-image jobs on native SDPA, without restarting Comfy.
+
+    Matched RTX 5060 Ti runs showed no gain from kitchen at these sizes.
+    Explicit backend choices and user-authored attention patches remain authoritative.
+    """
+    pref = (os.environ.get("DREAMFORGE_COMFY_ATTENTION") or "auto").strip().lower()
+    if (pref not in {"", "auto"} or not kitchen_enabled or mode != "txt2img"
+            or family not in {"sd15", "sdxl"} or min(width, height) <= 0
+            or width * height > 768 * 768 or "ModelAttentionBackend" not in object_info
+            or any(n.get("class_type") == "ModelAttentionBackend" for n in graph.values())):
+        return False
+    next_id = max([int(key) for key in graph if str(key).isdigit()] + [0]) + 1
+    changed = False
+    for node in list(graph.values()):
+        if node.get("class_type") != "KSampler":
+            continue
+        model = node["inputs"]["model"]
+        graph[str(next_id)] = {"class_type": "ModelAttentionBackend", "inputs": {
+            "model": model, "attention": "pytorch attention",
+        }}
+        node["inputs"]["model"] = [str(next_id), 0]
+        next_id += 1
+        changed = True
+    return changed

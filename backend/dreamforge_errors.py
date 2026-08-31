@@ -852,6 +852,18 @@ def from_exception(exc: BaseException, *, job_id: str | None = None) -> dict:
             recoverable=True,
             job_id=job_id,
         )
+    if "int8_tensorwise" in msg_lower and ("keyerror" in msg_lower or name == "KeyError"):
+        return error(
+            "unsupported_model_format",
+            "This ConvRot INT8 model needs newer ComfyUI quantization support.",
+            suggestions=[
+                "For Krea 2 editing, select the installed krea2TurboFP8_krea2TURBO.safetensors model.",
+                "ConvRot INT8 requires a compatible ComfyUI and comfy-kitchen update; restarting the same engine is not enough.",
+            ],
+            details={"exception": f"{name}: {msg}"},
+            recoverable=True,
+            job_id=job_id,
+        )
     if "float4_e2m1fn_x2" in msg_lower:
         return error(
             "unsupported_model_format",

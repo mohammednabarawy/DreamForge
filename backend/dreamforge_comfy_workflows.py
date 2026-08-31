@@ -350,6 +350,58 @@ def comfy_krea2_img2img(args: dict[str, Any]) -> dict[str, Any]:
     return g
 
 
+def comfy_krea2_edit(args: dict[str, Any]) -> dict[str, Any]:
+    """Krea 2 Identity Edit v1.2: grounded instructions and clean reference tokens."""
+    images = list(args.get("images") or ([args["image"]] if args.get("image") else []))
+    if not 1 <= len(images) <= 2 or not all(images):
+        raise ValueError("Krea 2 Edit requires one source image and at most one additional reference.")
+    lora_name = str(args.get("krea2_edit_lora") or "krea2_identity_edit_v1_2.safetensors")
+    loras = list(args.get("loras") or [])
+    identity_loras = [entry for entry in loras if "krea2_identity_edit" in str(entry.get("name", "")).lower()]
+    if any(Path(str(entry["name"]).replace(chr(92), "/")).name.lower() != Path(lora_name).name.lower() for entry in identity_loras):
+        raise ValueError("Krea 2 Edit uses v1.2 weights. Remove older Krea identity-edit LoRAs before editing.")
+    # Reuse LoRA strength controls without applying the edit LoRA twice.
+    strength = float(identity_loras[-1].get("weight", 0.75)) if identity_loras else 0.75
+    loras = [entry for entry in loras if entry not in identity_loras]
+    g: dict[str, Any] = {}
+    model, clip, vae, n = _add_model_loader(g, {**args, "loras": loras})
+    g[str(n)] = _node("LoraLoaderModelOnly", {
+        "model": model, "lora_name": lora_name, "strength_model": strength,
+    })
+    g["2"] = _node("LoadImage", {"image": images[0]})
+    g["3"] = _node("VAEEncode", {"pixels": ["2", 0], "vae": vae})
+    g["4"] = _node("EmptySD3LatentImage", {
+        "width": int(args.get("width", 1024)), "height": int(args.get("height", 1024)), "batch_size": 1,
+    })
+    patch = {
+        "model": [str(n), 0], "source_latent": ["3", 0], "vae": vae,
+        "source_image": ["2", 0], "target_latent": ["4", 0],
+        "fit_mode": "fit", "ref_boost": 1.0, "ref_boost_a": 1.0,
+    }
+    grounded = {"clip": clip, "image": ["2", 0], "grounding_px": 768, "system_prompt": ""}
+    if len(images) == 2:
+        g["10"] = _node("LoadImage", {"image": images[1]})
+        g["11"] = _node("VAEEncode", {"pixels": ["10", 0], "vae": vae})
+        patch.update(source_latent_b=["11", 0], source_image_b=["10", 0])
+        grounded["image_b"] = ["10", 0]
+    g["5"] = _node("Krea2EditModelPatch", patch)
+    g["6"] = _node("Krea2EditGroundedEncode", {**grounded, "prompt": str(args.get("prompt", ""))})
+    # Ground the unconditional branch too, so Raw/CFG > 1 remains valid.
+    g["7"] = _node("Krea2EditGroundedEncode", {**grounded, "prompt": ""})
+    g["8"] = _node("KSampler", {
+        "model": ["5", 0], "positive": ["6", 0], "negative": ["7", 0],
+        "latent_image": ["4", 0], "seed": int(args.get("seed", 0)),
+        "steps": int(args.get("steps", 8)), "cfg": float(args.get("cfg", 1.0)),
+        "sampler_name": str(args.get("sampler_name", "euler")),
+        "scheduler": str(args.get("scheduler", "simple")), "denoise": 1.0,
+    })
+    g["9"] = _vae_decode_node(args, ["8", 0], vae)
+    g["12"] = _node("SaveImage", {
+        "images": ["9", 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge")),
+    })
+    return g
+
+
 def comfy_kandinsky5_txt2img(args: dict[str, Any]) -> dict[str, Any]:
     """Kandinsky 5 txt2img."""
     ckpt = str(args["ckpt_name"])

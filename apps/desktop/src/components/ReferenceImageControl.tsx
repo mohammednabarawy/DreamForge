@@ -86,6 +86,7 @@ export function ReferenceImageControl({
     (path) => path.trim() && path.trim() !== attachedPath,
   );
   const showEditStrength =
+    !(studioMode === "edit" && modelFamily === "krea2") &&
     Boolean(attachedPath) &&
     attachMode !== "upscale" &&
     Boolean(onEditStrengthChange);
@@ -108,7 +109,7 @@ export function ReferenceImageControl({
     supportsMultiReferences &&
     Boolean(onPatchSettings) &&
     Boolean(attachedPath);
-  const maxSlots = maxReferenceImagesForFamily(modelFamily ?? "");
+  const maxSlots = maxReferenceImagesForFamily(modelFamily ?? "", studioMode);
 
   const referenceSlots = coerceReferenceSlots(settings, studioMode, maxSlots);
   const atReferenceCap =

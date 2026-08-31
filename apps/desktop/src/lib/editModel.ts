@@ -160,6 +160,14 @@ export function buildEditRoutingPatch(
       cn_type: "None",
     };
   }
+  if ((item.family ?? "").toLowerCase() === "krea2") {
+    return {
+      edit_type: "auto",
+      edit_strength: 1.0,
+      cn_selection: "None",
+      cn_type: "None",
+    };
+  }
   if (isFluxKontextEditModel(item) || (item.family ?? "").toLowerCase() === "flux_kontext") {
     return {
       edit_type: "kontext",

@@ -14,8 +14,7 @@ python_embeded/
 *.zip
 
 # --- Model directories (symlinked or downloaded) ---
-models/
-!models/configs/
+/models
 backend/models/*
 backend/models_backup/
 
@@ -37,9 +36,12 @@ backend/outputs/
 
 # --- Temp / cache ---
 __pycache__/
+.pytest_cache/
 *.py[cod]
 *$py.class
 *.tmp
+/.tmp/
+tests.out
 *.log
 temp/
 backend/temp/

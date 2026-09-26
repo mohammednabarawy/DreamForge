@@ -54,6 +54,12 @@ EDIT_RECIPES: dict[str, dict[str, Any]] = {
     "qwen_image_edit": {
         "name": "Qwen Edit",
         "checkpoints": [
+            "qwen_image_2.1_int8_convrot.safetensors",
+            "qwen_image_2.1_bf16.safetensors",
+            "Qwen-Image-2.1-Q4_K_M.gguf",
+            "Qwen-Image-2.1-Q5_K_M.gguf",
+            "Qwen-Image-2.1",
+            "qwen_image_2.1",
             "qwen-image-edit-2511-Q4_K_M.gguf",
             "Qwen-Image-Edit-2511-Q4_K_M.gguf",
             "Qwen_Image_Edit-Q5_1.gguf",
@@ -81,7 +87,7 @@ EDIT_RECIPES: dict[str, dict[str, Any]] = {
         "qwen_image_shift": 3.1,
         "qwen_scale_megapixels": 1.25,
         "qwen_lightning_strength": 0.75,
-        "max_reference_images": 3,
+        "max_reference_images": 10,
         "live_steps": 10,
         "live_cfg": 1.0,
     },
@@ -101,7 +107,7 @@ EDIT_RECIPES: dict[str, dict[str, Any]] = {
         "qwen_image_shift": 3.0,
         "qwen_scale_megapixels": 1.25,
         "qwen_lightning_strength": 1.0,
-        "max_reference_images": 3,
+        "max_reference_images": 10,
         "live_steps": 4,
         "live_cfg": 1.0,
     },
@@ -309,7 +315,7 @@ def resolve_qwen_edit_mode(
 ) -> str:
     """Return 'single', 'plus', or 'raw_plus' for Qwen edit graph selection."""
     family = (model_family or "").lower()
-    if family != "qwen_image_edit":
+    if family not in {"qwen_image_edit", "qwen_image", "qwen_image_2.1"}:
         return "single"
     mode = str(requested or "auto").lower()
     if mode in {"raw", "raw_plus", "preserve", "preserve_resolution", "exact"}:

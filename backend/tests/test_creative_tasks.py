@@ -7,6 +7,12 @@ from dreamforge_creative_tasks import (
 
 GALLERY = [
     {
+        "family": "qwen_image_2.1",
+        "caption": "Qwen Image 2.1 INT8",
+        "engine_name": "qwen_image_2.1_int8_convrot.safetensors",
+        "relative_path": "qwen_image_2.1_int8_convrot.safetensors",
+    },
+    {
         "family": "flux_kontext",
         "caption": "Flux Kontext FP8",
         "engine_name": "flux1-dev-kontext_fp8_scaled.safetensors",
@@ -33,7 +39,7 @@ GALLERY = [
 ]
 
 
-def test_resolve_inpaint_routes_flux_fill():
+def test_resolve_inpaint_routes_qwen_image_21():
     result = resolve_creative_task(
         "inpaint",
         {"prompt": "fix the sky"},
@@ -41,9 +47,9 @@ def test_resolve_inpaint_routes_flux_fill():
         selected_image="D:/photo.png",
     )
     patch = result["patch"]
-    assert patch["edit_type"] == "inpaint"
-    assert patch["cn_type"] == "inpaint"
-    assert "flux1-fill" in patch["model"]
+    assert patch["edit_type"] == "qwen_edit"
+    assert patch["cn_type"] == "None"
+    assert "qwen_image_2.1" in patch["model"]
     assert patch["input_image"] == "D:/photo.png"
 
 
@@ -61,6 +67,9 @@ def test_resolve_inpaint_clears_mask_when_selected_image_changes():
     patch = result["patch"]
     assert patch["input_image"] == "D:/old.png"
     assert patch.get("inpaint_mask_path") == "D:/old-mask.png"
+    assert patch["edit_type"] == "inpaint"
+    assert patch["cn_type"] == "inpaint"
+    assert "qwen_image_2.1" in patch["model"]
 
 
 def test_resolve_inpaint_preserves_mask_when_history_selection_differs():
@@ -79,7 +88,7 @@ def test_resolve_inpaint_preserves_mask_when_history_selection_differs():
     assert patch.get("inpaint_mask_path") == "D:/mask.png"
 
 
-def test_resolve_edit_routes_kontext():
+def test_resolve_edit_routes_qwen_image_21():
     result = resolve_creative_task(
         "edit",
         {"prompt": "make jacket blue"},
@@ -87,13 +96,13 @@ def test_resolve_edit_routes_kontext():
         selected_image="D:/photo.png",
     )
     patch = result["patch"]
-    assert patch["edit_type"] == "kontext"
+    assert patch["edit_type"] == "qwen_edit"
     assert patch["input_image"] == "D:/photo.png"
-    assert "kontext" in patch["model"].lower()
+    assert "qwen_image_2.1" in patch["model"].lower()
     assert patch.get("upscale_image") in (None, "")
 
 
-def test_resolve_edit_preserves_user_model_override():
+def test_resolve_edit_replaces_legacy_qwen_model():
     result = resolve_creative_task(
         "edit",
         {
@@ -105,7 +114,7 @@ def test_resolve_edit_preserves_user_model_override():
         selected_image="D:/photo.png",
     )
     patch = result["patch"]
-    assert patch["model"] == "qwen-image-edit-2511-Q4_K_M.gguf"
+    assert patch["model"] == "qwen_image_2.1_int8_convrot.safetensors"
     assert patch["edit_type"] == "qwen_edit"
 
 
@@ -155,7 +164,34 @@ def test_vram_quality_caps_edit_cfg_on_5gb():
     assert patch["cfg_scale"] <= 5
 
 
-def test_enforce_on_submit_inpaint_preserves_user_model_override():
+def test_qwen_image_21_profiles_survive_low_vram_defaults():
+    for mode in ("generate", "edit"):
+        patch = apply_vram_quality_defaults(
+            {"model": "qwen_image_2.1_int8.safetensors", "performance": "Quality", "steps": 40, "cfg_scale": 1},
+            studio_mode=mode,
+            vram_profile="5gb",
+        )
+        assert patch["performance"] == "Quality"
+        assert patch["steps"] == 40
+        assert patch["cfg_scale"] == 1
+
+
+def test_qwen_image_21_speed_survives_edit_routing():
+    result = resolve_creative_task(
+        "edit",
+        {"prompt": "change the shirt", "performance": "Speed", "steps": 25, "cfg_scale": 1},
+        GALLERY,
+        selected_image="D:/photo.png",
+        vram_profile="5gb",
+    )
+    patch = result["patch"]
+    assert patch["model"] == "qwen_image_2.1_int8_convrot.safetensors"
+    assert patch["performance"] == "Speed"
+    assert patch["steps"] == 25
+    assert patch["cfg_scale"] == 1
+
+
+def test_enforce_on_submit_inpaint_replaces_legacy_model_override():
     out = enforce_creative_task_settings(
         {
             "model": "juggernautxl_inpaint.safetensors",
@@ -167,8 +203,8 @@ def test_enforce_on_submit_inpaint_preserves_user_model_override():
         model_gallery=GALLERY,
         user_picked_model=True,
     )
-    assert out["edit_type"] == "inpaint"
-    assert out["model"] == "juggernautxl_inpaint.safetensors"
+    assert out["edit_type"] == "qwen_edit"
+    assert out["model"] == "qwen_image_2.1_int8_convrot.safetensors"
 
 
 def test_enforce_on_submit_inpaint_uses_default_when_model_empty():
@@ -181,11 +217,11 @@ def test_enforce_on_submit_inpaint_uses_default_when_model_empty():
         studio_mode="inpaint",
         model_gallery=GALLERY,
     )
-    assert out["edit_type"] == "inpaint"
-    assert "flux1-fill" in out["model"]
+    assert out["edit_type"] == "qwen_edit"
+    assert "qwen_image_2.1" in out["model"]
 
 
-def test_resolve_toolbox_cutout_compose_routes_qwen():
+def test_legacy_toolbox_route_collapses_into_edit():
     result = resolve_creative_task(
         "toolbox",
         {
@@ -198,8 +234,8 @@ def test_resolve_toolbox_cutout_compose_routes_qwen():
         selected_image="D:/subject.png",
     )
     patch = result["patch"]
-    assert result["studio_mode"] == "toolbox"
+    assert result["studio_mode"] == "edit"
     assert patch["edit_task"] == "cutout_compose"
     assert patch["edit_type"] == "qwen_edit"
-    assert "qwen" in patch["model"].lower()
-    assert float(patch["edit_strength"]) <= 0.4
+    assert "qwen_image_2.1" in patch["model"].lower()
+    assert float(patch["edit_strength"]) == 1.0

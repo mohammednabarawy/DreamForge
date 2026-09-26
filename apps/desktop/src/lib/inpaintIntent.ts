@@ -9,7 +9,7 @@ import {
   selectFluxFillModel,
 } from "./inpaintModel";
 import { DEFAULT_QWEN_EDIT_MODEL, selectQwenEditModel } from "./editModel";
-import { qwenEdit2511LightningPatch } from "./qwenEditDefaults";
+import { qwenImage21Defaults } from "./qwenEditDefaults";
 import {
   PORTRAIT_MASTER_SAMPLING,
   buildPortraitMasterPrompt,
@@ -274,7 +274,7 @@ export function patchForEditTask(
       patch.inpaint_feather = preset.inpaint_feather;
       patch.inpaint_mask_grow_by = preset.inpaint_mask_grow_by;
     } else {
-      Object.assign(patch, qwenEdit2511LightningPatch());
+      Object.assign(patch, qwenImage21Defaults());
       patch.model = selectQwenEditModel(gallery) || DEFAULT_QWEN_EDIT_MODEL;
       patch.qwen_edit_mode = "plus";
       patch.reference_role = "source_edit";
@@ -287,7 +287,7 @@ export function patchForEditTask(
     patch.edit_type = undefined;
     patch.cn_type = undefined;
     patch.cn_selection = undefined;
-    Object.assign(patch, qwenEdit2511LightningPatch());
+    Object.assign(patch, qwenImage21Defaults());
     patch.edit_strength = 0.35;
     patch.model = selectQwenEditModel(gallery) || DEFAULT_QWEN_EDIT_MODEL;
     patch.qwen_edit_mode = "plus";

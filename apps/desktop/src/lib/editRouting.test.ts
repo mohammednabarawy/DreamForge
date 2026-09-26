@@ -6,7 +6,7 @@ import { coerceReferenceSlots } from "./referenceSlots";
 import type { GenerationSettings, ModelGalleryItem } from "./tauri-api";
 
 const krea = { engine_name: "krea.safetensors", family: "krea2" } as ModelGalleryItem;
-const qwen = { engine_name: "qwen-edit.safetensors", family: "qwen_image_edit" } as ModelGalleryItem;
+const qwen = { engine_name: "qwen_image_2.1_int8_convrot.safetensors", family: "qwen_image_2.1" } as ModelGalleryItem;
 
 describe("Krea edit submission", () => {
   it("retains Krea, explicit sampling settings, and source/subject order with Keep Face", () => {

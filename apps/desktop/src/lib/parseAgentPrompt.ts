@@ -1,5 +1,5 @@
 import { findGalleryModel } from "./model-selection";
-import { qwenEdit2511LightningPatch } from "./qwenEditDefaults";
+import { qwenImage21Defaults } from "./qwenEditDefaults";
 import type { GenerationSettings, ModelGalleryItem } from "./tauri-api";
 
 export type AgentPromptPrepareOptions = {
@@ -199,7 +199,7 @@ function mergeAgentPromptDict(
   }
 
   if (patch.input_image && !patch.edit_type) {
-    Object.assign(patch, qwenEdit2511LightningPatch());
+    Object.assign(patch, qwenImage21Defaults());
   }
 
   return patch;

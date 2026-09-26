@@ -136,7 +136,7 @@ EDIT_TASK_PRESETS: dict[str, dict[str, Any]] = {
         "hint": "Extend the canvas in the requested direction.",
     },
     "global_edit": {
-        "edit_type": "kontext",
+        "edit_type": "qwen_edit",
         "edit_strength": 0.72,
         "requires_mask": False,
         "scope": "source_image",

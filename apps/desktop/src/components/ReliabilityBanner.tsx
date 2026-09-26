@@ -35,6 +35,16 @@ export function ReliabilityBanner({
                 <p className="mt-0.5 text-[11px] leading-snug text-dfui-secondary">
                   {warning.message}
                 </p>
+                {warning.suggestions && warning.suggestions.length > 0 && (
+                  <ul className="mt-1.5 space-y-0.5 border-t border-amber-500/20 pt-1 text-[10px] text-amber-200/80">
+                    {warning.suggestions.slice(0, 2).map((s, idx) => (
+                      <li key={idx} className="flex items-start gap-1">
+                        <span className="text-amber-400">•</span>
+                        <span>{s}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
               <button
                 type="button"

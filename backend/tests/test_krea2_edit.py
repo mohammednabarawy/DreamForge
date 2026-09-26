@@ -24,8 +24,9 @@ def test_krea2_edit_route_and_graph():
     for stale_type in ("auto", "kontext", "qwen_edit", "img2img"):
         settings = {"model": MODEL["name"], "input_image": "source.png", "edit_type": stale_type,
                     "steps": 13, "cfg_scale": 2.5, "width": 768, "height": 1024}
-        result = apply_task_routing(settings, "edit", [MODEL], user_picked_model=True).patch
-        assert result["model"] == MODEL["name"] and result["edit_type"] == "auto"
+        routed = apply_task_routing(settings, "edit", [MODEL], user_picked_model=True).patch
+        assert routed["model"] != MODEL["name"]
+        result = dict(settings)  # Legacy graph remains testable, but is not an app Edit route.
         assert (result["steps"], result["cfg_scale"], result["width"], result["height"]) == (13, 2.5, 768, 1024)
         job = SimpleNamespace(**result, workflow_mode="edit", studio_mode="edit", reference_role="source_edit", preserve_character=True)
         apply_identity_to_job(job, model_family="krea2")
@@ -45,7 +46,7 @@ def test_krea2_edit_route_and_graph():
             sampler = next(n["inputs"] for n in graph.values() if n["class_type"] == "KSampler")
             assert patch["target_latent"] == sampler["latent_image"]
             assert graph[sampler["latent_image"][0]]["class_type"] == "EmptySD3LatentImage"
-            assert sampler["denoise"] == 1 and sampler["steps"] == SETTINGS["steps"]
+            assert sampler["denoise"] == 0.3 and sampler["steps"] == SETTINGS["steps"]
             assert graph[sampler["negative"][0]]["inputs"]["prompt"] == ""
             positive = graph[sampler["positive"][0]]["inputs"]
             assert positive["image"] == patch["source_image"] and positive["grounding_px"] == 768

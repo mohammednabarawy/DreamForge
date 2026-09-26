@@ -1,10 +1,8 @@
 import type { StudioMode } from "./model-selection";
 
 export type GenerationSection =
-  | "creativeTemplate"
   | "upscalePanel"
   | "editFamilyPanel"
-  | "toolboxPanel"
   | "performance"
   | "aspectRatio"
   | "imageNumber"
@@ -12,7 +10,6 @@ export type GenerationSection =
   | "promptSeed"
   | "customSampling"
   | "controlNet"
-  | "qwen"
   | "promptHelpers"
   | "hardware";
 
@@ -79,14 +76,10 @@ export function generationSectionVisible(
   ctx: GenerationTabContext,
 ): boolean {
   switch (section) {
-    case "creativeTemplate":
-      return Boolean(ctx.advancedMode) && !ctx.isUpscale;
     case "upscalePanel":
       return ctx.isUpscale;
     case "editFamilyPanel":
       return ctx.isEdit || ctx.isInpaint;
-    case "toolboxPanel":
-      return ctx.isToolbox;
     case "performance":
       return !ctx.isUpscale;
     case "aspectRatio":
@@ -107,8 +100,6 @@ export function generationSectionVisible(
       );
     case "controlNet":
       return ctx.isGenerateFamily && !ctx.isModernModel && Boolean(ctx.advancedMode);
-    case "qwen":
-      return ctx.isQwenModel && (ctx.isEdit || ctx.isGenerateFamily) && Boolean(ctx.advancedMode);
     case "promptHelpers":
       return ctx.isGenerateFamily && !ctx.isModernModel && Boolean(ctx.advancedMode);
     case "hardware":
@@ -122,7 +113,6 @@ export type InspectorTabId =
   | "models"
   | "loras"
   | "styles"
-  | "recipes"
   | "settings"
   | "automation";
 
@@ -137,34 +127,33 @@ export function inspectorTabsForMode(input: {
   const { studioMode, simpleInspectorLocked, powerUserInspector, isInpaint, isUpscale } = input;
 
   if (isUpscale) {
-    return ["models", "recipes", "settings"];
+    return ["settings", "models"];
   }
   if (simpleInspectorLocked) {
-    return ["settings", "models", "recipes"];
+    return ["settings", "models"];
   }
   if (isInpaint) {
     return powerUserInspector
-      ? ["models", "loras", "recipes", "settings", "automation"]
-      : ["models", "recipes", "settings"];
+      ? ["settings", "models", "loras", "automation"]
+      : ["settings", "models"];
   }
   if (studioMode === "edit" || studioMode === "toolbox") {
     return powerUserInspector
-      ? ["models", "loras", "recipes", "settings", "automation"]
-      : ["models", "recipes", "settings"];
+      ? ["settings", "models", "loras", "automation"]
+      : ["settings", "models"];
   }
   if (isGenerateFamilyMode(studioMode)) {
     return powerUserInspector
-      ? ["models", "loras", "styles", "recipes", "settings", "automation"]
-      : ["models", "styles", "recipes", "settings"];
+      ? ["settings", "models", "styles", "loras", "automation"]
+      : ["settings", "models", "styles"];
   }
-  return ["models", "settings"];
+  return ["settings", "models"];
 }
 
 export const MODE_AUTO_SUMMARY: Partial<Record<string, string>> = {
   generate:
     "Auto: best create route · performance preset · VRAM detect · optional reference guidance",
   edit: "Auto: best edit model · describe the change · performance preset",
-  inpaint: "Auto: Flux Fill inpaint · mask from canvas · named intent presets",
+  inpaint: "Qwen Image 2.1 masked edit · mask from canvas · source preserved",
   upscale: "Auto: SDXL upscale route · tile settings tuned for quality",
-  toolbox: "Auto: Native tools and custom ComfyUI workflow imports",
 };

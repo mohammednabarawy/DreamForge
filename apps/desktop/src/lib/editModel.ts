@@ -38,9 +38,9 @@ export function isFluxKontextEditModel(item: ModelGalleryItem): boolean {
 
 export function isQwenEditModel(item: ModelGalleryItem): boolean {
   const family = (item.family ?? "").toLowerCase();
-  if (family === "qwen_image_edit") return true;
+  if (family === "qwen_image_2.1") return true;
   const hay = modelHaystack(item);
-  return hay.includes("qwen") && hay.includes("edit");
+  return hay.includes("qwen") && (hay.includes("2.1") || hay.includes("2_1"));
 }
 
 export function isImg2ImgEditModel(item: ModelGalleryItem): boolean {
@@ -54,11 +54,7 @@ export function isImg2ImgEditModel(item: ModelGalleryItem): boolean {
 }
 
 export function isEditCapableModel(item: ModelGalleryItem): boolean {
-  return (
-    isFluxKontextEditModel(item) ||
-    isQwenEditModel(item) ||
-    isImg2ImgEditModel(item)
-  );
+  return isQwenEditModel(item);
 }
 
 export function selectFluxKontextEditModel(gallery: ModelGalleryItem[]): string {
@@ -75,21 +71,18 @@ export function selectFluxKontextEditModel(gallery: ModelGalleryItem[]): string 
 }
 
 /** Canonical Qwen Edit GGUF filename when the checkpoint is not yet in the gallery. */
-export const DEFAULT_QWEN_EDIT_MODEL = "qwen-image-edit-2511-Q4_K_M.gguf";
+export const DEFAULT_QWEN_EDIT_MODEL = "qwen_image_2.1_int8_convrot.safetensors";
 
 export function scoreQwenEditGalleryItem(item: ModelGalleryItem): number {
   const hay = modelHaystack(item);
-  if (!hay.includes("qwen") || !hay.includes("edit")) return -1;
+  if (!hay.includes("qwen")) return -1;
+  if (!hay.includes("edit") && !hay.includes("2.1")) return -1;
   let score = 0;
-  if (hay.includes("q4_k_m") && hay.includes(".gguf")) score += 100;
-  else if (hay.includes(".gguf") && (hay.includes("q4") || hay.includes("q5"))) score += 85;
-  else if (hay.includes(".gguf")) score += 75;
-  else if (hay.includes("2511") && hay.includes("fp8") && !hay.includes("lightning")) score += 35;
-  else if (hay.includes("2511")) score += 30;
-  else if (hay.includes("fp8") && !hay.includes("lightning")) score += 20;
-  if (hay.includes("lightning") && (hay.includes("4step") || hay.includes("4steps"))) score -= 25;
-  if (hay.includes("lightning") && hay.includes("fp8")) score -= 15;
-  if (hay.includes("2511")) score += 10;
+  if (hay.includes("2.1") || hay.includes("qwen_image_2.1")) score += 200;
+  if (hay.includes("int8") || hay.includes("convrot")) score += 50;
+  else if (hay.includes("q4_k_m") && hay.includes(".gguf")) score += 40;
+  else if (hay.includes(".gguf")) score += 30;
+  else if (hay.includes("2511") && hay.includes("fp8")) score += 20;
   return score;
 }
 
@@ -107,8 +100,6 @@ export function selectQwenEditModel(gallery: ModelGalleryItem[]): string {
 }
 
 export function selectCuratedEditModel(gallery: ModelGalleryItem[]): string {
-  const kontext = selectFluxKontextEditModel(gallery);
-  if (kontext) return kontext;
   return selectQwenEditModel(gallery);
 }
 
@@ -118,7 +109,7 @@ export function editModelWarning(
 ): string | null {
   if (mode !== "edit") return null;
   if (isEditCapableModel(item)) return null;
-  return `"${modelBasename(item.caption)}" may not support instruction edits — Flux Kontext, Qwen Edit, or img2img checkpoints work best.`;
+  return `"${modelBasename(item.caption)}" cannot be used for editing. DreamForge edits only with Qwen Image 2.1.`;
 }
 
 export function sortGalleryForEditMode(
@@ -126,17 +117,11 @@ export function sortGalleryForEditMode(
   mode: StudioMode,
 ): ModelGalleryItem[] {
   if (mode !== "edit") return gallery;
-  const kontext: ModelGalleryItem[] = [];
   const qwen: ModelGalleryItem[] = [];
-  const img2img: ModelGalleryItem[] = [];
-  const other: ModelGalleryItem[] = [];
   for (const item of gallery) {
-    if (isFluxKontextEditModel(item)) kontext.push(item);
-    else if (isQwenEditModel(item)) qwen.push(item);
-    else if (isImg2ImgEditModel(item)) img2img.push(item);
-    else other.push(item);
+    if (isQwenEditModel(item)) qwen.push(item);
   }
-  return [...kontext, ...qwen, ...img2img, ...other];
+  return qwen;
 }
 
 /** Map a user-selected edit model to the correct edit_type / control-net routing. */
@@ -145,7 +130,7 @@ export function buildEditRoutingPatch(
 ): Partial<GenerationSettings> {
   if (!item) {
     return {
-      edit_type: "kontext",
+      edit_type: "qwen_edit",
       edit_strength: 1.0,
       cn_selection: "None",
       cn_type: "None",

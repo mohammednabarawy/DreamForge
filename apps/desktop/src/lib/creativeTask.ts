@@ -17,7 +17,7 @@ import {
 } from "./editModel";
 import { isPhotoRestoreTask, patchForPhotoRestoreTask } from "./photoRestore";
 import { ideogram4SettingsDefaults } from "./ideogram4Ui";
-import { qwenEdit2511LightningPatch } from "./qwenEditDefaults";
+import { qwenImage21Defaults } from "./qwenEditDefaults";
 import {
   DEFAULT_FLUX_FILL_MODEL,
   enforceInpaintJobSettings,
@@ -35,6 +35,7 @@ import { applyAutoEnhanceAtSubmit } from "./autoEnhance";
 import { applyHiDreamPerformanceAtSubmit } from "./hidreamPerformance";
 import { selectCuratedUpscaleModel } from "./upscaleModel";
 import { patchForEditTask } from "./inpaintIntent";
+import { activeReferencePath } from "./referenceImage";
 
 export type CreativeTaskContext = {
   studioMode: StudioMode;
@@ -67,6 +68,8 @@ export function applyVramQualityDefaults(
   const next = { ...settings };
   const steps = next.steps ?? 20;
   const cfg = next.cfg_scale ?? 7;
+
+  if (studioMode === "edit" && /qwen.*2[._]1/i.test(next.model ?? "")) return next;
 
   if (tier === "5gb") {
     if (studioMode === "edit" && next.edit_type === "qwen_edit") {
@@ -123,7 +126,7 @@ export function enforceEditJobSettings(
         upscale_method: undefined,
       };
     }
-    const qwenPatch = qwenEdit2511LightningPatch();
+    const qwenPatch = qwenImage21Defaults();
     const requestedQwenMode = (settings.qwen_edit_mode ?? "").trim().toLowerCase();
     return {
       ...settings,
@@ -139,7 +142,7 @@ export function enforceEditJobSettings(
     };
   }
   if ((settings.edit_task ?? "").toLowerCase() === "cutout_compose") {
-    const qwenPatch = qwenEdit2511LightningPatch();
+    const qwenPatch = qwenImage21Defaults();
     const requestedQwenMode = (settings.qwen_edit_mode ?? "").trim().toLowerCase();
     return {
       ...settings,
@@ -459,8 +462,7 @@ export function planStudioModeSwitch(
       useQwenEditRoute ||
       (editModelItem && isQwenEditModel(editModelItem))
     ) {
-      Object.assign(patch, qwenEdit2511LightningPatch());
-      patch.performance = "Lightning";
+      Object.assign(patch, qwenImage21Defaults());
     } else {
       patch.performance = "Lightning";
       patch.steps = Math.min(Math.max(settings.steps ?? 20, 20), 28);
@@ -468,7 +470,7 @@ export function planStudioModeSwitch(
     patch.upscale_image = undefined;
     patch.upscale_method = undefined;
     patch.inpaint_mask_path = undefined;
-    const src = (selectedImage ?? settings.input_image ?? "").trim();
+    const src = activeReferencePath(settings, "generate") || (selectedImage ?? "").trim();
     if (src) patch.input_image = src;
   }
 

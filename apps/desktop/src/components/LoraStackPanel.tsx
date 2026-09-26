@@ -9,9 +9,11 @@ import {
   upsertLora,
 } from "../lib/loraStack";
 import { getLoraInfo } from "../lib/studioBridge";
+import { isLoraCompatibleWithModel } from "../lib/modelCapabilities";
 
 type Props = {
   lora: string[];
+  activeModel?: string;
   loraMin?: number;
   loraMax?: number;
   maxStack?: number;
@@ -23,6 +25,7 @@ type Props = {
 
 export function LoraStackPanel({
   lora,
+  activeModel,
   loraMin = 0,
   loraMax = 2,
   maxStack = 5,
@@ -75,9 +78,24 @@ export function LoraStackPanel({
           return (
             <li key={entry.name} className="space-y-1 rounded border border-dfui-border/30 p-1.5">
               <div className="flex items-center justify-between gap-2">
-                <span className="truncate font-mono text-[10px] text-dfui-fg">
-                  {entry.name.split(/[/\\]/).pop()}
-                </span>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="truncate font-mono text-[10px] text-dfui-fg">
+                    {entry.name.split(/[/\\]/).pop()}
+                  </span>
+                  {(() => {
+                    if (!activeModel) return null;
+                    const compat = isLoraCompatibleWithModel(entry.name, activeModel);
+                    if (compat.compatible) return null;
+                    return (
+                      <span
+                        title={compat.reason}
+                        className="shrink-0 rounded bg-amber-500/15 border border-amber-500/30 px-1 py-0.2 text-[9px] text-amber-300 font-medium cursor-help"
+                      >
+                        ⚠️ Wrong arch
+                      </span>
+                    );
+                  })()}
+                </div>
                 <div className="flex shrink-0 items-center gap-1">
                   <button
                     type="button"

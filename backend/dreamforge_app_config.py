@@ -81,11 +81,10 @@ DEFAULT_APP_CONFIG: dict[str, Any] = {
         "civitai_api_key": "",
         "huggingface_api_key": "",
     },
-    "custom_tools": [],
 }
 
 _ALLOWED_ROOTS = {"agent", "privacy", "ui"}
-_TOP_LEVEL_KEYS = frozenset({"custom_tools"})
+_TOP_LEVEL_KEYS: frozenset[str] = frozenset()
 _AGENT_KEYS = {
     "provider",
     "base_url",
@@ -104,24 +103,21 @@ _UI_KEYS = {
     "use_flufferizer",
     "civitai_api_key",
     "huggingface_api_key",
-    "selected_custom_tool_id",
 }
 _EXPERIENCE_VALUES = {"simple", "pro"}
 
 _AGENT_FIELD_GUIDE = """
 DreamForge routing field guide:
 - generate: use for text-to-image when there is no source image to preserve. Let the user pick any library model in Generate mode.
-- edit: use for source-image edits without a required mask. Default to Qwen Image Edit 2511 Lightning (edit_type=qwen_edit, performance=Lightning, steps=8, cfg_scale=1.0, sampler=euler, scheduler=simple, cn_selection=Custom..., cn_type=qwen_edit) for semantic edits, typography, posters, Arabic/bilingual text, object swaps, and appearance changes. Fall back to FLUX Kontext (edit_type=kontext) only when no Qwen Image Edit model is installed. See docs/AGENT_DIFFUSION_GUIDE.md for model families and configs.
-- inpaint: use only when a local region/mask is required or the user says mask, erase, remove this area, fix spot, fill, outpaint, cleanup edge, or background/object replacement with strict local preservation. Prefer FLUX Fill/inpaint models and require input_image plus inpaint_mask_path before running.
+- edit: use for source-image edits and masked edits. Qwen Image 2.1 is the only supported edit/inpaint model (Speed 25 steps, Quality 40 steps, CFG 1, Euler/Simple, denoise 1), with up to 10 ordered reference images addressed as <image1> through <image10>. If Qwen Image 2.1 is unavailable, report that instead of switching to another model.
+- masked edit: when a local region/mask is required, use the same Edit mode and Qwen Image 2.1. Require input_image plus inpaint_mask_path.
 - upscale: use only for enlargement/restoration/detail enhancement of an existing image. Prefer RealESRGAN_x2 for fast 2x, SUPIR when available for high-realism repair, and do not use text-to-image generation for pure upscale.
 - agent: use only when a required decision is impossible from the instruction, such as missing source image for an edit or missing mask for inpaint.
 
 Conditioning and quality rules:
-- For exact Arabic or brand typography, do not ask diffusion to invent glyphs from scratch. Route to Qwen Image Edit and ask for deterministic rendered text/reference integration when possible. Preserve glyph geometry, layout, and surrounding pixels.
-- Qwen Image Edit 2511 Lightning is the default edit route on 16 GB GPUs. Prefer performance=Lightning, steps=8, cfg_scale=1.0, sampler=euler, scheduler=simple unless the user explicitly requests Quality or the faster Speed/LCM route.
-- Qwen Image Edit is strong for both semantic and appearance editing: it can change objects/text while preserving unchanged regions. Use explicit preservation wording in the prompt.
-- For face/character preservation with Qwen, keep input_image from selected_image and name what must stay unchanged in the prompt. Use FLUX Kontext (edit_type=kontext) when the user explicitly asks for Kontext or only Kontext models are installed.
-- For masked edits, preserve unmasked pixels, use mask-aware inpainting, and keep cn_type=inpaint.
+- For exact Arabic or brand typography, ask Qwen Image 2.1 to render the text directly and preserve reference layout where possible.
+- Qwen Image 2.1 is the only edit route. Use its 25-step, CFG 1, Euler/Simple defaults and explicit preservation wording. Never fall back to Kontext, Flux Fill, SDXL, or img2img for edits.
+- For masked edits, keep input_image, the mask and extra references in the ordered Qwen image slots; preserve unmasked pixels as requested.
 - Use ControlNet/structural guidance only when the user asks to preserve pose, edges, depth, layout, or a sketch. Do not add it to normal Kontext edits.
 - For structural preservation, keep the source image as input_image and prefer edit/inpaint over generate.
 - Keep patch minimal. Do not invent files. Do not include secrets. Return JSON only.
@@ -324,8 +320,8 @@ def _normalize_ui_config(cfg: dict[str, Any]) -> dict[str, Any]:
         ui["auto_enhance_on_generate"] = False
     else:
         ui["auto_enhance_on_generate"] = bool(ui.get("auto_enhance_on_generate"))
-    if experience == "simple" and str(ui.get("studio_mode") or "") == "agent":
-        ui["studio_mode"] = "generate"
+    mode = str(ui.get("studio_mode") or "generate").strip().lower()
+    ui["studio_mode"] = "edit" if mode in {"edit", "inpaint", "toolbox"} else "generate"
     return normalized
 
 
@@ -475,8 +471,8 @@ def _provider_agent_plan(
         "current_settings": _safe_settings(current),
         "selected_image": selected_image,
         "available_model_summary": _model_gallery_summary(model_gallery),
-        "allowed_modes": ["generate", "edit", "inpaint", "upscale", "agent"],
-        "allowed_edit_types": ["auto", "kontext", "inpaint", "img2img", "qwen_edit"],
+        "allowed_modes": ["generate", "edit"],
+        "allowed_edit_types": ["auto", "qwen_edit"],
         "important_patch_keys": [
             "model",
             "prompt",
@@ -591,16 +587,15 @@ def _heuristic_agent_plan(
 
     mode = "generate"
     if has_mask_intent:
-        mode = "inpaint"
+        mode = "edit"
         patch.update(
             {
+                **_qwen_edit_patch(),
                 "style": "image_edit",
                 "edit_type": "inpaint",
-                "cn_selection": "Custom...",
-                "cn_type": "inpaint",
             }
         )
-        actions.append("Use mask-aware inpainting route with local preservation.")
+        actions.append("Use Qwen Image 2.1 masked Edit with local preservation.")
     elif has_upscale_intent:
         mode = "upscale"
         patch.update(
@@ -626,21 +621,13 @@ def _heuristic_agent_plan(
         )
     ):
         mode = "edit"
+        patch.update(_qwen_edit_patch())
         if _gallery_has_qwen_edit(model_gallery):
-            patch.update(_qwen_edit_lightning_patch())
             actions.append(
-                "Use Qwen Image Edit 2511 Lightning for semantic and appearance editing."
+                "Use Qwen Image 2.1 for multi-reference semantic and appearance editing."
             )
         else:
-            patch.update(
-                {
-                    "style": "image_edit",
-                    "edit_type": "kontext",
-                    "cn_selection": "None",
-                    "cn_type": "None",
-                }
-            )
-            actions.append("Use FLUX Kontext for identity/reference continuity and global edits.")
+            actions.append("Qwen Image 2.1 is required for image editing.")
 
     if selected_image and mode in {"edit", "inpaint", "upscale"}:
         if mode == "upscale":
@@ -854,7 +841,6 @@ def _attach_dynamic_preset(
             value = enriched.get(key)
             if value is not None:
                 patch[key] = value
-    _force_qwen_lightning_defaults(patch)
     payload["patch"] = _filter_generation_patch(patch)
     payload["mode_contract"] = build_mode_contract(
         str(payload.get("mode") or "generate"),
@@ -879,7 +865,7 @@ def _mode_for_patch(patch: dict[str, Any], selected_image: str) -> str:
     if patch.get("upscale_image"):
         return "upscale"
     if patch.get("edit_type") == "inpaint" or patch.get("inpaint_mask_path"):
-        return "inpaint"
+        return "edit"
     if patch.get("input_image") or selected_image:
         return "edit"
     return "generate"
@@ -889,11 +875,11 @@ def _normalize_mode(mode: str) -> str:
     value = mode.strip().lower().replace("-", "_")
     if value in {"image_edit", "img2img", "reference_edit", "text_edit"}:
         return "edit"
-    if value in {"mask", "masked_edit"}:
-        return "inpaint"
+    if value in {"mask", "masked_edit", "inpaint", "toolbox"}:
+        return "edit"
     if value in {"enlarge", "enhance"}:
         return "upscale"
-    if value in {"generate", "edit", "inpaint", "upscale", "agent"}:
+    if value in {"generate", "edit", "upscale", "agent"}:
         return value
     return "generate"
 
@@ -902,30 +888,29 @@ def _gallery_has_qwen_edit(gallery: list[Any]) -> bool:
     for item in gallery:
         if not isinstance(item, dict):
             continue
-        if str(item.get("family") or "").lower() == "qwen_image_edit":
+        fam = str(item.get("family") or "").lower()
+        if fam == "qwen_image_2.1":
             return True
         hay = " ".join(
             str(item.get(key, "")) for key in ("family", "caption", "engine_name", "relative_path")
         ).lower()
-        if "qwen" in hay and "edit" in hay:
+        if "qwen" in hay and ("2.1" in hay or "2_1" in hay):
             return True
     return False
 
 
-def _qwen_edit_lightning_patch() -> dict[str, Any]:
+def _qwen_edit_patch() -> dict[str, Any]:
     return {
         "style": "image_edit",
         "edit_type": "qwen_edit",
         "cn_selection": "Custom...",
         "cn_type": "qwen_edit",
-        "performance": "Lightning",
-        "steps": 8,
+        "performance": "Quality",
+        "steps": 40,
         "cfg_scale": 1.0,
         "sampler": "euler",
         "scheduler": "simple",
-        "qwen_scale_megapixels": 1.25,
         "edit_strength": 1.0,
-        "qwen_lightning_strength": 0.75,
     }
 
 
@@ -935,34 +920,30 @@ def _complete_patch_for_mode(
     selected_image: str,
     model_gallery: list[Any],
 ) -> dict[str, Any]:
+    mode = "edit" if mode in {"inpaint", "toolbox"} else mode
     next_patch = dict(patch)
     if mode == "edit":
         from dreamforge_task_router import edit_routing_patch, pick_curated_edit_model
 
+        qwen_defaults = _qwen_edit_patch()
+        if next_patch.get("performance") in {"Speed", "Lightning"}:
+            qwen_defaults["steps"] = 25
+        for key, value in qwen_defaults.items():
+            next_patch.setdefault(key, value)
         next_patch.setdefault("style", "image_edit")
-        edit_type = str(next_patch.get("edit_type") or "").lower()
-        if not edit_type or edit_type == "auto":
-            picked, edit_type = pick_curated_edit_model(model_gallery)
-            if picked:
-                next_patch["model"] = picked
-            next_patch["edit_type"] = edit_type
+        masked = bool(next_patch.get("inpaint_mask_path")) or str(next_patch.get("edit_type") or "").lower() == "inpaint"
+        picked, _ = pick_curated_edit_model(model_gallery)
+        next_patch["model"] = picked
         engine = str(next_patch.get("model") or "")
         next_patch.update(
             edit_routing_patch(
                 model_gallery,
                 engine,
-                preferred_edit_type=str(next_patch.get("edit_type") or ""),
+                preferred_edit_type="qwen_edit",
             )
         )
-        if str(next_patch.get("edit_type") or "") == "qwen_edit":
-            _force_qwen_lightning_defaults(next_patch)
-        if selected_image:
-            next_patch.setdefault("input_image", selected_image)
-    elif mode == "inpaint":
-        next_patch.setdefault("style", "image_edit")
-        next_patch["edit_type"] = "inpaint"
-        next_patch["cn_selection"] = "Custom..."
-        next_patch["cn_type"] = "inpaint"
+        if masked:
+            next_patch["edit_type"] = "inpaint"
         if selected_image:
             next_patch.setdefault("input_image", selected_image)
     elif mode == "upscale":
@@ -992,24 +973,11 @@ def _complete_patch_for_mode(
     return next_patch
 
 
-def _force_qwen_lightning_defaults(patch: dict[str, Any]) -> None:
-    """Apply Lightning defaults for Qwen edit when speed/Lightning is requested."""
-    if patch.get("edit_type") != "qwen_edit":
-        return
-    perf = str(patch.get("performance") or "").strip().lower()
-    if perf not in {"", "lightning", "speed", "lcm"}:
-        return
-    patch["performance"] = "Lightning"
-    patch.setdefault("steps", 8)
-    patch.setdefault("cfg_scale", 1.0)
-    patch.setdefault("sampler", "euler")
-    patch.setdefault("scheduler", "simple")
-    patch.setdefault("qwen_scale_megapixels", 1.25)
-    patch.setdefault("qwen_lightning_strength", 0.75)
-
-
 def _pick_model_for_mode(mode: str, gallery: list[Any], *, edit_type: str = "") -> str:
     from dreamforge_cli_inventory import pick_best_qwen_edit_model
+
+    if mode in {"inpaint", "toolbox"}:
+        mode = "edit"
 
     if mode == "edit" and edit_type in ("qwen_edit", ""):
         picked = pick_best_qwen_edit_model(gallery)
@@ -1017,29 +985,17 @@ def _pick_model_for_mode(mode: str, gallery: list[Any], *, edit_type: str = "") 
             return picked
     if mode == "edit" and edit_type == "qwen_edit":
         needles = [
-            "qwen-image-edit-2511-q4_k_m",
-            "qwen image edit 2511",
-            "qwen-image-edit-2511",
-            "qwen image edit",
-            "qwen_image_edit",
-            "qwen-edit",
-            "qwen edit",
-            "qwen",
+            "qwen_image_2.1",
+            "qwen-image-2.1",
+            "qwen 2.1",
         ]
-    elif mode == "edit" and edit_type == "kontext":
-        needles = ["kontext", "flux kontext"]
     else:
         needles = {
-            "inpaint": ["flux fill", "fill", "inpaint"],
+            "inpaint": ["qwen_image_2.1", "qwen-image-2.1", "qwen 2.1"],
             "edit": [
-                "qwen-image-edit-2511-q4_k_m",
-                "qwen image edit 2511",
-                "qwen-image-edit-2511",
-                "qwen image edit",
-                "qwen_image_edit",
-                "qwen edit",
-                "kontext",
-                "flux kontext",
+                "qwen_image_2.1",
+                "qwen-image-2.1",
+                "qwen 2.1",
             ],
             "upscale": [
                 "epicrealism",

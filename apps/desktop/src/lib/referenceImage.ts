@@ -3,7 +3,7 @@ import { readImagePreview } from "./tauri-api";
 import type { StudioMode } from "./model-selection";
 import { sanitizeSettingsForStudioMode } from "./routeResolution";
 import { referenceRoleFromAttach, type ReferenceRole } from "./referenceRole";
-import { qwenEdit2511LightningPatch } from "./qwenEditDefaults";
+import { qwenImage21Defaults } from "./qwenEditDefaults";
 
 export const DREAMFORGE_IMAGE_PATH_MIME = "application/x-dreamforge-image-path";
 
@@ -43,7 +43,7 @@ export function referencePanelSubtitle(studioMode: StudioMode): string {
   }
   if (studioMode === "upscale") return "Image to upscale or restore";
   if (studioMode === "edit") {
-    return "Source and extra references use the selected edit model (Krea 2, Kontext, Qwen, img2img)";
+    return "Source and extra references use Qwen Image 2.1 Edit";
   }
   return "Attach references — routing follows model and role (image prompt, restyle, structure)";
 }
@@ -79,14 +79,32 @@ export function activeReferencePath(
     );
   }
   if (studioMode === "inpaint" || studioMode === "edit") {
-    return settings.input_image?.trim() || undefined;
+    return settings.input_image?.trim() || settings.reference_image?.trim() ||
+      settings.references?.find((item) => item.path?.trim())?.path.trim() || undefined;
   }
   return (
     settings.input_image?.trim() ||
     settings.reference_image?.trim() ||
+    settings.references?.find((item) => item.path?.trim())?.path.trim() ||
     settings.reference_images?.find((item) => item.trim())?.trim() ||
     undefined
   );
+}
+
+/** A source-image transformation belongs in Edit, not reference-guided Create. */
+export function isExplicitImageEditRequest(settings: GenerationSettings): boolean {
+  return Boolean(activeReferencePath(settings, "generate")) &&
+    /^\s*(?:(?:please|can you)\s+)?(?:edit|modify|retouch|replace|change|remove|recolor|fix|erase|swap)\b/i.test(settings.prompt ?? "");
+}
+
+/** One workspace; the prompt and source decide which native graph runs. */
+export function imageTaskForRequest(settings: GenerationSettings): "generate" | "edit" {
+  if (settings.inpaint_mask_path?.trim()) return "edit";
+  if (!activeReferencePath(settings, "generate")) return "generate";
+  if (isExplicitImageEditRequest(settings)) return "edit";
+  if (settings.reference_role === "source_edit" &&
+      !/^\s*(?:create|generate|compose|combine|put|place|make)\b/i.test(settings.prompt ?? "")) return "edit";
+  return "generate";
 }
 
 export function activeReferenceMode(
@@ -146,7 +164,7 @@ export function buildReferenceImagePatch(
       input_image: imagePath,
       upscale_image: undefined,
       inpaint_mask_path: undefined,
-      ...qwenEdit2511LightningPatch(),
+      ...qwenImage21Defaults(),
       output: outputFor("edit"),
     };
   }

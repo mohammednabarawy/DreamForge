@@ -100,6 +100,15 @@ def test_unified_family_performance_settings_are_family_specific():
     assert ideogram["custom_steps"] == 48
 
 
+def test_qwen_image_21_uses_native_speed_and_quality_profiles():
+    model = "qwen_image_2.1_int8_convrot.safetensors"
+    for performance, steps in (("Speed", 25), ("Quality", 40), ("Lightning", 25)):
+        profile = family_performance_settings("qwen_image_2.1", model, performance)
+        assert (profile["custom_steps"], profile["cfg"], profile["sampler_name"], profile["scheduler"]) == (
+            steps, 1.0, "euler", "simple"
+        )
+
+
 def test_hidream_fast_variant_steps():
     fast = family_performance_settings("hidream", "HiDream-I1-Fast.safetensors", "Lightning")
     assert fast["custom_steps"] == 16

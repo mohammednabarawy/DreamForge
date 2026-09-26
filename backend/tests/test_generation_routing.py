@@ -22,14 +22,14 @@ from dreamforge_generation import (
 )
 
 
-def test_custom_tool_only_active_in_toolbox_mode():
-    assert _active_custom_tool_id(
+def test_custom_tool_is_retired():
+    assert not _active_custom_tool_id(
         SimpleNamespace(studio_mode="toolbox", custom_tool_id="custom_1")
-    ) == "custom_1"
+    )
     assert not _active_custom_tool_id(
         SimpleNamespace(studio_mode="generate", custom_tool_id="custom_1")
     )
-    assert _active_custom_tool_id(SimpleNamespace(custom_tool_id="custom_1")) == "custom_1"
+    assert not _active_custom_tool_id(SimpleNamespace(custom_tool_id="custom_1"))
 
 
 def _route_input(
@@ -1911,7 +1911,7 @@ def test_global_edit_dry_run_ignores_stale_outpaint_route(tmp_path, monkeypatch)
 
     assert plan["mode"] == "edit"
     assert plan["edit_task_defaults"]["edit_task"] == "global_edit"
-    assert plan["edit_task_defaults"]["edit_type"] == "kontext"
+    assert plan["edit_task_defaults"]["edit_type"] == "qwen_edit"
     assert plan["final_edit_request"]["task"] == "global_edit"
 
 
@@ -2253,6 +2253,25 @@ def test_preserve_text_auto_enables_qwen_preserve_resolution(monkeypatch):
         "qwen_image_edit",
     )
     assert out.get("qwen_preserve_resolution") is True
+
+
+def test_qwen_21_edit_profiles_do_not_inherit_2511_lightning_or_edit_step_cap():
+    from dreamforge_generation import _apply_job_performance, _apply_qwen_family_settings, _tune_edit_job_settings
+
+    for performance, expected_steps in (("Speed", 25), ("Quality", 40)):
+        job = SimpleNamespace(
+            model="qwen_image_2.1_int8_convrot.safetensors", performance=performance,
+            input_image="source.png", upscale_image=None, edit_type="qwen_edit",
+            steps=None, cfg_scale=None, sampler=None, scheduler=None,
+        )
+        base = {"steps": 20, "cfg": 1.0, "sampler_name": "euler", "scheduler": "simple"}
+        out = _apply_job_performance(base, job, "qwen_image_2.1")
+        out = _tune_edit_job_settings(out, job, "qwen_image_2.1", is_live=True)
+        out = _apply_qwen_family_settings(out, job, "qwen_image_2.1")
+        assert (out["steps"], out["cfg"], out["sampler_name"], out["scheduler"]) == (
+            expected_steps, 1.0, "euler", "simple"
+        )
+        assert out["use_qwen_lightning_lora"] is False
 
 
 def test_job_namespace_merges_references_from_payload():

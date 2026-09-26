@@ -2,23 +2,6 @@ import type { StudioMode } from "./model-selection";
 
 export type UiExperience = "simple" | "pro";
 
-export const SIMPLE_STUDIO_MODES: Array<{ id: StudioMode; label: string }> = [
-  { id: "generate", label: "Create" },
-  { id: "edit", label: "Edit" },
-  { id: "inpaint", label: "Fix region" },
-  { id: "upscale", label: "Enhance" },
-  { id: "toolbox", label: "Toolbox" },
-];
-
-export const PRO_STUDIO_MODES: Array<{ id: StudioMode; label: string }> = [
-  { id: "generate", label: "Generate" },
-  { id: "edit", label: "Edit" },
-  { id: "inpaint", label: "Inpaint" },
-  { id: "upscale", label: "Upscale" },
-  { id: "toolbox", label: "Creative Toolbox" },
-  { id: "agent", label: "Agent" },
-];
-
 export function isSimpleExperience(experience?: UiExperience | null): boolean {
   return experience === "simple";
 }
@@ -28,18 +11,11 @@ export function isAdvancedMode(experience?: UiExperience | null): boolean {
   return !isSimpleExperience(experience);
 }
 
-export function studioModesForExperience(
-  experience?: UiExperience | null,
-): Array<{ id: StudioMode; label: string }> {
-  return isSimpleExperience(experience) ? SIMPLE_STUDIO_MODES : PRO_STUDIO_MODES;
-}
-
 export function normalizeStudioModeForExperience(
   mode: StudioMode,
-  experience?: UiExperience | null,
+  _experience?: UiExperience | null,
 ): StudioMode {
   if ((mode as string) === "extract") return "generate";
-  if (!isSimpleExperience(experience)) return mode;
-  if (mode === "agent") return "generate";
-  return mode;
+  if (mode === "edit" || mode === "inpaint" || mode === "toolbox") return "edit";
+  return "generate";
 }

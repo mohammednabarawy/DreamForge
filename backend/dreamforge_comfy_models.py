@@ -215,6 +215,20 @@ def _basename_match(wanted: str, choices: list[str]) -> str | None:
     return None
 
 
+def _is_qwen_image_21(model: dict[str, Any], family: str = "") -> bool:
+    identity = " ".join(
+        str(value or "")
+        for value in (
+            family,
+            model.get("family"),
+            model.get("engine_name"),
+            model.get("name"),
+            model.get("relative_path"),
+        )
+    ).lower()
+    return "qwen" in identity and ("2.1" in identity or "2_1" in identity)
+
+
 def _flux_companion_basenames_on_disk(family: str) -> dict[str, str]:
     """Map flux loader keys to basenames of files present under MODELS_ROOT."""
     dep_family = family if family in MODEL_DEPENDENCIES else "flux"
@@ -236,10 +250,23 @@ def _flux_companion_basenames_on_disk(family: str) -> dict[str, str]:
 
 def _qwen_companion_basenames_on_disk(family: str) -> dict[str, str]:
     """Map Qwen loader keys to companion basenames on disk."""
+    if "2.1" in family:
+        for candidate in (
+            "qwen3vl_8b_int8_convrot.safetensors",
+            "qwen3vl_8b_bf16.safetensors",
+            "qwen3vl_8b_fp8_scaled.safetensors",
+        ):
+            if any((MODELS_ROOT / folder / candidate).is_file() for folder in ("text_encoders", "clip")):
+                return {
+                    "clip": candidate,
+                    "vae": "qwen_image_2.1_vae_bf16.safetensors",
+                }
     dep_families = []
-    if family in MODEL_DEPENDENCIES:
+    if "2.1" in family and "qwen_image_2.1" in MODEL_DEPENDENCIES:
+        dep_families.append("qwen_image_2.1")
+    elif family in MODEL_DEPENDENCIES:
         dep_families.append(family)
-    if "qwen_image" not in dep_families:
+    if "qwen_image" not in dep_families and not family.startswith("qwen_image_2.1"):
         dep_families.append("qwen_image")
     out: dict[str, str] = {}
     for dep_family in dep_families:
@@ -404,13 +431,37 @@ def resolve_comfy_model_loader_args(
             clip_choices = _object_info_options(object_info, "CLIPLoader", "clip_name")
             clip_choices += _object_info_options(object_info, "CLIPLoaderGGUF", "clip_name")
             vae_choices = _object_info_options(object_info, "VAELoader", "vae_name")
-            default_clip = on_disk.get("clip", "qwen_2.5_vl_7b_fp8_scaled.safetensors")
-            clip = _basename_match(default_clip, clip_choices)
-            vae = _basename_match(on_disk.get("vae", "qwen_image_vae.safetensors"), vae_choices)
+            is_qwen_21 = _is_qwen_image_21(model, family)
             problems: list[str] = []
+            if is_qwen_21:
+                clip = next(
+                    (
+                        match
+                        for candidate in (
+                            "qwen3vl_8b_int8_convrot.safetensors",
+                            "qwen3vl_8b_bf16.safetensors",
+                            "qwen3vl_8b_fp8_scaled.safetensors",
+                        )
+                        if (match := _basename_match(candidate, clip_choices))
+                    ),
+                    None,
+                )
+                vae = _basename_match("qwen_image_2.1_vae_bf16.safetensors", vae_choices)
+                if not clip:
+                    problems.append(
+                        "Qwen Image 2.1 requires its Qwen3-VL 8B text encoder "
+                        "(qwen3vl_8b_int8_convrot.safetensors, qwen3vl_8b_bf16.safetensors, or qwen3vl_8b_fp8_scaled.safetensors); "
+                        "Qwen2.5-VL 7B is incompatible."
+                    )
+                if not vae:
+                    problems.append("Qwen Image 2.1 requires qwen_image_2.1_vae_bf16.safetensors.")
+            else:
+                default_clip = on_disk.get("clip", "qwen_2.5_vl_7b_fp8_scaled.safetensors")
+                clip = _basename_match(default_clip, clip_choices)
+                vae = _basename_match(on_disk.get("vae", "qwen_image_vae.safetensors"), vae_choices)
             if clip:
                 args["clip"] = clip
-            elif on_disk.get("clip"):
+            elif not is_qwen_21 and on_disk.get("clip"):
                 problems.append(
                     f"Qwen CLIP '{on_disk['clip']}' exists under {Path(MODELS_ROOT).resolve()} "
                     "but ComfyUI does not list it for CLIPLoader."
@@ -419,7 +470,7 @@ def resolve_comfy_model_loader_args(
                 problems.append("ComfyUI reports no Qwen text encoder files for CLIPLoader.")
             if vae:
                 args["vae"] = vae
-            elif on_disk.get("vae"):
+            elif not is_qwen_21 and on_disk.get("vae"):
                 problems.append(
                     f"Qwen VAE '{on_disk['vae']}' exists under {MODELS_ROOT} but ComfyUI vae list is: {vae_choices!r}."
                 )
@@ -438,8 +489,13 @@ def resolve_comfy_model_loader_args(
                     suggestions=[
                         f"Models folder resolves to: {models_root}",
                         "Stop any other ComfyUI on port 8188, then click Restart GPU engine.",
-                        "Install qwen_2.5_vl_7b_fp8_scaled.safetensors under text_encoders/ or clip/ "
-                        "and qwen_image_vae.safetensors under vae/.",
+                        (
+                            "Install a Qwen3-VL 8B encoder (INT8, BF16, or qwen3vl_8b_fp8_scaled.safetensors) "
+                            "under text_encoders/ and qwen_image_2.1_vae_bf16.safetensors under vae/."
+                            if is_qwen_21
+                            else "Install qwen_2.5_vl_7b_fp8_scaled.safetensors under text_encoders/ or clip/ "
+                            "and qwen_image_vae.safetensors under vae/."
+                        ),
                     ],
                 )
         return args
@@ -600,12 +656,37 @@ def resolve_comfy_model_loader_args(
         clip_choices = _object_info_options(object_info, "CLIPLoader", "clip_name")
         clip_choices += _object_info_options(object_info, "CLIPLoaderGGUF", "clip_name")
         vae_choices = _object_info_options(object_info, "VAELoader", "vae_name")
-        default_clip = on_disk.get("clip", "qwen_2.5_vl_7b_fp8_scaled.safetensors")
-        clip = _basename_match(default_clip, clip_choices)
-        vae = _basename_match(on_disk.get("vae", "qwen_image_vae.safetensors"), vae_choices)
+        is_qwen_21 = _is_qwen_image_21(model, family)
+        if is_qwen_21:
+            clip = next(
+                (
+                    match
+                    for candidate in (
+                        "qwen3vl_8b_int8_convrot.safetensors",
+                        "qwen3vl_8b_bf16.safetensors",
+                        "qwen3vl_8b_fp8_scaled.safetensors",
+                    )
+                    if (match := _basename_match(candidate, clip_choices))
+                ),
+                None,
+            )
+            vae = _basename_match("qwen_image_2.1_vae_bf16.safetensors", vae_choices)
+            if not clip:
+                problems.append(
+                    "Qwen Image 2.1 requires its Qwen3-VL 8B text encoder "
+                    "(qwen3vl_8b_int8_convrot.safetensors, qwen3vl_8b_bf16.safetensors, or qwen3vl_8b_fp8_scaled.safetensors); "
+                    "Qwen2.5-VL 7B is incompatible."
+                )
+            if not vae:
+                problems.append("Qwen Image 2.1 requires qwen_image_2.1_vae_bf16.safetensors.")
+        else:
+            fallback_clip = "qwen_2.5_vl_7b_fp8_scaled.safetensors"
+            fallback_vae = "qwen_image_vae.safetensors"
+            clip = _basename_match(on_disk.get("clip", fallback_clip), clip_choices)
+            vae = _basename_match(on_disk.get("vae", fallback_vae), vae_choices)
         if clip:
             args["clip"] = clip
-        elif on_disk.get("clip"):
+        elif not is_qwen_21 and on_disk.get("clip"):
             problems.append(
                 f"Qwen CLIP '{on_disk['clip']}' exists under {Path(MODELS_ROOT).resolve()} "
                 "but ComfyUI does not list it for CLIPLoader."
@@ -614,7 +695,7 @@ def resolve_comfy_model_loader_args(
             problems.append("ComfyUI reports no Qwen text encoder files for CLIPLoader.")
         if vae:
             args["vae"] = vae
-        elif on_disk.get("vae"):
+        elif not is_qwen_21 and on_disk.get("vae"):
             problems.append(
                 f"Qwen VAE '{on_disk['vae']}' exists under {MODELS_ROOT} but ComfyUI vae list is: {vae_choices!r}."
             )
@@ -651,10 +732,16 @@ def resolve_comfy_model_loader_args(
                 "and qwen_image_vae.safetensors under vae/."
             )
         elif family.startswith("qwen"):
-            companion_hint = (
-                "Install qwen_2.5_vl_7b_fp8_scaled.safetensors under text_encoders/ or clip/ "
-                "and qwen_image_vae.safetensors under vae/."
-            )
+            if _is_qwen_image_21(model, family):
+                companion_hint = (
+                    "Install a Qwen3-VL 8B encoder (INT8, BF16, or qwen3vl_8b_fp8_scaled.safetensors) "
+                    "under text_encoders/ and qwen_image_2.1_vae_bf16.safetensors under vae/."
+                )
+            else:
+                companion_hint = (
+                    "Install qwen_2.5_vl_7b_fp8_scaled.safetensors under text_encoders/ or clip/ "
+                    "and qwen_image_vae.safetensors under vae/."
+                )
         elif family.startswith("hidream"):
             companion_hint = (
                 "HiDream split loaders need clip_l, clip_g, t5xxl, llama text encoders and ae.safetensors, "

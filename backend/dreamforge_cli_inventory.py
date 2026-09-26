@@ -280,6 +280,8 @@ def infer_model_family(name):
     except ImportError:
         lowered = (name or "").lower()
         if "qwen" in lowered:
+            if "2.1" in lowered or "2_1" in lowered:
+                return "qwen_image_2.1"
             return "qwen_image_edit" if "edit" in lowered else "qwen_image"
         if "hidream" in lowered:
             if "o1" in lowered or "hidream_o1" in lowered:
@@ -430,11 +432,36 @@ MODEL_DEPENDENCIES = {
             "note": "Qwen image VAE.",
         },
     ],
+    "qwen_image_2.1": [
+        {
+            "id": "clip_qwen3vl_8b_int8",
+            "relative": "text_encoders/qwen3vl_8b_int8_convrot.safetensors",
+            "note": "Required for Qwen Image 2.1 safetensors UNet (Comfy native).",
+        },
+        {
+            "id": "vae_qwen_image_21",
+            "relative": "vae/qwen_image_2.1_vae_bf16.safetensors",
+            "note": "Qwen-Image-2.1 VAE.",
+        },
+    ],
     "qwen_image_edit": [
+        {
+            "id": "clip_qwen3vl_8b_int8",
+            "relative": "text_encoders/qwen3vl_8b_int8_convrot.safetensors",
+            "note": "Required for Qwen Image 2.1 safetensors UNet (Comfy native).",
+            "optional": True,
+        },
+        {
+            "id": "vae_qwen_image_21",
+            "relative": "vae/qwen_image_2.1_vae_bf16.safetensors",
+            "note": "Qwen-Image-2.1 VAE.",
+            "optional": True,
+        },
         {
             "id": "clip_qwen25_vl_7b",
             "relative": "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
             "note": "Required for Qwen Image Edit safetensors UNet (Comfy native).",
+            "optional": True,
         },
         {
             "id": "clip_qwen25_gguf_compatible",
@@ -606,32 +633,24 @@ def normalize_routing_speed_preference(speed_preference: str | None) -> str:
 
 
 def score_qwen_edit_gallery_item(item: dict) -> int:
+    family = str(item.get("family") or "").lower() if isinstance(item, dict) else ""
     hay = " ".join(
         str(item.get(key, ""))
         for key in ("family", "caption", "engine_name", "relative_path", "name")
     ).lower()
-    if "qwen" not in hay or "edit" not in hay:
+    is_qwen = "qwen" in hay or family.startswith("qwen")
+    is_21 = "2.1" in hay or "2_1" in hay or family == "qwen_image_2.1"
+    if not (is_qwen and is_21):
         return -1
     score = 0
-    if "q4_k_m" in hay and ".gguf" in hay:
-        score += 100
-    elif ".gguf" in hay and ("q4" in hay or "q5" in hay):
-        score += 85
-    elif ".gguf" in hay:
-        score += 75
-    elif "2511" in hay and "fp8" in hay and "lightning" not in hay:
-        score += 35
-    elif "2511" in hay:
-        score += 30
-    elif "fp8" in hay and "lightning" not in hay:
-        score += 20
-    if "lightning" in hay and ("4step" in hay or "4steps" in hay):
-        score -= 25
-    if "lightning" in hay and "fp8" in hay:
-        score -= 15
-    if "2511" in hay:
-        score += 10
+    if is_21:
+        score += 150
+        if "int8" in hay or "convrot" in hay:
+            score += 20
+        elif "fp8" in hay:
+            score += 10
     return score
+
 
 
 def pick_best_qwen_edit_model(gallery: list) -> str:
@@ -717,6 +736,11 @@ def companion_asset_path(req: dict) -> Path | None:
 
 # Same weights often live under clip/ or alternate filenames from older installs.
 COMPANION_ALTERNATE_PATHS: dict[str, list[str]] = {
+    "clip_qwen3vl_8b_int8": [
+        "text_encoders/qwen3vl_8b_bf16.safetensors",
+        "text_encoders/qwen3vl_8b_fp8_scaled.safetensors",
+        "clip/qwen3vl_8b_fp8_scaled.safetensors",
+    ],
     "clip_t5_flux_fp8": [
         "clip/t5xxl_fp8_e4m3fn_scaled.safetensors",
         "text_encoders/t5xxl_fp8_e4m3fn.safetensors",
@@ -798,7 +822,13 @@ def check_model_dependencies(model, *, performance: str | None = None):
     if not model:
         return []
     family = model.get("family")
-    name = (model.get("name") or "").lower()
+    name = " ".join(
+        str(model.get(key) or "")
+        for key in ("name", "engine_name", "relative_path")
+    ).lower()
+    qwen_identity = f"{family or ''} {name}".lower()
+    if "qwen" in qwen_identity and ("2.1" in qwen_identity or "2_1" in qwen_identity):
+        family = "qwen_image_2.1"
     if family == "qwen_image_edit" and name.endswith(".gguf"):
         compatible = _dependency_path("clip/Qwen2.5-VL-7B-Instruct-Q4_K_S.gguf")
         if compatible.exists():

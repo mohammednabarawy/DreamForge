@@ -1,5 +1,5 @@
-import { ChevronDown, ChevronRight, ClipboardPaste, Copy, Dices, RotateCcw, Save, Shuffle } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { ChevronDown, ChevronRight, ClipboardPaste, Copy, Dices, RotateCcw, Shuffle } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
 import {
   ASPECT_GROUP_ACCENT,
   ASPECT_GROUP_LABELS,
@@ -18,10 +18,8 @@ import {
   applyHiDreamO1DevAtSubmit,
   isHiDreamO1DevCheckpoint,
 } from "../lib/hidreamO1Profiles";
-import type { GenerationSettings, ModelDependencyItem, UiDefaults, ModelGalleryItem } from "../lib/tauri-api";
+import type { GenerationSettings, UiDefaults, ModelGalleryItem } from "../lib/tauri-api";
 import type { StudioSettings } from "../lib/studioBridge";
-import { listCreativeTemplates, type CreativeTemplateSummary } from "../lib/studioBridge";
-import { defaultTemplateIdForMode } from "../lib/creativeTemplates";
 import {
   buildGenerationTabContext,
   generationSectionVisible,
@@ -29,23 +27,12 @@ import {
   MODE_AUTO_SUMMARY,
 } from "../lib/generationTabVisibility";
 import { EditFamilySettingsPanel } from "./EditFamilySettingsPanel";
-import { CreativeToolboxPanel } from "./CreativeToolboxPanel";
+import { QWEN_IMAGE21_PROFILES } from "../lib/qwenEditDefaults";
 import { UltimateSDUpscalePanel } from "./UltimateSDUpscalePanel";
 import { AutoEnhancePanel } from "./AutoEnhancePanel";
 import type { EnhanceTarget } from "../lib/autoEnhance";
 
-const GENERATION_PRESETS_KEY = "dreamforge.generate.user-presets.v1";
 const GENERATION_DENSITY_KEY = "dreamforge.generate.control-density.v1";
-type UserGenerationPreset = { name: string; settings: Partial<GenerationSettings> };
-
-function readUserPresets(): UserGenerationPreset[] {
-  try {
-    const value = JSON.parse(localStorage.getItem(GENERATION_PRESETS_KEY) ?? "[]");
-    return Array.isArray(value) ? value.filter((item) => item?.name && item?.settings) : [];
-  } catch {
-    return [];
-  }
-}
 
 function boundedNumber(value: string, min: number, max: number, fallback: number) {
   const parsed = Number(value);
@@ -70,7 +57,6 @@ type Props = {
   activeModelLabel: string;
   advancedMode?: boolean;
   modelGallery?: ModelGalleryItem[];
-  onInstallCompanionItems?: (items: ModelDependencyItem[]) => void;
   onAutoEnhance?: (target: EnhanceTarget) => void;
   onVaryImage?: (amount: "subtle" | "strong") => void;
 };
@@ -156,69 +142,40 @@ export function GenerationSettingsPanel({
   activeModelLabel,
   advancedMode = false,
   modelGallery = [],
-  onInstallCompanionItems,
   onAutoEnhance,
   onVaryImage,
 }: Props) {
-  const [creativeTemplates, setCreativeTemplates] = useState<CreativeTemplateSummary[]>([]);
   const [controlDensity, setControlDensity] = useState<"basic" | "advanced">(() =>
     localStorage.getItem(GENERATION_DENSITY_KEY) === "advanced" ? "advanced" : "basic",
   );
-  const [userPresets, setUserPresets] = useState<UserGenerationPreset[]>(readUserPresets);
   const [customSize, setCustomSize] = useState(false);
   const [lockAspect, setLockAspect] = useState(true);
 
-  useEffect(() => {
-    if (!advancedMode) {
-      setCreativeTemplates([]);
-      return;
-    }
-    let cancelled = false;
-    void listCreativeTemplates(studioMode)
-      .then((templates) => {
-        if (!cancelled) setCreativeTemplates(templates);
-      })
-      .catch(() => {
-        if (!cancelled) setCreativeTemplates([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [advancedMode, studioMode]);
-
-  const activeTemplateId =
-    settings.template_id?.trim() ||
-    defaultTemplateIdForMode(
-      studioMode as "generate" | "edit" | "inpaint" | "upscale" | "agent",
-      settings.post_upscale_enabled,
-    ) ||
-    "";
-  const performances = uiDefaults?.performances ?? [
+  const performances = isQwenModel ? ["Speed", "Quality", CUSTOM_PERFORMANCE] : uiDefaults?.performances ?? [
     "Lightning",
     "Speed",
     "Quality",
     CUSTOM_PERFORMANCE,
   ];
-  const performance = settings.performance ?? "Lightning";
+  const performance = isQwenModel && !["Speed", "Quality", CUSTOM_PERFORMANCE].includes(settings.performance ?? "")
+    ? "Quality"
+    : settings.performance ?? "Lightning";
   const customPerf = isCustomPerformance(performance);
   const aspectGroups = useMemo(() => groupAspectPresets(aspectPresets), [aspectPresets]);
-  const activeAspect = settings.aspect_ratio ?? "768x768";
+  const activeAspect = settings.width && settings.height
+    ? `${settings.width}x${settings.height}`
+    : settings.aspect_ratio ?? "768x768";
   const currentWidth = settings.width ?? (Number(activeAspect.split(/[x×]/)[0]) || 768);
   const currentHeight = settings.height ?? (Number(activeAspect.split(/[x×]/)[1]) || 768);
   const activeModelLower = activeModelLabel.toLowerCase();
-  const activeModelFamily = modelGallery.find((item) =>
+  const activeModelFamily = isQwenModel ? "qwen_image_2.1" : modelGallery.find((item) =>
     item.engine_name === settings.model || item.relative_path === settings.model || item.caption === activeModelLabel,
   )?.family;
-  const isIdeogramModel = activeModelLower.includes("ideogram");
+  const isIdeogramModel = !isQwenModel && activeModelLower.includes("ideogram");
   let perfPreview = PERFORMANCE_PREVIEW[performance];
   if (isQwenModel && !customPerf) {
-    if (performance === "Quality") {
-      perfPreview = { steps: 28, cfg: 2.5, sampler: "euler", scheduler: "beta" };
-    } else if (performance === "Speed") {
-      perfPreview = { steps: 20, cfg: 2.5, sampler: "euler", scheduler: "beta" };
-    } else if (performance === "Lightning") {
-      perfPreview = { steps: 8, cfg: 1.5, sampler: "euler", scheduler: "sgm_uniform" };
-    }
+    const qwenProfile = QWEN_IMAGE21_PROFILES[performance as "Speed" | "Quality"];
+    perfPreview = { steps: qwenProfile.steps, cfg: qwenProfile.cfg_scale, sampler: qwenProfile.sampler, scheduler: qwenProfile.scheduler };
   } else if (activeModelLower.includes("flux") && !customPerf) {
     if (performance === "Quality") {
       perfPreview = { steps: 28, cfg: 3.5, sampler: "euler", scheduler: "beta" };
@@ -245,7 +202,9 @@ export function GenerationSettingsPanel({
   }
   const seedRandom = studioSettings?.seed_random ?? true;
   const hasNegative = Boolean((settings.negative_prompt ?? "").trim());
-  const perfHint = isIdeogramModel
+  const perfHint = isQwenModel
+    ? "Speed uses the 25-step ComfyUI template; Quality uses Qwen's 40-step reference. Both use CFG 1, Euler/Simple."
+    : isIdeogramModel
     ? ideogramPerformanceHint(performance)
     : performanceHint(performance);
 
@@ -254,6 +213,10 @@ export function GenerationSettingsPanel({
   };
 
   const handlePerformanceChange = (perf: string) => {
+    if (isQwenModel && (perf === "Speed" || perf === "Quality")) {
+      onChange({ performance: perf, ...QWEN_IMAGE21_PROFILES[perf] });
+      return;
+    }
     if (
       isCustomPerformance(perf) ||
       !isHiDreamO1DevCheckpoint(settings.model) ||
@@ -305,38 +268,17 @@ export function GenerationSettingsPanel({
     setControlDensity(density);
     localStorage.setItem(GENERATION_DENSITY_KEY, density);
   };
-  const saveCurrentPreset = () => {
-    const name = window.prompt("Preset name", `Preset ${userPresets.length + 1}`)?.trim();
-    if (!name) return;
-    const preset: UserGenerationPreset = {
-      name,
-      settings: {
-        performance: settings.performance,
-        aspect_ratio: settings.aspect_ratio,
-        width: settings.width,
-        height: settings.height,
-        image_number: settings.image_number,
-        steps: settings.steps,
-        cfg_scale: settings.cfg_scale,
-        sampler: settings.sampler,
-        scheduler: settings.scheduler,
-      },
-    };
-    const next = [...userPresets.filter((item) => item.name !== name), preset];
-    setUserPresets(next);
-    localStorage.setItem(GENERATION_PRESETS_KEY, JSON.stringify(next));
-  };
   const resetRunSettings = () => onChange({
-    performance: "Lightning",
+    performance: isQwenModel ? "Quality" : "Lightning",
     aspect_ratio: "768x768",
     width: undefined,
     height: undefined,
     image_number: 1,
     seed: -1,
-    steps: 20,
-    cfg_scale: 3.5,
-    sampler: undefined,
-    scheduler: undefined,
+    steps: isQwenModel ? QWEN_IMAGE21_PROFILES.Quality.steps : 20,
+    cfg_scale: isQwenModel ? 1 : 3.5,
+    sampler: isQwenModel ? "euler" : undefined,
+    scheduler: isQwenModel ? "simple" : undefined,
   });
 
   return (
@@ -355,56 +297,15 @@ export function GenerationSettingsPanel({
             </button>
           </div>
           <div className="flex items-center gap-1">
-            {advancedMode ? (["basic", "advanced"] as const).map((density) => (
+            {(["basic", "advanced"] as const).map((density) => (
               <button key={density} type="button" aria-pressed={controlDensity === density} onClick={() => setDensity(density)} className={`rounded px-2 py-1 text-[9px] font-semibold uppercase tracking-wide ${controlDensity === density ? "bg-dfui-accent/15 text-dfui-accent" : "text-dfui-muted hover:bg-dfui-surface"}`}>
                 {density}
               </button>
-            )) : null}
-            <select aria-label="Apply saved generation preset" defaultValue="" onChange={(event) => {
-              const preset = userPresets.find((item) => item.name === event.target.value);
-              if (preset) onChange(preset.settings);
-              event.target.value = "";
-            }} className="df-select ml-auto min-w-0 max-w-32 px-1.5 py-1 text-[9px]">
-              <option value="">Presets…</option>
-              {userPresets.map((preset) => <option key={preset.name} value={preset.name}>{preset.name}</option>)}
-            </select>
-            <button type="button" onClick={saveCurrentPreset} className="rounded p-1.5 text-dfui-muted hover:bg-dfui-surface hover:text-dfui-accent" title="Save current generation preset" aria-label="Save current generation preset"><Save size={12} /></button>
+            ))}
+            <span className="ml-auto text-[9px] text-dfui-tertiary">{controlDensity === "basic" ? "Recommended" : "Manual controls"}</span>
           </div>
         </div>
       ) : null}
-      {show("creativeTemplate") && creativeTemplates.length > 0 && (
-        <SettingsSection
-          title="Creative template"
-          subtitle="Override the default pipeline bundle for this mode"
-          defaultOpen={false}
-        >
-          <label className="block">
-            <FieldLabel hint="Bundles model routing, defaults, and optional post-upscale chain">
-              Template
-            </FieldLabel>
-            <select
-              value={activeTemplateId}
-              onChange={(e) => {
-                const id = e.target.value;
-                const picked = creativeTemplates.find((t) => t.id === id);
-                onChange({
-                  template_id: id,
-                  post_upscale: picked?.post_upscale,
-                  post_upscale_enabled: Boolean(picked?.post_upscale),
-                });
-              }}
-              className="df-select mt-1 w-full px-2.5 py-2 text-xs"
-            >
-              {creativeTemplates.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.label}
-                  {t.post_upscale ? ` · +${t.post_upscale}` : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-        </SettingsSection>
-      )}
       {show("upscalePanel") && (
         <>
           <UltimateSDUpscalePanel settings={settings} onChange={onChange} />
@@ -428,29 +329,19 @@ export function GenerationSettingsPanel({
           editRouteSubtitle={editRouteSubtitle}
           showEditStrength={showEditStrength}
           advancedMode={advancedMode}
-          modelGallery={modelGallery}
         />
       )}
-      {show("toolboxPanel") && (
-        <CreativeToolboxPanel
-          settings={settings}
-          onChange={onChange}
-          modelGallery={modelGallery}
-          onInstallCompanionItems={onInstallCompanionItems}
-        />
-      )}
-
       {show("performance") && (
       <SettingsSection
         title="Performance & size"
         subtitle={
           isGenerateFamilyMode(studioMode)
-            ? "Preset controls steps / CFG — Custom unlocks manual sampling"
-            : "Preset for edit / inpaint — advanced unlocks manual sampling"
+            ? "Choose quality and output size; sampling stays automatic"
+            : "Qwen Image 2.1 uses its recommended sampling by default"
         }
         defaultOpen
-        changed={performance !== "Lightning" || activeAspect !== "768x768" || (settings.image_number ?? 1) !== 1}
-        onReset={() => onChange({ performance: "Lightning", aspect_ratio: "768x768", width: undefined, height: undefined, image_number: 1 })}
+        changed={performance !== (isQwenModel ? "Quality" : "Lightning") || activeAspect !== "768x768" || (settings.image_number ?? 1) !== 1}
+        onReset={() => onChange({ performance: isQwenModel ? "Quality" : "Lightning", ...(isQwenModel ? QWEN_IMAGE21_PROFILES.Quality : {}), aspect_ratio: "768x768", width: undefined, height: undefined, image_number: 1 })}
       >
         {tabCtx.isModernModel ? <p className="rounded-md border border-df-blue/20 bg-df-blue/5 px-2 py-1.5 text-[9px] leading-snug text-dfui-tertiary">{activeModelFamily || activeModelLabel} uses modern guidance; unsupported negative-prompt and CLIP-skip controls are hidden.</p> : null}
         {MODE_AUTO_SUMMARY[studioMode] && (
@@ -492,7 +383,9 @@ export function GenerationSettingsPanel({
 
         {show("aspectRatio") && (
           <>
-            <FieldLabel hint="SDXL-trained sizes through 1344px; HiDream-O1 Dev supports up to 2048×2048. Portrait / square / landscape groups match Fooocus.">
+            <FieldLabel hint={activeModelFamily === "qwen_image_2.1"
+              ? "Create uses this canvas size (up to 2048×2048 on 16 GB VRAM); Edit normally keeps the source canvas."
+              : "SDXL-trained sizes through 1344px; HiDream-O1 Dev supports up to 2048×2048."}>
               Aspect ratio
             </FieldLabel>
             <div className="space-y-2">
@@ -513,7 +406,10 @@ export function GenerationSettingsPanel({
                           key={label}
                           type="button"
                           data-active={activeAspect === label}
-                          onClick={() => onChange({ aspect_ratio: label })}
+                          onClick={() => {
+                            const [width, height] = label.split("x").map(Number);
+                            onChange({ aspect_ratio: label, width, height });
+                          }}
                           className={`rounded-md border px-2 py-1 font-mono text-[10px] transition ${ASPECT_GROUP_ACCENT[group]}`}
                         >
                           {label.replace("x", "×")}
@@ -669,7 +565,7 @@ export function GenerationSettingsPanel({
           }
           defaultOpen={customPerf}
           changed={customPerf}
-          onReset={() => onChange({ performance: "Lightning", steps: 20, cfg_scale: 3.5, sampler: undefined, scheduler: undefined, clip_skip: undefined })}
+          onReset={() => onChange({ performance: isQwenModel ? "Quality" : "Lightning", steps: isQwenModel ? QWEN_IMAGE21_PROFILES.Quality.steps : 20, cfg_scale: isQwenModel ? 1 : 3.5, sampler: isQwenModel ? "euler" : undefined, scheduler: isQwenModel ? "simple" : undefined, clip_skip: undefined })}
         >
           {!customPerf ? (
             <div className="space-y-2">
@@ -702,7 +598,7 @@ export function GenerationSettingsPanel({
                 <label className="block">
                   <FieldLabel>Sampler</FieldLabel>
                   <select
-                    value={settings.sampler ?? "dpmpp_2m_sde_gpu"}
+                    value={settings.sampler ?? (isQwenModel ? "euler" : "dpmpp_2m_sde_gpu")}
                     onChange={(e) =>
                       onChange({ performance: CUSTOM_PERFORMANCE, sampler: e.target.value })
                     }
@@ -718,7 +614,7 @@ export function GenerationSettingsPanel({
                 <label className="block">
                   <FieldLabel>Scheduler</FieldLabel>
                   <select
-                    value={settings.scheduler ?? "karras"}
+                    value={settings.scheduler ?? (isQwenModel ? "simple" : "karras")}
                     onChange={(e) =>
                       onChange({ performance: CUSTOM_PERFORMANCE, scheduler: e.target.value })
                     }
@@ -784,102 +680,6 @@ export function GenerationSettingsPanel({
               />
             </label>
           )}
-        </SettingsSection>
-      )}
-
-      {show("qwen") && controlDensity === "advanced" && (
-        <SettingsSection title="Qwen Image" defaultOpen={false}>
-          <label className="block">
-            <FieldLabel>Edit graph</FieldLabel>
-            <select
-              value={settings.qwen_edit_mode ?? "auto"}
-              onChange={(e) =>
-                onChange({
-                  qwen_edit_mode: e.target.value as GenerationSettings["qwen_edit_mode"],
-                })
-              }
-              className="df-select mt-1 w-full px-2.5 py-2 text-xs"
-            >
-              <option value="auto">Auto (Plus when extra references)</option>
-              <option value="single">Single (TextEncodeQwenImageEdit)</option>
-              <option value="plus">Plus (TextEncodeQwenImageEditPlus)</option>
-              <option value="raw_plus">
-                Raw Plus (preserve resolution — ReferenceLatent)
-              </option>
-              <option value="preserve_resolution">
-                Preserve resolution (alias of Raw Plus)
-              </option>
-              <option value="lightning_4step">
-                Lightning 4-step (Fast edit)
-              </option>
-            </select>
-          </label>
-          <label className="mt-2 flex items-center gap-2 text-xs text-dfui-muted">
-            <input
-              type="checkbox"
-              checked={Boolean(settings.qwen_preserve_resolution)}
-              onChange={(e) =>
-                onChange({
-                  qwen_preserve_resolution: e.target.checked,
-                  qwen_edit_mode: e.target.checked
-                    ? settings.qwen_edit_mode === "single"
-                      ? "raw_plus"
-                      : settings.qwen_edit_mode
-                    : settings.qwen_edit_mode,
-                })
-              }
-              className="accent-dfui-accent"
-            />
-            Preserve source pixel layout (raw latent path)
-          </label>
-          <label className="block">
-            <FieldLabel>Preserve megapixels (raw path)</FieldLabel>
-            <input
-              type="number"
-              min={0}
-              max={16}
-              step={0.1}
-              placeholder="auto (source size)"
-              value={settings.qwen_preserve_megapixels ?? ""}
-              onChange={(e) => {
-                const raw = e.target.value.trim();
-                onChange({
-                  qwen_preserve_megapixels: raw === "" ? undefined : Number(raw),
-                });
-              }}
-              className="df-input mt-1 w-full px-2.5 py-1.5 font-mono text-xs"
-            />
-          </label>
-          <label className="block">
-            <FieldLabel>AuraFlow shift — {settings.qwen_image_shift ?? 3.1}</FieldLabel>
-            <input
-              type="range"
-              min={1}
-              max={6}
-              step={0.1}
-              value={settings.qwen_image_shift ?? 3.1}
-              onChange={(e) => onChange({ qwen_image_shift: Number(e.target.value) })}
-              className="mt-1 w-full accent-dfui-accent"
-            />
-          </label>
-          <label className="block">
-            <FieldLabel>Edit scale (megapixels)</FieldLabel>
-            <input
-              type="number"
-              min={0}
-              max={4}
-              step={0.05}
-              placeholder="auto"
-              value={settings.qwen_scale_megapixels ?? ""}
-              onChange={(e) => {
-                const raw = e.target.value.trim();
-                onChange({
-                  qwen_scale_megapixels: raw === "" ? undefined : Number(raw),
-                });
-              }}
-              className="df-input mt-1 w-full px-2.5 py-1.5 font-mono text-xs"
-            />
-          </label>
         </SettingsSection>
       )}
 

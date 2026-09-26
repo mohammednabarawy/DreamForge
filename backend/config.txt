@@ -1,36 +1,36 @@
 {
     "path_checkpoints": [
         "D:\\DreamForge\\backend\\models\\checkpoints",
-        "D:\\krita_server\\models\\checkpoints"
+        "D:\\krita\\_server\\models\\checkpoints"
     ],
     "path_loras": [
         "D:\\DreamForge\\backend\\models\\loras",
-        "D:\\krita_server\\models\\loras"
+        "D:\\krita\\_server\\models\\loras"
     ],
     "path_embeddings": [
         "D:\\DreamForge\\backend\\models\\embeddings",
-        "D:\\krita_server\\models\\embeddings"
+        "D:\\krita\\_server\\models\\embeddings"
     ],
     "path_vae_approx": "D:\\DreamForge\\backend\\models\\vae_approx",
     "path_vae": [
         "D:\\DreamForge\\backend\\models\\vae",
-        "D:\\krita_server\\models\\vae"
+        "D:\\krita\\_server\\models\\vae"
     ],
     "path_upscale_models": [
         "D:\\DreamForge\\backend\\models\\upscale_models",
-        "D:\\krita_server\\models\\upscale_models"
+        "D:\\krita\\_server\\models\\upscale_models"
     ],
     "path_inpaint": [
         "D:\\DreamForge\\backend\\models\\inpaint",
-        "D:\\krita_server\\models\\inpaint"
+        "D:\\krita\\_server\\models\\inpaint"
     ],
     "path_controlnet": [
         "D:\\DreamForge\\backend\\models\\controlnet",
-        "D:\\krita_server\\models\\controlnet"
+        "D:\\krita\\_server\\models\\controlnet"
     ],
     "path_clip_vision": [
         "D:\\DreamForge\\backend\\models\\clip_vision",
-        "D:\\krita_server\\models\\clip_vision"
+        "D:\\krita\\_server\\models\\clip_vision"
     ],
     "path_dreamforge_expansion": "D:\\DreamForge\\backend\\models\\prompt_expansion\\dreamforge_expansion",
     "path_wildcards": "D:\\DreamForge\\backend\\wildcards",

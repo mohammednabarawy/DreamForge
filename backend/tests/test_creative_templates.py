@@ -27,7 +27,9 @@ def test_resolve_template_extends_chain():
     resolved = resolve_template_patch("edit.kontext.enhance2x", base={"prompt": "x"})
     assert resolved["template_id"] == "edit.kontext.enhance2x"
     assert resolved["patch"]["post_upscale"] == "ultimate_sd_upscale"
-    assert resolved["patch"]["edit_type"] == "kontext"
+    assert resolved["patch"]["edit_type"] == "qwen_edit"
+    assert resolved["patch"]["steps"] == 40
+    assert resolved["companions"] == []
 
 
 def test_post_upscale_enabled_without_template_chain():

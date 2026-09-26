@@ -60,8 +60,18 @@ FAMILY_CAPABILITIES: Dict[str, Set[str]] = {
         ModelCapabilities.TEXT_TO_IMAGE,
     },
     "qwen_image_edit": {
+        ModelCapabilities.TEXT_TO_IMAGE,
         ModelCapabilities.QWEN_SEMANTIC_EDIT,
+        ModelCapabilities.KONTEXT_EDIT,
         ModelCapabilities.IMAGE_TO_IMAGE,
+        ModelCapabilities.INPAINT,
+    },
+    "qwen_image_2.1": {
+        ModelCapabilities.TEXT_TO_IMAGE,
+        ModelCapabilities.QWEN_SEMANTIC_EDIT,
+        ModelCapabilities.KONTEXT_EDIT,
+        ModelCapabilities.IMAGE_TO_IMAGE,
+        ModelCapabilities.INPAINT,
     },
     "hidream": {
         ModelCapabilities.TEXT_TO_IMAGE,
@@ -143,11 +153,14 @@ def model_capabilities_for_model(
                 ModelCapabilities.IMAGE_TO_IMAGE,
             }
         )
-    if "qwen" in blob and "edit" in blob:
+    if "qwen" in blob and ("edit" in blob or "2.1" in blob):
         caps.update(
             {
+                ModelCapabilities.TEXT_TO_IMAGE,
                 ModelCapabilities.QWEN_SEMANTIC_EDIT,
+                ModelCapabilities.KONTEXT_EDIT,
                 ModelCapabilities.IMAGE_TO_IMAGE,
+                ModelCapabilities.INPAINT,
             }
         )
     return caps

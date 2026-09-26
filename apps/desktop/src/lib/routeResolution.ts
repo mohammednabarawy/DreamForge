@@ -49,6 +49,9 @@ export function resolveEffectiveRoute(
   studioMode: StudioMode,
   settings: GenerationSettings,
 ): EffectiveRoute {
+  if (studioMode === "inpaint" || studioMode === "toolbox") {
+    return resolveEffectiveRoute("edit", settings);
+  }
   if (studioMode === "agent") {
     return {
       task: "agent",
@@ -88,28 +91,6 @@ export function resolveEffectiveRoute(
     };
   }
 
-  if (studioMode === "inpaint") {
-    return {
-      task: "inpaint",
-      sourcePath: settings.input_image?.trim(),
-      isGenerateReference: false,
-      outputKind: "inpaint",
-    };
-  }
-
-  if (studioMode === "toolbox") {
-    const task = (settings.edit_task ?? "").trim().toLowerCase();
-    const hasMask = Boolean(settings.inpaint_mask_path?.trim());
-    const inpaintLike =
-      task === "outfit_transfer" && hasMask && settings.edit_type === "inpaint";
-    return {
-      task: "edit",
-      sourcePath: settings.input_image?.trim(),
-      isGenerateReference: false,
-      outputKind: inpaintLike ? "inpaint" : "edit",
-    };
-  }
-
   return {
     task: "edit",
     sourcePath: settings.input_image?.trim(),
@@ -126,8 +107,11 @@ export function sanitizeSettingsForStudioMode(
   studioMode: StudioMode,
   settings: GenerationSettings,
 ): GenerationSettings {
+  if (studioMode === "inpaint" || studioMode === "toolbox") {
+    return sanitizeSettingsForStudioMode("edit", settings);
+  }
   const next = { ...clearLegacyIdentitySettings(settings, studioMode) };
-  if (studioMode !== "toolbox") next.custom_tool_id = undefined;
+  next.custom_tool_id = undefined;
 
   if (isEditFamilyMode(studioMode)) {
     if (studioMode === "upscale") {
@@ -137,15 +121,13 @@ export function sanitizeSettingsForStudioMode(
     }
     next.upscale_image = undefined;
     next.upscale_method = undefined;
-    if (studioMode === "edit") {
-      next.inpaint_mask_path = undefined;
+    next.workflow_mode = "edit";
+    next.reference_role = next.inpaint_mask_path?.trim() ? "inpaint" : "source_edit";
+    if (next.inpaint_mask_path?.trim()) {
+      next.edit_type = "inpaint";
+      next.cn_selection = "Custom...";
+      next.cn_type = "inpaint";
     }
-    return next;
-  }
-
-  if (studioMode === "toolbox") {
-    next.upscale_image = undefined;
-    next.upscale_method = undefined;
     return next;
   }
 

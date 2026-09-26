@@ -302,6 +302,10 @@ export type DreamForgeErrorCode =
   | "generation_in_progress"
   | "invalid_request"
   | "comfy_workflow_validation"
+  | "lora_family_mismatch"
+  | "denoise_too_low_for_intent"
+  | "workflow_suggestion"
+  | "aspect_ratio_mismatch"
   | "generation_failed";
 
 export type RepairAction = {

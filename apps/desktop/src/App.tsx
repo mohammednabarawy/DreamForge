@@ -119,12 +119,6 @@ function DreamForgeStudio() {
         mpsAvailable={mc.mpsAvailable}
         profileLabel={profileLabel}
         profileDetail={profileDetail}
-        experience={mc.uiExperience}
-        onExperienceChange={(exp) =>
-          void mc.saveAppConfig({
-            ui: { experience: exp, advanced_mode: exp === "pro" },
-          })
-        }
         onOpenAppSettings={() => setAppSettingsOpen(true)}
         onRestartEngine={() => void mc.runRestartEngine()}
       />
@@ -168,7 +162,7 @@ function DreamForgeStudio() {
             onEditThis={(item) => void mc.historyEditThis(item)}
             onFixRegion={(item) => void mc.historyFixRegion(item)}
             onEnhance={(item) => void mc.historyEnhance(item)}
-            simpleHistoryLabels={mc.uiExperience === "simple"}
+            simpleHistoryLabels={false}
             onOpenFolder={(path) => void mc.openOutputInExplorer(path)}
             onCopyPath={(path) => void mc.copyOutputPath(path)}
             onDeleteGeneration={(item) => void mc.deleteOutputManifest(item)}
@@ -202,7 +196,6 @@ function DreamForgeStudio() {
             companionBootstrapMessage={mc.companionBootstrapMessage}
             studioMode={mc.studioMode}
             agentPlannedMode={mc.agentPlannedMode}
-            onStudioModeChange={(mode) => void mc.setStudioMode(mode)}
             experience={mc.uiExperience}
             settings={mc.settings}
             onChange={mc.patchSettings}
@@ -284,12 +277,11 @@ function DreamForgeStudio() {
             modelDependencies={mc.modelDependencies}
             companionDownloadBusy={mc.companionDownloadBusy}
             onDownloadCompanions={() => void mc.downloadMissingCompanions()}
-            onInstallCompanionItems={(items) => mc.installCompanionItems(items)}
             onRefreshModelDependencies={() => void mc.refreshModelDependencies()}
             studioSettings={mc.studioSettings}
             onSaveStudioSettings={(patch) => void mc.saveStudioSettings(patch)}
             advancedMode={mc.advancedMode}
-            simpleExperience={mc.uiExperience === "simple"}
+            simpleExperience={false}
             imageNumberMax={mc.imageNumberMax}
             civitaiApiKey={mc.appConfig?.ui.civitai_api_key ?? ""}
             generating={mc.generating}

@@ -1,6 +1,22 @@
 from dreamforge_model_registry import ModelCapabilities
 
 
+def test_qwen_21_name_selects_21_companions_even_if_gallery_family_is_legacy(monkeypatch):
+    import dreamforge_cli_inventory as inv
+
+    monkeypatch.setattr(inv, "companion_file_present", lambda _req: False)
+    missing = inv.check_model_dependencies(
+        {
+            "family": "qwen_image",
+            "name": "qwen_image_2.1_int8_convrot.safetensors",
+        }
+    )
+    assert {item["id"] for item in missing} == {
+        "clip_qwen3vl_8b_int8",
+        "vae_qwen_image_21",
+    }
+
+
 def _model(name, size_mb, family):
     return {
         "name": name,

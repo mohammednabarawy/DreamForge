@@ -71,7 +71,8 @@ export function ReferenceImageControl({
   const [showRoles, setShowRoles] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const prompt = (settings.prompt ?? "").toLowerCase();
-  const isImage1Mentioned = prompt.includes("image 1");
+  const isImage1Mentioned = /(?:<image1>|image[_ #]1|picture 1)/i.test(prompt);
+  const isQwen21 = modelFamily === "qwen_image_2.1" || /qwen.*2[._]1/i.test(settings.model ?? "");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const extraInputRef = useRef<HTMLInputElement>(null);
 
@@ -81,6 +82,7 @@ export function ReferenceImageControl({
     (path) => path.trim() && path.trim() !== attachedPath,
   );
   const showEditStrength =
+    !isQwen21 &&
     !(studioMode === "edit" && modelFamily === "krea2") &&
     Boolean(attachedPath) &&
     attachMode !== "upscale" &&
@@ -91,6 +93,7 @@ export function ReferenceImageControl({
   const activeReferenceRole = inferReferenceRole(settings, studioMode);
   const proReferenceRoles = proReferenceRolesForStudio(studioMode);
   const canShowProReferenceRoles =
+    !isQwen21 &&
     !simpleExperience &&
     Boolean(attachedPath) &&
     Boolean(onPatchSettings) &&
@@ -107,6 +110,14 @@ export function ReferenceImageControl({
   const maxSlots = maxReferenceImagesForFamily(modelFamily ?? "", studioMode);
 
   const referenceSlots = coerceReferenceSlots(settings, studioMode, maxSlots);
+  const visibleReferenceCount = Math.max(referenceSlots.length, extraReferences.length + (attachedPath ? 1 : 0));
+  const showTagActions = isQwen21 && visibleReferenceCount > 1 && Boolean(onPatchSettings);
+  const insertImageTag = (index: number) => {
+    if (!onPatchSettings) return;
+    const tag = `<image${index + 1}>`;
+    if ((settings.prompt ?? "").includes(tag)) return;
+    onPatchSettings({ prompt: `${(settings.prompt ?? "").trim()} ${tag}`.trim() });
+  };
   const atReferenceCap =
     (attachedPath ? 1 : 0) + extraReferences.length >= maxSlots;
 
@@ -356,7 +367,7 @@ export function ReferenceImageControl({
                   IMG
                 </span>
               )}
-              {referenceSlots.length > 1 ? (
+              {visibleReferenceCount > 1 ? (
                 <span className="absolute left-0 top-0 rounded-br bg-df-blue/80 px-1 text-[8px] font-bold text-white">
                   1
                 </span>
@@ -365,8 +376,11 @@ export function ReferenceImageControl({
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 items-start justify-between gap-2">
                 <div className="min-w-0">
-                  {referenceSlots.length > 1 ? (
-                    <p className="text-[9px] font-semibold text-df-blue/90">Image 1</p>
+                  {visibleReferenceCount > 1 ? (
+                    <div className="flex items-center gap-1">
+                      <p className="text-xs font-semibold text-df-blue/90">Image 1</p>
+                      {showTagActions ? <button type="button" disabled={disabled} onClick={() => insertImageTag(0)} className="rounded border border-df-blue/30 px-1.5 py-0.5 font-mono text-[10px] text-df-blue hover:bg-df-blue/10 disabled:opacity-50" aria-label="Insert <image1> into prompt">{"<image1>"}</button> : null}
+                    </div>
                   ) : null}
                   <p className="truncate font-mono text-[10px] text-dfui-fg" title={attachedPath}>
                     {basename(attachedPath)}
@@ -374,6 +388,7 @@ export function ReferenceImageControl({
                   <p className="mt-0.5 text-[9px] text-dfui-muted">
                     {referenceAttachedLabel(studioMode, settings)}
                   </p>
+                  {showTagActions && !isImage1Mentioned ? <p className="text-[10px] text-amber-200">Not named in prompt</p> : null}
                 </div>
                 <button
                   type="button"
@@ -386,12 +401,12 @@ export function ReferenceImageControl({
                 </button>
               </div>
               <div className={`${compact ? "mt-1" : "mt-2"} flex flex-wrap items-center gap-1`}>
-                {attachMode !== "upscale" && (
+                {attachMode !== "upscale" && !isQwen21 && (
                   <span className="inline-flex rounded border border-dfui-border/50 bg-dfui-bg/60 px-1.5 py-0.5 text-[9px] text-dfui-secondary">
                     Strength {Math.round(editStrength * 100)}%
                   </span>
                 )}
-                {studioMode === "inpaint" && (
+                {(studioMode === "inpaint" || studioMode === "edit") && settings.inpaint_mask_path && (
                   <span
                     className={`rounded border px-1.5 py-0.5 text-[9px] ${
                       settings.inpaint_mask_path
@@ -399,7 +414,7 @@ export function ReferenceImageControl({
                         : "border-amber-400/30 bg-amber-400/10 text-amber-200"
                     }`}
                   >
-                    {settings.inpaint_mask_path ? "Mask ready" : "Mask needed"}
+                    Mask ready
                   </span>
                 )}
                 {(extraReferences.length > 0 || referenceSlots.length > 1) && (
@@ -408,7 +423,7 @@ export function ReferenceImageControl({
                   </span>
                 )}
               </div>
-              {studioMode === "inpaint" && onOpenInpaintMask && (
+              {(studioMode === "inpaint" || studioMode === "edit") && onOpenInpaintMask && (
                 <button
                   type="button"
                   disabled={disabled}
@@ -417,7 +432,7 @@ export function ReferenceImageControl({
                   title="Open full-screen mask editor (brush, tap selection, grow/shrink)"
                 >
                   <Paintbrush size={12} />
-                  {simpleExperience ? "Paint mask" : "Full-screen mask"}
+                  Paint mask (optional)
                 </button>
               )}
             </div>
@@ -468,7 +483,7 @@ export function ReferenceImageControl({
           </span>
         </label>
       )}
-      {showMultiSlots && activeReferenceRole === "image_prompt" && onPatchSettings && (
+      {showMultiSlots && !isQwen21 && activeReferenceRole === "image_prompt" && onPatchSettings && (
         <label
           className="mx-2.5 mb-2 flex items-center gap-2 rounded-md border border-dfui-border/35 bg-dfui-bg/35 px-2 py-1.5"
           title="IP-Adapter stop-at (sampling step fraction)"
@@ -502,7 +517,8 @@ export function ReferenceImageControl({
           settings={settings}
           studioMode={studioMode}
           disabled={disabled}
-          showRoles={showRoles}
+          showRoles={showRoles && !isQwen21}
+          onInsertTag={showTagActions ? insertImageTag : undefined}
           maxSlots={maxSlots}
           onAddSlot={(slot) => {
             const patch = appendReferenceSlot(settings, slot, studioMode, maxSlots);
@@ -528,6 +544,10 @@ export function ReferenceImageControl({
               title={path}
             >
               <span className="truncate">{basename(path)}</span>
+              {showTagActions ? (
+                <button type="button" disabled={disabled} onClick={() => insertImageTag(index + 1)} className="shrink-0 font-mono text-df-blue hover:underline disabled:opacity-50" aria-label={`Insert <image${index + 2}> into prompt`}>{`<image${index + 2}>`}</button>
+              ) : null}
+              {showTagActions && !prompt.includes(`<image${index + 2}>`) ? <span className="shrink-0 text-amber-200">Not named</span> : null}
               {onRemoveExtra && (
                 <button
                   type="button"

@@ -1,7 +1,6 @@
 import {
   selectCuratedEditModel,
 } from "./editModel";
-import { selectCuratedInpaintModel } from "./inpaintModel";
 import { selectCuratedUpscaleModel } from "./upscaleModel";
 import type { ModelGalleryItem } from "./tauri-api";
 
@@ -161,13 +160,7 @@ export function selectCuratedModelForMode(
   if (mode === "generate" || mode === "agent") {
     return ideogram ?? current ?? gallery[0]?.engine_name ?? "";
   }
-  if (mode === "inpaint") {
-    return selectCuratedInpaintModel(gallery, current);
-  }
-  if (mode === "toolbox") {
-    return selectCuratedEditModel(gallery);
-  }
-  if (mode === "edit") {
+  if (mode === "edit" || mode === "inpaint" || mode === "toolbox") {
     return selectCuratedEditModel(gallery);
   }
   return current ?? gallery[0]?.engine_name ?? "";

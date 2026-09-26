@@ -22,6 +22,7 @@ HF_BASE_FLUX_VAE = (
     "https://huggingface.co/black-forest-labs/FLUX.1-schnell/resolve/main"
 )
 HF_BASE_QWEN = "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files"
+HF_BASE_QWEN21 = "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main"
 HF_BASE_QWEN_CLIP = (
     "https://huggingface.co/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main"
 )
@@ -50,6 +51,14 @@ COMPANION_SOURCES: dict[str, dict[str, Any]] = {
     "clip_qwen25_vl_7b": {
         "url": f"{HF_BASE_QWEN}/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
         "min_bytes": 6 * 1024 * 1024 * 1024,
+    },
+    "clip_qwen3vl_8b_int8": {
+        "url": f"{HF_BASE_QWEN21}/text_encoders/qwen3vl_8b_int8_convrot.safetensors",
+        "min_bytes": 4 * 1024 * 1024 * 1024,
+    },
+    "vae_qwen_image_21": {
+        "url": f"{HF_BASE_QWEN21}/vae/qwen_image_2.1_vae_bf16.safetensors",
+        "min_bytes": 200 * 1024 * 1024,
     },
     "clip_z_image_qwen3_4b_fp4": {
         "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b_fp4_mixed.safetensors",

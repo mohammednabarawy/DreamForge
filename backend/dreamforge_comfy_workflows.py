@@ -15,6 +15,7 @@ We generate that API format here.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,19 @@ from dreamforge_upscale_defaults import (
 
 def _node(class_type: str, inputs: dict[str, Any]) -> dict[str, Any]:
     return {"class_type": class_type, "inputs": inputs}
+
+
+def _qwen_21_text_encoder_default() -> str:
+    from dreamforge_paths import MODELS_ROOT
+
+    for filename in (
+        "qwen3vl_8b_int8_convrot.safetensors",
+        "qwen3vl_8b_bf16.safetensors",
+        "qwen3vl_8b_fp8_scaled.safetensors",
+    ):
+        if any((MODELS_ROOT / folder / filename).is_file() for folder in ("text_encoders", "clip")):
+            return filename
+    return "qwen3vl_8b_int8_convrot.safetensors"
 
 
 def _controlnet_apply_advanced(
@@ -393,7 +407,8 @@ def comfy_krea2_edit(args: dict[str, Any]) -> dict[str, Any]:
         "latent_image": ["4", 0], "seed": int(args.get("seed", 0)),
         "steps": int(args.get("steps", 8)), "cfg": float(args.get("cfg", 1.0)),
         "sampler_name": str(args.get("sampler_name", "euler")),
-        "scheduler": str(args.get("scheduler", "simple")), "denoise": 1.0,
+        "scheduler": str(args.get("scheduler", "simple")),
+        "denoise": float(args.get("denoise", args.get("edit_strength", 1.0))),
     })
     g["9"] = _vae_decode_node(args, ["8", 0], vae)
     g["12"] = _node("SaveImage", {
@@ -583,7 +598,23 @@ def _add_model_loader(g: dict[str, Any], args: dict[str, Any], *, start_id: int 
         g[str(i)] = _node("CheckpointLoaderSimple", {"ckpt_name": model_name})
         model_out = [str(i), 0]
         i += 1
-        clip_name = str(args.get("clip") or args.get("clip_qwen") or "qwen_2.5_vl_7b_fp8_scaled.safetensors")
+        is_qwen_21 = (
+            "2.1" in model_name.lower()
+            or "2_1" in model_name.lower()
+            or "2.1" in family
+            or bool(args.get("use_qwen_21"))
+        )
+        default_clip = (
+            _qwen_21_text_encoder_default()
+            if is_qwen_21
+            else "qwen_2.5_vl_7b_fp8_scaled.safetensors"
+        )
+        default_vae = (
+            "qwen_image_2.1_vae_bf16.safetensors"
+            if is_qwen_21
+            else "qwen_image_vae.safetensors"
+        )
+        clip_name = str(args.get("clip") or args.get("clip_qwen") or default_clip)
         if clip_name.endswith(".gguf"):
             g[str(i)] = _node("CLIPLoaderGGUF", {"clip_name": clip_name, "type": "qwen_image"})
         else:
@@ -592,7 +623,7 @@ def _add_model_loader(g: dict[str, Any], args: dict[str, Any], *, start_id: int 
         i += 1
         g[str(i)] = _node(
             "VAELoader",
-            {"vae_name": str(args.get("vae") or "qwen_image_vae.safetensors")},
+            {"vae_name": str(args.get("vae") or default_vae)},
         )
         vae_out = [str(i), 0]
         i += 1
@@ -634,7 +665,23 @@ def _add_model_loader(g: dict[str, Any], args: dict[str, Any], *, start_id: int 
             model_out, i = _apply_easy_cache(g, model_out, args, i)
             return model_out, clip_out, vae_out, i
         if family.startswith("qwen"):
-            clip_name = str(args.get("clip") or args.get("clip_qwen") or "qwen_2.5_vl_7b_fp8_scaled.safetensors")
+            is_qwen_21 = (
+                "2.1" in unet_name.lower()
+                or "2_1" in unet_name.lower()
+                or "2.1" in family
+                or bool(args.get("use_qwen_21"))
+            )
+            default_clip = (
+                _qwen_21_text_encoder_default()
+                if is_qwen_21
+                else "qwen_2.5_vl_7b_fp8_scaled.safetensors"
+            )
+            default_vae = (
+                "qwen_image_2.1_vae_bf16.safetensors"
+                if is_qwen_21
+                else "qwen_image_vae.safetensors"
+            )
+            clip_name = str(args.get("clip") or args.get("clip_qwen") or default_clip)
             if clip_name.endswith(".gguf"):
                 g[str(i)] = _node("CLIPLoaderGGUF", {"clip_name": clip_name, "type": "qwen_image"})
             else:
@@ -643,7 +690,7 @@ def _add_model_loader(g: dict[str, Any], args: dict[str, Any], *, start_id: int 
             i += 1
             g[str(i)] = _node(
                 "VAELoader",
-                {"vae_name": str(args.get("vae") or "qwen_image_vae.safetensors")},
+                {"vae_name": str(args.get("vae") or default_vae)},
             )
             vae_out = [str(i), 0]
             i += 1
@@ -1296,8 +1343,60 @@ def comfy_flux_kontext_edit(args: dict[str, Any]) -> dict[str, Any]:
     return g
 
 
+def _is_qwen_21_args(args: dict[str, Any]) -> bool:
+    ckpt = str(args.get("ckpt_name") or "").lower()
+    fam = str(args.get("family") or "").lower()
+    return (
+        "2.1" in ckpt
+        or "2_1" in ckpt
+        or fam == "qwen_image_2.1"
+        or "2.1" in fam
+        or bool(args.get("use_qwen_21"))
+    )
+
+
+_QWEN_IMAGE_REFERENCE_RE = re.compile(
+    r"(?i)(?:<\s*image\s*[_#-]?\s*(10|[1-9])\s*>|(?:@?image|picture|reference)\s*[_#-]?\s*(10|[1-9]))"
+)
+
+
+def normalize_qwen_image_references(prompt: str, image_count: int) -> str:
+    """Convert friendly reference wording to Qwen 2.1's exact <imageN> tags."""
+    limit = max(0, min(int(image_count), 10))
+
+    def replace(match: re.Match[str]) -> str:
+        index = int(match.group(1) or match.group(2))
+        return f"<image{index}>" if index <= limit else match.group(0)
+
+    return _QWEN_IMAGE_REFERENCE_RE.sub(replace, str(prompt or ""))
+
+
+def qwen_transparent_png_prompt(prompt: str, *, force: bool = False) -> str:
+    text = str(prompt or "").strip()
+    lower = text.lower()
+    wants_alpha = any(
+        phrase in lower
+        for phrase in ("transparent background", "transparent png", "rgba", "alpha channel")
+    )
+    if (not wants_alpha and not force) or "this is an rgba image with transparency" in lower:
+        return text
+    return (
+        f"This is an RGBA image with transparency. {text}. "
+        "The image has alpha channel and the background is transparent."
+    )
+
+
 def _apply_qwen_model_sampling(model_out: list[str | int], g: dict[str, Any], start_id: int, args: dict[str, Any]):
-    """AuraFlow + CFGNorm prep used by native Comfy Qwen workflows."""
+    """AuraFlow + CFGNorm prep used by native Comfy Qwen workflows.
+    For Qwen-Image-2.1: Uses QwenImage21Cache for prefix KV attention caching
+    without corrupting the DiT noise schedule with AuraFlow shift/CFGNorm.
+    """
+    if _is_qwen_21_args(args):
+        device = str(args.get("qwen_cache_device") or "auto")
+        dtype = str(args.get("qwen_cache_dtype") or "default")
+        g[str(start_id)] = _node("QwenImage21Cache", {"model": model_out, "device": device, "dtype": dtype})
+        return [str(start_id), 0]
+
     shift_value = args.get("shift")
     if shift_value is None:
         shift_value = args.get("qwen_image_shift")
@@ -1313,6 +1412,7 @@ def _apply_qwen_model_sampling(model_out: list[str | int], g: dict[str, Any], st
     g[str(start_id)] = _node("ModelSamplingAuraFlow", {"model": model_out, "shift": shift})
     g[str(start_id + 1)] = _node("CFGNorm", {"model": [str(start_id), 0], "strength": strength})
     return [str(start_id + 1), 0]
+
 
 
 def _resolve_qwen_lightning_lora_name(args: dict[str, Any]) -> str | None:
@@ -1532,11 +1632,12 @@ def _qwen_edit_sampler_nodes(
     args: dict[str, Any],
 ) -> int:
     steps = int(args.get("steps", 20))
-    cfg = float(args.get("cfg", 2.5))
-    sampler = str(args.get("sampler_name", "euler"))
-    scheduler = str(args.get("scheduler", "beta"))
+    qwen_21 = _is_qwen_21_args(args)
+    cfg = 1.0 if qwen_21 else float(args.get("cfg", 2.5))
+    sampler = "euler" if qwen_21 else str(args.get("sampler_name", "euler"))
+    scheduler = "simple" if qwen_21 else str(args.get("scheduler", "beta"))
     seed = int(args.get("seed", 0))
-    denoise = float(args.get("denoise", args.get("edit_strength", 1.0)))
+    denoise = 1.0 if qwen_21 else float(args.get("denoise", args.get("edit_strength", 1.0)))
     g[str(start_id)] = _node(
         "KSampler",
         {
@@ -1685,22 +1786,41 @@ def comfy_cutout_compose(args: dict[str, Any]) -> dict[str, Any]:
     composite_out = [str(n), 0]
     n += 1
 
-    # Harmonize at the composite's native resolution — do not rescale before VAEEncode.
-    g[str(n)] = _node(
-        "TextEncodeQwenImageEdit",
-        {"clip": clip_out, "image": composite_out, "prompt": prompt},
-    )
-    pos = [str(n), 0]
-    n += 1
-    g[str(n)] = _node(
-        "TextEncodeQwenImageEdit",
-        {"clip": clip_out, "image": composite_out, "prompt": negative},
-    )
-    neg = [str(n), 0]
-    n += 1
-    g[str(n)] = _node("VAEEncode", {"pixels": composite_out, "vae": vae_out})
-    latent = [str(n), 0]
-    n += 1
+    is_qwen_21 = _is_qwen_21_args(args)
+    if is_qwen_21:
+        g[str(n)] = _node(
+            "TextEncodeQwenImage21",
+            {
+                "clip": clip_out,
+                "vae": vae_out,
+                "images.image_1": composite_out,
+                "prompt": normalize_qwen_image_references(prompt, 1),
+                "negative_prompt": negative,
+                "resolution": 0,
+            },
+        )
+        pos = [str(n), 0]
+        neg = [str(n), 1]
+        latent = [str(n), 2]
+        n += 1
+    else:
+        # Harmonize at the composite's native resolution — do not rescale before VAEEncode.
+        g[str(n)] = _node(
+            "TextEncodeQwenImageEdit",
+            {"clip": clip_out, "image": composite_out, "prompt": prompt},
+        )
+        pos = [str(n), 0]
+        n += 1
+        g[str(n)] = _node(
+            "TextEncodeQwenImageEdit",
+            {"clip": clip_out, "image": composite_out, "prompt": negative},
+        )
+        neg = [str(n), 0]
+        n += 1
+        g[str(n)] = _node("VAEEncode", {"pixels": composite_out, "vae": vae_out})
+        latent = [str(n), 0]
+        n += 1
+
 
     args_with_vae = {**args, "_vae_out": vae_out}
     _qwen_edit_sampler_nodes(
@@ -1724,17 +1844,23 @@ def comfy_cutout_compose(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def comfy_qwen_image_edit(args: dict[str, Any]) -> dict[str, Any]:
-    """Qwen-Image-Edit via TextEncodeQwenImageEdit (Comfy native / Krita qwen_e)."""
+    """Qwen-Image-Edit via TextEncodeQwenImage21 (for 2.1) or TextEncodeQwenImageEdit (for v1)."""
     ckpt = str(args["ckpt_name"])
-    prompt = str(args.get("prompt", ""))
+    prompt = qwen_transparent_png_prompt(str(args.get("prompt", "")))
     negative = str(args.get("negative", ""))
     image_filename = str(args["image"])
-    steps = int(args.get("steps", 20))
-    cfg = float(args.get("cfg", 2.5))
-    sampler = str(args.get("sampler_name", "euler"))
-    scheduler = str(args.get("scheduler", "beta"))
+    is_qwen_21 = _is_qwen_21_args(args)
+
+    default_steps = 25 if is_qwen_21 else 20
+    default_cfg = 1.0 if is_qwen_21 else 2.5
+    default_scheduler = "simple" if is_qwen_21 else "beta"
+
+    steps = int(args.get("steps") or default_steps)
+    cfg = float(args.get("cfg") if args.get("cfg") is not None else default_cfg)
+    sampler = str(args.get("sampler_name") or "euler")
+    scheduler = str(args.get("scheduler") or default_scheduler)
     seed = int(args.get("seed", 0))
-    denoise = float(args.get("denoise", args.get("edit_strength", 1.0)))
+    denoise = 1.0 if is_qwen_21 else float(args.get("denoise", args.get("edit_strength", 1.0)))
 
     g: dict[str, Any] = {}
     model_out, clip_out, vae_out, n = _add_model_loader(
@@ -1744,22 +1870,45 @@ def comfy_qwen_image_edit(args: dict[str, Any]) -> dict[str, Any]:
     model_sampled = _apply_qwen_model_sampling(model_out, g, n, args)
     n += 2
     g["1"] = _node("LoadImage", {"image": image_filename, "upload": "image"})
-    image_out, n = _maybe_scale_qwen_pixels(g, ["1", 0], n, args)
-    g[str(n)] = _node(
-        "TextEncodeQwenImageEdit",
-        {"clip": clip_out, "image": image_out, "prompt": prompt},
-    )
-    pos = [str(n), 0]
-    n += 1
-    g[str(n)] = _node(
-        "TextEncodeQwenImageEdit",
-        {"clip": clip_out, "image": image_out, "prompt": negative},
-    )
-    neg = [str(n), 0]
-    n += 1
-    g[str(n)] = _node("VAEEncode", {"pixels": image_out, "vae": vae_out})
-    latent = [str(n), 0]
-    n += 1
+    image_out = ["1", 0]
+    if not is_qwen_21:
+        image_out, n = _maybe_scale_qwen_pixels(g, image_out, n, args)
+
+    if is_qwen_21:
+        # Qwen 2.1: Native multimodal in-context conditioning.
+        # Single TextEncodeQwenImage21 node produces positive, negative, and matching empty latent.
+        res = int(args.get("resolution") or 0)
+        g[str(n)] = _node(
+            "TextEncodeQwenImage21",
+            {
+                "clip": clip_out,
+                "images.image_1": image_out,
+                "prompt": normalize_qwen_image_references(prompt, 1),
+                "negative_prompt": negative,
+                "resolution": res,
+                "vae": vae_out,
+            },
+        )
+        pos = [str(n), 0]
+        neg = [str(n), 1]
+        latent = [str(n), 2]
+        n += 1
+    else:
+        g[str(n)] = _node(
+            "TextEncodeQwenImageEdit",
+            {"clip": clip_out, "image": image_out, "prompt": prompt},
+        )
+        pos = [str(n), 0]
+        n += 1
+        g[str(n)] = _node(
+            "TextEncodeQwenImageEdit",
+            {"clip": clip_out, "image": image_out, "prompt": negative},
+        )
+        neg = [str(n), 0]
+        n += 1
+        g[str(n)] = _node("VAEEncode", {"pixels": image_out, "vae": vae_out})
+        latent = [str(n), 0]
+        n += 1
     args_with_vae = {**args, "_vae_out": vae_out}
     _qwen_edit_sampler_nodes(
         g,
@@ -1782,9 +1931,9 @@ def comfy_qwen_image_edit(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def comfy_qwen_image_edit_plus(args: dict[str, Any]) -> dict[str, Any]:
-    """Qwen-Image-Edit Plus via TextEncodeQwenImageEditPlus (up to 3 images)."""
+    """Qwen-Image-2.1 Edit via TextEncodeQwenImage21 (up to 10 images) or legacy Plus."""
     ckpt = str(args["ckpt_name"])
-    prompt = str(args.get("prompt", ""))
+    prompt = qwen_transparent_png_prompt(str(args.get("prompt", "")))
     negative = str(args.get("negative", ""))
     preserve_resolution = _truthy(args.get("qwen_preserve_resolution"))
     image_list = [str(x) for x in (args.get("images") or []) if x]
@@ -1792,6 +1941,22 @@ def comfy_qwen_image_edit_plus(args: dict[str, Any]) -> dict[str, Any]:
         image_list = [str(args["image"])]
     if not image_list:
         raise ValueError("comfy_qwen_image_edit_plus requires at least one image")
+
+    is_qwen_21 = (
+        _is_qwen_21_args(args)
+        or len(image_list) > 3
+    )
+
+    default_steps = 25 if is_qwen_21 else 20
+    default_cfg = 1.0 if is_qwen_21 else 2.5
+    default_scheduler = "simple" if is_qwen_21 else "beta"
+
+    steps = int(args.get("steps") or default_steps)
+    cfg = float(args.get("cfg") if args.get("cfg") is not None else default_cfg)
+    sampler = str(args.get("sampler_name") or "euler")
+    scheduler = str(args.get("scheduler") or default_scheduler)
+    seed = int(args.get("seed", 0))
+    denoise = 1.0 if is_qwen_21 else float(args.get("denoise", args.get("edit_strength", 1.0)))
 
     g: dict[str, Any] = {}
     model_out, clip_out, vae_out, n = _add_model_loader(
@@ -1801,18 +1966,57 @@ def comfy_qwen_image_edit_plus(args: dict[str, Any]) -> dict[str, Any]:
     model_sampled = _apply_qwen_model_sampling(model_out, g, n, args)
     n += 2
 
+    max_slots = 10 if is_qwen_21 else 3
     image_links: dict[str, list[str | int]] = {}
-    for index, filename in enumerate(image_list[:3], start=1):
+    for index, filename in enumerate(image_list[:max_slots], start=1):
         node_id = str(n)
         g[node_id] = _node("LoadImage", {"image": filename, "upload": "image"})
         image_links[f"image{index}"] = [node_id, 0]
         n += 1
 
+    if is_qwen_21:
+        # Qwen 2.1: Native multimodal in-context conditioning with up to 10 images.
+        # Single TextEncodeQwenImage21 node produces positive, negative, and matching empty latent.
+        res = int(args.get("resolution") or 0)
+        encode_inputs: dict[str, Any] = {
+            "clip": clip_out,
+            "vae": vae_out,
+            "prompt": normalize_qwen_image_references(prompt, len(image_links)),
+            "negative_prompt": negative,
+            "resolution": res,
+        }
+        for index, link in enumerate(image_links.values(), start=1):
+            encode_inputs[f"images.image_{index}"] = link
+
+        g[str(n)] = _node("TextEncodeQwenImage21", encode_inputs)
+        pos = [str(n), 0]
+        neg = [str(n), 1]
+        latent = [str(n), 2]
+        n += 1
+        _qwen_edit_sampler_nodes(
+            g,
+            start_id=n,
+            model_sampled=model_sampled,
+            pos=pos,
+            neg=neg,
+            latent=latent,
+            args={
+                **args,
+                "_vae_out": vae_out,
+                "ckpt_name": ckpt,
+                "steps": steps,
+                "cfg": cfg,
+                "sampler_name": sampler,
+                "scheduler": scheduler,
+                "seed": seed,
+                "denoise": denoise,
+            },
+        )
+        return g
+
     if preserve_resolution:
         latent_links: list[list[str | int]] = []
-        for key in ("image1", "image2", "image3"):
-            if key not in image_links:
-                continue
+        for key in image_links.keys():
             preserved, n = _qwen_preserve_source_pixels(g, image_links[key], n, args)
             g[str(n)] = _node("VAEEncode", {"pixels": preserved, "vae": vae_out})
             latent_links.append([str(n), 0])
@@ -1820,10 +2024,8 @@ def comfy_qwen_image_edit_plus(args: dict[str, Any]) -> dict[str, Any]:
 
         def _encode_prompt_only(text: str) -> list[str | int]:
             nonlocal n
-            g[str(n)] = _node(
-                "TextEncodeQwenImageEditPlus",
-                {"clip": clip_out, "prompt": text},
-            )
+            inputs: dict[str, Any] = {"clip": clip_out, "prompt": text}
+            g[str(n)] = _node("TextEncodeQwenImageEditPlus", inputs)
             out = [str(n), 0]
             n += 1
             return out
@@ -1855,9 +2057,8 @@ def comfy_qwen_image_edit_plus(args: dict[str, Any]) -> dict[str, Any]:
             "clip": clip_out,
             "prompt": text,
         }
-        for key in ("image1", "image2", "image3"):
-            if key in image_links:
-                inputs[key] = image_links[key]
+        for key, link in image_links.items():
+            inputs[key] = link
         g[str(n)] = _node("TextEncodeQwenImageEditPlus", inputs)
         out = [str(n), 0]
         n += 1
@@ -1881,16 +2082,126 @@ def comfy_qwen_image_edit_plus(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def comfy_qwen_image_txt2img(args: dict[str, Any]) -> dict[str, Any]:
-    """Qwen-Image txt2img (EmptySD3LatentImage + standard CLIP encode)."""
+    """Qwen-Image txt2img (Qwen 2.1 native or legacy v1)."""
     ckpt = str(args["ckpt_name"])
-    prompt = str(args.get("prompt", ""))
+    prompt = qwen_transparent_png_prompt(str(args.get("prompt", "")))
     negative = str(args.get("negative", ""))
     width = int(args.get("width", 1024))
     height = int(args.get("height", 1024))
-    steps = int(args.get("steps", 20))
-    cfg = float(args.get("cfg", 2.5))
-    sampler = str(args.get("sampler_name", "euler"))
-    scheduler = str(args.get("scheduler", "beta"))
+    is_qwen_21 = _is_qwen_21_args(args)
+
+    default_steps = 25 if is_qwen_21 else 20
+    default_cfg = 1.0 if is_qwen_21 else 2.5
+    default_scheduler = "simple" if is_qwen_21 else "beta"
+
+    steps = int(args.get("steps") or default_steps)
+    cfg = float(args.get("cfg") if args.get("cfg") is not None else default_cfg)
+    sampler = str(args.get("sampler_name") or "euler")
+    scheduler = str(args.get("scheduler") or default_scheduler)
+    seed = int(args.get("seed", 0))
+    reference_images = [
+        str(image) for image in (args.get("images") or []) if str(image or "").strip()
+    ][:10]
+
+    g: dict[str, Any] = {}
+    model_out, clip_out, vae_out, n = _add_model_loader(
+        g, {**args, "ckpt_name": ckpt}
+    )
+    model_out, n = _apply_qwen_lightning_lora(model_out, g, n, args)
+    if is_qwen_21:
+        # The official text-to-image graph does not add prefix-image caching.
+        model_sampled = model_out
+    else:
+        model_sampled = _apply_qwen_model_sampling(model_out, g, n, args)
+        n += 2
+
+    if is_qwen_21:
+        # Official Comfy-Org T2I workflow: TextEncodeQwenImage21 + EmptyLatentImage
+        encode_inputs: dict[str, Any] = {
+            "clip": clip_out,
+            "prompt": normalize_qwen_image_references(prompt, len(reference_images)),
+            "negative_prompt": negative,
+        }
+        if reference_images:
+            encode_inputs["vae"] = vae_out
+            encode_inputs["resolution"] = int(args.get("reference_resolution") or 1024)
+        for index, filename in enumerate(reference_images, start=1):
+            g[str(n)] = _node("LoadImage", {"image": filename, "upload": "image"})
+            encode_inputs[f"images.image_{index}"] = [str(n), 0]
+            n += 1
+        g[str(n)] = _node("TextEncodeQwenImage21", encode_inputs)
+        pos = [str(n), 0]
+        neg = [str(n), 1]
+        n += 1
+        g[str(n)] = _node("EmptyLatentImage", {"width": width, "height": height, "batch_size": 1})
+        latent = [str(n), 0]
+        n += 1
+    else:
+        g["2"] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
+        g["3"] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
+        g["4"] = _node("EmptySD3LatentImage", {"width": width, "height": height, "batch_size": 1})
+        g["5"] = _node(
+            "KSampler",
+            {
+                "model": model_sampled,
+                "positive": ["2", 0],
+                "negative": ["3", 0],
+                "latent_image": ["4", 0],
+                "seed": seed,
+                "steps": steps,
+                "cfg": cfg,
+                "sampler_name": sampler,
+                "scheduler": scheduler,
+                "denoise": 1.0,
+            },
+        )
+        g["6"] = _vae_decode_node(args, ["5", 0], vae_out)
+        g["7"] = _node(
+            "SaveImage",
+            {"images": ["6", 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+        )
+        return g
+
+    g[str(n)] = _node(
+        "KSampler",
+        {
+            "model": model_sampled,
+            "positive": pos,
+            "negative": neg,
+            "latent_image": latent,
+            "seed": seed,
+            "steps": steps,
+            "cfg": cfg,
+            "sampler_name": sampler,
+            "scheduler": scheduler,
+            "denoise": 1.0,
+        },
+    )
+    k_id = str(n)
+    n += 1
+    g[str(n)] = _vae_decode_node(args, [k_id, 0], vae_out)
+    dec_id = str(n)
+    n += 1
+    g[str(n)] = _node(
+        "SaveImage",
+        {"images": [dec_id, 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+    )
+    return g
+
+
+def comfy_qwen_image_background_removal(args: dict[str, Any]) -> dict[str, Any]:
+    """Qwen-Image-2.1 Background Removal via TextEncodeQwenImage21.
+    Matches official Comfy-Org template: image_qwen_image_2_1_background_removal.json.
+    Outputs native transparent RGBA PNG without requiring external matting models.
+    """
+    ckpt = str(args["ckpt_name"])
+    image_filename = str(args["image"])
+    prompt = str(args.get("prompt") or "Remove the background, and output a PNG image")
+    negative = str(args.get("negative") or "")
+    steps = int(args.get("steps") or 25)
+    cfg = float(args.get("cfg") if args.get("cfg") is not None else 1.0)
+    sampler = str(args.get("sampler_name") or "euler")
+    scheduler = str(args.get("scheduler") or "simple")
     seed = int(args.get("seed", 0))
 
     g: dict[str, Any] = {}
@@ -1900,16 +2211,34 @@ def comfy_qwen_image_txt2img(args: dict[str, Any]) -> dict[str, Any]:
     model_out, n = _apply_qwen_lightning_lora(model_out, g, n, args)
     model_sampled = _apply_qwen_model_sampling(model_out, g, n, args)
     n += 2
-    g["2"] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
-    g["3"] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
-    g["4"] = _node("EmptySD3LatentImage", {"width": width, "height": height, "batch_size": 1})
-    g["5"] = _node(
+
+    g["1"] = _node("LoadImage", {"image": image_filename, "upload": "image"})
+    image_out = ["1", 0]
+
+    res = int(args.get("resolution") or 0)
+    g[str(n)] = _node(
+        "TextEncodeQwenImage21",
+        {
+            "clip": clip_out,
+            "vae": vae_out,
+            "images.image_1": image_out,
+            "prompt": normalize_qwen_image_references(prompt, 1),
+            "negative_prompt": negative,
+            "resolution": res,
+        },
+    )
+    pos = [str(n), 0]
+    neg = [str(n), 1]
+    latent = [str(n), 2]
+    n += 1
+
+    g[str(n)] = _node(
         "KSampler",
         {
             "model": model_sampled,
-            "positive": ["2", 0],
-            "negative": ["3", 0],
-            "latent_image": ["4", 0],
+            "positive": pos,
+            "negative": neg,
+            "latent_image": latent,
             "seed": seed,
             "steps": steps,
             "cfg": cfg,
@@ -1918,12 +2247,17 @@ def comfy_qwen_image_txt2img(args: dict[str, Any]) -> dict[str, Any]:
             "denoise": 1.0,
         },
     )
-    g["6"] = _vae_decode_node(args, ["5", 0], vae_out)
-    g["7"] = _node(
+    k_id = str(n)
+    n += 1
+    g[str(n)] = _vae_decode_node(args, [k_id, 0], vae_out)
+    dec_id = str(n)
+    n += 1
+    g[str(n)] = _node(
         "SaveImage",
-        {"images": ["6", 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+        {"images": [dec_id, 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge_Cutout"))},
     )
     return g
+
 
 
 def _ideogram4_graph_params(args: dict[str, Any]) -> dict[str, Any]:

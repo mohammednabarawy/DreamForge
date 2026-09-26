@@ -30,6 +30,9 @@ _FAMILY_ROUTE_LABELS: dict[str, dict[str, str]] = {
     "qwen_image_edit": {
         "source_edit": "Editing with Qwen Edit",
     },
+    "qwen_image_2.1": {
+        "source_edit": "Editing with Qwen Image 2.1",
+    },
 }
 
 
@@ -263,7 +266,7 @@ def resolve_input_routing(
             cn_type = "None"
         elif reference_role == "source_edit" and (
             checkpoint_is_flux_kontext(model, model_family)
-            or (model_family or "").lower() in {"qwen_image_edit", "krea2"}
+            or (model_family or "").lower() in {"qwen_image_edit", "qwen_image_2.1", "krea2"}
         ):
             cn_selection = "None"
             cn_type = "None"
@@ -274,7 +277,7 @@ def resolve_input_routing(
             cn_selection = "None"
             cn_type = "None"
         elif (
-            (model_family or "").lower() == "qwen_image_edit"
+            (model_family or "").lower() in {"qwen_image_edit", "qwen_image_2.1"}
             or _norm(edit_type) == "qwen_edit"
         ) and not is_inpaint_job:
             cn_selection = "None"
@@ -390,6 +393,8 @@ def resolve_comfy_workflow_mode(
     model_family: str,
     input_filename: str | None,
 ) -> str:
+    if model_family == "qwen_image_2.1" and _norm(route.workflow_mode) == "generate":
+        return "txt2img"
     if getattr(route, "edit_task", None) == "photo_restore":
         return "photo_restore"
     if getattr(route, "edit_task", None) == "portrait_master":

@@ -90,20 +90,20 @@ class TestPhase3BridgeHandlers:
         ]:
             assert cmd in HANDLERS, f"missing handler: {cmd}"
 
-    def test_workflow_ir_handler_registered(self):
-        assert "compile_workflow_ir" in HANDLERS
+    def test_removed_workflow_ir_handler_not_registered(self):
+        assert "compile_workflow_ir" not in HANDLERS
 
     def test_custom_style_handlers_registered(self):
         assert "import_fooocus_styles" in HANDLERS
         assert "delete_custom_style" in HANDLERS
 
-    def test_workflow_template_handler_registered(self):
-        assert "list_workflow_templates" in HANDLERS
+    def test_removed_workflow_template_handler_not_registered(self):
+        assert "list_workflow_templates" not in HANDLERS
 
-    def test_workflow_compatibility_handler_registered(self):
-        assert "analyze_workflow_compatibility" in HANDLERS
-        assert "compile_workflow_recipe" in HANDLERS
-        assert "save_workflow_file" in HANDLERS
+    def test_removed_workflow_import_handlers_not_registered(self):
+        assert "analyze_workflow_compatibility" not in HANDLERS
+        assert "compile_workflow_recipe" not in HANDLERS
+        assert "save_workflow_file" not in HANDLERS
 
     def test_recipe_discovery_handler_registered(self):
         assert "recipe_discovery_search" in HANDLERS

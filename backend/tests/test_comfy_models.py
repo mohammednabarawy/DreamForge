@@ -413,6 +413,74 @@ def test_resolve_qwen_checkpoint_loads_explicit_companions():
     assert args["vae"] == "qwen_image_vae.safetensors"
 
 
+def test_qwen_21_checkpoint_never_pairs_with_qwen25_encoder():
+    client = SimpleNamespace(
+        object_info=lambda: {
+            "CheckpointLoaderSimple": {
+                "input": {"required": {"ckpt_name": [["qwen_image_2.1_int8_convrot.safetensors"], {}]}}
+            },
+            "CLIPLoader": {
+                "input": {"required": {"clip_name": [[
+                    "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+                    "qwen3vl_8b_int8_convrot.safetensors",
+                ], {}]}}
+            },
+            "VAELoader": {
+                "input": {"required": {"vae_name": [[
+                    "qwen_image_vae.safetensors",
+                    "qwen_image_2.1_vae_bf16.safetensors",
+                ], {}]}}
+            },
+        }
+    )
+    model = {
+        "category": "checkpoints",
+        "relative_path": "qwen_image_2.1_int8_convrot.safetensors",
+        "name": "qwen_image_2.1_int8_convrot.safetensors",
+        # Legacy inference can say qwen_image; checkpoint identity must win.
+        "family": "qwen_image",
+    }
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            "dreamforge_comfy_models._qwen_companion_basenames_on_disk",
+            lambda _family: {
+                "clip": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+                "vae": "qwen_image_vae.safetensors",
+            },
+        )
+        mp.setattr("dreamforge_comfy_models.check_model_dependencies", lambda _model: [])
+        args = resolve_comfy_model_loader_args(client, model=model, model_family="qwen_image")
+
+    assert args["clip"] == "qwen3vl_8b_int8_convrot.safetensors"
+    assert args["vae"] == "qwen_image_2.1_vae_bf16.safetensors"
+
+
+def test_qwen_21_checkpoint_errors_instead_of_using_qwen25_encoder():
+    client = SimpleNamespace(
+        object_info=lambda: {
+            "CheckpointLoaderSimple": {
+                "input": {"required": {"ckpt_name": [["qwen_image_2.1_int8_convrot.safetensors"], {}]}}
+            },
+            "CLIPLoader": {
+                "input": {"required": {"clip_name": [["qwen_2.5_vl_7b_fp8_scaled.safetensors"], {}]}}
+            },
+            "VAELoader": {
+                "input": {"required": {"vae_name": [["qwen_image_2.1_vae_bf16.safetensors"], {}]}}
+            },
+        }
+    )
+    model = {
+        "category": "checkpoints",
+        "relative_path": "qwen_image_2.1_int8_convrot.safetensors",
+        "name": "qwen_image_2.1_int8_convrot.safetensors",
+        "family": "qwen_image",
+    }
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("dreamforge_comfy_models.check_model_dependencies", lambda _model: [])
+        with pytest.raises(ComfyModelResolutionError, match="Qwen2.5-VL 7B is incompatible"):
+            resolve_comfy_model_loader_args(client, model=model, model_family="qwen_image")
+
+
 def test_resolve_qwen_edit_when_vae_on_disk_but_clip_missing_from_comfy():
     client = SimpleNamespace(
         object_info=lambda: {

@@ -10,7 +10,7 @@ from pathlib import Path
 
 MODERN_FAMILIES = frozenset({
     "flux", "flux2", "flux_kontext", "hidream", "hidream_o1",
-    "qwen_image", "qwen_image_edit", "sd3", "z_image", "ideogram4",
+    "qwen_image", "qwen_image_edit", "qwen_image_2.1", "sd3", "z_image", "ideogram4",
     "krea2",
 })
 
@@ -54,6 +54,7 @@ MISALIGNED_PERFORMANCE = {
     "flux_kontext": {"Lcm", "Pony XL", "SD3", "HiDream", "HiDream Full", "Flux"},
     "qwen_image": {"Lcm", "Pony XL", "SD3", "HiDream", "HiDream Full", "Flux"},
     "qwen_image_edit": {"Lcm", "Pony XL", "SD3", "HiDream", "HiDream Full", "Flux"},
+    "qwen_image_2.1": {"Lcm", "Pony XL", "SD3", "HiDream", "HiDream Full", "Flux"},
     "krea2": {"Lcm", "Pony XL", "SD3", "HiDream", "HiDream Full", "Flux"},
     "sd3": {"Lcm", "Pony XL", "HiDream", "HiDream Full", "SD3", "Flux"},
     "ideogram4": {"Lcm", "Pony XL", "SD3", "HiDream", "HiDream Full", "Flux"},
@@ -67,6 +68,8 @@ def infer_model_family(name: str) -> str:
     if "krea2" in lowered or "krea-2" in lowered or "krea_2" in lowered:
         return "krea2"
     if "qwen" in lowered:
+        if "2.1" in lowered or "2_1" in lowered:
+            return "qwen_image_2.1"
         return "qwen_image_edit" if "edit" in lowered else "qwen_image"
     if "hidream" in lowered:
         if "o1" in lowered or "hidream_o1" in lowered:
@@ -251,6 +254,7 @@ def family_display_name(family: str) -> str:
         "flux_kontext": "Flux Kontext",
         "qwen_image": "Qwen Image",
         "qwen_image_edit": "Qwen Image Edit",
+        "qwen_image_2.1": "Qwen Image 2.1",
         "sd3": "SD3",
         "sd15": "SD 1.5",
         "sdxl": "SDXL",
@@ -328,6 +332,12 @@ def family_performance_settings(
             "Lightning": (hidream_steps if fast_hidream else 16, hidream_cfg, "euler", "normal"),
             "Speed": (hidream_steps, hidream_cfg, "euler", "normal"),
             "Quality": (50, HIDREAM_FULL_CFG, "euler", "normal"),
+        }
+    elif family == "qwen_image_2.1":
+        table = {
+            "Lightning": (25, 1.0, "euler", "simple"),  # legacy selection; no 2.1 Lightning LoRA
+            "Speed": (25, 1.0, "euler", "simple"),
+            "Quality": (40, 1.0, "euler", "simple"),
         }
     elif family.startswith("qwen"):
         is_lightning = "lightning" in name or "edit" in name
@@ -646,6 +656,8 @@ def auto_generation_settings(
                         width=width,
                         height=height,
                     )
+                elif family == "qwen_image_2.1":
+                    width, height = min(width, 2048), min(height, 2048)
                 else:
                     width, height = min(width, 1344), min(height, 1344)
             except ImportError:

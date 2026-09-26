@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from dreamforge_prompt.flux_llm_enhance import (
@@ -99,6 +100,23 @@ def _apply_studio_mode(job, studio_mode: str) -> None:
             job.edit_type = "qwen_edit"
 
 
+def _check_qwen21_rewrite(original: str, rewritten: str, image_count: int) -> tuple[str, str]:
+    from dreamforge_comfy_workflows import normalize_qwen_image_references, qwen_transparent_png_prompt
+
+    original = normalize_qwen_image_references(original, image_count)
+    rewritten = normalize_qwen_image_references(rewritten, image_count)
+    if image_count > 1:
+        missing = [f"<image{i}>" for i in range(1, image_count + 1) if f"<image{i}>" not in rewritten]
+        if missing:
+            return "", f"Enhancement lost attached-image references: {', '.join(missing)}. Retry or use the original prompt."
+    for literal in re.findall(r'"([^"]+)"', original):
+        if f'"{literal}"' not in rewritten:
+            return "", f'Enhancement changed quoted image text: "{literal}". Retry or use the original prompt.'
+    if qwen_transparent_png_prompt(original) != original:
+        rewritten = qwen_transparent_png_prompt(rewritten, force=True)
+    return rewritten, ""
+
+
 def enhance_studio_prompt(params: dict[str, Any]) -> dict[str, Any]:
     """Enhance a studio prompt for preview in the prompt bar (no GPU generation)."""
     prompt_raw = str(params.get("prompt") or "").strip()
@@ -167,12 +185,32 @@ def enhance_studio_prompt(params: dict[str, Any]) -> dict[str, Any]:
     if llm_purpose:
         from dreamforge_prompt.flux_llm_enhance import run_flux_llm_enhance
 
-        llm = run_flux_llm_enhance(prompt_raw, purpose=llm_purpose, params=params)
+        llm_input = prompt_raw
+        context = ""
+        image_count = 0
+        if family == "qwen_image_2.1":
+            from dreamforge_comfy_workflows import normalize_qwen_image_references
+            from dreamforge_references import coerce_reference_slots
+
+            image_count = len(coerce_reference_slots(job))
+            llm_input = normalize_qwen_image_references(prompt_raw, image_count)
+            if image_count > 1:
+                tags = ", ".join(f"<image{i}>" for i in range(1, image_count + 1))
+                canvas = "Create a new canvas from the references." if studio_mode == "generate" else "<image1> is the edit canvas; later images are references."
+                context = f"{image_count} images are attached in upload order. Mention every image with its exact tag: {tags}. {canvas} Do not invent unseen details."
+            if studio_mode == "edit" and getattr(job, "inpaint_mask_path", None):
+                context += " An edit mask is attached; change only the masked area and preserve the rest."
+        llm = run_flux_llm_enhance(llm_input, purpose=llm_purpose, params=params, context=context)
         if not llm.get("ok"):
             return {"ok": False, "error": llm.get("error") or "Prompt enhancement failed"}
+        out_prompt = str(llm.get("prompt") or llm_input)
+        if family == "qwen_image_2.1":
+            out_prompt, error = _check_qwen21_rewrite(llm_input, out_prompt, image_count)
+            if error:
+                return {"ok": False, "error": error}
         return {
             "ok": True,
-            "prompt": llm.get("prompt") or prompt_raw,
+            "prompt": out_prompt,
             "negative_prompt": negative or "",
             "hint": _enhance_hint(
                 studio_mode,

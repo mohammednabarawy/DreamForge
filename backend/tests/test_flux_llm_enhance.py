@@ -29,6 +29,7 @@ class FluxLlmEnhanceTests(unittest.TestCase):
             "flux2": "flux2_generate",
             "qwen": "qwen_generate",
             "qwen_image": "qwen_generate",
+            "qwen_image_2.1": "qwen_generate",
             "hidream": "hidream_generate",
             "hidream_o1": "hidream_generate",
             "krea2": "krea2_generate",
@@ -44,6 +45,7 @@ class FluxLlmEnhanceTests(unittest.TestCase):
 
     def test_resolve_qwen_generate(self):
         self.assertEqual(resolve_flux_enhance_purpose("generate", "qwen_image"), "qwen_generate")
+        self.assertEqual(resolve_flux_enhance_purpose("generate", "qwen_image_2.1"), "qwen_generate")
 
     def test_resolve_hidream_generate(self):
         self.assertEqual(
@@ -112,6 +114,7 @@ class FluxLlmEnhanceTests(unittest.TestCase):
             resolve_flux_enhance_purpose("edit", "qwen_image_edit"),
             "qwen_edit",
         )
+        self.assertEqual(resolve_flux_enhance_purpose("edit", "qwen_image_2.1"), "qwen_edit")
 
     def test_build_enhance_messages_substitutes_prompt(self):
         _system, user = build_enhance_messages("flux_generate", "a red car")

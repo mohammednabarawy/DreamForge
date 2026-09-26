@@ -392,9 +392,7 @@ def _coerce_reference_image_paths(job) -> list[str]:
 
 
 def _active_custom_tool_id(job) -> str:
-    tool_id = str(getattr(job, "custom_tool_id", None) or "").strip()
-    studio_mode = str(getattr(job, "studio_mode", None) or "").strip().lower()
-    return tool_id if not studio_mode or studio_mode == "toolbox" else ""
+    return ""
 
 
 def _comfy_workflow_mode(
@@ -562,10 +560,6 @@ def _build_comfy_prompt_graph(
             mask_path=mask_path,
         )
 
-    from dreamforge_comfy_workflow_import import (
-        build_prompt_from_template,
-        resolve_comfy_workflow_template,
-    )
     from dreamforge_comfy_workflows import (
         comfy_area_composition,
         comfy_controlnet_basic,
@@ -583,6 +577,7 @@ def _build_comfy_prompt_graph(
         comfy_outpaint_basic,
         comfy_qwen_image_edit,
         comfy_qwen_image_edit_plus,
+        comfy_qwen_image_background_removal,
         comfy_qwen_image_txt2img,
         comfy_krea2_txt2img,
         comfy_krea2_img2img,
@@ -602,10 +597,6 @@ def _build_comfy_prompt_graph(
         comfy_outfit_transfer,
     )
 
-    explicit = getattr(job, "comfy_workflow_api", None) or getattr(
-        job, "comfy_workflow_path", None
-    )
-    template_path = resolve_comfy_workflow_template(mode=mode, explicit_path=explicit)
     ckpt_name = model.get("name") or model.get("engine_name")
     loader_args = {
         "category": model.get("category") or "checkpoints",
@@ -616,63 +607,6 @@ def _build_comfy_prompt_graph(
     if model_loader_args:
         loader_args.update(model_loader_args)
     loras = list(settings.get("comfy_loras") or [])
-    bindings = {
-        **loader_args,
-        "prompt": prompt,
-        "negative": negative,
-        "steps": settings["steps"],
-        "cfg": settings["cfg"],
-        "sampler_name": settings["sampler_name"],
-        "scheduler": settings["scheduler"],
-        "seed": seed,
-        "denoise": edit_strength,
-        "width": settings["width"],
-        "height": settings["height"],
-        "filename_prefix": "DreamForge",
-        "upscale_model": cn_upscale,
-        "cutout_placement": getattr(job, "cutout_placement", "center"),
-        **{
-            k: v
-            for k, v in upscale_field_defaults(
-                {
-                    "upscale_by": getattr(job, "upscale_by", None),
-                    "upscale_denoise": getattr(job, "upscale_denoise", None),
-                    "upscale_tile_width": getattr(job, "upscale_tile_width", None),
-                    "upscale_tile_height": getattr(job, "upscale_tile_height", None),
-                    "upscale_mask_blur": getattr(job, "upscale_mask_blur", None),
-                    "upscale_tile_padding": getattr(job, "upscale_tile_padding", None),
-                    "upscale_seam_fix_mode": getattr(job, "upscale_seam_fix_mode", None),
-                    "upscale_mode_type": getattr(job, "upscale_mode_type", None),
-                    "upscale_force_uniform_tiles": getattr(job, "upscale_force_uniform_tiles", None),
-                    "upscale_tiled_decode": getattr(job, "upscale_tiled_decode", None),
-                    "steps": settings.get("steps"),
-                    "cfg": settings.get("cfg"),
-                    "sampler_name": settings.get("sampler_name"),
-                    "scheduler": settings.get("scheduler"),
-                }
-            ).items()
-            if k.startswith("upscale_") or k in ("steps", "cfg", "sampler_name", "scheduler")
-        },
-        "upscale_seam_fix_denoise": getattr(job, "upscale_seam_fix_denoise", 1.0),
-        "upscale_seam_fix_width": getattr(job, "upscale_seam_fix_width", 64),
-        "upscale_seam_fix_mask_blur": getattr(job, "upscale_seam_fix_mask_blur", 8),
-        "upscale_seam_fix_padding": getattr(job, "upscale_seam_fix_padding", 16),
-        "upscale_tiled_decode": getattr(job, "upscale_tiled_decode", False),
-        "grow_mask_by": grow_mask_by,
-        "loras": loras,
-    }
-    if input_filename:
-        bindings["image"] = input_filename
-    if mask_filename:
-        bindings["mask"] = mask_filename
-    if reference_stitch_filename:
-        bindings["reference_stitch"] = reference_stitch_filename
-    controlnet_model = bindings.get("controlnet_model")
-    if controlnet_model:
-        bindings["controlnet_model"] = controlnet_model
-    if template_path:
-        return build_prompt_from_template(template_path, bindings), str(template_path)
-
     common = {
         **loader_args,
         "prompt": prompt,
@@ -760,6 +694,34 @@ def _build_comfy_prompt_graph(
                 "hidream_s_noise": settings.get("hidream_s_noise", 1.0),
                 "hidream_s_noise_end": settings.get("hidream_s_noise_end", 1.0),
                 "hidream_noise_clip_std": settings.get("hidream_noise_clip_std", 2.5),
+            }
+        )
+    elif mode in ("ipadapter", "ipadapter_controlnet") and (
+        model_family == "qwen_image_2.1"
+        or "qwen_image_2.1" in str(ckpt_name).lower()
+        or "qwen-image-2.1" in str(ckpt_name).lower()
+    ):
+        reference_images: list[str] = []
+        seen_images: set[str] = set()
+        if input_filename:
+            reference_images.append(input_filename)
+            seen_images.add(input_filename.lower())
+        for slot in getattr(job, "_resolved_reference_slots", []) or []:
+            if str(slot.get("role") or "").strip().lower() not in {
+                "image_prompt", "restyle", "source_edit"
+            }:
+                continue
+            image = str(slot.get("image") or "").strip()
+            if image and image.lower() not in seen_images:
+                reference_images.append(image)
+                seen_images.add(image.lower())
+        graph = comfy_qwen_image_txt2img(
+            {
+                **loader_args,
+                **common,
+                "images": reference_images[:10],
+                "prompt": prompt,
+                "negative": negative,
             }
         )
     elif mode in ("ipadapter", "ipadapter_controlnet"):
@@ -985,7 +947,7 @@ def _build_comfy_prompt_graph(
                 "outpaint_feathering": int(getattr(job, "outpaint_feathering", 40) or 40),
             }
         )
-    elif input_filename:
+    elif input_filename and not (mode == "txt2img" and model_family == "qwen_image_2.1"):
         if mode == "upscale":
             from dreamforge_krita_resources import resolve_upscaler
 
@@ -1023,6 +985,31 @@ def _build_comfy_prompt_graph(
                 )
             else:
                 graph = comfy_ultimate_sd_upscale({**common, "image": input_filename})
+        elif mode == "inpaint" and mask_filename and (
+            model_family == "qwen_image_2.1"
+            or "qwen_image_2.1" in str(ckpt_name).lower()
+            or "qwen-image-2.1" in str(ckpt_name).lower()
+        ):
+            images = [input_filename, *(qwen_reference_filenames or [])[:8], mask_filename]
+            mask_index = len(images)
+            graph = comfy_qwen_image_edit_plus(
+                {
+                    **loader_args,
+                    "images": images,
+                    "prompt": (
+                        f"{prompt}\nUse <image1> as the source image and <image{mask_index}> as the edit mask. "
+                        f"Change only the white or selected area in <image{mask_index}> and preserve everything outside it."
+                    ),
+                    "negative": negative,
+                    "steps": settings["steps"],
+                    "cfg": 1.0,
+                    "sampler_name": "euler",
+                    "scheduler": "simple",
+                    "seed": seed,
+                    "denoise": 1.0,
+                    "filename_prefix": "DreamForge",
+                }
+            )
         elif mode == "inpaint" and mask_filename:
             inpaint_args = {
                 **loader_args,
@@ -1047,6 +1034,8 @@ def _build_comfy_prompt_graph(
             graph = comfy_krea2_edit({
                 **common,
                 "images": [input_filename, *(krea2_reference_filenames or [])],
+                "denoise": edit_strength,
+                "edit_strength": edit_strength,
             })
         elif mode == "kontext":
             kontext_args = {
@@ -1079,12 +1068,13 @@ def _build_comfy_prompt_graph(
                 )
             graph = comfy_flux_kontext_edit(kontext_args)
         elif (model_family or "").startswith("qwen") and (
-            model_family == "qwen_image_edit" or mode == "qwen_edit" or model_family == "qwen_image"
+            model_family in {"qwen_image_edit", "qwen_image", "qwen_image_2.1"} or mode in {"qwen_edit", "edit"}
         ):
             from dreamforge_krita_recipes import resolve_qwen_edit_mode, edit_recipe
 
             requested_qwen_mode = str(getattr(job, "qwen_edit_mode", "") or "").strip().lower()
-            if requested_qwen_mode == "lightning_4step":
+            is_qwen_21 = model_family == "qwen_image_2.1" or "2.1" in str(ckpt_name).lower() or "2_1" in str(ckpt_name).lower()
+            if requested_qwen_mode == "lightning_4step" and not is_qwen_21:
                 qwen_recipe = edit_recipe("qwen_image_edit", requested_qwen_mode)
                 if qwen_recipe:
                     settings["steps"] = qwen_recipe.get("custom_steps", settings.get("steps", 4))
@@ -1097,14 +1087,29 @@ def _build_comfy_prompt_graph(
                         settings["qwen_image_shift"] = qwen_recipe["qwen_image_shift"]
                     settings["use_qwen_lightning_lora"] = True
 
+            qwen_steps = settings.get("steps")
+            qwen_cfg = settings.get("cfg")
+            qwen_scheduler = settings.get("scheduler")
+            if is_qwen_21:
+                if qwen_cfg is None or float(qwen_cfg) == 2.5:
+                    qwen_cfg = 1.0
+                if not qwen_scheduler or qwen_scheduler in {"beta", "normal"}:
+                    qwen_scheduler = "simple"
+                if not qwen_steps or int(qwen_steps) == 20:
+                    qwen_steps = 25
+            else:
+                qwen_steps = qwen_steps or 20
+                qwen_cfg = qwen_cfg if qwen_cfg is not None else 2.5
+                qwen_scheduler = qwen_scheduler or "beta"
+
             qwen_common = {
                 **loader_args,
                 "prompt": prompt,
                 "negative": negative,
-                "steps": settings["steps"],
-                "cfg": settings["cfg"],
-                "sampler_name": settings["sampler_name"],
-                "scheduler": settings["scheduler"],
+                "steps": qwen_steps,
+                "cfg": qwen_cfg,
+                "sampler_name": settings.get("sampler_name") or "euler",
+                "scheduler": qwen_scheduler,
                 "seed": seed,
                 "denoise": edit_strength,
                 "filename_prefix": "DreamForge",
@@ -1134,8 +1139,16 @@ def _build_comfy_prompt_graph(
             }
             if preserve_qwen_resolution:
                 edit_mode = "raw_plus"
-            if edit_mode in {"plus", "raw_plus"}:
-                images = [input_filename, *(qwen_reference_filenames or [])][:3]
+            remove_background = (
+                str(getattr(job, "edit_task", "") or "").strip().lower() == "remove_background"
+                or ("remove" in prompt.lower() and "background" in prompt.lower())
+            )
+            if is_qwen_21 and remove_background:
+                graph = comfy_qwen_image_background_removal(
+                    {**qwen_common, "image": input_filename, "prompt": "Remove the background, and output a PNG image"}
+                )
+            elif edit_mode in {"plus", "raw_plus"}:
+                images = [input_filename, *(qwen_reference_filenames or [])][:10]
                 graph = comfy_qwen_image_edit_plus(
                     {
                         **qwen_common,
@@ -1249,16 +1262,33 @@ def _build_comfy_prompt_graph(
                 }
             )
     elif (model_family or "").startswith("qwen"):
+        is_qwen_21 = model_family == "qwen_image_2.1" or "2.1" in str(ckpt_name).lower() or "2_1" in str(ckpt_name).lower()
+        qwen_steps = settings.get("steps")
+        qwen_cfg = settings.get("cfg")
+        qwen_scheduler = settings.get("scheduler")
+        if is_qwen_21:
+            if qwen_cfg is None or float(qwen_cfg) == 2.5:
+                qwen_cfg = 1.0
+            if not qwen_scheduler or qwen_scheduler in {"beta", "normal"}:
+                qwen_scheduler = "simple"
+            if not qwen_steps or int(qwen_steps) == 20:
+                qwen_steps = 25
+        else:
+            qwen_steps = qwen_steps or 20
+            qwen_cfg = qwen_cfg if qwen_cfg is not None else 2.5
+            qwen_scheduler = qwen_scheduler or "beta"
+
         qwen_txt2img = {
             **loader_args,
             "prompt": prompt,
             "negative": negative,
+            "images": [slot["image"] for slot in getattr(job, "_resolved_reference_slots", [])] if is_qwen_21 else [],
             "width": settings["width"],
             "height": settings["height"],
-            "steps": settings["steps"],
-            "cfg": settings["cfg"],
-            "sampler_name": settings["sampler_name"],
-            "scheduler": settings["scheduler"],
+            "steps": qwen_steps,
+            "cfg": qwen_cfg,
+            "sampler_name": settings.get("sampler_name") or "euler",
+            "scheduler": qwen_scheduler,
             "seed": seed,
             "filename_prefix": "DreamForge",
         }
@@ -1744,6 +1774,19 @@ def run_generation(
             model_family,
         )
         settings = finalize_hidream_generation_settings(settings, model, job)
+        if (
+            model_family == "qwen_image_2.1"
+            and str(getattr(job, "studio_mode", "") or "").lower() == "generate"
+            and (settings["width"], settings["height"]) != (width, height)
+        ):
+            err = invalid_request(
+                f"Qwen Image 2.1 cannot use the selected {width}×{height} canvas "
+                f"with the current VRAM profile (limit: {settings['width']}×{settings['height']}). "
+                "Choose a smaller size or a suitable VRAM profile.",
+                job_id=job_id,
+            )
+            emit_event(stream_sink, err)
+            return {"status": "error", **err}
         if getattr(job, "clip_skip", None) is not None:
             try:
                 settings["clip_skip"] = int(job.clip_skip)
@@ -1772,6 +1815,90 @@ def run_generation(
         settings = dict(settings)
         settings["negative"] = negative
         settings["comfy_loras"] = prepared.get("comfy_loras") or []
+        # --- Upgrade 6: Resolution Intent Preservation ---
+        _input_path_for_check = getattr(job, "input_image", None)
+        if _input_path_for_check:
+            try:
+                from PIL import Image as PILImage
+                with PILImage.open(_input_path_for_check) as _input_img:
+                    _inp_w, _inp_h = _input_img.size
+                _req_w = int(settings.get("width") or 768)
+                _req_h = int(settings.get("height") or 768)
+                _inp_ratio = _inp_w / max(_inp_h, 1)
+                _req_ratio = _req_w / max(_req_h, 1)
+                _ratio_diff = abs(_inp_ratio - _req_ratio) / max(_req_ratio, 0.01)
+                if _ratio_diff > 0.15:  # more than 15% aspect ratio mismatch
+                    # Describe the aspect ratios in human terms
+                    def _ar_label(w, h):
+                        r = w / max(h, 1)
+                        if abs(r - 1.0) < 0.08:
+                            return "square (1:1)"
+                        elif r > 1.0:
+                            return f"landscape (~{w}:{h})"
+                        else:
+                            return f"portrait (~{w}:{h})"
+
+                    emit_event(
+                        stream_sink,
+                        {
+                            "type": "warning",
+                            "code": "aspect_ratio_mismatch",
+                            "message": (
+                                f"Your input image is {_ar_label(_inp_w, _inp_h)} ({_inp_w}×{_inp_h}) "
+                                f"but you requested {_ar_label(_req_w, _req_h)} ({_req_w}×{_req_h}). "
+                                f"The output will be auto-scaled to match the input, which may "
+                                f"differ from your requested dimensions."
+                            ),
+                            "suggestions": [
+                                f"Match the aspect ratio to your input: try {_inp_w}×{_inp_h} or a similar ratio.",
+                                "Or remove the input image to generate at your exact requested resolution.",
+                            ],
+                            "details": {
+                                "input_width": _inp_w,
+                                "input_height": _inp_h,
+                                "requested_width": _req_w,
+                                "requested_height": _req_h,
+                                "ratio_difference_pct": round(_ratio_diff * 100, 1),
+                            },
+                            "job_id": job_id,
+                        },
+                    )
+            except Exception:
+                pass  # Don't block generation for a pre-check failure
+
+        # --- Upgrade 1: LoRA-Model Compatibility Guard ---
+        from modules.lora_compat import check_lora_compatibility
+        compat_loras, incompat_loras = check_lora_compatibility(
+            settings.get("comfy_loras") or [], model_family
+        )
+        if incompat_loras:
+            settings["comfy_loras"] = compat_loras
+            stripped_names = ", ".join(
+                f"'{e.get('name', '?')}' ({e.get('_lora_family', '?')})"
+                for e in incompat_loras
+            )
+            emit_event(
+                stream_sink,
+                {
+                    "type": "warning",
+                    "code": "lora_family_mismatch",
+                    "message": f"Removed incompatible LoRA(s): {stripped_names}. "
+                               f"These were trained for a different architecture than {model_family}.",
+                    "suggestions": [
+                        f"Use LoRAs trained for {model_family.upper()} with this model.",
+                        "Check the LoRA's source page for supported architectures.",
+                        "Switch to a model that matches your LoRA (e.g., Flux for Flux LoRAs, SDXL for SDXL LoRAs).",
+                    ],
+                    "details": {
+                        "stripped_loras": [
+                            {"name": e.get("name"), "family": e.get("_lora_family"), "reason": e.get("_compat_reason")}
+                            for e in incompat_loras
+                        ]
+                    },
+                    "job_id": job_id,
+                },
+            )
+
         settings["prompt_pipeline"] = {
             "prompt_enhancer": prepared.get("prompt_enhancer"),
             "expansion_available": prepared.get("expansion_available"),
@@ -1780,6 +1907,7 @@ def run_generation(
             "comfy_lora_count": len(settings["comfy_loras"]),
             "ideogram4_prompt_mode": prepared.get("ideogram4_prompt_mode"),
             "prompt_format": prepared.get("prompt_format"),
+            "trace": prepared.get("pipeline_trace", []),
         }
         if prepared.get("prompt_prepare_error"):
             from dreamforge_errors import invalid_request
@@ -2048,40 +2176,35 @@ def run_generation(
         inpaint_intent_params: dict = {}
         if is_inpaint_job:
             from dreamforge_inpaint_intent import (
-                inpaint_intent_requires_fill_engine,
-                normalize_inpaint_intent,
-                pick_inpaint_base_model,
                 resolve_inpaint_intent_params,
             )
             from dreamforge_model_library_cache import get_cached_model_gallery
+            from dreamforge_task_router import pick_curated_edit_model
 
             inpaint_gallery, _inpaint_gallery_hit = get_cached_model_gallery()
             inpaint_intent_params = resolve_inpaint_intent_params(job)
-            intent = normalize_inpaint_intent(getattr(job, "inpaint_intent", None))
-            requires_fill = inpaint_intent_requires_fill_engine(intent)
-            if not requires_fill:
-                base_model = pick_inpaint_base_model(
-                    inpaint_gallery or [],
-                    current=str(getattr(job, "model", "") or model.get("engine_name") or ""),
-                )
-                if base_model:
-                    try:
-                        from dreamforge_cli_inventory import resolve_generation_model
+            qwen_model, _ = pick_curated_edit_model(inpaint_gallery or [])
+            if qwen_model and model_family != "qwen_image_2.1":
+                try:
+                    from dreamforge_cli_inventory import resolve_generation_model
 
-                        model = resolve_generation_model(base_model)
-                        model_family = str(model.get("family") or "").lower()
-                    except Exception:
-                        pass
-            from dreamforge_inpaint_routing import model_supports_inpaint
-
-            if not model_supports_inpaint(model, model_family):
+                    model = resolve_generation_model(qwen_model)
+                    model_family = str(model.get("family") or "").lower()
+                except Exception:
+                    pass
+            model_blob = " ".join(
+                str(model.get(key) or "")
+                for key in ("engine_name", "name", "relative_path")
+            ).lower()
+            if model_family != "qwen_image_2.1" and not (
+                "qwen" in model_blob and ("2.1" in model_blob or "2_1" in model_blob)
+            ):
                 from dreamforge_errors import invalid_request
 
                 model_label = model.get("name") or model.get("engine_name") or model_family
                 err = invalid_request(
-                    "Inpaint requires a checkpoint with inpaint support "
-                    f"(Flux Fill, SDXL inpaint, etc.); got {model_label}. "
-                    "Pick an inpaint-capable model in the inspector.",
+                    "Edit masks require Qwen Image 2.1; "
+                    f"got {model_label}. Install or select the Qwen Image 2.1 checkpoint.",
                     job_id=job_id,
                 )
                 emit_event(stream_sink, err)
@@ -2092,7 +2215,10 @@ def run_generation(
         style = str(getattr(job, "style", "none") or "none").lower()
 
         if not input_path:
-            needs_reference = model_family in ("flux_kontext", "qwen_image_edit")
+            needs_reference = model_family in ("flux_kontext", "qwen_image_edit") or (
+                model_family == "qwen_image_2.1"
+                and str(getattr(job, "studio_mode", "") or "").lower() in {"edit", "inpaint"}
+            )
             if needs_reference:
                 err = missing_input_image(job_id=job_id)
                 emit_event(stream_sink, err)
@@ -2232,7 +2358,7 @@ def run_generation(
         default_edit_strength = 1.0
         if not _checkpoint_is_flux_kontext(model, model_family) and (
             model_family or ""
-        ).lower() != "qwen_image_edit":
+        ).lower() not in {"qwen_image_edit", "qwen_image_2.1"}:
             default_edit_strength = 0.75
         if is_inpaint_job and inpaint_intent_params:
             default_edit_strength = float(
@@ -2262,6 +2388,41 @@ def run_generation(
             model=model,
             model_family=model_family,
         )
+
+        # --- Upgrade 2: Prompt-vs-Input Conflict Detector ---
+        if input_path and edit_strength < 1.0:
+            from dreamforge_prompt.prompt_intent_analyzer import (
+                detect_transform_intent,
+                recommend_denoise_floor,
+                format_conflict_message,
+            )
+            transform_signals = detect_transform_intent(prompt)
+            if transform_signals:
+                denoise_floor = recommend_denoise_floor(transform_signals)
+                if edit_strength < denoise_floor:
+                    conflict_msg = format_conflict_message(
+                        transform_signals, edit_strength, denoise_floor
+                    )
+                    emit_event(
+                        stream_sink,
+                        {
+                            "type": "warning",
+                            "code": "denoise_too_low_for_intent",
+                            "message": conflict_msg,
+                            "suggestions": [
+                                f"Raise denoise/edit strength to {denoise_floor:.2f} or higher.",
+                                "Use Identity Edit mode (Krea 2) or Kontext Edit (Flux) to preserve the face while changing everything else.",
+                                "Remove the input image to do pure text-to-image generation.",
+                            ],
+                            "details": {
+                                "detected_signals": transform_signals,
+                                "current_denoise": edit_strength,
+                                "recommended_floor": denoise_floor,
+                            },
+                            "job_id": job_id,
+                        },
+                    )
+
         try:
             from dreamforge_krita_resources import resolve_upscaler
 
@@ -2457,11 +2618,12 @@ def run_generation(
             emit_event(stream_sink, err)
             return {"status": "error", **err}
         if extra_reference_paths and input_path:
-            if model_family == "qwen_image_edit" or krea2_instruction_edit:
+            if model_family in {"qwen_image_edit", "qwen_image_2.1"} or krea2_instruction_edit:
                 try:
                     from dreamforge_paths import resolve_image_path_or_raise
 
-                    for ref_index, ref_path in enumerate(extra_reference_paths[:2]):
+                    ref_limit = 9 if model_family == "qwen_image_2.1" else 2
+                    for ref_index, ref_path in enumerate(extra_reference_paths[:ref_limit]):
                         resolved = resolve_image_path_or_raise(str(ref_path))
                         ref_local_name = (
                             f"{job_id}_krea2_ref_{ref_index}{Path(resolved).suffix}"
@@ -2978,6 +3140,44 @@ def run_generation(
             str(model.get("name") or model.get("engine_name") or ""),
             settings,
         )
+
+        # --- Upgrade 3: Smart Workflow Suggestion ---
+        from dreamforge_workflow_advisor import advise_workflow as _advise_workflow
+        try:
+            from dreamforge_prompt.prompt_intent_analyzer import detect_transform_intent
+            _wf_signals = detect_transform_intent(prompt)
+        except Exception:
+            _wf_signals = {}
+        if _wf_signals:
+            _wf_advice = _advise_workflow(
+                resolved_mode=comfy_mode,
+                model_family=model_family,
+                prompt_signals=_wf_signals,
+                has_input_image=bool(input_path),
+                edit_strength=edit_strength,
+                has_mask=bool(mask_path),
+            )
+            if _wf_advice:
+                from dreamforge_workflow_advisor import format_advice_message
+                emit_event(
+                    stream_sink,
+                    {
+                        "type": "warning",
+                        "code": "workflow_suggestion",
+                        "message": format_advice_message(_wf_advice),
+                        "suggestions": [
+                            f"{_wf_advice.action_label} for better results.",
+                            "Or keep the current workflow if you prefer.",
+                        ],
+                        "details": {
+                            "current_mode": _wf_advice.current_mode,
+                            "suggested_mode": _wf_advice.suggested_mode,
+                            "confidence": _wf_advice.confidence,
+                            "action_label": _wf_advice.action_label,
+                        },
+                        "job_id": job_id,
+                    },
+                )
 
         try:
             prompt_graph, template_used = _build_comfy_prompt_graph(
@@ -3818,7 +4018,7 @@ def _apply_qwen_family_settings(
         params = {}
         recipe = None
 
-    if recipe and not custom_perf and not explicit_sampling:
+    if family != "qwen_image_2.1" and recipe and not custom_perf and not explicit_sampling:
         out["steps"] = int(recipe.get("custom_steps", out.get("steps", 20)))
         out["cfg"] = float(recipe.get("cfg", out.get("cfg", 2.5)))
         out["sampler_name"] = recipe.get("sampler_name", out.get("sampler_name"))
@@ -3860,6 +4060,10 @@ def _apply_qwen_family_settings(
         out["qwen_preserve_resolution"] = True
     if getattr(job, "qwen_preserve_megapixels", None) is not None:
         out["qwen_preserve_megapixels"] = float(job.qwen_preserve_megapixels)
+
+    if family == "qwen_image_2.1":
+        out["use_qwen_lightning_lora"] = False
+        return out
 
     perf = str(getattr(job, "performance", "") or "").strip().lower()
     model_name = " ".join(
@@ -3934,6 +4138,9 @@ def _tune_edit_job_settings(
         getattr(job, "input_image", None) or getattr(job, "upscale_image", None)
     )
     if not has_input or edit_type not in ("kontext", "inpaint", "img2img", "qwen_edit"):
+        return out
+
+    if (model_family or "").lower() == "qwen_image_2.1":
         return out
 
     family = (model_family or "").lower()

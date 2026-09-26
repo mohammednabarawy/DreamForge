@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -140,6 +141,32 @@ def test_restart_managed_comfy_server_stops_then_starts(monkeypatch):
     assert restarted is server
     assert stops == [(10.0, True)]
     assert starts == [55.0]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction behavior")
+def test_model_mirror_replaces_broken_junction(tmp_path):
+    import dreamforge_comfy_server as mod
+
+    models = tmp_path / "shared" / "models"
+    target = models / "ultralytics"
+    target.mkdir(parents=True)
+    old_target = tmp_path / "old" / "models" / "ultralytics"
+    old_target.mkdir(parents=True)
+    comfy = tmp_path / "comfy"
+    link = comfy / "models" / "ultralytics"
+    link.parent.mkdir(parents=True)
+    subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(link), str(old_target)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    old_target.rmdir()
+
+    mod._mirror_models_into_comfy_tree(comfy, models)
+
+    assert link.is_symlink() or getattr(link, "is_junction", lambda: False)()
+    assert link.resolve() == target.resolve()
 
 
 def test_ensure_comfy_running_restarts_when_launch_policy_changes(monkeypatch):

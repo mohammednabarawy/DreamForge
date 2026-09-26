@@ -22,8 +22,6 @@ export function PromptEnhanceModal({
   onApply,
   onEnhance,
 }: Props) {
-  if (!open) return null;
-
   const [status, setStatus] = useState<"idle" | "enhancing" | "success" | "error">("idle");
   const [steps, setSteps] = useState<Step[]>([
     { id: "connect", label: "Connecting to local LLM server", status: "pending" },
@@ -94,6 +92,8 @@ export function PromptEnhanceModal({
       void runEnhancement();
     }
   }, [open]);
+
+  if (!open) return null;
 
   return (
     <div

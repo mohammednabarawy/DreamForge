@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-EDIT_ALLOWED_FAMILIES = frozenset({"flux_kontext", "qwen_image_edit"})
-EDIT_FORBIDDEN_SIMPLE_FAMILIES = frozenset({"ideogram4"})
+EDIT_ALLOWED_FAMILIES = frozenset({"qwen_image_2.1"})
+EDIT_FORBIDDEN_SIMPLE_FAMILIES = frozenset()
 
 
 def _gallery_hay(item: dict[str, Any]) -> str:
@@ -36,8 +36,12 @@ def gallery_family(gallery: list[Any], engine_name: str) -> str:
 
 
 def _is_qwen_edit_item(item: dict[str, Any]) -> bool:
+    family = str(item.get("family") or "").lower() if item else ""
+    if family == "qwen_image_2.1":
+        return True
     hay = _gallery_hay(item)
-    return "qwen" in hay and "edit" in hay
+    return "qwen" in hay and ("2.1" in hay or "2_1" in hay)
+
 
 
 def _is_kontext_item(item: dict[str, Any]) -> bool:
@@ -49,16 +53,13 @@ def _is_kontext_item(item: dict[str, Any]) -> bool:
 
 
 def pick_curated_edit_model(gallery: list[Any]) -> tuple[str, str]:
-    """Return (engine_name, edit_type) — Kontext first, then Qwen Edit."""
+    """Return the installed Qwen Image 2.1 checkpoint for all image edits."""
     from dreamforge_app_config import _pick_model_for_mode
 
-    kontext = _pick_model_for_mode("edit", gallery, edit_type="kontext")
-    if kontext:
-        return kontext, "kontext"
     qwen = _pick_model_for_mode("edit", gallery, edit_type="qwen_edit")
     if qwen:
         return qwen, "qwen_edit"
-    return "", "kontext"
+    return "", "qwen_edit"
 
 
 def edit_routing_patch(
@@ -273,8 +274,13 @@ def apply_task_routing(
     mode = (studio_mode or "generate").strip().lower()
     if mode == "agent":
         mode = "generate"
+    legacy_masked_edit = mode == "inpaint"
+    if mode in {"inpaint", "toolbox"}:
+        mode = "edit"
     gallery_list = gallery if isinstance(gallery, list) else []
     out = dict(settings)
+    if legacy_masked_edit:
+        out["edit_type"] = "inpaint"
     warnings: list[str] = []
     reason = "unchanged"
 
@@ -292,10 +298,6 @@ def apply_task_routing(
         )
 
         if manual:
-            if family in EDIT_FORBIDDEN_SIMPLE_FAMILIES:
-                warnings.append(
-                    "Ideogram 4 is optimized for generation — Flux Kontext or Qwen Edit usually give better photo edits."
-                )
             out.update(
                 edit_routing_patch(
                     gallery_list,
@@ -324,6 +326,9 @@ def apply_task_routing(
                 model, _edit_type = pick_curated_edit_model(gallery_list)
                 if model:
                     out["model"] = model
+                else:
+                    out["model"] = ""
+                    warnings.append("Qwen Image 2.1 is required for image editing but is not installed.")
                 out.update(
                     edit_routing_patch(
                         gallery_list,
@@ -331,21 +336,15 @@ def apply_task_routing(
                         preferred_edit_type=str(out.get("edit_type") or _edit_type),
                     )
                 )
-                if family in EDIT_FORBIDDEN_SIMPLE_FAMILIES and model:
-                    warnings.append(
-                        f"Routed edit away from {current or family} to {model} (task-appropriate edit model)."
-                    )
                 reason = "easy_edit_default" if not advanced_mode else "pro_auto_edit_route"
 
         out["user_picked_model"] = bool(manual)
         out["advanced_mode"] = bool(advanced_mode)
-        kind = str(out.get("edit_type") or "kontext")
-        if (toolbox_studio_mode or "").strip().lower() == "toolbox":
-            if not str(out.get("custom_tool_id") or "").strip():
-                toolbox_reason = _apply_toolbox_task_routing(out, gallery_list)
-                if toolbox_reason:
-                    reason = toolbox_reason
-                    kind = f"toolbox_{str(out.get('edit_task') or 'edit')}"
+        if legacy_masked_edit or out.get("inpaint_mask_path"):
+            out["edit_type"] = "inpaint"
+            out["cn_selection"] = "Custom..."
+            out["cn_type"] = "inpaint"
+        kind = str(out.get("edit_type") or "qwen_edit")
         return RouteDecision(
             patch=out,
             route_reason=reason,
@@ -354,38 +353,15 @@ def apply_task_routing(
         )
 
     if mode == "inpaint":
-        from dreamforge_inpaint_routing import model_supports_inpaint, pick_best_inpaint_model
-        from dreamforge_krita_resources import STUDIO_MODE_DEFAULTS
-
-        current = str(out.get("model") or "").strip()
-        current_item = find_gallery_item(gallery_list, current) if current else None
-        manual = bool(
-            user_picked_model
-            and current
-            and current_item
-            and model_supports_inpaint(current_item, gallery_family(gallery_list, current))
-        )
-        fill = pick_best_inpaint_model(gallery_list)
-        defaults = STUDIO_MODE_DEFAULTS.get("inpaint", {})
-
-        if not manual:
-            if fill:
-                out["model"] = fill
-            elif defaults.get("model_name"):
-                out["model"] = defaults["model_name"]
-            reason = "easy_inpaint_default"
-        else:
-            if not model_supports_inpaint(current_item, gallery_family(gallery_list, current)):
-                warnings.append(
-                    f"Selected model {current} may not support inpaint; Flux Fill or an "
-                    "SDXL inpaint checkpoint is recommended."
-                )
-            reason = "user_inpaint_override"
+        model, _ = pick_curated_edit_model(gallery_list)
+        if model:
+            out["model"] = model
+        reason = "qwen_image_21_masked_edit"
 
         out["edit_type"] = "inpaint"
         out["cn_selection"] = "Custom..."
         out["cn_type"] = "inpaint"
-        out["user_picked_model"] = bool(manual)
+        out["user_picked_model"] = False
         out["advanced_mode"] = bool(advanced_mode)
         return RouteDecision(
             patch=out,

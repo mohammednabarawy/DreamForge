@@ -43,7 +43,7 @@ def test_resolve_edit_task_defaults_global_edit_for_edit_mode():
         mode="edit",
         settings={"edit_type": "outpaint"},
     )
-    assert stale["edit_type"] == "kontext"
+    assert stale["edit_type"] == "qwen_edit"
 
 
 def test_all_edit_task_presets_have_hints():
@@ -73,7 +73,7 @@ def test_apply_global_edit_task_clears_stale_local_route():
         edit_strength=None,
     )
     apply_edit_task_defaults_to_job(job, mode="edit")
-    assert job.edit_type == "kontext"
+    assert job.edit_type == "qwen_edit"
     assert job.cn_type is None
     assert job.cn_selection is None
 

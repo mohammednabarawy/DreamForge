@@ -4,7 +4,7 @@ import {
   selectIdentityGenerateModel,
   type IdentityGenerateRoute,
 } from "./model-selection";
-import { qwenEdit2511LightningPatch } from "./qwenEditDefaults";
+import { qwenImage21Defaults } from "./qwenEditDefaults";
 import { ipAdapterAssetsReady } from "./easyModeRouting";
 
 export type IdentityMode =
@@ -144,7 +144,7 @@ function patchForQwenIdentity(
     edit_strength: 1.0,
     cn_selection: "None",
     cn_type: "None",
-    ...qwenEdit2511LightningPatch(),
+    ...qwenImage21Defaults(),
     ...(model ? { model } : {}),
   };
 }

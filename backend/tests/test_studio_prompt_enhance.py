@@ -1,6 +1,8 @@
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 BACKEND = Path(__file__).resolve().parents[1]
 if str(BACKEND) not in sys.path:
@@ -12,10 +14,44 @@ from dreamforge_prompt.pipeline import (  # noqa: E402
     _modern_generate_boost,
     _upscale_boost,
 )
-from dreamforge_prompt.studio_enhance import studio_enhancer_for_preview  # noqa: E402
+from dreamforge_prompt.studio_enhance import (  # noqa: E402
+    _check_qwen21_rewrite,
+    enhance_studio_prompt,
+    studio_enhancer_for_preview,
+)
 
 
 class StudioPromptEnhanceTests(unittest.TestCase):
+    def test_qwen21_rewrite_keeps_references_text_and_alpha(self):
+        original = 'Make people from image 1 and image 2 together, sign reads "HELLO", transparent PNG'
+        rewritten, error = _check_qwen21_rewrite(
+            original, 'The people from <image1> and <image2> stand beside a sign reading "HELLO".', 2
+        )
+        self.assertFalse(error)
+        self.assertIn("<image1>", rewritten)
+        self.assertIn("<image2>", rewritten)
+        self.assertIn("RGBA image with transparency", rewritten)
+        self.assertIn("alpha channel", rewritten)
+        _, error = _check_qwen21_rewrite(original, 'One person beside a sign reading "HELLO".', 2)
+        self.assertIn("<image1>", error)
+
+    @patch("dreamforge_prompt.flux_llm_enhance.run_flux_llm_enhance")
+    @patch("dreamforge_cli_direct._compile_job")
+    def test_qwen21_enhance_routes_create_and_edit(self, compile_job, brain):
+        model = {"family": "qwen_image_2.1"}
+        brain.return_value = {"ok": True, "prompt": "Put <image1> and <image2> together."}
+        for mode in ("generate", "edit"):
+            job = SimpleNamespace(model="qwen_image_2.1.safetensors", references=[
+                {"path": "first.png", "role": "image_prompt"},
+                {"path": "second.png", "role": "image_prompt"},
+            ])
+            compile_job.return_value = (job, model, "Put image 1 and image 2 together", "", 1024, 1024, None)
+            result = enhance_studio_prompt({"prompt": "Put image 1 and image 2 together", "studio_mode": mode})
+            self.assertTrue(result["ok"], result)
+            self.assertEqual(result["prompt"], "Put <image1> and <image2> together.")
+            self.assertEqual(brain.call_args.kwargs["purpose"], "qwen_generate" if mode == "generate" else "qwen_edit")
+            self.assertIn("<image2>", brain.call_args.kwargs["context"])
+
     def test_studio_enhancer_flux2_uses_flux_llm(self):
         self.assertEqual(studio_enhancer_for_preview("generate", "flux2"), "flux_llm")
 

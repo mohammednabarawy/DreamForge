@@ -234,6 +234,29 @@ def cmd_image_browser_metadata(params: dict) -> dict:
     return {"ok": True, "metadata": meta, "text": format_metadata_string(meta)}
 
 
+def cmd_inspect_image_file(params: dict) -> dict:
+    path = (params.get("path") or "").strip()
+    if not path:
+        return _error("path required")
+    from PIL import Image
+
+    try:
+        with Image.open(path) as image:
+            transparent = False
+            if image.mode in ("RGBA", "LA") or "transparency" in image.info:
+                # Small alpha noise is not a usable transparent background.
+                transparent = image.convert("RGBA").getchannel("A").getextrema()[0] < 128
+            return {
+                "ok": True,
+                "width": image.width,
+                "height": image.height,
+                "format": image.format,
+                "transparent": transparent,
+            }
+    except (OSError, ValueError) as exc:
+        return _error(str(exc))
+
+
 def cmd_image_browser_reindex(_params: dict) -> dict:
     browser = _image_browser()
     browser.update_images()
@@ -475,6 +498,7 @@ STUDIO_HANDLERS = {
     "agent_plan": cmd_agent_plan,
     "browse_images": cmd_browse_images,
     "image_browser_metadata": cmd_image_browser_metadata,
+    "inspect_image_file": cmd_inspect_image_file,
     "image_browser_reindex": cmd_image_browser_reindex,
     "random_onebutton_prompt": cmd_random_onebutton_prompt,
     "enhance_studio_prompt": cmd_enhance_studio_prompt,

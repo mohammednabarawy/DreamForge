@@ -1,65 +1,51 @@
 import { describe, expect, it } from "vitest";
-import { resolveCustomTool, type CustomTool } from "./customTools";
 import { computeGenerateReadiness } from "./generationReadiness";
 import { sanitizeSettingsForStudioMode } from "./routeResolution";
 
-const baseTool: CustomTool = {
-  id: "custom_123",
-  name: "Carousel",
-  description: "",
-  workflow_path: "C:/Users/test/Carousel.json",
-  bindings: {},
-};
+const base = {
+  workerReady: true,
+  generating: false,
+  engineState: "ready",
+  engineLabel: "Ready",
+  prompt: "replace the sky",
+  model: "qwen_image_2.1_int8_convrot.safetensors",
+  modelDependenciesReady: true,
+  missingCompanionCount: 0,
+  modelGallery: [],
+} as const;
 
-describe("resolveCustomTool", () => {
-  it("falls back to the only tool when the saved id is stale", () => {
-    expect(resolveCustomTool([baseTool], "custom_old")?.id).toBe("custom_123");
-  });
-
-  it("returns undefined when multiple tools and id is stale", () => {
-    const other: CustomTool = { ...baseTool, id: "custom_456", name: "Other" };
-    expect(resolveCustomTool([baseTool, other], "custom_old")).toBeUndefined();
-  });
-});
-
-describe("computeGenerateReadiness toolbox", () => {
-  it("allows generate when only one custom tool exists despite stale id", () => {
-    const readiness = computeGenerateReadiness({
-      workerReady: true,
-      generating: false,
-      engineState: "ready",
-      engineLabel: "Ready",
-      prompt: "hello",
-      model: "flux.safetensors",
-      modelDependenciesReady: true,
-      missingCompanionCount: 0,
-      settings: {
-        custom_tool_id: "custom_stale",
-        input_image: "C:/ref.png",
-      } as any,
-      modelGallery: [],
-      studioMode: "toolbox",
-      customTools: [baseTool],
+describe("merged Edit mode", () => {
+  it("requires a mask only when Edit is configured for inpainting", () => {
+    const blocked = computeGenerateReadiness({
+      ...base,
+      studioMode: "edit",
+      settings: { input_image: "C:/source.png", edit_type: "inpaint" },
     });
-    expect(readiness.ok).toBe(true);
-  });
-});
+    expect(blocked).toMatchObject({ ok: false, reason: "Create or attach an inpaint mask first" });
 
-describe("sanitizeSettingsForStudioMode custom tools", () => {
-  it.each(["generate", "edit", "inpaint", "upscale", "agent"] as const)(
-    "clears the Toolbox workflow in %s mode",
+    const ready = computeGenerateReadiness({
+      ...base,
+      studioMode: "edit",
+      settings: {
+        input_image: "C:/source.png",
+        inpaint_mask_path: "C:/mask.png",
+        edit_type: "inpaint",
+      },
+    });
+    expect(ready.ok).toBe(true);
+  });
+
+  it.each(["inpaint", "toolbox"] as const)(
+    "normalizes legacy %s settings into Edit and drops custom workflows",
     (mode) => {
-      expect(
-        sanitizeSettingsForStudioMode(mode, { custom_tool_id: "custom_123" } as any)
-          .custom_tool_id,
-      ).toBeUndefined();
+      const next = sanitizeSettingsForStudioMode(mode, {
+        custom_tool_id: "custom_123",
+        input_image: "C:/source.png",
+        inpaint_mask_path: "C:/mask.png",
+        edit_type: "inpaint",
+      });
+      expect(next.custom_tool_id).toBeUndefined();
+      expect(next.inpaint_mask_path).toBe("C:/mask.png");
     },
   );
-
-  it("keeps the selected workflow in Toolbox mode", () => {
-    expect(
-      sanitizeSettingsForStudioMode("toolbox", { custom_tool_id: "custom_123" } as any)
-        .custom_tool_id,
-    ).toBe("custom_123");
-  });
 });

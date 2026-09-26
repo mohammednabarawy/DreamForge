@@ -48,6 +48,10 @@ def apply_vram_quality_defaults(
 
     steps = int(out.get("steps") or 20)
 
+    model_name = str(out.get("model") or "").lower()
+    if "qwen" in model_name and ("2.1" in model_name or "2_1" in model_name):
+        return out
+
 
 
     if tier == "5gb":
@@ -148,7 +152,11 @@ def resolve_creative_task(
 
         mode = "generate"
 
-    routing_mode = "edit" if mode == "toolbox" else mode
+    if mode in {"inpaint", "toolbox"}:
+
+        mode = "edit"
+
+    routing_mode = mode
 
     base = dict(settings) if isinstance(settings, dict) else {}
 
@@ -202,38 +210,19 @@ def resolve_creative_task(
 
 
 
-    if mode in {"edit", "toolbox"}:
+    if routing_mode == "edit":
 
-        src = (selected_image or base.get("input_image") or patch.get("input_image") or "").strip()
-
-        if src:
-
-            patch["input_image"] = src
-
-        if not patch.get("post_upscale"):
-
-            patch["upscale_image"] = None
-
-            patch["upscale_method"] = None
-
-        if mode == "edit":
-
-            patch["inpaint_mask_path"] = None
-
-    elif mode == "inpaint":
-
-        previous_src = (base.get("input_image") or "").strip()
-
-        # Keep the attached inpaint source authoritative; history selection is only a fallback.
-        src = (previous_src or selected_image or patch.get("input_image") or "").strip()
+        # A mask belongs to its source image; a history selection must not silently swap it.
+        src = (
+            (base.get("input_image") if base.get("inpaint_mask_path") else selected_image)
+            or base.get("input_image")
+            or patch.get("input_image")
+            or ""
+        ).strip()
 
         if src:
 
             patch["input_image"] = src
-
-        if previous_src and src and src != previous_src:
-
-            patch["inpaint_mask_path"] = None
 
         if not patch.get("post_upscale"):
 
@@ -287,7 +276,7 @@ def resolve_creative_task(
             gallery,
             advanced_mode=advanced_mode,
             user_picked_model=user_picked_model,
-            toolbox_studio_mode=mode if mode == "toolbox" else None,
+            toolbox_studio_mode=None,
         )
         merged = routed.patch
         route_reason = routed.route_reason
@@ -300,7 +289,7 @@ def resolve_creative_task(
 
         merged["template_id"] = resolved_template_id
 
-    if merged.get("post_upscale") and mode in {"edit", "inpaint", "toolbox"}:
+    if merged.get("post_upscale") and routing_mode == "edit":
 
         merged["upscale_image"] = None
 

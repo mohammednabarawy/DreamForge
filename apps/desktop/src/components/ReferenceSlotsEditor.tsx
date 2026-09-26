@@ -27,6 +27,7 @@ type Props = {
   onUpdateSlot: (index: number, patch: Partial<ReferenceSlot>) => void;
   onRemoveSlot: (index: number) => void;
   onMoveSlot?: (index: number, direction: -1 | 1) => void;
+  onInsertTag?: (index: number) => void;
 };
 
 function SlotPreview({ path }: { path: string }) {
@@ -64,6 +65,7 @@ export function ReferenceSlotsEditor({
   onUpdateSlot,
   onRemoveSlot,
   onMoveSlot,
+  onInsertTag,
 }: Props) {
   const slots = coerceReferenceSlots(settings, studioMode, maxSlots);
   const extraSlots = slots.slice(1);
@@ -107,11 +109,11 @@ export function ReferenceSlotsEditor({
       </div>
 
 
-      <div className="space-y-2">
+      <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
         {extraSlots.map((slot, offset) => {
           const index = offset + 1;
           const prompt = (settings.prompt ?? "").toLowerCase();
-          const isMentioned = prompt.includes(`image ${index + 1}`);
+          const isMentioned = new RegExp(`(?:<image${index + 1}>|image[_ #]${index + 1}|picture ${index + 1})`, "i").test(prompt);
           return (
             <div
               key={`${slot.path}-${index}`}
@@ -131,12 +133,14 @@ export function ReferenceSlotsEditor({
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-1">
                     <div className="min-w-0">
-                      <p className="text-[9px] font-semibold text-df-blue/90">
-                        Image {index + 1}
-                      </p>
+                      <div className="flex items-center gap-1">
+                        <p className="text-xs font-semibold text-df-blue/90">Image {index + 1}</p>
+                        {onInsertTag ? <button type="button" disabled={disabled} onClick={() => onInsertTag(index)} className="rounded border border-df-blue/30 px-1.5 py-0.5 font-mono text-[10px] text-df-blue hover:bg-df-blue/10 disabled:opacity-50" aria-label={`Insert <image${index + 1}> into prompt`}>{`<image${index + 1}>`}</button> : null}
+                      </div>
                       <p className="truncate font-mono text-[9px] text-dfui-muted" title={slot.path}>
                         {basename(slot.path)}
                       </p>
+                      {onInsertTag && !isMentioned ? <p className="text-[10px] text-amber-200">Not named in prompt</p> : null}
                     </div>
                     <div className="flex shrink-0 items-center gap-0.5">
                     {onMoveSlot ? <>

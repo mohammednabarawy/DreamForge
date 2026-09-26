@@ -57,28 +57,28 @@ def test_agent_provider_requires_local_endpoint(tmp_path: Path, monkeypatch):
     assert result["detail"] == "local_endpoint_required"
 
 
-def test_heuristic_edit_defaults_to_qwen_lightning_when_qwen_installed():
+def test_heuristic_edit_uses_qwen_image_21_quality_defaults():
     result = app_config._heuristic_agent_plan(
         "Change the jacket to navy blue, keep the face unchanged",
         {"prompt": ""},
         "D:/work/photo.png",
         [
             {
-                "family": "qwen_image_edit",
-                "caption": "Qwen Image Edit 2511",
-                "engine_name": "qwen-image-edit-2511-Q4_K_M.gguf",
-                "relative_path": "qwen-image-edit-2511-Q4_K_M.gguf",
+                "family": "qwen_image_2.1",
+                "caption": "Qwen Image 2.1",
+                "engine_name": "qwen_image_2.1_int8_convrot.safetensors",
+                "relative_path": "qwen_image_2.1_int8_convrot.safetensors",
             }
         ],
     )
     assert result["mode"] == "edit"
     assert result["patch"]["edit_type"] == "qwen_edit"
-    assert result["patch"]["performance"] == "Lightning"
-    assert result["patch"]["steps"] == 8
+    assert result["patch"]["performance"] == "Quality"
+    assert result["patch"]["steps"] == 40
     assert result["patch"]["cfg_scale"] == 1.0
 
 
-def test_heuristic_edit_defaults_to_kontext_without_text_intent():
+def test_heuristic_edit_does_not_fall_back_to_kontext():
     result = app_config._heuristic_agent_plan(
         "Change the jacket to navy blue, keep the face unchanged",
         {"prompt": ""},
@@ -93,9 +93,8 @@ def test_heuristic_edit_defaults_to_kontext_without_text_intent():
         ],
     )
     assert result["mode"] == "edit"
-    assert result["patch"]["edit_type"] == "kontext"
-    assert result["patch"]["cn_selection"] == "None"
-    assert result["patch"]["cn_type"] == "None"
+    assert result["patch"]["edit_type"] == "qwen_edit"
+    assert result["patch"].get("model") != "flux1-dev-kontext_fp8_scaled.safetensors"
     assert result["patch"]["input_image"] == "D:/work/photo.png"
 
 
@@ -112,16 +111,16 @@ def test_heuristic_qwen_edit_picks_qwen_model_before_kontext():
                 "relative_path": "flux-kontext",
             },
             {
-                "family": "qwen_image_edit",
-                "caption": "Qwen Image Edit 2511 Q4",
-                "engine_name": "../diffusion_models/qwen-image-edit-2511-Q4_K_M.gguf",
-                "relative_path": "qwen-image-edit-2511-Q4_K_M.gguf",
+                "family": "qwen_image_2.1",
+                "caption": "Qwen Image 2.1",
+                "engine_name": "../diffusion_models/qwen_image_2.1_int8_convrot.safetensors",
+                "relative_path": "qwen_image_2.1_int8_convrot.safetensors",
             },
         ],
     )
 
     assert result["patch"]["edit_type"] == "qwen_edit"
-    assert result["patch"]["model"] == "../diffusion_models/qwen-image-edit-2511-Q4_K_M.gguf"
+    assert result["patch"]["model"] == "../diffusion_models/qwen_image_2.1_int8_convrot.safetensors"
 
 
 def test_agent_plan_falls_back_to_local_edit_route(tmp_path: Path, monkeypatch):
@@ -203,10 +202,10 @@ def test_provider_plan_uses_schema_then_text_fallback(tmp_path: Path, monkeypatc
             "settings": {},
             "model_gallery": [
                 {
-                    "family": "qwen_image_edit",
-                    "caption": "Qwen Image Edit",
-                    "engine_name": "qwen-image-edit.safetensors",
-                    "relative_path": "qwen-image-edit.safetensors",
+                    "family": "qwen_image_2.1",
+                    "caption": "Qwen Image 2.1",
+                    "engine_name": "qwen_image_2.1_int8_convrot.safetensors",
+                    "relative_path": "qwen_image_2.1_int8_convrot.safetensors",
                 }
             ],
         }
@@ -216,14 +215,15 @@ def test_provider_plan_uses_schema_then_text_fallback(tmp_path: Path, monkeypatc
     assert "response_format" not in calls[1]
     assert "DreamForge routing field guide" in calls[0]["messages"][0]["content"]
     user_payload = json.loads(calls[0]["messages"][1]["content"])
-    assert user_payload["available_model_summary"][0]["family"] == "qwen_image_edit"
+    assert user_payload["available_model_summary"][0]["family"] == "qwen_image_2.1"
     assert result["source"] == "provider"
     assert result["mode"] == "edit"
     assert result["patch"]["input_image"] == "D:/image.png"
     assert result["patch"]["edit_type"] == "qwen_edit"
     assert result["patch"]["cn_selection"] == "None"
     assert result["patch"]["cn_type"] == "None"
-    assert result["patch"]["performance"] == "Lightning"
+    assert result["patch"]["performance"] == "Quality"
+    assert result["patch"]["steps"] == 40
     assert "aspect_ratio" not in result["patch"]
 
 
@@ -298,7 +298,7 @@ def test_provider_route_sanitizes_invalid_control_values(tmp_path: Path, monkeyp
     assert result["patch"]["cn_selection"] == "None"
     assert result["patch"]["cn_type"] == "None"
     assert result["patch"]["performance"] == "Quality"
-    assert result["patch"]["steps"] == 8
+    assert result["patch"]["steps"] == 40
     assert result["patch"]["cfg_scale"] == 1.0
     assert result["patch"]["sampler"] == "euler"
     assert result["patch"]["scheduler"] == "simple"
@@ -408,23 +408,24 @@ def test_save_app_config_simple_experience_clears_agent_mode(tmp_path: Path, mon
     assert saved["ui"]["studio_mode"] == "generate"
 
 
-def test_qwen_lightning_defaults_not_applied_for_quality():
-    patch = {"edit_type": "qwen_edit", "performance": "Quality", "steps": 30, "cfg_scale": 5.0}
-    app_config._force_qwen_lightning_defaults(patch)
+def test_qwen_image_21_edit_patch_uses_quality_defaults():
+    patch = app_config._qwen_edit_patch()
     assert patch["performance"] == "Quality"
-    assert patch["steps"] == 30
-    assert patch["cfg_scale"] == 5.0
-
-
-def test_qwen_lightning_defaults_apply_for_speed_modes():
-    patch = {"edit_type": "qwen_edit", "performance": "Speed"}
-    app_config._force_qwen_lightning_defaults(patch)
-    assert patch["performance"] == "Lightning"
-    assert patch["steps"] == 8
+    assert patch["steps"] == 40
     assert patch["cfg_scale"] == 1.0
 
 
-def test_save_app_config_persists_custom_tools(tmp_path: Path, monkeypatch):
+def test_qwen_image_21_edit_patch_preserves_speed():
+    patch = app_config._complete_patch_for_mode(
+        "edit", {"performance": "Speed"}, "D:/photo.png",
+        [{"family": "qwen_image_2.1", "engine_name": "qwen_image_2.1_int8_convrot.safetensors"}],
+    )
+    assert patch["performance"] == "Speed"
+    assert patch["steps"] == 25
+    assert patch["cfg_scale"] == 1.0
+
+
+def test_save_app_config_drops_removed_custom_tools(tmp_path: Path, monkeypatch):
     monkeypatch.setenv(app_config.CONFIG_ENV, str(tmp_path / "app-config.json"))
     saved = app_config.save_app_config(
         {
@@ -439,9 +440,9 @@ def test_save_app_config_persists_custom_tools(tmp_path: Path, monkeypatch):
             ]
         }
     )
-    assert saved["custom_tools"][0]["name"] == "Pixel Art"
+    assert "custom_tools" not in saved
     reloaded = app_config.load_app_config(redacted=False)
-    assert reloaded["custom_tools"][0]["workflow_path"] == "D:/workflows/pixel.json"
+    assert "custom_tools" not in reloaded
 
 
 def test_agent_provider_change_resets_defaults(tmp_path: Path, monkeypatch):

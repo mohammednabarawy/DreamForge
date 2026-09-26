@@ -4,6 +4,7 @@ import { modelBasename, type StudioMode } from "./model-selection";
 import {
   applyInpaintIntentAtSubmit,
 } from "./inpaintIntent";
+import { isQwenEditModel, selectQwenEditModel } from "./editModel";
 
 /** Canonical Flux Fill FP8 filename when the checkpoint is not yet in the gallery. */
 export const DEFAULT_FLUX_FILL_MODEL = "flux1-fill-dev-fp8.safetensors";
@@ -44,52 +45,16 @@ export function isNativeInpaintModel(item: ModelGalleryItem): boolean {
 }
 
 export function isInpaintCapableModel(item: ModelGalleryItem): boolean {
-  return isFluxFillModel(item) || isNativeInpaintModel(item);
+  return isQwenEditModel(item);
 }
 
 export function findInpaintCapableModels(gallery: ModelGalleryItem[]): ModelGalleryItem[] {
   return gallery.filter(isInpaintCapableModel);
 }
 
-function scoreInpaintGalleryItem(item: ModelGalleryItem): number {
-  if (!isInpaintCapableModel(item)) return -1;
-  const hay = modelHaystack(item);
-  let score = 0;
-  if (isFluxFillModel(item)) {
-    score += 80;
-    if (hay.includes("fp8") || hay.includes("_fp8")) score += 15;
-  }
-  if (hay.includes("inpaint")) score += 40;
-  const family = (item.family ?? "").toLowerCase();
-  if (family === "sdxl" || family === "sdxl_inpaint" || family === "sd15") score += 25;
-  if (hay.includes("lightning") && hay.includes("inpaint")) score += 10;
-  return score;
-}
-
-function isFluxFillFp8Model(item: ModelGalleryItem): boolean {
-  const hay = modelHaystack(item);
-  return isFluxFillModel(item) && (hay.includes("fp8") || hay.includes("_fp8"));
-}
-
 /** Default inpaint checkpoint: best scored Fill or native inpaint model in gallery. */
 export function selectFluxFillModel(gallery: ModelGalleryItem[]): string {
-  let bestScore = -1;
-  let bestEngine = "";
-  for (const item of gallery) {
-    const score = scoreInpaintGalleryItem(item);
-    if (score > bestScore) {
-      bestScore = score;
-      bestEngine = item.engine_name;
-    }
-  }
-  if (bestEngine) return bestEngine;
-  const fp8 = gallery.find(isFluxFillFp8Model);
-  if (fp8) return fp8.engine_name;
-  for (const needle of FLUX_FILL_NEEDLES) {
-    const hit = gallery.find((item) => modelHaystack(item).includes(needle));
-    if (hit) return hit.engine_name;
-  }
-  return "";
+  return selectQwenEditModel(gallery);
 }
 
 export function selectCuratedInpaintModel(
@@ -105,7 +70,7 @@ export function inpaintModelWarning(
 ): string | null {
   if (mode !== "inpaint") return null;
   if (isInpaintCapableModel(item)) return null;
-  return `"${modelBasename(item.caption)}" is not recognized as inpaint-capable. Use Flux Fill or an SDXL/SD1.5 inpaint checkpoint.`;
+  return `"${modelBasename(item.caption)}" cannot be used for masked editing. DreamForge edits only with Qwen Image 2.1.`;
 }
 
 export function sortGalleryForInpaintMode(
@@ -113,24 +78,15 @@ export function sortGalleryForInpaintMode(
   mode: StudioMode,
 ): ModelGalleryItem[] {
   if (mode !== "inpaint") return gallery;
-  const scored = gallery
-    .map((item) => ({ item, score: scoreInpaintGalleryItem(item) }))
-    .sort((a, b) => b.score - a.score);
-  const capable = scored.filter((row) => row.score >= 0).map((row) => row.item);
-  const rest = scored.filter((row) => row.score < 0).map((row) => row.item);
-  return [...capable, ...rest];
+  return gallery.filter(isQwenEditModel);
 }
 
 /** Flux Fill needs denoise 1.0; native inpaint keeps user/task strength. */
 export function effectiveInpaintEditStrength(
-  settings: GenerationSettings,
-  modelItem: ModelGalleryItem | undefined,
+  _settings: GenerationSettings,
+  _modelItem: ModelGalleryItem | undefined,
 ): number {
-  const raw = Number(settings.edit_strength ?? 0.9);
-  if (modelItem && isFluxFillModel(modelItem)) {
-    return 1.0;
-  }
-  return raw;
+  return 1.0;
 }
 
 /** Force inpaint routing before submit (blocks stale Qwen/edit control-net state). */
@@ -138,21 +94,12 @@ export function enforceInpaintJobSettings(
   settings: GenerationSettings,
   studioMode: StudioMode,
   gallery: ModelGalleryItem[],
-  advancedMode?: boolean,
+  _advancedMode?: boolean,
 ): GenerationSettings {
   if (studioMode !== "inpaint") return settings;
   const merged = applyInpaintIntentAtSubmit(settings, gallery);
-  const currentItem = gallery.find((item) => item.engine_name === merged.model);
-  const userModel = merged.model?.trim();
-  const userPickedCapable =
-    Boolean(userModel) &&
-    Boolean(currentItem) &&
-    isInpaintCapableModel(currentItem!);
   const defaultModel = selectCuratedInpaintModel(gallery);
-  const model =
-    userPickedCapable || (advancedMode && userModel)
-      ? userModel
-      : defaultModel || userModel;
+  const model = defaultModel || merged.model;
   const modelItem = gallery.find((item) => item.engine_name === model);
   return {
     ...merged,

@@ -414,34 +414,113 @@ def prepare_generation_prompts(
     elif not styles:
         styles = list(settings.get("styles") or [])
 
+    pipeline_trace: list[dict[str, Any]] = []
+    original_prompt = prompt  # capture before any modifications
+
     prompt = _qwen_edit_prompt_guard(job, family, prompt)
+    if prompt != original_prompt:
+        pipeline_trace.append({
+            "stage": "qwen_edit_guard",
+            "action": "modified",
+            "added_text": "",
+            "reason": "Qwen edit prompt guard applied",
+        })
+        original_prompt = prompt  # reset tracker
     negative = _qwen_edit_negative_guard(job, family, negative)
     if workflow_mode == "upscale":
         prompt = _upscale_boost(workflow_mode, prompt)
+        if prompt != original_prompt:
+            # Extract what was added
+            added = prompt[len(original_prompt):] if prompt.startswith(original_prompt) else ""
+            pipeline_trace.append({
+                "stage": "upscale_boost",
+                "action": "appended",
+                "added_text": added.strip(", "),
+                "reason": "Upscale quality boost auto-appended",
+            })
+            original_prompt = prompt
     elif workflow_mode == "inpaint":
         prompt = _inpaint_boost(job, workflow_mode, prompt)
+        if prompt != original_prompt:
+            added = prompt.replace(original_prompt, "").strip(", ")
+            pipeline_trace.append({
+                "stage": "inpaint_boost",
+                "action": "prepended" if prompt.endswith(original_prompt.strip()) else "appended",
+                "added_text": added,
+                "reason": "Inpaint masked region instructions auto-added",
+            })
+            original_prompt = prompt
     elif workflow_mode == "edit":
         prompt = _kontext_edit_boost(job, family, prompt)
+        if prompt != original_prompt:
+            added = prompt.replace(original_prompt, "").strip(", ")
+            pipeline_trace.append({
+                "stage": "kontext_edit_boost",
+                "action": "appended",
+                "added_text": added,
+                "reason": "Kontext preservation clause auto-appended",
+            })
+            original_prompt = prompt
     elif workflow_mode == "generate":
         prompt = _identity_generate_boost(job, workflow_mode, prompt)
+        if prompt != original_prompt:
+            added = prompt.replace(original_prompt, "").strip(", ")
+            pipeline_trace.append({
+                "stage": "identity_generate_boost",
+                "action": "prepended",
+                "added_text": added,
+                "reason": "Identity retention prefix auto-prepended for reference image",
+            })
+            original_prompt = prompt
         if _is_modern_family(family):
             prompt = _modern_generate_boost(family, prompt)
+            if prompt != original_prompt:
+                added = prompt.replace(original_prompt, "").strip(", ")
+                pipeline_trace.append({
+                    "stage": "modern_generate_boost",
+                    "action": "appended",
+                    "added_text": added,
+                    "reason": f"Quality boost auto-appended (prompt under 28 words, {family} family)",
+                })
+                original_prompt = prompt
 
     gen_data = _build_gen_data(job, settings)
+    prompt_before_legacy = prompt  # save before legacy processing
     positive, negative_out, parsed_loras = process_prompt_with_legacy_modules(
         styles,
         prompt,
         negative,
         gen_data,
     )
+    if positive.strip() != prompt_before_legacy.strip():
+        pipeline_trace.append({
+            "stage": "legacy_style_processing",
+            "action": "modified",
+            "added_text": "",
+            "reason": f"Style template(s) applied: {', '.join(styles) if styles else 'none'}",
+        })
 
     distance = _batch_distance(job, image_index=image_index)
     if distance is not None:
         positive = shift_attention(positive, distance)
         negative_out = shift_attention(negative_out, distance)
+        pipeline_trace.append({
+            "stage": "attention_shift",
+            "action": "modified",
+            "added_text": "",
+            "reason": f"Batch attention shift applied (distance={distance})",
+        })
 
     negative_out = negative_out.strip().strip(",").strip()
     comfy_loras = merge_generation_loras(job, parsed_loras)
+
+    if not pipeline_trace:
+        pipeline_trace.append({
+            "stage": "passthrough",
+            "action": "none",
+            "added_text": "",
+            "reason": "Prompt sent to model without modifications",
+        })
 
     return {
         "prompt": positive.strip(),
@@ -452,4 +531,5 @@ def prepare_generation_prompts(
         "prompt_enhancer": enhancer,
         "expansion_available": prompt_expansion_available(),
         "shift_attention_distance": distance,
+        "pipeline_trace": pipeline_trace,
     }

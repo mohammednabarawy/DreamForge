@@ -287,6 +287,47 @@ const COPY: Record<DreamForgeErrorCode, CopyEntry> = {
     ],
     recoverable: true,
   },
+  lora_family_mismatch: {
+    title: "Incompatible LoRA removed",
+    message:
+      "One or more active LoRAs were trained for a different model architecture and would have had no effect. DreamForge automatically removed them from this generation so your prompt and model run cleanly.",
+    suggestions: [
+      "Use LoRAs matching your active model family (e.g. Flux LoRAs on Flux models, SDXL LoRAs on SDXL models).",
+      "Switch to a model family that matches your desired LoRA.",
+    ],
+    recoverable: true,
+  },
+  denoise_too_low_for_intent: {
+    title: "Denoise may be too low for prompt",
+    message:
+      "Your prompt describes a major transformation (like clothing or scene changes), but the current denoise level is preserving too much of the input image structure.",
+    suggestions: [
+      "Raise Denoise / Edit Strength to 0.95+ in Generation Settings.",
+      "Attach the source image and ask Qwen Image 2.1 Edit to change the scene while keeping the person.",
+      "Clear the input image to generate purely from your prompt.",
+    ],
+    recoverable: true,
+  },
+  workflow_suggestion: {
+    title: "Workflow suggestion available",
+    message:
+      "A more specialized workflow mode is available that better matches your prompt and reference image intent.",
+    suggestions: [
+      "Check the suggested workflow mode in the warning details.",
+      "Switch workflow mode in Inspector for optimal results.",
+    ],
+    recoverable: true,
+  },
+  aspect_ratio_mismatch: {
+    title: "Input aspect ratio differs from settings",
+    message:
+      "The input image aspect ratio is different from your requested generation dimensions. The output will automatically scale to match the source image aspect ratio.",
+    suggestions: [
+      "Set your generation aspect ratio to match the reference image.",
+      "Remove the reference image if you want exact custom dimensions.",
+    ],
+    recoverable: true,
+  },
   generation_failed: {
     title: "Generation failed",
     message:

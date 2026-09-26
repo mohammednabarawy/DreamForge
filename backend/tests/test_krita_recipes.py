@@ -59,12 +59,12 @@ def test_qwen_model_params_low_vram_scale():
 def test_qwen_edit_recipe_prefers_local_q4_gguf_and_lightning_defaults():
     recipe = edit_recipe("qwen_image_edit", "qwen_edit")
     assert recipe is not None
-    assert recipe["checkpoints"][0] == "qwen-image-edit-2511-Q4_K_M.gguf"
+    assert recipe["checkpoints"][0] == "qwen_image_2.1_int8_convrot.safetensors"
     assert recipe["custom_steps"] == 8
     assert recipe["cfg"] == 1.0
     assert recipe["scheduler"] == "simple"
     assert recipe["qwen_lightning_strength"] == 0.75
-    assert recipe["max_reference_images"] == 3
+    assert recipe["max_reference_images"] == 10
 
 
 def test_qwen_edit_recipe_lightning_4step():
@@ -74,4 +74,4 @@ def test_qwen_edit_recipe_lightning_4step():
     assert recipe["custom_steps"] == 4
     assert recipe["cfg"] == 1.0
     assert recipe["qwen_lightning_strength"] == 1.0
-    assert recipe["max_reference_images"] == 3
+    assert recipe["max_reference_images"] == 10

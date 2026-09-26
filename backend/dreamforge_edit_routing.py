@@ -37,10 +37,10 @@ def model_supports_kontext_edit(model: dict | None, model_family: str = "") -> b
 
 def model_supports_qwen_edit(model: dict | None, model_family: str = "") -> bool:
     fam = (model_family or (model or {}).get("family") or "").lower()
-    if fam == "qwen_image_edit":
+    if fam == "qwen_image_2.1":
         return True
     blob = _blob(model)
-    return "qwen" in blob and "edit" in blob
+    return "qwen" in blob and ("2.1" in blob or "2_1" in blob)
 
 
 def model_supports_img2img_edit(model: dict | None, model_family: str = "") -> bool:
@@ -62,11 +62,7 @@ def model_supports_img2img_edit(model: dict | None, model_family: str = "") -> b
 
 
 def model_supports_edit(model: dict | None, model_family: str = "") -> bool:
-    return (
-        model_supports_kontext_edit(model, model_family)
-        or model_supports_qwen_edit(model, model_family)
-        or model_supports_img2img_edit(model, model_family)
-    )
+    return model_supports_qwen_edit(model, model_family)
 
 
 _SDXL_TOOLBOX_NEEDLES = ("epicrealism", "juggernaut", "realvis", "dreamshaper", "sd_xl", "sdxl")
@@ -235,11 +231,11 @@ def edit_routing_for_model(model: dict | None, model_family: str = "") -> dict[s
             "cn_type": "img2img",
         }
     return {
-        "edit_type": "kontext",
+        "edit_type": "qwen_edit",
         "edit_strength": 1.0,
         "cn_selection": "None",
         "cn_type": "None",
-        "steps": 20,
+        "steps": 24,
     }
 
 
@@ -249,16 +245,20 @@ def score_edit_gallery_item(item: dict[str, Any]) -> int:
     family = str(item.get("family") or "").lower()
     if not model_supports_edit(item, family):
         return -1
+    if model_supports_qwen_edit(item, family):
+        score = 120
+        blob = _blob(item)
+        if "2.1" in blob or "qwen_image_2.1" in blob:
+            score += 50
+        if "int8" in blob or "convrot" in blob:
+            score += 20
+        elif "q4_k_m" in blob and ".gguf" in blob:
+            score += 15
+        return score
     if model_supports_kontext_edit(item, family):
-        score = 90
+        score = 80
         blob = _blob(item)
         if "fp8" in blob:
-            score += 10
-        return score
-    if model_supports_qwen_edit(item, family):
-        score = 85
-        blob = _blob(item)
-        if "q4_k_m" in blob and ".gguf" in blob:
             score += 10
         return score
     return 40

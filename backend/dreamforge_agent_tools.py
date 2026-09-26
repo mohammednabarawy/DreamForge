@@ -63,13 +63,15 @@ MODEL_FAMILY_HINTS: dict[str, dict[str, Any]] = {
         "notes": "Qwen Image generation. Euler sampler, 30 steps, CFG 3.0.",
     },
     "qwen_image_edit": {
-        "best_for": ["text_edits", "localized_changes", "signage_fixes", "object_removal"],
+        "best_for": ["text_edits", "localized_changes", "signage_fixes", "object_removal", "multi_reference", "outfit_transfer"],
         "models": [
+            "qwen_image_2.1_int8_convrot.safetensors",
+            "qwen_image_2.1_bf16.safetensors",
+            "Qwen-Image-2.1-Q4_K_M.gguf",
             "qwen-image-edit-2511-Q4_K_M.gguf",
-            "Qwen_Image_Edit-Q5_1.gguf",
             "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
         ],
-        "vram_16gb": "prefer qwen-image-edit-2511-Q4_K_M.gguf; needs Qwen text encoder and qwen_image_vae",
+        "vram_16gb": "prefer qwen_image_2.1_int8_convrot.safetensors; supports up to 10 reference images (<image1> - <image10>); needs Qwen text encoder and VAE",
         "vram_8gb": "use Q3/Q4 at lower resolution only after dependencies are installed",
         "requires_input_image": True,
         "stability": "preferred local editor when dependencies are ready",

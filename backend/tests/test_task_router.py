@@ -15,10 +15,10 @@ GALLERY = [
         "relative_path": "flux1-fill-dev-fp8.safetensors",
     },
     {
-        "family": "qwen_image_edit",
-        "caption": "Qwen Edit Q4",
-        "engine_name": "qwen-image-edit-2511-Q4_K_M.gguf",
-        "relative_path": "qwen-image-edit-2511-Q4_K_M.gguf",
+        "family": "qwen_image_2.1",
+        "caption": "Qwen Image 2.1",
+        "engine_name": "qwen_image_2.1_int8_convrot.safetensors",
+        "relative_path": "qwen_image_2.1_int8_convrot.safetensors",
     },
     {
         "family": "ideogram4",
@@ -56,7 +56,7 @@ def test_easy_edit_routes_away_from_ideogram():
         user_picked_model=False,
     )
     assert "ideogram" not in routed.patch["model"].lower()
-    assert routed.patch["edit_type"] == "kontext"
+    assert routed.patch["edit_type"] == "qwen_edit"
     assert routed.route_reason == "easy_edit_default"
 
 
@@ -105,7 +105,7 @@ def test_enforce_edit_simple_blocks_ideogram():
         user_picked_model=False,
     )
     assert "ideogram" not in out["model"].lower()
-    assert out["edit_type"] == "kontext"
+    assert out["edit_type"] == "qwen_edit"
 
 
 def test_enforce_upscale_pro_keeps_flux():
@@ -124,7 +124,7 @@ def test_enforce_upscale_pro_keeps_flux():
     assert out.get("user_picked_model") is True
 
 
-def test_resolve_edit_routes_kontext():
+def test_resolve_edit_uses_qwen_image_21():
     result = resolve_creative_task(
         "edit",
         {"prompt": "make jacket blue"},
@@ -133,8 +133,41 @@ def test_resolve_edit_routes_kontext():
         advanced_mode=False,
     )
     patch = result["patch"]
-    assert patch["edit_type"] == "kontext"
-    assert "kontext" in patch["model"].lower()
+    assert patch["edit_type"] == "qwen_edit"
+    assert "qwen_image_2.1" in patch["model"].lower()
+
+
+def test_masked_edit_keeps_qwen_inpaint_controls():
+    routed = apply_task_routing(
+        {"model": "ideogram4_fp8_scaled.safetensors", "input_image": "D:/photo.png",
+         "inpaint_mask_path": "D:/mask.png", "prompt": "Change the shirt"},
+        "edit", GALLERY,
+    )
+    assert "qwen_image_2.1" in routed.patch["model"].lower()
+    assert routed.patch["edit_type"] == "inpaint"
+    assert routed.patch["cn_type"] == "inpaint"
+
+
+def test_generate_keeps_other_selected_models_while_edit_uses_qwen():
+    for model in ("ideogram4_fp8_scaled.safetensors", "flux1-dev-kontext_fp8_scaled.safetensors"):
+        settings = {"model": model, "input_image": "D:/photo.png", "prompt": "Create a portrait"}
+        assert apply_task_routing(settings, "generate", GALLERY).patch["model"] == model
+        edited = apply_task_routing(settings, "edit", GALLERY)
+        assert "qwen_image_2.1" in edited.patch["model"].lower()
+
+
+def test_edit_does_not_fall_back_when_qwen_image_21_is_missing():
+    gallery = [item for item in GALLERY if item["family"] != "qwen_image_2.1"]
+    routed = apply_task_routing(
+        {"model": "flux1-dev-kontext_fp8_scaled.safetensors", "input_image": "D:/photo.png"},
+        "edit",
+        gallery,
+        advanced_mode=False,
+        user_picked_model=False,
+    )
+    assert routed.patch["model"] == ""
+    assert routed.patch["edit_type"] == "qwen_edit"
+    assert any("Qwen Image 2.1 is required" in warning for warning in routed.warnings)
 
 
 def test_toolbox_custom_tool_skips_native_task_routing():
@@ -155,7 +188,7 @@ def test_toolbox_custom_tool_skips_native_task_routing():
     assert routed.route_reason != "toolbox_cutout_compose"
 
 
-def test_toolbox_outfit_transfer_regions_route_segformer():
+def test_removed_toolbox_outfit_route_does_not_auto_mask():
     routed = apply_task_routing(
         {
             "edit_task": "outfit_transfer",
@@ -167,6 +200,6 @@ def test_toolbox_outfit_transfer_regions_route_segformer():
         GALLERY,
         toolbox_studio_mode="toolbox",
     )
-    assert routed.patch.get("outfit_auto_mask") is True
-    assert routed.patch["edit_type"] == "inpaint"
-    assert routed.route_reason == "toolbox_outfit_segformer"
+    assert routed.patch.get("outfit_auto_mask") is not True
+    assert routed.patch["edit_type"] == "qwen_edit"
+    assert routed.route_reason != "toolbox_outfit_segformer"

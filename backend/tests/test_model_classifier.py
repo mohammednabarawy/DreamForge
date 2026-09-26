@@ -249,6 +249,13 @@ def test_classifier_routes_qwen_text_encoder_gguf_to_text_encoders(tmp_path: Pat
     assert verdict.target_dir == "text_encoders"
 
 
+def test_qwen_21_model_family_is_not_downgraded_to_legacy_qwen_image():
+    from modules.model_ui_defaults import infer_model_family
+
+    assert infer_model_family("qwen_image_2.1_int8_convrot.safetensors") == "qwen_image_2.1"
+    assert infer_model_family("qwen_image_edit_fp8.safetensors") == "qwen_image_edit"
+
+
 # --------------------------------------------------------------------------- #
 # Organizer
 # --------------------------------------------------------------------------- #

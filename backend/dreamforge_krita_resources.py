@@ -315,19 +315,20 @@ STUDIO_RESOURCE_SOURCES: dict[str, dict[str, Any]] = {
 STUDIO_MODE_RESOURCES: dict[str, list[str]] = {
     # Upscale uses `_resource_ids_for_studio_mode` (method-specific upscaler only).
     "upscale": [],
-    "inpaint": ["diffusion_flux_fill_dev"],
-    "edit": ["diffusion_flux_kontext_fp8_scaled"],
+    "inpaint": [],
+    "edit": [],
 }
 
 STUDIO_MODE_DEFAULTS: dict[str, dict[str, str]] = {
     "inpaint": {
-        "family": "flux_fill",
-        "model_name": "flux1-fill-dev-fp8.safetensors",
+        "family": "qwen_image_2.1",
+        "model_name": "qwen_image_2.1_int8_convrot.safetensors",
+        "performance": "Quality",
     },
     "edit": {
-        "family": "flux_kontext",
-        "model_name": "flux1-dev-kontext_fp8_scaled.safetensors",
-        "performance": "Lightning",
+        "family": "qwen_image_2.1",
+        "model_name": "qwen_image_2.1_int8_convrot.safetensors",
+        "performance": "Quality",
     },
 }
 

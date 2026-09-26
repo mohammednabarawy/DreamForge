@@ -1,12 +1,12 @@
 import type { StudioMode } from "./model-selection";
 import { selectIdentityGenerateModel } from "./model-selection";
 import { buildEditRoutingPatch } from "./editModel";
-import { coerceReferenceSlots, MAX_REFERENCE_SLOTS } from "./referenceSlots";
+import { coerceReferenceSlots } from "./referenceSlots";
 import { isIdentityPreservationActive } from "./identityPreserve";
 import type { GenerationSettings, ModelGalleryItem } from "./tauri-api";
 
-/** Qwen Edit Plus (TextEncodeQwenImageEditPlus) accepts at most 3 images. */
-export const QWEN_EDIT_MAX_REFERENCES = 3;
+/** Qwen Image 2.1 accepts up to ten ordered reference images. */
+export const QWEN_EDIT_MAX_REFERENCES = 10;
 
 /**
  * Roles that count as "an image the prompt can talk about" (image 1/2/3).
@@ -62,7 +62,7 @@ export function applyMultiImageComposeAtSubmit(
   if (!multiImageComposeActive(settings, studioMode, gallery)) return settings;
   const selected = gallery.find(item => item.engine_name === settings.model);
   // Native reference models already handle composition; keep the user's choice.
-  if (["hidream_o1", "flux_kontext", "qwen_image_edit"].includes(selected?.family ?? "")) {
+  if (["hidream_o1", "flux_kontext", "qwen_image_2.1"].includes(selected?.family ?? "")) {
     return settings;
   }
   const routed = selectIdentityGenerateModel(gallery);
@@ -99,21 +99,21 @@ export function resolveReferenceModelFamily(
   selectedFamily: string,
 ): string {
   if (selectedFamily === "krea2" && studioMode === "edit") return selectedFamily;
-  if (["hidream_o1", "flux_kontext", "qwen_image_edit"].includes(selectedFamily)) return selectedFamily;
+  if (["hidream_o1", "flux_kontext", "qwen_image_2.1"].includes(selectedFamily)) return selectedFamily;
   const routed = selectIdentityGenerateModel(gallery);
-  if (routed?.family === "qwen_image_edit") {
+  if (routed?.family === "qwen_image_2.1") {
     const isKeepFace = studioMode === "agent" && isIdentityPreservationActive(settings);
     if (isKeepFace || multiImageComposeActive(settings, studioMode, gallery)) {
-      return "qwen_image_edit";
+      return "qwen_image_2.1";
     }
   }
   return selectedFamily;
 }
 
-/** Max reference images a resolved family supports (Qwen Edit Plus caps at 3). */
+/** Max reference images a resolved family supports (Qwen 2.1 supports up to 10; Krea 2 supports 2 in edit and 4 in generate). */
 export function maxReferenceImagesForFamily(family: string, studioMode: StudioMode = "edit"): number {
-  if (family === "krea2" && studioMode === "edit") return 2;
-  return family === "qwen_image_edit"
-    ? QWEN_EDIT_MAX_REFERENCES
-    : MAX_REFERENCE_SLOTS;
+  if (family === "krea2") return studioMode === "edit" ? 2 : 4;
+  if (family === "qwen_image_2.1") return 10;
+  if (family === "flux_kontext") return 4;
+  return 4;
 }

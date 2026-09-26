@@ -120,7 +120,7 @@ export function routeBadgeLabel(
         : "Restyling source image";
     case "source_edit":
       if (family.includes("kontext")) return "Editing with Flux Kontext";
-      if (family === "qwen_image_edit") return "Editing with Qwen Edit";
+      if (family === "qwen_image_edit" || family === "qwen_image_2.1") return "Editing with Qwen Image 2.1";
       if (family === "krea2") return "Editing with Krea 2 Identity Edit";
       return "Editing source image";
     case "inpaint":

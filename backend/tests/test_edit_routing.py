@@ -34,11 +34,11 @@ def test_kontext_edit_routing():
 
 def test_qwen_edit_routing():
     model = {
-        "name": "qwen-image-edit-2511-Q4_K_M.gguf",
-        "family": "qwen_image_edit",
+        "name": "qwen_image_2.1_int8_convrot.safetensors",
+        "family": "qwen_image_2.1",
     }
-    assert model_supports_qwen_edit(model, "qwen_image_edit")
-    patch = edit_routing_for_model(model, "qwen_image_edit")
+    assert model_supports_qwen_edit(model, "qwen_image_2.1")
+    patch = edit_routing_for_model(model, "qwen_image_2.1")
     assert patch["edit_type"] == "qwen_edit"
 
 
@@ -48,7 +48,7 @@ def test_flux_dev_img2img_edit_routing():
         "family": "flux",
     }
     assert model_supports_img2img_edit(model, "flux")
-    assert model_supports_edit(model, "flux")
+    assert not model_supports_edit(model, "flux")
     patch = edit_routing_for_model(model, "flux")
     assert patch["edit_type"] == "img2img"
 

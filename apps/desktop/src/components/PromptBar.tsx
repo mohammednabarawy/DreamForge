@@ -6,12 +6,13 @@ import type { StudioMode } from "../lib/model-selection";
 import { easyRouteSummary } from "../lib/easyModeRouting";
 import {
   isSimpleExperience,
-  studioModesForExperience,
   type UiExperience,
 } from "../lib/experienceUi";
 import { sanitizeSettingsForStudioMode } from "../lib/routeResolution";
+import { coerceReferenceSlots } from "../lib/referenceSlots";
 import { detectAgentPromptHint } from "../lib/parseAgentPrompt";
 import {
+  activeReferencePath,
   handleImagePathDragOver,
   readImagePathFromDrop,
 } from "../lib/referenceImage";
@@ -34,7 +35,6 @@ type Props = {
   settings: GenerationSettings;
   studioMode: StudioMode;
   agentPlannedMode?: StudioMode | null;
-  onStudioModeChange: (mode: StudioMode) => void;
   onChange: (patch: Partial<GenerationSettings>) => void;
   mentions: Mention[];
   generating: boolean;
@@ -75,7 +75,6 @@ export function PromptBar({
   settings,
   studioMode,
   agentPlannedMode,
-  onStudioModeChange,
   onChange,
   mentions,
   generating,
@@ -120,7 +119,7 @@ export function PromptBar({
   const promptText = (settings.prompt ?? "").trim();
   const canEnhancePrompt =
     !isAgentMode &&
-    studioMode === "generate" &&
+    (studioMode === "generate" || studioMode === "edit") &&
     Boolean(promptText) &&
     !generating &&
     !enhancePromptBusy;
@@ -138,8 +137,9 @@ export function PromptBar({
     imageNumberMax,
     Math.max(1, Math.round(Number.isFinite(rawImageCount) ? rawImageCount : 1)),
   );
-  const primaryActionLabel =
-    studioMode === "generate" && requestedImageCount > 1
+  const primaryActionLabel = studioMode === "edit"
+    ? "Edit image"
+    : studioMode === "generate" && requestedImageCount > 1
       ? `Generate ${requestedImageCount}`
       : "Generate";
   const simpleBatchCount = Math.min(4, Math.max(2, imageNumberMax >= 4 ? 4 : imageNumberMax));
@@ -149,8 +149,22 @@ export function PromptBar({
     !isAgentMode &&
     simpleBatchCount > 1 &&
     Boolean(onGenerateVariants);
-  const showPostUpscaleToggle =
-    !isAgentMode && (studioMode === "edit" || studioMode === "inpaint");
+  const isQwen21 = studioMode === "edit" || referenceModelFamily === "qwen_image_2.1" || /qwen.*2[._]1/i.test(settings.model ?? "");
+  const primaryReference = activeReferencePath(settings, studioMode);
+  const referenceCount = Math.max(
+    coerceReferenceSlots(settings, studioMode).length,
+    (primaryReference ? 1 : 0) + (settings.reference_images ?? []).filter((path) => path.trim() && path !== primaryReference).length,
+  );
+  const requestedSize = settings.width && settings.height
+    ? `${settings.width}×${settings.height}`
+    : (settings.aspect_ratio ?? "auto").replace("x", "×");
+  const requestSummary = [
+    `Requested ${requestedSize}`,
+    `${referenceCount} reference${referenceCount === 1 ? "" : "s"}`,
+    studioMode === "edit" && settings.inpaint_mask_path ? "masked edit" : null,
+    /transparent\s+(?:background|png)|(?:background|png)\s+transparent/i.test(promptText)
+      ? "transparent background requested" : null,
+  ].filter(Boolean).join(" · ");
   const canRunPrimary =
     isAgentMode && !generating
       ? Boolean((settings.prompt ?? "").trim())
@@ -210,19 +224,20 @@ export function PromptBar({
     [settings.prompt],
   );
   const activeRouteLabel =
-    studioMode === "agent" && agentPlannedMode
+    studioMode === "edit"
+      ? `Auto · Qwen Image 2.1 ${settings.inpaint_mask_path?.trim() ? "masked edit" : "edit"}`
+      : studioMode === "agent" && agentPlannedMode
       ? `Planned ${agentPlannedMode}: ${activeModelLabel}`
       : simpleExperience
-        ? easyRouteSummary(
+        ? `Auto · ${easyRouteSummary(
             settings,
             studioMode,
             referenceModelFamily,
             activeModelLabel,
-          )
+          )}`
         : studioMode === "generate"
           ? activeModelLabel
           : `Selected: ${activeModelLabel}`;
-  const modes = studioModesForExperience(experience);
   const promptLabel = isAgentMode
     ? "Instruction"
     : studioMode === "upscale"
@@ -267,10 +282,10 @@ export function PromptBar({
     if (isAgentMode) {
       return "Tell the agent what you want. Example: edit this poster, preserve Arabic text, make it cinematic";
     }
-    const isQwenEdit = referenceModelFamily === "qwen_image_edit";
+    const isQwenEdit = referenceModelFamily === "qwen_image_edit" || referenceModelFamily === "qwen_image_2.1";
     const hasRefs = (settings.reference_images ?? []).some((path) => path.trim());
     if (isQwenEdit || hasRefs) {
-      return "Describe the edit… Use 'image 1', 'image 2' to refer to your attached reference images.";
+      return "Describe the edit… Refer to attached images as <image1>, <image2>, and so on.";
     }
     return "Describe the shot… Type @ to pick a model or style";
   }, [isAgentMode, referenceModelFamily, settings.reference_images]);
@@ -329,23 +344,8 @@ export function PromptBar({
         </ul>
       )}
       <motion.div className="df-command-route-row mb-2 flex min-w-0 items-center gap-2">
-        <div className="flex min-w-0 shrink-0 items-center gap-1 overflow-x-auto rounded-xl border border-dfui-border/55 bg-dfui-bg/45 p-1" role="group" aria-label="Creation mode">
-          {modes.map((mode) => (
-            <button
-              key={mode.id}
-              type="button"
-              onClick={() => onStudioModeChange(mode.id)}
-              disabled={generating}
-              aria-pressed={studioMode === mode.id}
-              className={`min-h-8 shrink-0 rounded-lg border px-3 text-[10px] font-semibold transition-all ${
-                studioMode === mode.id
-                  ? "border-dfui-accent/45 bg-dfui-accent/15 text-dfui-accent shadow-[0_0_16px_rgba(247,148,30,0.08)]"
-                  : "border-transparent text-dfui-muted hover:border-dfui-border/60 hover:bg-dfui-surface hover:text-dfui-fg"
-              } disabled:opacity-60`}
-            >
-              {mode.label}
-            </button>
-          ))}
+        <div className="flex min-h-9 shrink-0 items-center rounded-xl border border-dfui-accent/45 bg-dfui-accent/15 px-3 text-[10px] font-semibold text-dfui-accent">
+          Create &amp; Edit
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <button type="button" onClick={() => setPromptExpanded((value) => !value)} aria-pressed={promptExpanded} className="rounded-lg border border-dfui-border/45 p-2 text-dfui-muted hover:border-dfui-accent/40 hover:text-dfui-fg" title={promptExpanded ? "Collapse prompt editor" : "Expand prompt editor"} aria-label={promptExpanded ? "Collapse prompt editor" : "Expand prompt editor"}>
@@ -480,7 +480,7 @@ export function PromptBar({
               className={`df-textarea-glowing flex-1 py-1.5 text-xs leading-snug ${promptExpanded ? "min-h-[150px]" : "min-h-[48px]"}`}
               data-df-prompt-input
             />
-            {!isAgentMode && studioMode === "generate" && onEnhancePrompt ? (
+            {!isAgentMode && (studioMode === "generate" || studioMode === "edit") && onEnhancePrompt ? (
               <motion.button
                 whileHover={{ scale: canEnhancePrompt ? 1.04 : 1 }}
                 whileTap={{ scale: canEnhancePrompt ? 0.96 : 1 }}
@@ -510,10 +510,11 @@ export function PromptBar({
             <p className={`min-w-0 truncate text-[10px] ${!canRunPrimary && generateBlockReason ? "text-amber-200" : "text-dfui-muted"}`} role={!canRunPrimary && generateBlockReason ? "status" : undefined}>
               {!canRunPrimary && generateBlockReason
                 ? generateBlockReason
-                : agentHint ??
-                  (promptDragOver
-                    ? "Drop to attach as reference image"
-                    : "@mentions · drag history image to prompt bar")}
+                : promptDragOver
+                  ? "Drop to attach as reference image"
+                  : isQwen21 && (studioMode === "generate" || studioMode === "edit")
+                    ? requestSummary
+                    : agentHint ?? "@mentions · drag history image to prompt bar"}
             </p>
             <div className="ml-auto flex shrink-0 flex-wrap justify-end gap-1.5">
               {isIdeogramModel && !isAgentMode && studioMode === "generate" ? (
@@ -569,23 +570,6 @@ export function PromptBar({
                 <Sparkles size={13} className="text-df-blue" />
                 {isAgentMode ? "Ask" : "Dry run"}
               </motion.button>
-              ) : null}
-              {showPostUpscaleToggle ? (
-                <label
-                  className="inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-lg border border-dfui-border/50 px-2.5 text-xs text-dfui-fg transition-colors hover:border-df-orange/40"
-                  title="After edit or inpaint, run Ultimate SD Upscale"
-                >
-                  <input
-                    type="checkbox"
-                    className="accent-df-orange"
-                    checked={Boolean(settings.post_upscale_enabled)}
-                    disabled={generating}
-                    onChange={(e) =>
-                      onChange({ post_upscale_enabled: e.target.checked })
-                    }
-                  />
-                  Sharpen 2×
-                </label>
               ) : null}
               {generating ? (
                 <motion.button

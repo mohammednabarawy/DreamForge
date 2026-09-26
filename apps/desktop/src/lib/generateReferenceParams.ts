@@ -52,6 +52,10 @@ export function applyExplicitReferenceRoleParams(
     return { params };
   }
 
+  if (modelFamily === "qwen_image_2.1") {
+    return { params };
+  }
+
   if ((role === "restyle" || role === "image_prompt") && refPath &&
       (modelFamily === "flux_kontext" || modelFamily === "qwen_image_edit")) {
     return { params: applyEditFamilyReferenceRoleParams({

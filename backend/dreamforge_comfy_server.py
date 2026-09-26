@@ -128,7 +128,15 @@ def _mirror_models_into_comfy_tree(comfy_root: Path, models_root: Path) -> None:
         if not target.exists():
             continue
         link = local_root / name
-        if link.exists() or link.is_symlink():
+        if link.exists():
+            continue
+        is_junction = getattr(link, "is_junction", lambda: False)()
+        if link.is_symlink():
+            link.unlink()
+        elif is_junction:
+            # Broken Windows junctions report exists() == False but still block mklink.
+            link.rmdir()
+        elif link.exists():
             continue
         _create_dir_link(link, target)
 

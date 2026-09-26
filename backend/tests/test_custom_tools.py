@@ -79,7 +79,7 @@ def test_apply_custom_tool_bindings_patches_prompt_image_and_sampler(tmp_path: P
     assert patched["4"]["inputs"]["filename_prefix"] == "ToolRun"
 
 
-def test_find_custom_tool_reads_app_config(tmp_path: Path, monkeypatch):
+def test_removed_custom_tools_are_not_read_from_app_config(tmp_path: Path, monkeypatch):
     cfg_path = tmp_path / "app_config.json"
     cfg_path.write_text(
         json.dumps(
@@ -98,8 +98,7 @@ def test_find_custom_tool_reads_app_config(tmp_path: Path, monkeypatch):
     )
     monkeypatch.setenv("DREAMFORGE_APP_CONFIG_PATH", str(cfg_path))
     tool = find_custom_tool("custom_1")
-    assert tool is not None
-    assert tool["name"] == "Pixel Art"
+    assert tool is None
     assert find_custom_tool("missing") is None
 
 
@@ -183,7 +182,7 @@ def test_build_custom_tool_prompt_graph_requires_api_format(tmp_path: Path, monk
     client = SimpleNamespace(
         upload_image=lambda **_: {"name": "uploaded.png"},
     )
-    with pytest.raises(CustomToolError, match="workflow could not be loaded"):
+    with pytest.raises(CustomToolError, match="was not found in app config"):
         build_custom_tool_prompt_graph(
             client=client,
             job=job,

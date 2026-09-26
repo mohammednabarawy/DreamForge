@@ -35,7 +35,7 @@ import {
   type StudioMode,
   type StyleRecipe,
 } from "../lib/model-selection";
-import { isAdvancedMode, isSimpleExperience, type UiExperience } from "../lib/experienceUi";
+import { isSimpleExperience, normalizeStudioModeForExperience, type UiExperience } from "../lib/experienceUi";
 import { ideogram4SettingsDefaults, looksLikeIdeogramJson } from "../lib/ideogram4Ui";
 import { resolveAspectPresets } from "../lib/aspectPresets";
 import { enhancePrefsFromAppConfig, shouldAutoEnhanceOnGenerate } from "../lib/promptEnhance";
@@ -48,6 +48,7 @@ import {
   buildEditRoutingPatch,
   editModelWarning,
   isQwenEditModel,
+  selectCuratedEditModel,
 } from "../lib/editModel";
 import { excerptPrompt, HISTORY_PAGE_SIZE } from "../lib/historyUtils";
 import { settingsFromManifestBundle } from "../lib/historyActions";
@@ -128,7 +129,7 @@ import {
   resolveCanvasPreviewUrl,
 } from "../lib/preview-display";
 import { prepareGenerationFromAgentPrompt } from "../lib/parseAgentPrompt";
-import { qwenEdit2511LightningPatch } from "../lib/qwenEditDefaults";
+import { QWEN_IMAGE21_PROFILES, qwenImage21Defaults } from "../lib/qwenEditDefaults";
 import { computeGenerateReadiness } from "../lib/generationReadiness";
 import {
   lowerVramProfile,
@@ -150,9 +151,7 @@ import {
   checkImagePromptResources,
   clearUserStyleProfile,
   downloadCompanionEntries,
-  checkWorkflowTaskDependencies,
   ensureCreativeTaskReady,
-  fetchCustomToolDependencies,
   exportUserStyleProfile,
   getUserStyleProfile,
   getAppConfig,
@@ -176,11 +175,13 @@ import {
   type WorkflowReadiness,
 } from "../lib/studioBridge";
 import {
+  activeReferencePath,
   appendExtraReferencePath,
   buildClearReferenceImagePatch,
   buildGenerateReferencePatch,
   buildReferenceImagePatch,
   defaultReferenceEditStrength,
+  imageTaskForRequest,
   referenceModeForStudio,
   referenceStatusLabel,
   removeExtraReferenceAt,
@@ -234,9 +235,7 @@ import { isEditFamilyMode } from "../lib/generationReadiness";
 import {
   customNodeItemsFromActions,
   mergeAllCompanionMissing,
-  isWorkflowModelItem,
 } from "../lib/companionAssets";
-import { resolveCustomTool } from "../lib/customTools";
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value ? (value as Record<string, unknown>) : undefined;
@@ -467,8 +466,8 @@ export function useDreamForge() {
     null,
   );
   const [appConfig, setAppConfig] = useState<DreamForgeAppConfig | null>(null);
-  const uiExperience = (appConfig?.ui.experience ?? "pro") as UiExperience;
-  const advancedMode = isAdvancedMode(uiExperience);
+  const uiExperience: UiExperience = "pro";
+  const advancedMode = true;
   const [agentProviders, setAgentProviders] = useState<AgentProviderPreset[]>(
     [],
   );
@@ -517,14 +516,6 @@ export function useDreamForge() {
     ready: boolean;
   }>({ missing: [], ready: true });
   const [studioResources, setStudioResources] = useState<{
-    missing: ModelDependencyItem[];
-    ready: boolean;
-  }>({ missing: [], ready: true });
-  const [taskWorkflowDependencies, setTaskWorkflowDependencies] = useState<{
-    missing: ModelDependencyItem[];
-    ready: boolean;
-  }>({ missing: [], ready: true });
-  const [customToolDependencies, setCustomToolDependencies] = useState<{
     missing: ModelDependencyItem[];
     ready: boolean;
   }>({ missing: [], ready: true });
@@ -1049,18 +1040,9 @@ export function useDreamForge() {
         }));
       }
       if (app) {
-        setAppConfig({
-          ...app,
-          custom_tools: Array.isArray(app.custom_tools) ? app.custom_tools : [],
-        });
-        const savedToolId =
-          app.ui?.studio_mode === "toolbox"
-            ? app.ui.selected_custom_tool_id?.trim()
-            : undefined;
+        setAppConfig(app);
         setSettings((prev) =>
-          prev.custom_tool_id === savedToolId
-            ? prev
-            : { ...prev, custom_tool_id: savedToolId },
+          prev.custom_tool_id ? { ...prev, custom_tool_id: undefined } : prev,
         );
       }
       setAgentProviders(providers);
@@ -1897,6 +1879,10 @@ export function useDreamForge() {
   const selectModelGallery = useCallback(
     async (item: ModelGalleryItem) => {
       const mode = appConfig?.ui.studio_mode ?? "generate";
+      if ((mode === "edit" || mode === "inpaint") && !isQwenEditModel(item)) {
+        setStatus("Image edits use Qwen Image 2.1. Install it before selecting an edit model.");
+        return;
+      }
       if (
         mode !== "generate" &&
         mode !== "inpaint" &&
@@ -1922,7 +1908,7 @@ export function useDreamForge() {
             : {};
       const qwenPatch =
         mode === "edit" && isQwenEditModel(item)
-          ? qwenEdit2511LightningPatch()
+          ? qwenImage21Defaults()
           : {};
       const ideogramPatch =
         mode === "edit" && (item.family ?? "").toLowerCase() === "ideogram4"
@@ -2120,19 +2106,10 @@ export function useDreamForge() {
           ...(appConfig?.ui ?? {}),
           ...(patch.ui ?? {}),
         },
-        custom_tools: patch.custom_tools ?? appConfig?.custom_tools,
       } as DreamForgeAppConfigPatch;
       const saved = await saveAppConfig(merged);
       setAppConfig(saved);
-      if (patch.custom_tools) {
-        setStatus(
-          patch.custom_tools.length === 1
-            ? `Saved custom tool “${patch.custom_tools[0]?.name ?? "tool"}”`
-            : `Saved ${patch.custom_tools.length} custom tools`,
-        );
-      } else {
-        setStatus("Agent settings saved");
-      }
+      setStatus("Agent settings saved");
       return saved;
     },
     [appConfig],
@@ -2163,17 +2140,10 @@ export function useDreamForge() {
   }, [openInpaintMaskEditor]);
 
   useEffect(() => {
-    if (studioModeForTask !== "inpaint") {
+    if (studioModeForTask !== "inpaint" && studioModeForTask !== "edit") {
       setInpaintCanvasFocus(false);
     }
   }, [studioModeForTask]);
-
-  useEffect(() => {
-    if (!appConfig) return;
-    if (uiExperience === "simple" && appConfig.ui.studio_mode === "agent") {
-      void saveAppConfigPatch({ ui: { studio_mode: "generate" } });
-    }
-  }, [appConfig, saveAppConfigPatch, uiExperience]);
 
   const runAgentProviderTest = useCallback(
     async (patch?: DreamForgeAppConfigPatch) => {
@@ -2306,20 +2276,10 @@ export function useDreamForge() {
       const studioMode =
         meta?.studioMode ??
         ((appConfig?.ui.studio_mode ?? "generate") as StudioMode);
-      let sanitized = sanitizeEditFamilySettings(preparedSettings, studioMode);
-      if (studioMode === "toolbox") {
-        const resolvedCustomTool = resolveCustomTool(
-          appConfig?.custom_tools,
-          sanitized.custom_tool_id,
-        );
-        if (resolvedCustomTool) {
-          sanitized = { ...sanitized, custom_tool_id: resolvedCustomTool.id };
-        }
-      } else {
-        // A toolbox selection can survive in React state after switching tabs.
-        // Never let it hijack normal Generate/Edit/Agent submissions.
-        sanitized = { ...sanitized, custom_tool_id: undefined };
-      }
+      let sanitized: GenerationSettings = {
+        ...sanitizeEditFamilySettings(preparedSettings, studioMode),
+        custom_tool_id: undefined,
+      };
       sanitized = await enforceCreativeTaskSettingsRemote(sanitized, {
         studioMode,
         gallery: modelGalleryAll,
@@ -2340,17 +2300,30 @@ export function useDreamForge() {
         setStatus("Select a base model");
         return false;
       }
+      let routeModelDependencies = modelDependencies;
+      let routeStudioResources = studioResources;
+      if (studioMode === "edit") {
+        try {
+          const [modelCheck, studioCheck] = await Promise.all([
+            checkModelDependencies(sanitized.model, sanitized.performance ?? null),
+            checkStudioResources("edit", undefined, sanitized.model),
+          ]);
+          routeModelDependencies = { ready: modelCheck.ready, missing: modelCheck.missing ?? [] };
+          routeStudioResources = { ready: studioCheck.ready, missing: (studioCheck.missing ?? []) as ModelDependencyItem[] };
+        } catch (error) {
+          setStatus(`Could not verify Qwen Edit assets: ${String(error)}`);
+          return false;
+        }
+      }
       const mergedMissing = mergeAllCompanionMissing({
-        modelMissing: modelDependencies.missing,
-        studioMissing: studioResources.missing,
-        taskWorkflowMissing: taskWorkflowDependencies.missing,
-        customToolWorkflowMissing: sanitized.custom_tool_id?.trim()
-          ? customToolDependencies.missing
-          : [],
+        modelMissing: routeModelDependencies.missing,
+        studioMissing: routeStudioResources.missing,
+        taskWorkflowMissing: [],
+        customToolWorkflowMissing: [],
         agentPlan: agentPlanRef.current,
         settingsSnapshot: computePlanSettingsSnapshot(sanitized, studioMode),
         lastError,
-        skipBaseModelCompanions: Boolean(sanitized.custom_tool_id?.trim()),
+        skipBaseModelCompanions: false,
       });
       const mergedMissingCount = mergedMissing.length;
       const readiness = computeGenerateReadiness({
@@ -2361,16 +2334,15 @@ export function useDreamForge() {
         prompt,
         model: sanitized.model ?? "",
         modelDependenciesReady:
-          modelDependencies.ready &&
-          studioResources.ready &&
+          routeModelDependencies.ready &&
+          routeStudioResources.ready &&
           mergedMissingCount === 0,
         missingCompanionCount: mergedMissingCount,
-        studioMissingAssetCount: studioResources.missing.length,
+        studioMissingAssetCount: routeStudioResources.missing.length,
         settings: sanitized,
         modelGallery: modelGalleryAll,
         studioMode,
         inpaintMaskSyncing,
-        customTools: appConfig?.custom_tools,
       });
       if (!readiness.ok) {
         setStatus(readiness.reason);
@@ -2413,11 +2385,7 @@ export function useDreamForge() {
         studio_mode: studioMode,
         workflow_mode:
           sanitized.workflow_mode ??
-          (studioMode === "generate"
-            ? "generate"
-            : studioMode === "toolbox"
-              ? "edit"
-              : studioMode),
+          (studioMode === "generate" ? "generate" : studioMode),
       };
       const activeModel = findGalleryModel(modelGalleryAll, params.model ?? "");
       const modelFamily = (activeModel?.family ?? "").toLowerCase();
@@ -2435,7 +2403,7 @@ export function useDreamForge() {
       const routeWarning = routed.warning;
       params = applyVaryAmountAtSubmit(params);
       params = applyUpscalePresetAtSubmit(params);
-      params = applyReferencesAtSubmit(params, studioMode);
+      params = applyReferencesAtSubmit(params, studioMode, modelFamily);
       params = applyMultiImageComposeAtSubmit(params, studioMode, modelGalleryAll);
       params = applyAutoEnhanceAtSubmit(params);
       params = applyIdentityAtSubmit(params, modelGalleryAll, {
@@ -2612,7 +2580,9 @@ export function useDreamForge() {
 
   const planApplyAndRun = useCallback(
     async ({ run, silent = false }: { run: boolean; silent?: boolean }) => {
-      const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+      const configuredMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+      const studioMode = configuredMode === "agent" || configuredMode === "upscale"
+        ? configuredMode : imageTaskForRequest(settingsRef.current);
       if (!silent) {
         setStatus(run ? "Planning and starting…" : "Planning route…");
       }
@@ -2706,7 +2676,6 @@ export function useDreamForge() {
             modelGallery: modelGalleryAll,
             studioMode: targetMode,
             inpaintMaskSyncing,
-            customTools: appConfig?.custom_tools,
           });
           if (!localReady.ok && !localReady.missingCompanions) {
             setStatus(localReady.reason);
@@ -2765,7 +2734,7 @@ export function useDreamForge() {
 
   useEffect(() => {
     const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
-    if (studioMode !== "inpaint" || generatingRef.current) return;
+    if ((studioMode !== "inpaint" && studioMode !== "edit") || generatingRef.current) return;
     const current = settingsRef.current;
     if (!current.input_image?.trim() || !current.inpaint_mask_path?.trim()) return;
     const timer = window.setTimeout(() => {
@@ -2789,11 +2758,11 @@ export function useDreamForge() {
   const runEnhancePrompt = useCallback(async () => {
     const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
     if (studioMode === "agent") {
-      setStatus("Switch to Generate, Edit, Inpaint, or Upscale to enhance prompts");
+      setStatus("Switch to Create or Edit to enhance prompts");
       return;
     }
-    if (studioMode !== "generate") {
-      setStatus("Manual prompt enhance is available in Generate mode only");
+    if (studioMode !== "generate" && studioMode !== "edit") {
+      setStatus("Prompt enhance is available in Create and Edit modes");
       return;
     }
     const current = settingsRef.current;
@@ -2808,10 +2777,22 @@ export function useDreamForge() {
 
   const handleEnhancePromptCall = useCallback(async () => {
     const current = settingsRef.current;
-    const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
-    const sanitized = sanitizeEditFamilySettings(current, studioMode);
+    const studioMode = imageTaskForRequest(current);
+    const routed = await enforceCreativeTaskSettingsRemote(
+      sanitizeEditFamilySettings(current, studioMode),
+      {
+        studioMode,
+        gallery: modelGalleryAll,
+        advancedMode,
+        vramProfile: current.vram_profile,
+        vramGb,
+        mpsAvailable,
+        selectedImage: selected?.images?.[0],
+        userPickedModel: userPickedModelRef.current,
+      },
+    );
     const res = await enhanceStudioPrompt({
-      ...sanitized,
+      ...sanitizeSettingsForStudioMode(studioMode, routed),
       studio_mode: studioMode,
       ...enhancePrefsFromAppConfig(appConfig),
     });
@@ -2822,7 +2803,7 @@ export function useDreamForge() {
       prompt: res.prompt ?? "",
       negative_prompt: res.negative_prompt ?? "",
     };
-  }, [appConfig]);
+  }, [appConfig, modelGalleryAll, advancedMode, vramGb, mpsAvailable, selected]);
 
   const handleApplyEnhancedPrompt = useCallback((prompt: string, negativePrompt?: string) => {
     const patch: Partial<GenerationSettings> = { prompt };
@@ -2993,8 +2974,12 @@ export function useDreamForge() {
 
   const runGenerateVariants = useCallback(
     async (count: number) => {
-      const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
-      if (studioMode !== "generate") return;
+      const configuredMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+      if (configuredMode === "agent" || configuredMode === "upscale" || imageTaskForRequest(settingsRef.current) !== "generate") {
+        setStatus("Variants are available for image generation, not source edits");
+        return;
+      }
+      const studioMode: StudioMode = "generate";
       if (await promptMissingCompanionsDownloadRef.current?.()) return;
       const n = Math.min(imageNumberMax, Math.max(1, Math.round(count)));
       const current = { ...settingsRef.current, image_number: 1 };
@@ -3079,8 +3064,10 @@ export function useDreamForge() {
   );
 
   const runGenerate = useCallback(async () => {
-    const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
-    if (studioMode !== "agent") {
+    const configuredMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+    const studioMode = configuredMode === "agent" || configuredMode === "upscale"
+      ? configuredMode : imageTaskForRequest(settingsRef.current);
+    if (studioMode !== "agent" && studioMode !== "edit") {
       if (await promptMissingCompanionsDownloadRef.current?.()) return;
     }
     if (studioMode === "agent") {
@@ -3092,7 +3079,7 @@ export function useDreamForge() {
       Boolean(current.execute_workflow_plan) &&
       Array.isArray(current.workflow_plan) &&
       current.workflow_plan.length > 0;
-    if (studioMode !== "generate" || usesWorkflowPlan) {
+    if (usesWorkflowPlan) {
       await planApplyAndRun({ run: true });
       return;
     }
@@ -3100,8 +3087,22 @@ export function useDreamForge() {
     // "Image number > 1" on the primary Generate action means running a seed
     // batch of that many jobs and showing them all in the result tray.
     const requestedImages = Math.round(Number(current.image_number ?? 1));
-    if (requestedImages > 1) {
+    if (studioMode === "generate" && requestedImages > 1) {
       await runGenerateVariants(requestedImages);
+      return;
+    }
+    if (studioMode === "edit") {
+      const performance = current.performance === "Speed" || current.performance === "Custom..."
+        ? current.performance : "Quality";
+      await startGeneration({
+        ...current,
+        ...qwenImage21Defaults(),
+        performance,
+        ...(performance === "Custom..."
+          ? { steps: current.steps, cfg_scale: current.cfg_scale, sampler: current.sampler, scheduler: current.scheduler }
+          : QWEN_IMAGE21_PROFILES[performance]),
+        input_image: activeReferencePath(current, "generate"),
+      }, { studioMode });
       return;
     }
     const sanitized = sanitizeEditFamilySettings(current, studioMode);
@@ -3198,7 +3199,9 @@ export function useDreamForge() {
   }, [settings.vram_profile, workerReady, restarting, runRestartEngine]);
 
   useEffect(() => {
-    const mode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+    const configuredMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+    const mode = configuredMode === "agent" || configuredMode === "upscale"
+      ? configuredMode : imageTaskForRequest(settings);
     if (mode === "generate" || mode === "agent") {
       setStudioResources({ ready: true, missing: [] });
       return;
@@ -3207,7 +3210,7 @@ export function useDreamForge() {
     void checkStudioResources(
       mode,
       mode === "upscale" ? settings.upscale_method ?? undefined : undefined,
-      settingsRef.current.model || undefined,
+      (mode === "edit" ? selectCuratedEditModel(modelGalleryAll) : settingsRef.current.model) || undefined,
     )
       .then((res) => {
         if (cancelled) return;
@@ -3226,6 +3229,11 @@ export function useDreamForge() {
     appConfig?.ui.studio_mode,
     settings.upscale_method,
     settings.model,
+    settings.prompt,
+    settings.input_image,
+    settings.reference_image,
+    settings.inpaint_mask_path,
+    modelGalleryAll,
     companionDownloadPhase,
   ]);
 
@@ -3267,85 +3275,9 @@ export function useDreamForge() {
     companionDownloadPhase,
   ]);
 
-  useEffect(() => {
-    const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
-    const task = settings.edit_task?.trim();
-    if (!workerReady || studioMode !== "toolbox" || !task) {
-      setTaskWorkflowDependencies({ ready: true, missing: [] });
-      return;
-    }
-    let cancelled = false;
-    void checkWorkflowTaskDependencies(task)
-      .then((result) => {
-        if (cancelled) return;
-        const missing = (result.missing ?? []) as ModelDependencyItem[];
-        setTaskWorkflowDependencies({
-          ready: Boolean(result.ready) || missing.length === 0,
-          missing,
-        });
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setTaskWorkflowDependencies({ ready: true, missing: [] });
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    appConfig?.ui.studio_mode,
-    settings.edit_task,
-    workerReady,
-    companionDownloadPhase,
-  ]);
-
-  useEffect(() => {
-    const tools = appConfig?.custom_tools ?? [];
-    if (!tools.length) return;
-    const currentId = settings.custom_tool_id?.trim();
-    const resolved = resolveCustomTool(tools, currentId);
-    if (!resolved || resolved.id === currentId) return;
-    patchSettings({ custom_tool_id: resolved.id });
-  }, [appConfig?.custom_tools, patchSettings, settings.custom_tool_id]);
-
-  useEffect(() => {
-    const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
-    const customTool = resolveCustomTool(
-      appConfig?.custom_tools,
-      settings.custom_tool_id,
-    );
-    const customToolId = customTool?.id;
-    if (!workerReady || studioMode !== "toolbox" || !customToolId) {
-      setCustomToolDependencies({ ready: true, missing: [] });
-      return;
-    }
-    let cancelled = false;
-    void fetchCustomToolDependencies(customToolId, true)
-      .then((result) => {
-        if (cancelled) return;
-        const missing = (result.missing ?? []) as ModelDependencyItem[];
-        setCustomToolDependencies({
-          ready: Boolean(result.ready) || missing.length === 0,
-          missing,
-        });
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setCustomToolDependencies({ ready: true, missing: [] });
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    appConfig?.ui.studio_mode,
-    appConfig?.custom_tools,
-    settings.custom_tool_id,
-    workerReady,
-    companionDownloadPhase,
-  ]);
-
-  const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+  const configuredStudioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+  const studioMode = configuredStudioMode === "agent" || configuredStudioMode === "upscale"
+    ? configuredStudioMode : imageTaskForRequest(settings);
   const planSettingsSnapshot = useMemo(
     () => computePlanSettingsSnapshot(settings, studioMode),
     [settings, studioMode],
@@ -3363,40 +3295,40 @@ export function useDreamForge() {
       }),
     [settings, selected, previewUrl, studioMode],
   );
-  const skipBaseModelCompanions = Boolean(settings.custom_tool_id?.trim());
   const generateReadiness = useMemo(
     () => {
+      const routedSettings = studioMode === "edit" ? {
+        ...settings,
+        model: selectCuratedEditModel(modelGalleryAll),
+        input_image: activeReferencePath(settings, "generate"),
+      } : settings;
       const mergedMissingCount = mergeAllCompanionMissing({
         modelMissing: modelDependencies.missing,
         studioMissing: studioResources.missing,
-        taskWorkflowMissing: taskWorkflowDependencies.missing,
-        customToolWorkflowMissing: customToolDependencies.missing,
+        taskWorkflowMissing: [],
+        customToolWorkflowMissing: [],
         agentPlan,
         settingsSnapshot: planSettingsSnapshot,
         lastError,
-        skipBaseModelCompanions,
+        skipBaseModelCompanions: false,
       }).length;
       return computeGenerateReadiness({
         workerReady,
         generating,
         engineState,
         engineLabel: engineLabel(engineState, bootMessage),
-        prompt: settings.prompt ?? "",
-        model: settings.model ?? "",
+        prompt: routedSettings.prompt ?? "",
+        model: routedSettings.model ?? "",
         modelDependenciesReady:
           modelDependencies.ready &&
-          studioResources.ready &&
-          customToolDependencies.ready &&
-          mergedMissingCount === 0,
+          studioResources.ready && mergedMissingCount === 0,
         missingCompanionCount: mergedMissingCount,
         studioMissingAssetCount: studioResources.missing.length,
-        customToolMissingCount: customToolDependencies.missing.length,
-        settings,
+        settings: routedSettings,
         modelGallery: modelGalleryAll,
         studioMode,
         editPlanState: isEditFamilyMode(studioMode) ? editPlanState : undefined,
         inpaintMaskSyncing,
-        customTools: appConfig?.custom_tools,
       });
     },
     [
@@ -3407,8 +3339,6 @@ export function useDreamForge() {
       settings,
       modelDependencies,
       studioResources,
-      taskWorkflowDependencies,
-      customToolDependencies,
       agentPlan,
       planSettingsSnapshot,
       lastError,
@@ -3416,8 +3346,6 @@ export function useDreamForge() {
       studioMode,
       editPlanState,
       inpaintMaskSyncing,
-      appConfig?.custom_tools,
-      skipBaseModelCompanions,
     ],
   );
   const effectiveGenerateReadiness = useMemo(() => generateReadiness, [generateReadiness]);
@@ -3426,12 +3354,12 @@ export function useDreamForge() {
       mergeAllCompanionMissing({
         modelMissing: modelDependencies.missing,
         studioMissing: studioResources.missing,
-        taskWorkflowMissing: taskWorkflowDependencies.missing,
-        customToolWorkflowMissing: customToolDependencies.missing,
+        taskWorkflowMissing: [],
+        customToolWorkflowMissing: [],
         agentPlan,
         settingsSnapshot: planSettingsSnapshot,
         lastError,
-        skipBaseModelCompanions,
+        skipBaseModelCompanions: false,
       }),
     [
       agentPlan,
@@ -3439,9 +3367,6 @@ export function useDreamForge() {
       lastError,
       modelDependencies.missing,
       studioResources.missing,
-      taskWorkflowDependencies.missing,
-      customToolDependencies.missing,
-      skipBaseModelCompanions,
     ],
   );
   const missingDownloadCount = mergedMissingDependencies.length;
@@ -3537,11 +3462,7 @@ export function useDreamForge() {
       setAgentPlan(null);
       if (mode === "inpaint") {
         openInpaintMaskEditor();
-        setStatus(
-          uiExperience === "simple"
-            ? `Attached ${referenceStatusLabel(studioMode, resolved)} — paint on the canvas`
-            : `Attached ${referenceStatusLabel(studioMode, resolved)} — paint on the canvas or use full-screen mask tools`,
-        );
+        setStatus(`Attached ${referenceStatusLabel(studioMode, resolved)} — paint on the canvas or use full-screen mask tools`);
       } else if (studioMode === "generate" && mode === "reference") {
         const routeModel = findGalleryModel(
           modelGalleryAll,
@@ -3565,7 +3486,7 @@ export function useDreamForge() {
   const attachExtraReferenceImage = useCallback(
     async (path: string) => {
       const resolved = await resolveReferenceImagePath(path);
-      const studioMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
+      const studioMode = imageTaskForRequest(settingsRef.current);
       const useReferenceSlots =
         (studioMode === "generate" || studioMode === "edit" || studioMode === "agent") &&
         !isSimpleExperience(uiExperience);
@@ -3627,7 +3548,8 @@ export function useDreamForge() {
 
   const refreshModelDependencies = useCallback(async (modelName?: string) => {
     const model = (modelName ?? settingsRef.current.model ?? "").trim();
-    const performance = settingsRef.current.performance ?? null;
+    const performance = imageTaskForRequest(settingsRef.current) === "edit"
+      ? "Quality" : settingsRef.current.performance ?? null;
     if (!model) {
       const empty = { missing: [] as ModelDependencyItem[], ready: true };
       setModelDependencies(empty);
@@ -3653,9 +3575,7 @@ export function useDreamForge() {
 
   const setStudioMode = useCallback(
     async (mode: StudioMode) => {
-      if (mode === "agent" && (appConfig?.ui.experience ?? "pro") === "simple") {
-        mode = "generate";
-      }
+      mode = normalizeStudioModeForExperience(mode, appConfig?.ui.experience ?? "pro");
       const previousMode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
       if (mode !== previousMode) {
         userPickedModelRef.current = false;
@@ -3759,7 +3679,7 @@ export function useDreamForge() {
       ) {
         void applyModelProfile(plan.profileItem);
       }
-      if (mode === "inpaint" || mode === "edit" || mode === "upscale" || mode === "toolbox") {
+      if (mode === "inpaint" || mode === "edit" || mode === "upscale") {
         let studioMissing: ModelDependencyItem[] = [];
         try {
           const studioRes = await checkStudioResources(
@@ -3824,11 +3744,7 @@ export function useDreamForge() {
         await setStudioMode(mode);
         if (mode === "inpaint") {
           openInpaintMaskEditor();
-          setStatus(
-            uiExperience === "simple"
-              ? "Attached image — paint the fix region on the canvas"
-              : "Attached image — paint on the canvas or open full-screen mask tools",
-          );
+          setStatus("Attached image — paint on the canvas or open full-screen mask tools");
         } else {
           setStatus(
             mode === "edit"
@@ -3866,11 +3782,7 @@ export function useDreamForge() {
           patchSettings({ inpaint_mask_path: undefined });
           openInpaintMaskEditor();
         }
-        setStatus(
-          uiExperience === "simple"
-            ? `Attached ${referenceStatusLabel(mode, resolved)} — paint on the canvas`
-            : `Attached ${referenceStatusLabel(mode, resolved)} - paint a fresh mask`,
-        );
+        setStatus(`Attached ${referenceStatusLabel(mode, resolved)} - paint a fresh mask`);
       } else if (currentMode === mode) {
         setStatus(`Attached ${referenceStatusLabel(mode, resolved)}`);
       }
@@ -4056,18 +3968,18 @@ export function useDreamForge() {
     const plan = agentPlanRef.current;
     const plannedModel =
       typeof plan?.proposed?.model === "string" ? plan.proposed.model : "";
-    const model = ((settingsRef.current.model ?? "") || plannedModel).trim();
     const studioMode =
       opts?.studioMode ??
-      ((appConfig?.ui.studio_mode ?? "generate") as StudioMode);
-    const skipBaseModelCompanions =
-      studioMode === "toolbox" && Boolean(settingsRef.current.custom_tool_id?.trim());
+      imageTaskForRequest(settingsRef.current);
+    const model = (studioMode === "edit"
+      ? selectCuratedEditModel(modelGalleryAll)
+      : ((settingsRef.current.model ?? "") || plannedModel)).trim();
     let fromModel = modelDependencies.missing;
-    if (model && !skipBaseModelCompanions) {
+    if (model) {
       try {
         const res = await checkModelDependencies(
           model,
-          settingsRef.current.performance ?? null,
+          studioMode === "edit" ? "Quality" : settingsRef.current.performance ?? null,
         );
         fromModel = res.missing ?? [];
         setModelDependencies({
@@ -4089,7 +4001,7 @@ export function useDreamForge() {
           studioMode === "upscale"
             ? settingsRef.current.upscale_method ?? undefined
             : undefined,
-          settingsRef.current.model || undefined,
+          model || undefined,
         );
         studioMissing = (studioRes.missing ?? []) as ModelDependencyItem[];
         setStudioResources({
@@ -4103,23 +4015,21 @@ export function useDreamForge() {
     const merged = mergeAllCompanionMissing({
       modelMissing: fromModel,
       studioMissing,
-      taskWorkflowMissing: taskWorkflowDependencies.missing,
-      customToolWorkflowMissing:
-        studioMode === "toolbox" ? customToolDependencies.missing : [],
+      taskWorkflowMissing: [],
+      customToolWorkflowMissing: [],
       agentPlan: plan,
       settingsSnapshot: computePlanSettingsSnapshot(settingsRef.current, studioMode),
       lastError,
-      skipBaseModelCompanions,
+      skipBaseModelCompanions: false,
     });
-    return { model: skipBaseModelCompanions ? "workflow-assets" : model || "workflow-assets", merged };
+    return { model: model || "workflow-assets", merged };
   },
     [
       appConfig?.ui.studio_mode,
       lastError,
       modelDependencies.missing,
+      modelGalleryAll,
       studioResources.missing,
-      taskWorkflowDependencies.missing,
-      customToolDependencies.missing,
     ],
   );
 
@@ -4144,8 +4054,7 @@ export function useDreamForge() {
         ((appConfig?.ui.studio_mode ?? "generate") as StudioMode);
       const needsStudio =
         studioMode === "inpaint" || studioMode === "edit" || studioMode === "upscale";
-      const prepStudioMode =
-        needsStudio || studioMode === "toolbox" ? studioMode : undefined;
+      const prepStudioMode = needsStudio ? studioMode : undefined;
       const prepareLabel = studioPrepareFallbackLabel(studioMode);
 
       const currentSettings = sanitizeSettingsForStudioMode(studioMode, settingsRef.current);
@@ -4168,7 +4077,6 @@ export function useDreamForge() {
         currentSettings.performance ?? "",
         upscaleForPrep,
         currentSettings.edit_task ?? "",
-        currentSettings.custom_tool_id ?? "",
       ].join("|");
       const prepCached = assetPrepReadyRef.current;
       if (
@@ -4194,32 +4102,11 @@ export function useDreamForge() {
                 : undefined,
           performance: currentSettings.performance ?? null,
           edit_task: currentSettings.edit_task?.trim() || null,
-          custom_tool_id: currentSettings.custom_tool_id?.trim() || null,
           auto_download_tier_a: true,
           auto_download_tier_b: false,
           auto_install_nodes: true,
           template_id: templateId ?? null,
         });
-        const taskMissing = (result.missing ?? []).filter((item) =>
-          isWorkflowModelItem(item as ModelDependencyItem),
-        ) as ModelDependencyItem[];
-        setTaskWorkflowDependencies({
-          ready: taskMissing.length === 0,
-          missing: taskMissing,
-        });
-        const customToolId = currentSettings.custom_tool_id?.trim();
-        if (customToolId) {
-          try {
-            const customRes = await fetchCustomToolDependencies(customToolId, true);
-            const customMissing = (customRes.missing ?? []) as ModelDependencyItem[];
-            setCustomToolDependencies({
-              ready: Boolean(customRes.ready) || customMissing.length === 0,
-              missing: customMissing,
-            });
-          } catch {
-            /* keep prior custom tool dependency snapshot */
-          }
-        }
         const lastSetup = result.node_setup?.[result.node_setup.length - 1];
         if (lastSetup) {
           setCompanionBootstrapMessage(lastSetup);
@@ -4319,7 +4206,6 @@ export function useDreamForge() {
                     : undefined,
               performance: settingsRef.current.performance ?? null,
               edit_task: settingsRef.current.edit_task?.trim() || null,
-              custom_tool_id: currentSettings.custom_tool_id?.trim() || null,
               auto_download_tier_a: true,
               auto_download_tier_b: true,
               auto_install_nodes: true,
@@ -4330,13 +4216,6 @@ export function useDreamForge() {
                   settingsRef.current.post_upscale_enabled,
                 ) ??
                 null,
-            });
-            const recheckTaskMissing = (recheck.missing ?? []).filter((item) =>
-              isWorkflowModelItem(item as ModelDependencyItem),
-            ) as ModelDependencyItem[];
-            setTaskWorkflowDependencies({
-              ready: recheckTaskMissing.length === 0,
-              missing: recheckTaskMissing,
             });
             if (recheck.ready) {
               assetPrepReadyRef.current = { key: prepCacheKey, at: Date.now() };
@@ -4486,17 +4365,6 @@ export function useDreamForge() {
           /* keep cached studio state */
         }
       }
-      if (mode === "toolbox" && settingsRef.current.edit_task?.trim()) {
-        try {
-          const taskRes = await checkWorkflowTaskDependencies(settingsRef.current.edit_task);
-          setTaskWorkflowDependencies({
-            ready: Boolean(taskRes.ready) || (taskRes.missing?.length ?? 0) === 0,
-            missing: (taskRes.missing ?? []) as ModelDependencyItem[],
-          });
-        } catch {
-          /* keep cached task workflow state */
-        }
-      }
       const { merged } = await resolveMergedMissingDependencies();
       if (merged.length === 0 && companionDownloadPhase === "done") {
         setStatus("Companion files ready — you can generate now");
@@ -4534,20 +4402,23 @@ export function useDreamForge() {
       clearTimeout(modelDepsDebounceRef.current);
     }
     modelDepsDebounceRef.current = setTimeout(() => {
-      void refreshModelDependencies(settings.model);
+      const model = imageTaskForRequest(settings) === "edit"
+        ? selectCuratedEditModel(modelGalleryAll) : settings.model;
+      void refreshModelDependencies(model);
     }, 450);
     return () => {
       if (modelDepsDebounceRef.current) {
         clearTimeout(modelDepsDebounceRef.current);
       }
     };
-  }, [settings.model, settings.performance, refreshModelDependencies]);
+  }, [settings, modelGalleryAll, refreshModelDependencies]);
 
   useEffect(() => {
     assetPrepReadyRef.current = null;
   }, [settings.model, settings.performance, appConfig?.ui.studio_mode]);
 
   const referenceModelFamily = useMemo(() => {
+    if (imageTaskForRequest(settings) === "edit") return "qwen_image_2.1";
     const item = findGalleryModel(modelGalleryAll, settings.model ?? "");
     const baseFamily = item?.family ?? "";
     const mode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;
@@ -4718,7 +4589,7 @@ export function useDreamForge() {
     appConfig,
     uiExperience,
     advancedMode,
-    studioMode: (appConfig?.ui.studio_mode ?? "generate") as StudioMode,
+    studioMode,
     editPlanState,
     agentPlannedMode,
     setStudioMode,

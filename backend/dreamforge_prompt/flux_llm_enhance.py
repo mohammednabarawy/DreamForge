@@ -23,6 +23,7 @@ FAMILY_PROMPT_PURPOSES: dict[str, str] = {
     "sd3": "flux_generate",
     "qwen": "qwen_generate",
     "qwen_image": "qwen_generate",
+    "qwen_image_2.1": "qwen_generate",
     "hidream": "hidream_generate",
     "hidream_o1": "hidream_generate",
     "krea2": "krea2_generate",
@@ -69,6 +70,7 @@ _FAMILY_PROFILE_LABELS: dict[str, str] = {
     "qwen": "Qwen Image",
     "qwen_image": "Qwen Image",
     "qwen_image_edit": "Qwen Image Edit",
+    "qwen_image_2.1": "Qwen Image 2.1",
     "hidream": "HiDream",
     "hidream_o1": "HiDream",
     "krea2": "Krea 2",
@@ -351,6 +353,7 @@ def run_flux_llm_enhance(
     purpose: str,
     params: dict[str, Any] | None = None,
     enhance_strength: str | None = None,
+    context: str = "",
 ) -> dict[str, Any]:
     """Expand or rewrite a prompt via configured DreamForge brain."""
     from dreamforge_brain import AiBrain
@@ -371,7 +374,7 @@ def run_flux_llm_enhance(
     skip, skip_reason = should_skip_llm_enhance(
         prompt_raw, purpose_key, enhance_strength=strength
     )
-    if skip:
+    if skip and not context:
         return {
             "ok": True,
             "prompt": prompt_raw,
@@ -386,6 +389,8 @@ def run_flux_llm_enhance(
         system, user_msg = build_enhance_messages(
             purpose_key, prompt_raw, enhance_strength=strength
         )
+        if context:
+            user_msg += f"\n\nAttached-image context (not output text): {context}"
     except FileNotFoundError as exc:
         return {"ok": False, "error": str(exc)}
 

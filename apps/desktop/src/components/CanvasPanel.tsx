@@ -13,6 +13,7 @@ import type { EngineState } from "../lib/engine";
 import type { LiveProgress } from "../lib/generationProgressUi";
 import type { StudioMode } from "../lib/model-selection";
 import type { AgentPlanSnapshot, AgentTranscriptMessage } from "../lib/studioBridge";
+import { inspectImageFile } from "../lib/studioBridge";
 import type { UiExperience } from "../lib/experienceUi";
 import { isSimpleExperience } from "../lib/experienceUi";
 import { pathToAssetUrl } from "../lib/preview-display";
@@ -70,7 +71,6 @@ type Props = {
   companionBootstrapMessage?: string;
   studioMode: StudioMode;
   agentPlannedMode?: StudioMode | null;
-  onStudioModeChange: (mode: StudioMode) => void;
   settings: GenerationSettings;
   onChange: (patch: Partial<GenerationSettings>) => void;
   mentions: Mention[];
@@ -139,7 +139,6 @@ export function CanvasPanel({
   companionBootstrapMessage,
   studioMode,
   agentPlannedMode,
-  onStudioModeChange,
   settings,
   onChange,
   mentions,
@@ -207,6 +206,8 @@ export function CanvasPanel({
     naturalW: 0,
     naturalH: 0,
   });
+  const [outputSize, setOutputSize] = useState<{ url: string; width: number; height: number } | null>(null);
+  const [outputInfo, setOutputInfo] = useState<{ path: string; width: number; height: number; format: string; transparent: boolean } | null>(null);
   const compareModeRef = useRef<CompareMode>(compareMode);
   compareModeRef.current = compareMode;
   const compareImageClass =
@@ -232,12 +233,12 @@ export function CanvasPanel({
     (studioMode === "edit" || studioMode === "inpaint" || studioMode === "upscale");
   const inpaintContext = agentPlan?.inpaint_context;
   const showInlineMask =
-    studioMode === "inpaint" &&
+    (studioMode === "edit" || studioMode === "inpaint") &&
     Boolean(inputImagePath) &&
     !generating &&
     Boolean(inpaintCanvasFocus);
   const showContextOverlay =
-    studioMode === "inpaint" &&
+    (studioMode === "edit" || studioMode === "inpaint") &&
     Boolean(inpaintContext?.crop?.enabled || inpaintContext?.mask_bbox) &&
     !generating &&
     (showInlineMask || compareMode === "before" || !previewUrl);
@@ -284,6 +285,26 @@ export function CanvasPanel({
       naturalH: img.naturalHeight,
     });
   }, []);
+
+  const recordOutputSize = useCallback((image: HTMLImageElement) => {
+    measureCanvasLayout();
+    if (previewUrl && !generating && image.naturalWidth && image.naturalHeight) {
+      setOutputSize({ url: previewUrl, width: image.naturalWidth, height: image.naturalHeight });
+    }
+  }, [generating, measureCanvasLayout, previewUrl]);
+
+  useEffect(() => {
+    if (!activeCandidatePath || generating) return;
+    let cancelled = false;
+    setOutputInfo(null);
+    void inspectImageFile(activeCandidatePath).then((info) => {
+      if (!cancelled && info.ok && info.width && info.height) {
+        setOutputInfo({ path: activeCandidatePath, width: info.width, height: info.height,
+          format: info.format ?? "Image", transparent: Boolean(info.transparent) });
+      }
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [activeCandidatePath, generating]);
 
   useEffect(() => {
     const frame = canvasViewportRef.current;
@@ -552,7 +573,7 @@ export function CanvasPanel({
                     decoding="async"
                     draggable={false}
                     className={compareImageClass}
-                    onLoad={measureCanvasLayout}
+                    onLoad={(event) => recordOutputSize(event.currentTarget)}
                   />
                   <div
                     className="pointer-events-none absolute inset-0 overflow-hidden"
@@ -615,7 +636,10 @@ export function CanvasPanel({
                   decoding="async"
                   draggable={false}
                   className={compareImageClass}
-                  onLoad={measureCanvasLayout}
+                  onLoad={(event) => {
+                    if (canvasPreviewUrl === previewUrl) recordOutputSize(event.currentTarget);
+                    else measureCanvasLayout();
+                  }}
                 />
                 {showContextOverlay ? (
                   <InpaintContextOverlay context={inpaintContext} />
@@ -725,6 +749,8 @@ export function CanvasPanel({
           <ResultTray
             images={resultCandidates}
             activePath={activeCandidatePath ?? undefined}
+            outputSize={outputSize?.url === previewUrl ? outputSize : undefined}
+            outputInfo={outputInfo && outputInfo.path === activeCandidatePath ? outputInfo : undefined}
             sourcePath={compareSourcePath || undefined}
             onSelect={onSelectResultCandidate}
             onRetry={onRetryGeneration}
@@ -734,7 +760,7 @@ export function CanvasPanel({
             onAutoEnhance={onAutoEnhance}
           />
         ) : null}
-        {canCompare && studioMode === "inpaint" && compareMode !== "before" && inputImagePath && (
+        {canCompare && (studioMode === "edit" || studioMode === "inpaint") && compareMode !== "before" && inputImagePath && (
           <button
             type="button"
             onClick={() => {
@@ -788,7 +814,6 @@ export function CanvasPanel({
         settings={settings}
         studioMode={studioMode}
         agentPlannedMode={agentPlannedMode}
-        onStudioModeChange={onStudioModeChange}
         onChange={onChange}
         mentions={mentions}
         generating={generating}

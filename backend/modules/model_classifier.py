@@ -277,7 +277,12 @@ def _family_from_keys(keys: Sequence[str], filename_tokens: set[str]) -> tuple[s
         _has_key_contains(keys, "ff_net.", "img_in.", "img_mlp.", "img_in.", "txt_in.", "txt_norm.")
         or "qwen" in filename_tokens
     ):
-        family = "qwen_image_edit" if "edit" in filename_tokens else "qwen_image"
+        is_qwen_21 = "2" in filename_tokens and "1" in filename_tokens
+        family = (
+            "qwen_image_2.1"
+            if is_qwen_21
+            else "qwen_image_edit" if "edit" in filename_tokens else "qwen_image"
+        )
         reasons.append("MMDiT transformer_blocks (+ Qwen hints) detected")
         return family, reasons
 
@@ -323,14 +328,18 @@ def _family_from_filename(name: str) -> tuple[str, list[str]]:
         reasons.append("filename hints 'krea2'")
         return "krea2", reasons
     if "qwen" in lowered:
-        family = "qwen_image_edit" if "edit" in lowered else "qwen_image"
+        family = (
+            "qwen_image_2.1"
+            if "2.1" in lowered or "2_1" in lowered
+            else "qwen_image_edit" if "edit" in lowered else "qwen_image"
+        )
         reasons.append(f"filename hints '{family}'")
         return family, reasons
     if "hidream" in lowered:
         family = "hidream_o1" if ("o1" in lowered or "hidream_o1" in lowered) else "hidream"
         reasons.append(f"filename hints '{family}'")
         return family, reasons
-    if "flux" in lowered:
+    if "flux" in lowered or "-f1" in lowered or "_f1" in lowered or "f1." in lowered:
         if "klein" in lowered or "flux-2" in lowered or "flux2" in lowered:
             reasons.append("filename hints 'flux2'")
             return "flux2", reasons
@@ -355,9 +364,40 @@ def _family_from_filename(name: str) -> tuple[str, list[str]]:
     )
     if any(token in lowered for token in sd15_hints):
         return "sd15", ["filename hints 'sd 1.5'"]
-    if "sdxl" in lowered or "xl_base" in lowered or "pony" in lowered:
+    if "sdxl" in lowered or "xl_base" in lowered or "pony" in lowered or "_xl" in lowered or "-xl" in lowered or "xl." in lowered or "xl_" in lowered:
         return "sdxl", ["filename hints 'sdxl'"]
     return "unknown", reasons
+
+
+_lora_family_cache: dict[str, str] = {}
+
+def get_lora_family(lora_path: str) -> str:
+    if lora_path in _lora_family_cache:
+        return _lora_family_cache[lora_path]
+    path = Path(lora_path)
+    if not path.exists():
+        try:
+            from dreamforge_prompt.loras import resolve_lora_on_disk
+            resolved = resolve_lora_on_disk(lora_path)
+            if resolved:
+                path = Path(resolved)
+        except Exception:
+            pass
+
+    suffix = path.suffix.lower()
+    keys: list[str] = []
+    if suffix == ".safetensors" and path.exists():
+        header = read_safetensors_header(path)
+        if header is not None:
+            keys = _tensor_keys(header)
+    filename_tokens = _filename_tokens(path.name)
+    family = "unknown"
+    if keys:
+        family, _ = _family_from_keys(keys, filename_tokens)
+    if family == "unknown":
+        family, _ = _family_from_filename(path.name)
+    _lora_family_cache[lora_path] = family
+    return family
 
 
 # --------------------------------------------------------------------------- #

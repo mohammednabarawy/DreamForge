@@ -12,16 +12,12 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import {
-  isFluxFillModel,
-  sortGalleryForInpaintMode,
-} from "../lib/inpaintModel";
 import { inspectorTabsForMode } from "../lib/generationTabVisibility";
 import {
   sortGalleryForUpscaleMode,
 } from "../lib/upscaleModel";
 import {
-  isFluxKontextEditModel,
+  isQwenEditModel,
   sortGalleryForEditMode,
 } from "../lib/editModel";
 import {
@@ -43,16 +39,11 @@ import { StyleThumbnailGrid } from "./StyleThumbnailGrid";
 import { MarketplaceTab } from "./MarketplaceTab";
 import { LoraStackPanel } from "./LoraStackPanel";
 import { GenerationSettingsPanel } from "./GenerationSettingsPanel";
+import { getModelCapabilities } from "../lib/modelCapabilities";
 import { AutomationPanel } from "./AutomationPanel";
-import { RecipeActions } from "./RecipeActions";
-import { RecipeLibraryTab } from "./RecipeLibraryTab";
-import { DiscoverWorkflowTab } from "./DiscoverWorkflowTab";
-import { DiscoverRecipeTab } from "./DiscoverRecipeTab";
 import {
   aggregateLoraKeywords,
   importFooocusStyles,
-  listWorkflowTemplates,
-  type DiscoverWorkflowTemplate,
   type StudioSettings,
 } from "../lib/studioBridge";
 import {
@@ -68,9 +59,8 @@ import {
 } from "../lib/discover";
 import { DEFAULT_MAX_LORA_STACK } from "../lib/loraStack";
 import type { StyleGroup } from "../lib/inventory";
-import { settingsPatchFromRecipe } from "../lib/recipe";
 
-type Tab = "discover_models" | "discover_loras" | "discover_recipes" | "discover_workflows" | "models" | "loras" | "styles" | "recipes" | "settings" | "automation";
+type Tab = "discover_models" | "discover_loras" | "discover_recipes" | "models" | "loras" | "styles" | "recipes" | "settings" | "automation";
 type ModelSort = "recommended" | "name" | "newest" | "largest" | "family";
 
 function formatModelSize(bytes?: number): string {
@@ -103,7 +93,6 @@ type Props = {
   modelDependencies?: { missing: Array<{ id?: string; relative?: string; note?: string }>; ready: boolean };
   companionDownloadBusy?: boolean;
   onDownloadCompanions?: () => void;
-  onInstallCompanionItems?: (items: import("../lib/tauri-api").ModelDependencyItem[]) => void;
   onRefreshModelDependencies?: () => void;
   studioSettings?: StudioSettings | null;
   onSaveStudioSettings?: (patch: StudioSettings) => void | Promise<void>;
@@ -145,7 +134,6 @@ export function InspectorPanel({
   modelDependencies,
   companionDownloadBusy,
   onDownloadCompanions,
-  onInstallCompanionItems,
   onRefreshModelDependencies,
   studioSettings,
   onSaveStudioSettings,
@@ -165,16 +153,13 @@ export function InspectorPanel({
   const [surface, setSurface] = useState<DiscoverLibrarySurface>(() => loadDiscoverLibrarySurface());
   const [libraryTab, setLibraryTab] = useState<DiscoverLibraryTab>(() => loadDiscoverLibraryTab());
   const [discoverTab, setDiscoverTab] = useState<DiscoverTab>(() => loadDiscoverTab());
-  const [workflowTemplates, setWorkflowTemplates] = useState<DiscoverWorkflowTemplate[]>([]);
-  const [workflowLoading, setWorkflowLoading] = useState(false);
-  const [workflowError, setWorkflowError] = useState<string | null>(null);
   const [styleFilter, setStyleFilter] = useState("");
   const [modelFamily, setModelFamily] = useState("all");
   const [modelSort, setModelSort] = useState<ModelSort>("recommended");
 
   const tab: Tab = surface === "discover" ? discoverTab : libraryTab;
   const setTab = useCallback((next: Tab) => {
-    if (next === "discover_models" || next === "discover_loras" || next === "discover_recipes" || next === "discover_workflows") {
+    if (next === "discover_models" || next === "discover_loras" || next === "discover_recipes") {
       setDiscoverTab(next);
       saveDiscoverTab(next);
       return;
@@ -188,53 +173,26 @@ export function InspectorPanel({
     saveDiscoverLibrarySurface(next);
   }, []);
 
-  const applyRecipeToGenerate = useCallback((recipe: Record<string, unknown>, source = "") => {
-    onChange({
-      ...settingsPatchFromRecipe(recipe),
-      use_comfy_server: true,
-      workflow_mode: "generate",
-      workflow_source: source || undefined,
-    });
-    switchSurface("library");
-    setTab("settings");
-  }, [onChange, setTab, switchSurface]);
-
   const handleImportFooocusStyles = useCallback(async (payload: unknown) => {
     const result = await importFooocusStyles(payload);
     if (!result.ok) throw new Error(result.error ?? "Style import failed");
     await onRefreshInventory();
   }, [onRefreshInventory]);
 
-  useEffect(() => {
-    if (surface !== "discover" || discoverTab !== "discover_workflows") return;
-    let alive = true;
-    setWorkflowLoading(true);
-    setWorkflowError(null);
-    void listWorkflowTemplates()
-      .then((result) => {
-        if (!alive) return;
-        if (!result.ok) throw new Error(result.error ?? "Could not load workflow templates");
-        setWorkflowTemplates(result.templates ?? []);
-      })
-      .catch((error) => {
-        if (alive) setWorkflowError(error instanceof Error ? error.message : String(error));
-      })
-      .finally(() => {
-        if (alive) setWorkflowLoading(false);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [discoverTab, surface]);
-
-  const showEditStrength = Boolean(settings.input_image) || ["kontext", "inpaint", "img2img", "qwen_edit"].includes(settings.edit_type ?? "");
-  const isQwenModel = (settings.model ?? activeModelLabel ?? "").toLowerCase().includes("qwen");
+  const selectedModel = modelGallery.find((item) => item.engine_name === settings.model);
+  const selectedQwen21 = selectedModel
+    ? isQwenEditModel(selectedModel)
+    : /qwen.*(?:2\.1|2_1)|(?:2\.1|2_1).*qwen/i.test(settings.model ?? "");
+  const qwen21Selected = studioMode === "edit" || selectedQwen21;
+  const showEditStrength = !qwen21Selected &&
+    (Boolean(settings.input_image) || ["kontext", "inpaint", "img2img", "qwen_edit"].includes(settings.edit_type ?? ""));
+  const isQwenModel = studioMode === "edit" || (settings.model ?? activeModelLabel ?? "").toLowerCase().includes("qwen");
 
   const isEditFamily = isEditFamilyMode(studioMode as StudioMode);
   const powerUserInspector = advancedMode;
   const simpleInspectorLocked = simpleExperience;
   const isUpscale = studioMode === "upscale";
-  const isInpaint = studioMode === "inpaint";
+  const isInpaint = studioMode === "inpaint" || (studioMode === "edit" && Boolean(settings.inpaint_mask_path));
   const isEdit = studioMode === "edit";
   /** Create-style aspect / batch controls — not edit, inpaint, or upscale. */
   const showGenerateLikeSettings =
@@ -248,7 +206,10 @@ export function InspectorPanel({
     [modelGallery],
   );
   const sortedModelGallery = useMemo(() => {
-    let gallery = modelGallery.filter((item) => modelFamily === "all" || item.family === modelFamily);
+    let gallery = modelGallery.filter((item) =>
+      (studioMode !== "edit" || isQwenEditModel(item)) &&
+      (modelFamily === "all" || item.family === modelFamily),
+    );
     if (modelSort !== "recommended") {
       gallery = [...gallery].sort((a, b) => {
         if (modelSort === "newest") return (b.modified_at ?? 0) - (a.modified_at ?? 0);
@@ -259,7 +220,6 @@ export function InspectorPanel({
         return a.caption.localeCompare(b.caption);
       });
     }
-    gallery = sortGalleryForInpaintMode(gallery, studioMode as StudioMode);
     gallery = sortGalleryForUpscaleMode(gallery, studioMode as StudioMode);
     gallery = sortGalleryForEditMode(gallery, studioMode as StudioMode);
     return gallery;
@@ -281,15 +241,15 @@ export function InspectorPanel({
   const curatedInpaintModel = useMemo(
     () =>
       isInpaint
-        ? selectCuratedModelForMode("inpaint", modelGallery, settings.model)
+        ? selectCuratedModelForMode("edit", modelGallery, settings.model)
         : "",
     [isInpaint, modelGallery, settings.model],
   );
 
   const inpaintModelManual = useMemo(() => {
-    if (!isInpaint || !settings.model?.trim()) return false;
+    if (!isInpaint || studioMode === "edit" || !settings.model?.trim()) return false;
     return settings.model !== curatedInpaintModel;
-  }, [curatedInpaintModel, isInpaint, settings.model]);
+  }, [curatedInpaintModel, isInpaint, settings.model, studioMode]);
 
   const curatedEditModel = useMemo(
     () =>
@@ -298,9 +258,9 @@ export function InspectorPanel({
   );
 
   const editModelManual = useMemo(() => {
-    if (!isEdit || !settings.model?.trim()) return false;
+    if (!isEdit || !selectedQwen21 || !settings.model?.trim()) return false;
     return settings.model !== curatedEditModel;
-  }, [curatedEditModel, isEdit, settings.model]);
+  }, [curatedEditModel, isEdit, selectedQwen21, settings.model]);
 
   const routedModelLabel = useMemo(() => {
     if (!isEditFamily) return activeModelLabel;
@@ -342,7 +302,7 @@ export function InspectorPanel({
     if (isInpaint) {
       return inpaintModelManual
         ? `User override · ${activeModelLabel}`
-        : `Default inpaint · ${modelBasename(curatedInpaintModel || routedModelLabel) || "missing"}`;
+        : `Qwen Image 2.1 masked edit · ${modelBasename(curatedInpaintModel || routedModelLabel) || "missing"}`;
     }
     if (isEdit) {
       return editModelManual
@@ -369,8 +329,6 @@ export function InspectorPanel({
   const modelTiles: GalleryTile[] = useMemo(
     () =>
       sortedModelGallery.map((m) => {
-        const fillBadge = isInpaint && isFluxFillModel(m) ? "Fill" : undefined;
-        const kontextBadge = isEdit && isFluxKontextEditModel(m) ? "Kontext" : undefined;
         const categoryBadge = m.category !== "checkpoints" ? m.category : undefined;
         return {
           key: `${m.category}:${m.relative_path}`,
@@ -378,11 +336,11 @@ export function InspectorPanel({
           label: PathLabel(m.caption),
           sublabel: [m.family, formatModelSize(m.size_bytes)].filter(Boolean).join(" · "),
           thumbnailPath: m.thumbnail_path,
-          badge: fillBadge ?? kontextBadge ?? categoryBadge,
+          badge: categoryBadge,
           selected: modelMatches(m, settings.model),
         };
       }),
-    [isInpaint, settings.model, sortedModelGallery],
+    [settings.model, sortedModelGallery],
   );
 
   const loraTiles: GalleryTile[] = useMemo(
@@ -408,16 +366,15 @@ export function InspectorPanel({
       discover_models: { label: "Models", icon: Boxes },
       discover_loras: { label: "LoRAs", icon: Layers },
       discover_recipes: { label: "Recipes", icon: Search },
-      discover_workflows: { label: "Workflows", icon: LayoutGrid },
       models: { label: "Models", icon: Boxes },
       loras: { label: "LoRAs", icon: Layers },
       styles: { label: "Styles", icon: Palette },
       recipes: { label: "Recipes", icon: FileJson },
-      settings: { label: surface === "library" ? "Generate" : "Generation", icon: SlidersHorizontal },
+      settings: { label: "Settings", icon: SlidersHorizontal },
       automation: { label: surface === "library" ? "Automate" : "Batch", icon: LayoutGrid },
     };
     const ids: Tab[] = surface === "discover"
-      ? ["discover_models", "discover_loras", "discover_recipes", "discover_workflows"]
+      ? ["discover_models", "discover_loras"]
       : inspectorTabsForMode({
           studioMode,
           simpleInspectorLocked,
@@ -505,6 +462,7 @@ export function InspectorPanel({
           <div className="max-h-40 overflow-y-auto rounded-lg border border-dfui-border/40 bg-dfui-bg/20">
             <LoraStackPanel
               lora={activeLoras}
+              activeModel={activeModelLabel}
               loraMin={studioSettings?.lora_min ?? 0}
               loraMax={studioSettings?.lora_max ?? 2}
               maxStack={DEFAULT_MAX_LORA_STACK}
@@ -596,7 +554,7 @@ export function InspectorPanel({
           <div
             ref={tabScrollRef}
             className={surface === "discover"
-              ? "grid min-w-0 flex-1 grid-cols-4 gap-1 px-2 py-2"
+              ? "grid min-w-0 flex-1 grid-cols-2 gap-1 px-2 py-2"
               : "df-tab-scroll flex min-w-0 flex-1 gap-1 overflow-x-auto scroll-smooth px-2 py-2"}
           >
             {tabs.map(({ id, label, icon: Icon }) => (
@@ -657,29 +615,6 @@ export function InspectorPanel({
           />
         )}
 
-        {tab === "discover_recipes" && (
-          <DiscoverRecipeTab
-            modelGallery={modelGallery}
-            loraGallery={loraGallery}
-            onRefreshInventory={onRefreshInventory}
-            onSaveStudioSettings={onSaveStudioSettings}
-            onChange={(patch) => {
-              onChange(patch);
-              switchSurface("library");
-              setTab("settings");
-            }}
-          />
-        )}
-
-        {tab === "discover_workflows" && (
-          <DiscoverWorkflowTab
-            templates={workflowTemplates}
-            loading={workflowLoading}
-            error={workflowError}
-            onApplyRecipe={applyRecipeToGenerate}
-          />
-        )}
-
         {tab === "models" && (
           <InspectorGalleryPane
             footer={
@@ -699,12 +634,39 @@ export function InspectorPanel({
             header={
               <>
                 <div className="rounded-lg border border-dfui-accent/25 bg-dfui-accent/5 px-2.5 py-2">
-                  <p className="text-[10px] uppercase tracking-wide text-dfui-muted">
-                    Active model
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] uppercase tracking-wide text-dfui-muted">
+                      Active model
+                    </p>
+                    {(() => {
+                      const caps = getModelCapabilities(isEdit ? routedModelLabel : activeModelLabel);
+                      if (!caps) return null;
+                      return (
+                        <div className="flex items-center gap-1">
+                          {caps.badges.map((b) => (
+                            <span
+                              key={b}
+                              className="rounded bg-dfui-panel/80 px-1 py-0.5 text-[9px] font-medium text-dfui-accent border border-dfui-accent/20"
+                            >
+                              {b}
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                  <p className="truncate font-mono text-xs text-dfui-fg mt-0.5">
+                    {isEdit ? routedModelLabel : activeModelLabel}
                   </p>
-                  <p className="truncate font-mono text-xs text-dfui-fg">
-                    {activeModelLabel}
-                  </p>
+                  {(() => {
+                    const caps = getModelCapabilities(isEdit ? routedModelLabel : activeModelLabel);
+                    if (!caps) return null;
+                    return (
+                      <p className="mt-1 text-[10px] leading-tight text-dfui-tertiary">
+                        💡 {caps.bestFor}
+                      </p>
+                    );
+                  })()}
                   {modelDependencies && !modelDependencies.ready && (
                     <div className="mt-2 space-y-1.5 border-t border-dfui-border/30 pt-2">
                       <p className="text-[10px] text-amber-200/90">
@@ -824,13 +786,8 @@ export function InspectorPanel({
           />
         )}
 
-        {tab === "recipes" && (
-          <RecipeLibraryTab onApply={applyRecipeToGenerate} onRevealPath={onRevealPath} modelGallery={modelGallery} loraGallery={loraGallery} />
-        )}
-
         {tab === "settings" && (
           <div className="h-full min-h-0 overflow-y-auto">
-            <RecipeActions settings={settings} onChange={onChange} onOpenLibrary={() => setTab("recipes")} />
             <GenerationSettingsPanel
               settings={settings}
               onChange={onChange}
@@ -849,7 +806,6 @@ export function InspectorPanel({
               activeModelLabel={activeModelLabel}
               advancedMode={advancedMode}
               modelGallery={modelGallery}
-              onInstallCompanionItems={onInstallCompanionItems}
             />
           </div>
         )}

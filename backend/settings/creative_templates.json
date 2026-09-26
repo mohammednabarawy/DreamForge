@@ -13,20 +13,24 @@
     },
     "edit.kontext": {
       "studio_mode": "edit",
-      "label": "Edit (Kontext)",
+      "label": "Edit (Qwen Image 2.1)",
       "model_pick": {
-        "edit_type": "kontext",
-        "family": "flux_kontext"
+        "edit_type": "qwen_edit",
+        "family": "qwen_image_2.1"
       },
       "defaults": {
         "style": "image_edit",
-        "edit_type": "kontext",
+        "edit_type": "qwen_edit",
         "cn_selection": "None",
         "cn_type": "None",
         "edit_strength": 1.0,
-        "steps": 20
+        "performance": "Quality",
+        "steps": 40,
+        "cfg_scale": 1.0,
+        "sampler": "euler",
+        "scheduler": "simple"
       },
-      "companions": ["diffusion_flux_kontext_fp8_scaled"],
+      "companions": [],
       "chain": {}
     },
     "edit.kontext.enhance2x": {
@@ -38,21 +42,24 @@
     },
     "inpaint.flux_fill": {
       "studio_mode": "inpaint",
-      "label": "Fix region (Flux Fill)",
+      "label": "Masked edit (Qwen Image 2.1)",
       "model_pick": {
         "edit_type": "inpaint",
-        "family": "flux_fill"
+        "family": "qwen_image_2.1"
       },
       "defaults": {
         "style": "image_edit",
         "edit_type": "inpaint",
         "cn_selection": "Custom...",
         "cn_type": "inpaint",
-        "edit_strength": 0.9,
-        "steps": 20
+        "edit_strength": 1.0,
+        "performance": "Quality",
+        "steps": 40,
+        "cfg_scale": 1.0,
+        "sampler": "euler",
+        "scheduler": "simple"
       },
-      "companions": ["diffusion_flux_fill_dev"],
-      "krita_recipe": "flux_inpaint",
+      "companions": [],
       "chain": {}
     },
     "inpaint.flux_fill.enhance2x": {

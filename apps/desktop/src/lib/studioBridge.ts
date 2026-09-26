@@ -67,28 +67,13 @@ export type DreamForgeAppConfig = {
     civitai_api_key?: string;
     civitai_api_key_configured?: boolean;
     civitai_api_key_tail?: string;
-    /** Last selected Creative Toolbox custom tool (survives app restart). */
-    selected_custom_tool_id?: string;
   };
-  custom_tools?: Array<{
-    id: string;
-    name: string;
-    description: string;
-    workflow_path: string;
-    source_workflow_path?: string;
-    workflow_sha256?: string;
-    workflow_format?: "ui" | "api";
-    managed_workflow_version?: number;
-    bindings: Record<string, any>;
-    model_overrides?: Record<string, string>;
-  }>;
 };
 
 export type DreamForgeAppConfigPatch = {
   agent?: Partial<DreamForgeAppConfig["agent"]>;
   privacy?: Partial<DreamForgeAppConfig["privacy"]>;
   ui?: Partial<DreamForgeAppConfig["ui"]>;
-  custom_tools?: DreamForgeAppConfig["custom_tools"];
 };
 
 export type AgentProviderTestResult = {
@@ -277,104 +262,6 @@ export async function deleteCustomStyle(styleId: string) {
     "delete_custom_style",
     { style_id: styleId },
   );
-}
-
-export type DiscoverWorkflowTemplate = {
-  id: string;
-  label: string;
-  operation: string;
-  mode: string;
-  summary: string;
-  builder: string;
-  node_pattern?: string[];
-  required_inputs?: string[];
-  required_models?: string[];
-  required_node_packs?: string[];
-  security_note?: string;
-  url?: string;
-  thumbnail_url?: string;
-  source?: string;
-};
-
-export async function listWorkflowTemplates() {
-  return bridgeInvoke<{
-    ok: boolean;
-    templates?: DiscoverWorkflowTemplate[];
-    error?: string;
-  }>("list_workflow_templates", {});
-}
-
-export type WorkflowCompatibilityReport = {
-  ok: boolean;
-  state?: "NATIVE" | "ADAPTABLE" | "COMFY_ONLY" | "INVALID";
-  format?: string;
-  reason?: string;
-  dependencies?: string[];
-  security?: { safe?: boolean; blocked?: boolean; reasons?: string[] };
-  error?: string;
-};
-
-export async function analyzeWorkflowCompatibility(path: string) {
-  return bridgeInvoke<WorkflowCompatibilityReport>("analyze_workflow_compatibility", { path });
-}
-
-export type WorkflowRecipeCompileResult = {
-  ok: boolean;
-  can_recreate?: boolean;
-  missing?: string[];
-  recipe?: Record<string, unknown>;
-  report?: WorkflowCompatibilityReport;
-};
-
-export async function compileWorkflowRecipe(path: string) {
-  return bridgeInvoke<WorkflowRecipeCompileResult>("compile_workflow_recipe", { path });
-}
-
-export type WorkflowIRCompileResult = {
-  ok: boolean;
-  version?: string;
-  can_execute?: boolean;
-  kind?: string;
-  source?: string;
-  nodes?: string[];
-  dependencies?: string[];
-  recipe?: Record<string, unknown>;
-  report?: WorkflowCompatibilityReport;
-  missing?: string[];
-};
-
-export async function compileWorkflowIR(path: string) {
-  return bridgeInvoke<WorkflowIRCompileResult>("compile_workflow_ir", { path });
-}
-
-export type WorkflowIndexItem = DiscoverWorkflowTemplate & {
-  url?: string;
-  thumbnail_url?: string;
-  source?: string;
-  category?: string;
-  tags?: string[];
-  open_source?: boolean;
-};
-
-export async function searchWorkflowIndex(url = "") {
-  return bridgeInvoke<{ ok: boolean; items?: WorkflowIndexItem[]; count?: number; error?: string }>("workflow_index_search", { url });
-}
-
-export async function downloadWorkflow(url: string, filename?: string) {
-  return bridgeInvoke<{ ok: boolean; path?: string; filename?: string; execution?: "disabled"; error?: string }>("workflow_download", { url, filename });
-}
-
-export type WorkflowSaveResult = {
-  ok: boolean;
-  path?: string;
-  filename?: string;
-  execution?: "disabled";
-  report?: WorkflowCompatibilityReport;
-  error?: string;
-};
-
-export async function saveWorkflowFile(path: string) {
-  return bridgeInvoke<WorkflowSaveResult>("save_workflow_file", { path });
 }
 
 export type RecipeDiscoveryItem = {
@@ -602,6 +489,13 @@ export async function browseImages(page: number, search = "") {
 export async function imageBrowserMetadata(path: string) {
   return bridgeInvoke<{ metadata: Record<string, unknown>; text: string }>(
     "image_browser_metadata",
+    { path },
+  );
+}
+
+export async function inspectImageFile(path: string) {
+  return bridgeInvoke<{ ok: boolean; width?: number; height?: number; format?: string; transparent?: boolean }>(
+    "inspect_image_file",
     { path },
   );
 }
@@ -895,66 +789,12 @@ export async function installWorkflowModels(
   });
 }
 
-export async function fetchCustomToolDependencies(toolId: string, useObjectInfo = true) {
-  return bridgeInvoke<{
-    ok?: boolean;
-    ready?: boolean;
-    missing?: ModelDependencyItem[];
-    tool_id?: string;
-    tool_name?: string;
-    error?: string;
-  }>("custom_tool_dependencies", {
-    tool_id: toolId,
-    use_object_info: useObjectInfo,
-  });
-}
-
-export async function fetchCustomToolWorkflowModels(toolId: string) {
-  return bridgeInvoke<{
-    ok?: boolean;
-    tool_id?: string;
-    tool_name?: string;
-    models?: Array<Record<string, unknown>>;
-    error?: string;
-  }>("custom_tool_workflow_models", {
-    tool_id: toolId,
-  });
-}
-
-export async function parseComfyWorkflowFile(path: string) {
-  return bridgeInvoke<{
-    ok?: boolean;
-    api_format?: boolean;
-    ui_format?: boolean;
-    nodes?: Record<string, unknown>;
-    class_types?: string[];
-    repaired_nodes?: string[];
-    ui_sibling?: string | null;
-    warning?: string;
-    error?: string;
-  }>("parse_comfy_workflow", { path });
-}
-
-export async function importCustomToolWorkflow(path: string, toolId: string) {
-  return bridgeInvoke<{
-    ok?: boolean;
-    workflow_path: string;
-    source_workflow_path: string;
-    workflow_sha256: string;
-    workflow_format: "ui" | "api";
-    managed_workflow_version: number;
-    warning?: string;
-    error?: string;
-  }>("import_custom_tool_workflow", { path, tool_id: toolId });
-}
-
 export async function ensureCreativeTaskReady(args: {
   model?: string;
   studio_mode?: string;
   upscale_method?: string | null;
   performance?: string | null;
   edit_task?: string | null;
-  custom_tool_id?: string | null;
   auto_download_tier_a?: boolean;
   auto_download_tier_b?: boolean;
   auto_install_nodes?: boolean;
@@ -966,7 +806,6 @@ export async function ensureCreativeTaskReady(args: {
     upscale_method: args.upscale_method ?? null,
     performance: args.performance ?? null,
     edit_task: args.edit_task ?? null,
-    custom_tool_id: args.custom_tool_id ?? null,
     auto_download_tier_a: args.auto_download_tier_a ?? true,
     auto_download_tier_b: args.auto_download_tier_b ?? false,
     auto_install_nodes: args.auto_install_nodes ?? false,

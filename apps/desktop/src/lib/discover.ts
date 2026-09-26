@@ -5,13 +5,13 @@ const LIBRARY_TAB_KEY = "dreamforge.discoverLibrary.libraryTab.v1";
 
 export type DiscoverLibrarySurface = "discover" | "library";
 export type DiscoverLibraryTab = "models" | "loras" | "styles" | "recipes" | "settings" | "automation";
-export type DiscoverTab = "discover_models" | "discover_loras" | "discover_recipes" | "discover_workflows";
+export type DiscoverTab = "discover_models" | "discover_loras" | "discover_recipes";
 const DISCOVER_TAB_KEY = "dreamforge.discoverLibrary.discoverTab.v1";
 
 export function loadDiscoverTab(): DiscoverTab {
   try {
     const saved = localStorage.getItem(DISCOVER_TAB_KEY);
-    if (saved === "discover_loras" || saved === "discover_recipes" || saved === "discover_workflows") return saved;
+    if (saved === "discover_loras" || saved === "discover_recipes") return saved;
     return "discover_models";
   } catch {
     return "discover_models";

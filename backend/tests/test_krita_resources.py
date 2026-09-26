@@ -61,34 +61,36 @@ def test_edit_recipe_kontext_only_for_flux_kontext_family():
     assert rk is not None and rk["sampler_name"] == "euler"
 
 
-def test_check_studio_edit_requires_kontext_download_when_missing(monkeypatch):
+def test_check_studio_edit_requires_qwen_image_21_dependencies(monkeypatch):
     monkeypatch.setattr(
-        "dreamforge_krita_resources.studio_edit_flux_unet_present",
-        lambda models_root=None: False,
+        "dreamforge_cli_inventory.check_model_dependencies",
+        lambda model, *, performance: [{"id": "qwen_image_21_model", "relative": "diffusion_models/qwen_image_2.1_int8_convrot.safetensors"}],
     )
     monkeypatch.setattr(
-        "dreamforge_krita_resources.companion_file_present",
-        lambda *args, **kwargs: False,
+        "dreamforge_companion_download.enrich_missing_dependency",
+        lambda item: item,
     )
     from dreamforge_krita_resources import check_studio_resources
 
     miss = check_studio_resources("edit")
-    assert any(m.get("id") == "diffusion_flux_kontext_fp8_scaled" for m in miss)
+    assert any(m.get("id") == "qwen_image_21_model" for m in miss)
+    assert not any("flux" in str(m.get("id")) for m in miss)
 
 
-def test_check_studio_inpaint_requires_flux_fill_when_missing(monkeypatch):
+def test_check_studio_inpaint_requires_same_qwen_image_21_dependencies(monkeypatch):
     monkeypatch.setattr(
-        "dreamforge_krita_resources.studio_inpaint_flux_fill_present",
-        lambda models_root=None: False,
+        "dreamforge_cli_inventory.check_model_dependencies",
+        lambda model, *, performance: [{"id": "qwen_image_21_model", "relative": "diffusion_models/qwen_image_2.1_int8_convrot.safetensors"}],
     )
     monkeypatch.setattr(
-        "dreamforge_krita_resources.companion_file_present",
-        lambda *args, **kwargs: False,
+        "dreamforge_companion_download.enrich_missing_dependency",
+        lambda item: item,
     )
     from dreamforge_krita_resources import check_studio_resources
 
     miss = check_studio_resources("inpaint")
-    assert any(m.get("id") == "diffusion_flux_fill_dev" for m in miss)
+    assert any(m.get("id") == "qwen_image_21_model" for m in miss)
+    assert not any("flux" in str(m.get("id")) for m in miss)
 
 
 def test_inpaint_mask_recipe_values_defaults():

@@ -5,6 +5,8 @@ import type { EnhanceTarget } from "../lib/autoEnhance";
 type Props = {
   images: string[];
   activePath?: string | null;
+  outputSize?: { width: number; height: number };
+  outputInfo?: { width: number; height: number; format: string; transparent: boolean };
   sourcePath?: string | null;
   onSelect: (path: string) => void;
   onRetry?: () => void;
@@ -17,6 +19,8 @@ type Props = {
 export function ResultTray({
   images,
   activePath,
+  outputSize,
+  outputInfo,
   sourcePath,
   onSelect,
   onRetry,
@@ -35,7 +39,9 @@ export function ResultTray({
     >
       <div className="flex flex-wrap items-center justify-between gap-2 px-0.5">
         <p className="font-mono text-[9px] uppercase tracking-wider text-dfui-tertiary">
-          Candidates ({images.length})
+          Candidates ({images.length}){outputInfo
+            ? ` · Actual ${outputInfo.width}×${outputInfo.height} ${outputInfo.format} · ${outputInfo.transparent ? "Has transparency" : "Opaque"}`
+            : outputSize ? ` · Actual ${outputSize.width}×${outputSize.height}` : ""}
         </p>
         <div className="flex flex-wrap items-center gap-1.5">
           {onVaryImage ? (

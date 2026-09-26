@@ -14,7 +14,7 @@ export type ReferenceSlot = {
   face_index?: number;
 };
 
-export const MAX_REFERENCE_SLOTS = 4;
+export const MAX_REFERENCE_SLOTS = 10;
 export const DEFAULT_SLOT_WEIGHT = 0.75;
 export const DEFAULT_SLOT_STOP_AT = 1.0;
 
@@ -308,9 +308,22 @@ export function moveReferenceSlot(
 export function applyReferencesAtSubmit(
   settings: GenerationSettings,
   studioMode: StudioMode = "generate",
+  modelFamily = "",
 ): GenerationSettings {
   const normalized = normalizeReferenceSettings(settings, studioMode);
   const slots = coerceReferenceSlots(normalized, studioMode);
+  if (studioMode === "generate" && modelFamily === "qwen_image_2.1" && slots.length) {
+    return {
+      ...normalized,
+      references: slots.map((slot) => ({ ...slot, role: "image_prompt" })),
+      reference_role: "image_prompt",
+      reference_image: slots[0].path,
+      input_image: undefined,
+      workflow_mode: "generate",
+      cn_selection: "None",
+      cn_type: "None",
+    };
+  }
   const composition = resolveReferenceComposition(slots);
   if (composition.mode === "ipadapter_controlnet") {
     return {

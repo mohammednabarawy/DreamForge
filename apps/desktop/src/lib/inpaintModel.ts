@@ -45,7 +45,8 @@ export function isNativeInpaintModel(item: ModelGalleryItem): boolean {
 }
 
 export function isInpaintCapableModel(item: ModelGalleryItem): boolean {
-  return isQwenEditModel(item);
+  return isQwenEditModel(item) || isFluxFillModel(item) || isNativeInpaintModel(item) ||
+    (item.family ?? "").toLowerCase() === "flux_kontext";
 }
 
 export function findInpaintCapableModels(gallery: ModelGalleryItem[]): ModelGalleryItem[] {
@@ -70,7 +71,7 @@ export function inpaintModelWarning(
 ): string | null {
   if (mode !== "inpaint") return null;
   if (isInpaintCapableModel(item)) return null;
-  return `"${modelBasename(item.caption)}" cannot be used for masked editing. DreamForge edits only with Qwen Image 2.1.`;
+  return `"${modelBasename(item.caption)}" does not support masked editing. Choose Qwen Image 2.1, Flux Fill, Kontext, or an SDXL/SD1.5 model.`;
 }
 
 export function sortGalleryForInpaintMode(
@@ -78,15 +79,16 @@ export function sortGalleryForInpaintMode(
   mode: StudioMode,
 ): ModelGalleryItem[] {
   if (mode !== "inpaint") return gallery;
-  return gallery.filter(isQwenEditModel);
+  return gallery;
 }
 
 /** Flux Fill needs denoise 1.0; native inpaint keeps user/task strength. */
 export function effectiveInpaintEditStrength(
-  _settings: GenerationSettings,
-  _modelItem: ModelGalleryItem | undefined,
+  settings: GenerationSettings,
+  modelItem: ModelGalleryItem | undefined,
 ): number {
-  return 1.0;
+  return modelItem && (isQwenEditModel(modelItem) || isFluxFillModel(modelItem))
+    ? 1.0 : settings.edit_strength ?? 0.75;
 }
 
 /** Force inpaint routing before submit (blocks stale Qwen/edit control-net state). */
@@ -99,7 +101,7 @@ export function enforceInpaintJobSettings(
   if (studioMode !== "inpaint") return settings;
   const merged = applyInpaintIntentAtSubmit(settings, gallery);
   const defaultModel = selectCuratedInpaintModel(gallery);
-  const model = defaultModel || merged.model;
+  const model = settings.model || defaultModel;
   const modelItem = gallery.find((item) => item.engine_name === model);
   return {
     ...merged,

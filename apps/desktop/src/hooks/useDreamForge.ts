@@ -31,7 +31,7 @@ import {
   modelMatches,
   resolveActiveModel,
   selectCuratedModelForMode,
-  selectIdeogram4GalleryModel,
+  selectKrea2GalleryModel,
   type StudioMode,
   type StyleRecipe,
 } from "../lib/model-selection";
@@ -48,7 +48,6 @@ import {
   buildEditRoutingPatch,
   editModelWarning,
   isQwenEditModel,
-  selectCuratedEditModel,
 } from "../lib/editModel";
 import { excerptPrompt, HISTORY_PAGE_SIZE } from "../lib/historyUtils";
 import { settingsFromManifestBundle } from "../lib/historyActions";
@@ -202,6 +201,7 @@ import {
   normalizeReferenceSettings,
   appendReferenceSlot,
   coerceReferenceSlots,
+  patchPrimaryReferenceSlot,
 } from "../lib/referenceSlots";
 import { applyAutoEnhanceAtSubmit, patchForEnhanceTarget, type EnhanceTarget } from "../lib/autoEnhance";
 import { applyIdentityAtSubmit } from "../lib/identityPreserve";
@@ -218,7 +218,6 @@ import {
 import { applyHiDreamPerformanceAtSubmit } from "../lib/hidreamPerformance";
 import { applyQwenPreserveAtSubmit } from "../lib/qwenPreserveAtSubmit";
 import {
-  applyMultiImageComposeAtSubmit,
   maxReferenceImagesForFamily,
   resolveReferenceModelFamily,
 } from "../lib/multiImageCompose";
@@ -452,7 +451,7 @@ export function useDreamForge() {
   const studioCatalogLoadedRef = useRef(false);
   const userPickedModelRef = useRef(false);
   // Monotonic token so a slower, older applyModelProfile() call can't clobber a
-  // newer model selection (e.g. generate-mode's fire-and-forget Ideogram4 profile
+  // newer model selection (e.g. generate-mode's fire-and-forget default profile
   // resolving after the user explicitly picked another checkpoint).
   const modelProfileTokenRef = useRef(0);
   const userPickedLorasRef = useRef(false);
@@ -746,15 +745,17 @@ export function useDreamForge() {
     prompt: "Premium product hero shot, studio lighting, clean negative space",
     model: "",
     vram_profile: "auto",
-    aspect_ratio: "768x768",
+    aspect_ratio: "1024x1024",
     style: "none",
     styles: [],
     image_number: 1,
     negative_prompt: "",
-    steps: 20,
-    cfg_scale: 3.5,
+    steps: 8,
+    cfg_scale: 1,
+    sampler: "euler",
+    scheduler: "simple",
+    performance: "Lightning",
     output: outputPathForSession(loadActiveSessionId()),
-    ...ideogram4SettingsDefaults(),
   });
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
@@ -1304,7 +1305,12 @@ export function useDreamForge() {
       setLiveProgress(null);
       setEngineState("ready");
       if (p.success) {
-        setStatus("Generation complete");
+        const warnings = p.result?.validation?.flatMap((item) => item.warnings ?? []) ?? [];
+        setStatus(warnings.includes("transparent_background_missing")
+          ? "Image saved, but the requested transparent background is missing"
+          : warnings.some((item) => /^(?:width|height)_expected_/.test(item))
+            ? "Image saved, but its dimensions differ from the requested size"
+            : "Generation complete");
         setLastError(null);
         void refreshUserStyleProfile();
         void notifyDone("DreamForge", "Your image finished rendering.");
@@ -1878,27 +1884,24 @@ export function useDreamForge() {
 
   const selectModelGallery = useCallback(
     async (item: ModelGalleryItem) => {
-      const mode = appConfig?.ui.studio_mode ?? "generate";
-      if ((mode === "edit" || mode === "inpaint") && !isQwenEditModel(item)) {
-        setStatus("Image edits use Qwen Image 2.1. Install it before selecting an edit model.");
-        return;
-      }
+      const configuredMode = appConfig?.ui.studio_mode ?? "generate";
+      const mode = configuredMode === "agent" || configuredMode === "upscale"
+        ? configuredMode : imageTaskForRequest(settingsRef.current);
       if (
         mode !== "generate" &&
-        mode !== "inpaint" &&
         mode !== "edit" &&
         !advancedMode
       ) {
         setStatus(
-          "Switch to Generate, Edit, or Inpaint mode, or enable advanced mode to override routed models",
+          "Use Create & Edit, or enable advanced mode to override the upscale model",
         );
         return;
       }
       userPickedModelRef.current = true;
       const routingPatch: Partial<GenerationSettings> =
-        mode === "edit"
+        mode === "edit" && !settingsRef.current.inpaint_mask_path
           ? buildEditRoutingPatch(item)
-          : mode === "inpaint"
+          : settingsRef.current.inpaint_mask_path
             ? {
                 edit_type: "inpaint",
                 cn_selection: "Custom...",
@@ -1921,7 +1924,7 @@ export function useDreamForge() {
         ...ideogramPatch,
       });
       const warn =
-        inpaintModelWarning(item, mode) ??
+        inpaintModelWarning(item, settingsRef.current.inpaint_mask_path ? "inpaint" : mode) ??
         upscaleModelWarning(item, mode) ??
         editModelWarning(item, mode);
       const profile = await applyModelProfile(item);
@@ -2311,7 +2314,7 @@ export function useDreamForge() {
           routeModelDependencies = { ready: modelCheck.ready, missing: modelCheck.missing ?? [] };
           routeStudioResources = { ready: studioCheck.ready, missing: (studioCheck.missing ?? []) as ModelDependencyItem[] };
         } catch (error) {
-          setStatus(`Could not verify Qwen Edit assets: ${String(error)}`);
+          setStatus(`Could not verify selected edit model assets: ${String(error)}`);
           return false;
         }
       }
@@ -2404,7 +2407,6 @@ export function useDreamForge() {
       params = applyVaryAmountAtSubmit(params);
       params = applyUpscalePresetAtSubmit(params);
       params = applyReferencesAtSubmit(params, studioMode, modelFamily);
-      params = applyMultiImageComposeAtSubmit(params, studioMode, modelGalleryAll);
       params = applyAutoEnhanceAtSubmit(params);
       params = applyIdentityAtSubmit(params, modelGalleryAll, {
         studioMode,
@@ -2412,7 +2414,7 @@ export function useDreamForge() {
         studioMissing: studioResources.missing,
         imagePromptMissing: imagePromptResources.missing,
       });
-      // After identity/compose routing resolves the Qwen edit model, decide the
+      // After identity routing resolves the Qwen edit model, decide the
       // raw-latent (preserve resolution) path so layout/text fidelity holds.
       params = applyQwenPreserveAtSubmit(params, studioMode, modelFamily);
       params = await enforceCreativeTaskSettingsRemote(params, {
@@ -2596,7 +2598,8 @@ export function useDreamForge() {
         if (prepared.applied.length) {
           patchSettings(prepared.settings);
         }
-        const res = await dryRun(prepared.settings);
+        const plannedSettings = sanitizeSettingsForStudioMode(studioMode, prepared.settings);
+        const res = await dryRun(plannedSettings);
         const hint =
           prepared.applied.length > 0
             ? `Agent JSON mapped: ${prepared.applied.join(", ")}. `
@@ -2616,7 +2619,7 @@ export function useDreamForge() {
         const plan = buildPlanSnapshotFromDryRun({
           planPayload,
           workflowBlueprint,
-          baseSettings: prepared.settings,
+          baseSettings: plannedSettings,
           studioMode,
           readiness,
           message: `${hint}${extra}`.trim() || "Dry-run plan",
@@ -3091,7 +3094,7 @@ export function useDreamForge() {
       await runGenerateVariants(requestedImages);
       return;
     }
-    if (studioMode === "edit") {
+    if (studioMode === "edit" && /qwen.*2[._]1/i.test(current.model ?? "")) {
       const performance = current.performance === "Speed" || current.performance === "Custom..."
         ? current.performance : "Quality";
       await startGeneration({
@@ -3210,7 +3213,7 @@ export function useDreamForge() {
     void checkStudioResources(
       mode,
       mode === "upscale" ? settings.upscale_method ?? undefined : undefined,
-      (mode === "edit" ? selectCuratedEditModel(modelGalleryAll) : settingsRef.current.model) || undefined,
+      settingsRef.current.model || undefined,
     )
       .then((res) => {
         if (cancelled) return;
@@ -3299,7 +3302,6 @@ export function useDreamForge() {
     () => {
       const routedSettings = studioMode === "edit" ? {
         ...settings,
-        model: selectCuratedEditModel(modelGalleryAll),
         input_image: activeReferencePath(settings, "generate"),
       } : settings;
       const mergedMissingCount = mergeAllCompanionMissing({
@@ -3451,11 +3453,15 @@ export function useDreamForge() {
           );
         }
       }
+      const combined = { ...settingsRef.current, ...patch };
+      const primary = coerceReferenceSlots(combined, studioMode)[0];
+      const synced = patchPrimaryReferenceSlot(combined, {
+        ...primary,
+        path: resolved,
+        role: patch.reference_role ?? primary?.role ?? "restyle",
+      }, studioMode);
       const mergedPatch = normalizeReferenceSettings(
-        sanitizeSettingsForStudioMode(studioMode, {
-          ...settingsRef.current,
-          ...patch,
-        }),
+        sanitizeSettingsForStudioMode(studioMode, { ...combined, ...synced }),
         studioMode,
       );
       patchSettings(mergedPatch);
@@ -3591,7 +3597,7 @@ export function useDreamForge() {
           settingsRef.current,
         );
         const resetPatch = buildClearReferenceImagePatch();
-        const ideogram = selectIdeogram4GalleryModel(modelGalleryAll);
+        const krea2 = selectKrea2GalleryModel(modelGalleryAll);
         const hasIntentionalReference = Boolean(
           sanitized.input_image?.trim() ||
             sanitized.reference_image?.trim() ||
@@ -3609,13 +3615,15 @@ export function useDreamForge() {
               settingsRef.current.edit_type !== "auto" &&
               !hasIntentionalReference),
         );
-        if (ideogram && !hasIntentionalReference) {
+        if (krea2 && !hasIntentionalReference) {
           patchSettings({
             ...resetPatch,
-            model: ideogram.engine_name,
-            ...ideogram4SettingsDefaults(),
+            model: krea2.engine_name,
+            aspect_ratio: "1024x1024",
+            width: 1024,
+            height: 1024,
           });
-          void applyModelProfile(ideogram);
+          void applyModelProfile(krea2);
         } else if (hasIntentionalReference) {
           patchSettings(sanitized);
         } else if (hasStaleCarryover) {
@@ -3971,15 +3979,13 @@ export function useDreamForge() {
     const studioMode =
       opts?.studioMode ??
       imageTaskForRequest(settingsRef.current);
-    const model = (studioMode === "edit"
-      ? selectCuratedEditModel(modelGalleryAll)
-      : ((settingsRef.current.model ?? "") || plannedModel)).trim();
+    const model = ((settingsRef.current.model ?? "") || plannedModel).trim();
     let fromModel = modelDependencies.missing;
     if (model) {
       try {
         const res = await checkModelDependencies(
           model,
-          studioMode === "edit" ? "Quality" : settingsRef.current.performance ?? null,
+          settingsRef.current.performance ?? null,
         );
         fromModel = res.missing ?? [];
         setModelDependencies({
@@ -4402,9 +4408,7 @@ export function useDreamForge() {
       clearTimeout(modelDepsDebounceRef.current);
     }
     modelDepsDebounceRef.current = setTimeout(() => {
-      const model = imageTaskForRequest(settings) === "edit"
-        ? selectCuratedEditModel(modelGalleryAll) : settings.model;
-      void refreshModelDependencies(model);
+      void refreshModelDependencies(settings.model);
     }, 450);
     return () => {
       if (modelDepsDebounceRef.current) {
@@ -4418,7 +4422,6 @@ export function useDreamForge() {
   }, [settings.model, settings.performance, appConfig?.ui.studio_mode]);
 
   const referenceModelFamily = useMemo(() => {
-    if (imageTaskForRequest(settings) === "edit") return "qwen_image_2.1";
     const item = findGalleryModel(modelGalleryAll, settings.model ?? "");
     const baseFamily = item?.family ?? "";
     const mode = (appConfig?.ui.studio_mode ?? "generate") as StudioMode;

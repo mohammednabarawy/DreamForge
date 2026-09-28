@@ -43,7 +43,7 @@ GALLERY = [
 ]
 
 
-def test_easy_edit_routes_away_from_ideogram():
+def test_edit_keeps_compatible_ideogram():
     routed = apply_task_routing(
         {
             "model": "ideogram4_fp8_scaled.safetensors",
@@ -55,9 +55,9 @@ def test_easy_edit_routes_away_from_ideogram():
         advanced_mode=False,
         user_picked_model=False,
     )
-    assert "ideogram" not in routed.patch["model"].lower()
-    assert routed.patch["edit_type"] == "qwen_edit"
-    assert routed.route_reason == "easy_edit_default"
+    assert routed.patch["model"] == "ideogram4_fp8_scaled.safetensors"
+    assert routed.patch["edit_type"] == "kontext"
+    assert routed.route_reason == "compatible_edit_model"
 
 
 def test_pro_upscale_preserves_flux_user_pick():
@@ -92,7 +92,7 @@ def test_easy_upscale_forces_sdxl_default():
     assert not routed.patch.get("user_picked_model")
 
 
-def test_enforce_edit_simple_blocks_ideogram():
+def test_enforce_edit_keeps_compatible_ideogram():
     out = enforce_creative_task_settings(
         {
             "model": "ideogram4_fp8_scaled.safetensors",
@@ -104,8 +104,8 @@ def test_enforce_edit_simple_blocks_ideogram():
         advanced_mode=False,
         user_picked_model=False,
     )
-    assert "ideogram" not in out["model"].lower()
-    assert out["edit_type"] == "qwen_edit"
+    assert out["model"] == "ideogram4_fp8_scaled.safetensors"
+    assert out["edit_type"] == "kontext"
 
 
 def test_enforce_upscale_pro_keeps_flux():
@@ -148,15 +148,15 @@ def test_masked_edit_keeps_qwen_inpaint_controls():
     assert routed.patch["cn_type"] == "inpaint"
 
 
-def test_generate_keeps_other_selected_models_while_edit_uses_qwen():
+def test_generate_and_edit_keep_other_selected_models():
     for model in ("ideogram4_fp8_scaled.safetensors", "flux1-dev-kontext_fp8_scaled.safetensors"):
         settings = {"model": model, "input_image": "D:/photo.png", "prompt": "Create a portrait"}
         assert apply_task_routing(settings, "generate", GALLERY).patch["model"] == model
         edited = apply_task_routing(settings, "edit", GALLERY)
-        assert "qwen_image_2.1" in edited.patch["model"].lower()
+        assert edited.patch["model"] == model
 
 
-def test_edit_does_not_fall_back_when_qwen_image_21_is_missing():
+def test_edit_works_with_selected_kontext_when_qwen_image_21_is_missing():
     gallery = [item for item in GALLERY if item["family"] != "qwen_image_2.1"]
     routed = apply_task_routing(
         {"model": "flux1-dev-kontext_fp8_scaled.safetensors", "input_image": "D:/photo.png"},
@@ -165,9 +165,33 @@ def test_edit_does_not_fall_back_when_qwen_image_21_is_missing():
         advanced_mode=False,
         user_picked_model=False,
     )
-    assert routed.patch["model"] == ""
-    assert routed.patch["edit_type"] == "qwen_edit"
-    assert any("Qwen Image 2.1 is required" in warning for warning in routed.warnings)
+    assert routed.patch["model"] == "flux1-dev-kontext_fp8_scaled.safetensors"
+    assert routed.patch["edit_type"] == "kontext"
+    assert not routed.warnings
+
+
+def test_explicit_edit_selection_survives_resolution_sampling_and_mask_routing():
+    for item in GALLERY:
+        if item["family"] in {"flux_fill", "qwen_image_2.1"}:
+            continue
+        settings = {"model": item["engine_name"], "input_image": "D:/photo.png",
+                    "edit_type": "qwen_edit", "prompt": "Change the shirt", "performance": "Custom...",
+                    "steps": 13, "cfg_scale": 2.5, "sampler": "euler", "scheduler": "simple", "edit_strength": 0.6}
+        result = resolve_creative_task("edit", settings, GALLERY, user_picked_model=True, vram_profile="16gb")
+        patch = result["patch"]
+        assert patch["model"] == settings["model"]
+        assert patch["edit_type"] != "qwen_edit"
+        assert patch["cfg_scale"] == 2.5
+        assert patch["steps"] == 13
+        assert patch["edit_strength"] == 0.6
+        masked = apply_task_routing({**settings, "inpaint_mask_path": "D:/mask.png"}, "edit", GALLERY, user_picked_model=True)
+        assert masked.patch["model"] == settings["model"]
+        assert masked.patch["edit_type"] == "inpaint"
+
+    unknown = {"model": "unknown.safetensors", "input_image": "D:/photo.png"}
+    routed = apply_task_routing(unknown, "edit", GALLERY, user_picked_model=True)
+    assert routed.patch["model"] == unknown["model"]
+    assert routed.warnings
 
 
 def test_toolbox_custom_tool_skips_native_task_routing():

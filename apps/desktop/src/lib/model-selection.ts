@@ -127,6 +127,22 @@ function ideogram4EngineName(gallery: ModelGalleryItem[]): string | undefined {
   return selectIdeogram4GalleryModel(gallery)?.engine_name;
 }
 
+/** Prefer an installed Krea 2 Turbo FP8 checkpoint for text-to-image. */
+export function selectKrea2GalleryModel(
+  gallery: ModelGalleryItem[],
+): ModelGalleryItem | undefined {
+  return pickBestScoredGalleryItem(gallery, (item) => {
+    if ((item.family ?? "").toLowerCase() !== "krea2") return -1;
+    const name = modelBasename(item.relative_path).toLowerCase();
+    if (!name.includes("turbo")) return -1;
+    return (name.includes("fp8") ? 20 : 0) + (name.includes("scaled") ? 10 : 0);
+  });
+}
+
+function defaultGenerateEngineName(gallery: ModelGalleryItem[]): string | undefined {
+  return selectKrea2GalleryModel(gallery)?.engine_name ?? ideogram4EngineName(gallery);
+}
+
 export function resolveActiveModel(
   gallery: ModelGalleryItem[],
   current: string | undefined,
@@ -139,8 +155,8 @@ export function resolveActiveModel(
   }
   const fromRecipe = pickStyleModel(gallery, styleId, recipes);
   if (fromRecipe) return fromRecipe;
-  const ideogram = ideogram4EngineName(gallery);
-  if (ideogram) return ideogram;
+  const generateModel = defaultGenerateEngineName(gallery);
+  if (generateModel) return generateModel;
   if (current && findGalleryModel(gallery, current)) {
     return findGalleryModel(gallery, current)!.engine_name;
   }
@@ -156,9 +172,8 @@ export function selectCuratedModelForMode(
   if (mode === "upscale") {
     return selectCuratedUpscaleModel(gallery) || current || gallery[0]?.engine_name || "";
   }
-  const ideogram = ideogram4EngineName(gallery);
   if (mode === "generate" || mode === "agent") {
-    return ideogram ?? current ?? gallery[0]?.engine_name ?? "";
+    return defaultGenerateEngineName(gallery) ?? current ?? gallery[0]?.engine_name ?? "";
   }
   if (mode === "edit" || mode === "inpaint" || mode === "toolbox") {
     return selectCuratedEditModel(gallery);

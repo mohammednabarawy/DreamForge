@@ -149,7 +149,7 @@ export function PromptBar({
     !isAgentMode &&
     simpleBatchCount > 1 &&
     Boolean(onGenerateVariants);
-  const isQwen21 = studioMode === "edit" || referenceModelFamily === "qwen_image_2.1" || /qwen.*2[._]1/i.test(settings.model ?? "");
+  const isQwen21 = referenceModelFamily === "qwen_image_2.1" || /qwen.*2[._]1/i.test(settings.model ?? "");
   const primaryReference = activeReferencePath(settings, studioMode);
   const referenceCount = Math.max(
     coerceReferenceSlots(settings, studioMode).length,
@@ -225,7 +225,7 @@ export function PromptBar({
   );
   const activeRouteLabel =
     studioMode === "edit"
-      ? `Auto · Qwen Image 2.1 ${settings.inpaint_mask_path?.trim() ? "masked edit" : "edit"}`
+      ? `Selected · ${activeModelLabel} ${settings.inpaint_mask_path?.trim() ? "masked edit" : "edit"}`
       : studioMode === "agent" && agentPlannedMode
       ? `Planned ${agentPlannedMode}: ${activeModelLabel}`
       : simpleExperience
@@ -282,13 +282,11 @@ export function PromptBar({
     if (isAgentMode) {
       return "Tell the agent what you want. Example: edit this poster, preserve Arabic text, make it cinematic";
     }
-    const isQwenEdit = referenceModelFamily === "qwen_image_edit" || referenceModelFamily === "qwen_image_2.1";
-    const hasRefs = (settings.reference_images ?? []).some((path) => path.trim());
-    if (isQwenEdit || hasRefs) {
-      return "Describe the edit… Refer to attached images as <image1>, <image2>, and so on.";
+    if (referenceCount > 0) {
+      return "Describe what to create or change… Refer to attached images as <image1>, <image2>, and so on.";
     }
     return "Describe the shot… Type @ to pick a model or style";
-  }, [isAgentMode, referenceModelFamily, settings.reference_images]);
+  }, [isAgentMode, referenceCount]);
 
   return (
     <div

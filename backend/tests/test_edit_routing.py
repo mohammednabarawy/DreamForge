@@ -48,7 +48,7 @@ def test_flux_dev_img2img_edit_routing():
         "family": "flux",
     }
     assert model_supports_img2img_edit(model, "flux")
-    assert not model_supports_edit(model, "flux")
+    assert model_supports_edit(model, "flux")
     patch = edit_routing_for_model(model, "flux")
     assert patch["edit_type"] == "img2img"
 

@@ -102,7 +102,7 @@ def test_resolve_edit_routes_qwen_image_21():
     assert patch.get("upscale_image") in (None, "")
 
 
-def test_resolve_edit_replaces_legacy_qwen_model():
+def test_resolve_edit_preserves_legacy_qwen_model():
     result = resolve_creative_task(
         "edit",
         {
@@ -114,7 +114,7 @@ def test_resolve_edit_replaces_legacy_qwen_model():
         selected_image="D:/photo.png",
     )
     patch = result["patch"]
-    assert patch["model"] == "qwen_image_2.1_int8_convrot.safetensors"
+    assert patch["model"] == "qwen-image-edit-2511-Q4_K_M.gguf"
     assert patch["edit_type"] == "qwen_edit"
 
 
@@ -191,7 +191,7 @@ def test_qwen_image_21_speed_survives_edit_routing():
     assert patch["cfg_scale"] == 1
 
 
-def test_enforce_on_submit_inpaint_replaces_legacy_model_override():
+def test_enforce_on_submit_preserves_selected_native_editor():
     out = enforce_creative_task_settings(
         {
             "model": "juggernautxl_inpaint.safetensors",
@@ -203,8 +203,8 @@ def test_enforce_on_submit_inpaint_replaces_legacy_model_override():
         model_gallery=GALLERY,
         user_picked_model=True,
     )
-    assert out["edit_type"] == "qwen_edit"
-    assert out["model"] == "qwen_image_2.1_int8_convrot.safetensors"
+    assert out["edit_type"] == "img2img"
+    assert out["model"] == "juggernautxl_inpaint.safetensors"
 
 
 def test_enforce_on_submit_inpaint_uses_default_when_model_empty():

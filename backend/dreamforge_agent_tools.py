@@ -391,6 +391,8 @@ def validate_image(
     expected_height: int | None = None,
     *,
     check_fake_text: bool = False,
+    strict_dimensions: bool = False,
+    require_transparency: bool = False,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
         "path": path,
@@ -403,7 +405,9 @@ def validate_image(
         return result
 
     try:
-        image = Image.open(path).convert("RGB")
+        source = Image.open(path)
+        transparent = "A" in source.getbands() and source.getchannel("A").getextrema()[0] < 255
+        image = source.convert("RGB")
         width, height = image.size
         gray = image.convert("L")
         extrema = ImageStat.Stat(gray).extrema[0]
@@ -414,20 +418,23 @@ def validate_image(
             "nonblank": extrema[0] != extrema[1],
             "luma_extrema": extrema,
             "contrast": contrast,
+            "transparent": transparent,
         })
         if expected_width and width != expected_width:
             result["warnings"].append(f"width_expected_{expected_width}_got_{width}")
         if expected_height and height != expected_height:
             result["warnings"].append(f"height_expected_{expected_height}_got_{height}")
+        if require_transparency and not transparent:
+            result["warnings"].append("transparent_background_missing")
         if extrema[0] == extrema[1]:
             result["warnings"].append("image_appears_blank")
         if contrast < 18:
             result["warnings"].append("very_low_contrast")
         if check_fake_text:
             result["warnings"].extend(detect_possible_fake_text(path))
-        result["ok"] = not result["warnings"] or all(
+        result["ok"] = not result["warnings"] or (not strict_dimensions and all(
             w.startswith(("width_expected", "height_expected")) for w in result["warnings"]
-        )
+        ))
     except Exception as exc:
         result["warnings"].append(f"validation_error:{exc}")
     return result

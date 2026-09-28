@@ -163,6 +163,11 @@ export function sanitizeSettingsForStudioMode(
 
   if (!hasRef) {
     next.reference_role = undefined;
+    next.cn_selection = "None";
+    next.cn_type = "None";
+    next.edit_type = "auto";
+    if (next.style === "image_edit") next.style = "none";
+    if (studioMode === "generate") next.workflow_mode = "generate";
     return next;
   }
 

@@ -724,7 +724,7 @@ def test_z_image_txt2img_uses_lumina2_clip_and_auraflow():
     assert graph["4"]["class_type"] == "EmptySD3LatentImage"
 
 
-def test_krea2_txt2img_uses_krea2_clip_and_auraflow():
+def test_krea2_txt2img_matches_official_turbo_graph():
     from dreamforge_comfy_workflows import comfy_krea2_txt2img
 
     graph = comfy_krea2_txt2img(
@@ -748,8 +748,20 @@ def test_krea2_txt2img_uses_krea2_clip_and_auraflow():
     assert unet["inputs"]["unet_name"] == "krea2_turbo_fp8_scaled.safetensors"
     vae = next(n for n in graph.values() if n.get("class_type") == "VAELoader")
     assert vae["inputs"]["vae_name"] == "qwen_image_vae.safetensors"
-    assert any(n.get("class_type") == "ModelSamplingAuraFlow" for n in graph.values())
-    assert graph["4"]["class_type"] == "EmptySD3LatentImage"
+    assert not any(n.get("class_type") == "ModelSamplingAuraFlow" for n in graph.values())
+    assert graph["3"]["class_type"] == "ConditioningZeroOut"
+    assert graph["4"]["class_type"] == "EmptyLatentImage"
+    sampler = graph["5"]["inputs"]
+    assert sampler["model"] == [next(k for k, v in graph.items() if v is unet), 0]
+    assert (sampler["steps"], sampler["cfg"], sampler["sampler_name"], sampler["scheduler"]) == (
+        8, 1.0, "euler", "simple"
+    )
+    guided = comfy_krea2_txt2img({
+        "ckpt_name": "krea2_raw.safetensors", "category": "diffusion_models", "family": "krea2",
+        "prompt": "a portrait", "negative": "blur", "cfg": 3.5,
+    })
+    assert guided["3"]["class_type"] == "CLIPTextEncode"
+    assert guided["3"]["inputs"]["text"] == "blur"
 
 
 def test_kandinsky5_img2img_uses_kandinsky_clip_encode():

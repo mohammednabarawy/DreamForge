@@ -151,14 +151,18 @@ export function GenerationSettingsPanel({
   const [customSize, setCustomSize] = useState(false);
   const [lockAspect, setLockAspect] = useState(true);
 
-  const performances = isQwenModel ? ["Speed", "Quality", CUSTOM_PERFORMANCE] : uiDefaults?.performances ?? [
+  const isKreaTurbo = !isQwenModel && /krea.?2.*turbo|turbo.*krea.?2/i.test(activeModelLabel);
+  const defaultAspect = isKreaTurbo ? "1024x1024" : "768x768";
+  const performances = isQwenModel ? ["Speed", "Quality", CUSTOM_PERFORMANCE] : isKreaTurbo ? ["Lightning", CUSTOM_PERFORMANCE] : uiDefaults?.performances ?? [
     "Lightning",
     "Speed",
     "Quality",
     CUSTOM_PERFORMANCE,
   ];
-  const performance = isQwenModel && !["Speed", "Quality", CUSTOM_PERFORMANCE].includes(settings.performance ?? "")
-    ? "Quality"
+  const performance = isKreaTurbo && !isCustomPerformance(settings.performance)
+    ? "Lightning"
+    : isQwenModel && !["Speed", "Quality", CUSTOM_PERFORMANCE].includes(settings.performance ?? "")
+    ? "Speed"
     : settings.performance ?? "Lightning";
   const customPerf = isCustomPerformance(performance);
   const aspectGroups = useMemo(() => groupAspectPresets(aspectPresets), [aspectPresets]);
@@ -199,11 +203,15 @@ export function GenerationSettingsPanel({
   if (isIdeogramModel && !customPerf) {
     perfPreview =
       IDEOGRAM_PERFORMANCE_PREVIEW[performance] ?? IDEOGRAM_PERFORMANCE_PREVIEW.Speed;
+  } else if (isKreaTurbo && !customPerf) {
+    perfPreview = { steps: 8, cfg: 1, sampler: "euler", scheduler: "simple" };
   }
   const seedRandom = studioSettings?.seed_random ?? true;
   const hasNegative = Boolean((settings.negative_prompt ?? "").trim());
   const perfHint = isQwenModel
     ? "Speed uses the 25-step ComfyUI template; Quality uses Qwen's 40-step reference. Both use CFG 1, Euler/Simple."
+    : isKreaTurbo && !customPerf
+    ? "Krea 2 Turbo uses its distilled 8-step profile. Use Custom for manual sampling."
     : isIdeogramModel
     ? ideogramPerformanceHint(performance)
     : performanceHint(performance);
@@ -213,6 +221,10 @@ export function GenerationSettingsPanel({
   };
 
   const handlePerformanceChange = (perf: string) => {
+    if (isKreaTurbo && perf === "Lightning") {
+      onChange({ performance: perf, steps: 8, cfg_scale: 1, sampler: "euler", scheduler: "simple" });
+      return;
+    }
     if (isQwenModel && (perf === "Speed" || perf === "Quality")) {
       onChange({ performance: perf, ...QWEN_IMAGE21_PROFILES[perf] });
       return;
@@ -340,8 +352,8 @@ export function GenerationSettingsPanel({
             : "Qwen Image 2.1 uses its recommended sampling by default"
         }
         defaultOpen
-        changed={performance !== (isQwenModel ? "Quality" : "Lightning") || activeAspect !== "768x768" || (settings.image_number ?? 1) !== 1}
-        onReset={() => onChange({ performance: isQwenModel ? "Quality" : "Lightning", ...(isQwenModel ? QWEN_IMAGE21_PROFILES.Quality : {}), aspect_ratio: "768x768", width: undefined, height: undefined, image_number: 1 })}
+        changed={performance !== (isQwenModel ? "Quality" : "Lightning") || activeAspect !== defaultAspect || (settings.image_number ?? 1) !== 1}
+        onReset={() => onChange({ performance: isQwenModel ? "Quality" : "Lightning", ...(isQwenModel ? QWEN_IMAGE21_PROFILES.Quality : isKreaTurbo ? { steps: 8, cfg_scale: 1, sampler: "euler", scheduler: "simple" } : {}), aspect_ratio: defaultAspect, width: undefined, height: undefined, image_number: 1 })}
       >
         {tabCtx.isModernModel ? <p className="rounded-md border border-df-blue/20 bg-df-blue/5 px-2 py-1.5 text-[9px] leading-snug text-dfui-tertiary">{activeModelFamily || activeModelLabel} uses modern guidance; unsupported negative-prompt and CLIP-skip controls are hidden.</p> : null}
         {MODE_AUTO_SUMMARY[studioMode] && (

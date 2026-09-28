@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-EDIT_ALLOWED_FAMILIES = frozenset({"qwen_image_2.1"})
 EDIT_FORBIDDEN_SIMPLE_FAMILIES = frozenset()
 
 
@@ -53,7 +52,7 @@ def _is_kontext_item(item: dict[str, Any]) -> bool:
 
 
 def pick_curated_edit_model(gallery: list[Any]) -> tuple[str, str]:
-    """Return the installed Qwen Image 2.1 checkpoint for all image edits."""
+    """Return the default Qwen Image 2.1 editor when no compatible model is selected."""
     from dreamforge_app_config import _pick_model_for_mode
 
     qwen = _pick_model_for_mode("edit", gallery, edit_type="qwen_edit")
@@ -76,20 +75,19 @@ def edit_routing_patch(
     if family == "krea2":
         return patch
     pref = str(preferred_edit_type or "").lower()
-    if pref == "qwen_edit":
+    if pref == "qwen_edit" and patch.get("edit_type") == "qwen_edit":
         return {
             "edit_type": "qwen_edit",
             "edit_strength": 1.0,
             "cn_selection": "None",
             "cn_type": "None",
         }
-    if pref == "kontext" and patch.get("edit_type") != "qwen_edit":
+    if pref == "kontext" and patch.get("edit_type") == "kontext":
         return {
             "edit_type": "kontext",
             "edit_strength": 1.0,
             "cn_selection": "None",
             "cn_type": "None",
-            "steps": 20,
         }
     return patch
 
@@ -286,6 +284,9 @@ def apply_task_routing(
 
     if mode == "edit":
         from dreamforge_edit_routing import model_supports_edit
+        from dreamforge_inpaint_routing import model_supports_inpaint
+
+        supports_task = model_supports_inpaint if legacy_masked_edit or out.get("inpaint_mask_path") else model_supports_edit
 
         current = str(out.get("model") or "").strip()
         family = gallery_family(gallery_list, current)
@@ -293,8 +294,6 @@ def apply_task_routing(
         manual = bool(
             user_picked_model
             and current
-            and current_item
-            and model_supports_edit(current_item, family)
         )
 
         if manual:
@@ -306,11 +305,13 @@ def apply_task_routing(
                 )
             )
             reason = "user_edit_override"
+            if not supports_task(current_item, family):
+                warnings.append("The selected model does not support this edit task; choose a compatible model.")
         else:
             item = find_gallery_item(gallery_list, current) or {}
             valid = bool(
                 current
-                and model_supports_edit(item, family)
+                and supports_task(item, family)
                 and family not in EDIT_FORBIDDEN_SIMPLE_FAMILIES
             )
             if valid:
@@ -328,7 +329,7 @@ def apply_task_routing(
                     out["model"] = model
                 else:
                     out["model"] = ""
-                    warnings.append("Qwen Image 2.1 is required for image editing but is not installed.")
+                    warnings.append("The default Qwen Image 2.1 editor is not installed; select another edit-capable model.")
                 out.update(
                     edit_routing_patch(
                         gallery_list,
@@ -340,6 +341,8 @@ def apply_task_routing(
 
         out["user_picked_model"] = bool(manual)
         out["advanced_mode"] = bool(advanced_mode)
+        if gallery_family(gallery_list, str(out.get("model") or "")) != "qwen_image_2.1" and settings.get("edit_strength") is not None:
+            out["edit_strength"] = settings["edit_strength"]
         if legacy_masked_edit or out.get("inpaint_mask_path"):
             out["edit_type"] = "inpaint"
             out["cn_selection"] = "Custom..."

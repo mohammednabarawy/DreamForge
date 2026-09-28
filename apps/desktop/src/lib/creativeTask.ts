@@ -12,7 +12,6 @@ import {
   DEFAULT_QWEN_EDIT_MODEL,
   isEditCapableModel,
   isQwenEditModel,
-  selectFluxKontextEditModel,
   selectQwenEditModel,
 } from "./editModel";
 import { isPhotoRestoreTask, patchForPhotoRestoreTask } from "./photoRestore";
@@ -94,10 +93,11 @@ export function enforceEditJobSettings(
   settings: GenerationSettings,
   studioMode: StudioMode,
   gallery: ModelGalleryItem[],
-  advancedMode?: boolean,
+  _advancedMode?: boolean,
+  userPickedModel?: boolean,
 ): GenerationSettings {
   if (studioMode !== "edit" && studioMode !== "toolbox") return settings;
-  if (isPhotoRestoreTask(settings)) {
+  if (!userPickedModel && isPhotoRestoreTask(settings)) {
     const restorePatch = patchForPhotoRestoreTask(settings, gallery);
     return {
       ...settings,
@@ -107,7 +107,7 @@ export function enforceEditJobSettings(
       inpaint_mask_path: undefined,
     };
   }
-  if ((settings.edit_task ?? "").toLowerCase() === "outfit_transfer") {
+  if (!userPickedModel && (settings.edit_task ?? "").toLowerCase() === "outfit_transfer") {
     const hasMask = Boolean(settings.inpaint_mask_path?.trim());
     if (hasMask) {
       return {
@@ -141,7 +141,7 @@ export function enforceEditJobSettings(
       inpaint_mask_path: undefined,
     };
   }
-  if ((settings.edit_task ?? "").toLowerCase() === "cutout_compose") {
+  if (!userPickedModel && (settings.edit_task ?? "").toLowerCase() === "cutout_compose") {
     const qwenPatch = qwenImage21Defaults();
     const requestedQwenMode = (settings.qwen_edit_mode ?? "").trim().toLowerCase();
     return {
@@ -161,28 +161,19 @@ export function enforceEditJobSettings(
       inpaint_mask_path: undefined,
     };
   }
-  const current = gallery.find((item) => item.engine_name === settings.model);
-  const defaultModel =
-    selectFluxKontextEditModel(gallery) || DEFAULT_FLUX_KONTEXT_EDIT_MODEL;
-  const userModel = settings.model?.trim();
-  const userPickedCapable =
-    Boolean(userModel) &&
-    Boolean(current) &&
-    isEditCapableModel(current!);
-  const effectiveModel =
-    userPickedCapable || (advancedMode && userModel)
-      ? userModel!
-      : userModel || defaultModel;
-  const effectiveItem =
-    gallery.find((item) => item.engine_name === effectiveModel) ?? current;
+  const effectiveModel = settings.model?.trim() || selectQwenEditModel(gallery) || DEFAULT_QWEN_EDIT_MODEL;
+  const effectiveItem = gallery.find((item) => item.engine_name === effectiveModel);
   return {
     ...settings,
     model: effectiveModel,
     style: settings.style ?? "image_edit",
-    ...buildEditRoutingPatch(effectiveItem),
+    ...(settings.inpaint_mask_path ? {
+      edit_type: "inpaint", cn_selection: "Custom...", cn_type: "inpaint",
+    } as const : buildEditRoutingPatch(effectiveItem)),
+    edit_strength: effectiveItem && isQwenEditModel(effectiveItem)
+      ? 1 : settings.edit_strength ?? buildEditRoutingPatch(effectiveItem).edit_strength,
     upscale_image: undefined,
     upscale_method: undefined,
-    inpaint_mask_path: undefined,
   };
 }
 
@@ -219,7 +210,7 @@ export function enforceCreativeTaskSettings(
     ctx;
   let next = applyCreativeTemplateDefaults(settings, studioMode);
   if (studioMode === "edit" || studioMode === "toolbox") {
-    next = enforceEditJobSettings(next, studioMode, gallery, advancedMode);
+    next = enforceEditJobSettings(next, studioMode, gallery, advancedMode, ctx.userPickedModel);
   } else if (studioMode === "inpaint") {
     next = enforceInpaintJobSettings(next, studioMode, gallery, advancedMode);
   } else if (studioMode === "upscale") {
@@ -454,14 +445,13 @@ export function planStudioModeSwitch(
     patch.model = manualEdit ? settings.model : effectiveModel || routedModel;
     if (!manualEdit) {
       refUpdates.userPickedModel = false;
+    } else {
+      refUpdates.userPickedModel = true;
     }
     Object.assign(patch, buildEditRoutingPatch(editModelItem));
     if (useIdeogramRoute) {
       Object.assign(patch, ideogram4SettingsDefaults());
-    } else if (
-      useQwenEditRoute ||
-      (editModelItem && isQwenEditModel(editModelItem))
-    ) {
+    } else if (editModelItem && isQwenEditModel(editModelItem)) {
       Object.assign(patch, qwenImage21Defaults());
     } else {
       patch.performance = "Lightning";

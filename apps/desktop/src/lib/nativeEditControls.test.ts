@@ -7,11 +7,12 @@ import { EditFamilySettingsPanel } from "../components/EditFamilySettingsPanel";
 import { PromptBar } from "../components/PromptBar";
 import { ResultTray } from "../components/ResultTray";
 import { applyIdentityAtSubmit } from "./identityPreserve";
-import { applyMultiImageComposeAtSubmit } from "./multiImageCompose";
+import { resolveReferenceModelFamily } from "./multiImageCompose";
 import { applyExplicitReferenceRoleParams } from "./generateReferenceParams";
 import { applyReferencesAtSubmit } from "./referenceSlots";
 import { activeReferencePath, buildGenerateReferencePatch, imageTaskForRequest, isExplicitImageEditRequest } from "./referenceImage";
-import { planStudioModeSwitch } from "./creativeTask";
+import { enforceCreativeTaskSettings, planStudioModeSwitch } from "./creativeTask";
+import { isEditCapableModel, sortGalleryForEditMode } from "./editModel";
 import { buildEasyCreateReferencePatch } from "./easyModeRouting";
 import { sanitizeSettingsForStudioMode } from "./routeResolution";
 import type { GenerationSettings, ModelGalleryItem } from "./tauri-api";
@@ -34,11 +35,34 @@ function submit(settings: GenerationSettings, mode: "generate" | "edit", family:
   let next = sanitizeSettingsForStudioMode(mode, settings);
   next = applyExplicitReferenceRoleParams(next, mode, family, { ipAdapterReady: false }).params;
   next = applyReferencesAtSubmit(next, mode, family);
-  next = applyMultiImageComposeAtSubmit(next, mode, models);
   return applyIdentityAtSubmit(next, models, { studioMode: mode });
 }
 
 describe("native editing without legacy identity controls", () => {
+  it("keeps a manually selected non-Qwen editor through mode switching and submit", () => {
+    expect(sortGalleryForEditMode(models, "edit")).toEqual(models);
+    for (const model of models.slice(0, 2)) {
+      expect(isEditCapableModel(model)).toBe(true);
+      const settings = { ...legacy, model: model.engine_name };
+      const plan = planStudioModeSwitch({ studioMode: "edit", previousMode: "generate", gallery: models,
+        settings, selectedImage: "source.png", userPickedModel: true, advancedMode: false });
+      expect(plan.patch.model).toBe(model.engine_name);
+      expect(plan.refUpdates.userPickedModel).toBe(true);
+      expect(plan.patch.performance).not.toBe("Quality");
+      const next = enforceCreativeTaskSettings({ ...settings, inpaint_mask_path: "mask.png" }, {
+        studioMode: "edit", gallery: models, userPickedModel: true, vramProfile: "16gb",
+      });
+      expect(next).toMatchObject({ model: model.engine_name, inpaint_mask_path: "mask.png", edit_type: "inpaint" });
+      const html = renderToStaticMarkup(createElement(PromptBar, {
+        settings, studioMode: "edit", referenceModelFamily: model.family,
+        onChange: () => {}, mentions: [], generating: false, workerReady: true, canGenerate: true,
+        onDryRun: () => {}, onGenerate: () => {}, onCancel: () => {},
+        onAttachReferenceImage: () => {}, onClearReferenceImage: () => {}, activeModelLabel: model.family,
+      }));
+      expect(html).toContain(`Selected · ${model.family} edit`);
+      expect(html).not.toContain("Qwen Image 2.1 edit");
+    }
+  });
   it("offers prompt enhancement in both Create and Edit", () => {
     const noop = () => {};
     for (const studioMode of ["generate", "edit"] as const) {
@@ -67,7 +91,7 @@ describe("native editing without legacy identity controls", () => {
       activeModelLabel: "Qwen Image 2.1",
     }));
     expect(html).toContain("Create &amp; Edit");
-    expect(html).toContain("Auto · Qwen Image 2.1 edit");
+    expect(html).toContain("Selected · Qwen Image 2.1 edit");
     expect(html).toContain("Edit image");
     expect(html).not.toContain("Switch to Edit");
     const plan = planStudioModeSwitch({ studioMode: "edit", previousMode: "generate", gallery: models,
@@ -80,6 +104,8 @@ describe("native editing without legacy identity controls", () => {
       const base = { ...legacy, model, prompt: "Create a studio portrait using <image1> and <image2>" };
       expect(imageTaskForRequest(base)).toBe("generate");
       expect(imageTaskForRequest({ ...base, prompt: "Make the people in <image1> and <image2> together in one photo" })).toBe("generate");
+      expect(imageTaskForRequest({ ...base, prompt: "Make the person in <image1> wear a blue shirt" })).toBe("edit");
+      expect(imageTaskForRequest({ ...base, prompt: "Put a hat on the person in <image1>" })).toBe("edit");
       expect(imageTaskForRequest({ ...base, prompt: "Change <image1> to a blue shirt" })).toBe("edit");
       expect(imageTaskForRequest({ ...base, inpaint_mask_path: "mask.png" })).toBe("edit");
       expect(imageTaskForRequest({ ...base, input_image: undefined, reference_image: undefined, references: [] })).toBe("generate");
@@ -174,8 +200,9 @@ describe("native editing without legacy identity controls", () => {
   });
   it("keeps multi-image composition and native Qwen/Kontext Generate references without identity flags", () => {
     const composed = submit({ ...legacy, model: "sdxl.safetensors", reference_role: "restyle" }, "generate", "sdxl");
-    expect(composed).toMatchObject({ model: "flux_kontext.safetensors", input_image: "source.png", steps: 13,
+    expect(composed).toMatchObject({ model: "sdxl.safetensors", input_image: "source.png", steps: 13,
       preserve_character: false, identity_verify: false });
+    expect(resolveReferenceModelFamily(composed, "generate", models, "sdxl")).toBe("sdxl");
     for (const model of models.slice(1)) {
       const next = submit({ ...legacy, model: model.engine_name, reference_role: "image_prompt" }, "generate", model.family!);
       expect(next.model).toBe(model.engine_name);
@@ -203,7 +230,7 @@ describe("native editing without legacy identity controls", () => {
         isInpaint: false, routedModelLabel: "Qwen Image 2.1", showEditStrength: false, onChange: noop })));
     expect(html).not.toMatch(/Keep face \/ character|Verify likeness|Face guidance|Not a character|Face in this image|Similarity/);
     expect(html).toContain("Add image");
-    expect(html).toContain("Qwen Image 2.1 Edit");
+    expect(html).toContain("Image edit");
     expect(html).toContain("Preserve from the source");
   });
 });

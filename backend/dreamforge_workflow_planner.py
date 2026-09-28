@@ -383,7 +383,9 @@ def filter_operations_for_plan_mode(
     if mode == "generate" and not has_image:
         if wf != "face_detail":
             ops = [op for op in ops if op != "face_detail"]
-        return ops
+        if wf not in _TEXT_PLAN_WORKFLOW_MODES:
+            ops = [op for op in ops if op != "text_integrate"]
+        return ops or ["generate_image"]
 
     if mode == "inpaint":
         allowed = set(_PRIMARY_INPAINT_OPS)
@@ -717,7 +719,7 @@ def assess_workflow_readiness(
         for cat in cats:
             for item in categories.get(cat, []):
                 fam = item.get("family")
-                if not fam and infer_model_family:
+                if fam not in allowed_fams and infer_model_family:
                     fam = infer_model_family(str(item.get("name") or item.get("relative_path") or ""))
                 if fam and fam in allowed_fams:
                     return True

@@ -256,7 +256,9 @@ def resolve_creative_task(
 
         patch.pop("post_upscale", None)
 
-    merged = _complete_patch_for_mode(routing_mode, {**base, **patch}, selected_image, gallery)
+    merged = _complete_patch_for_mode(
+        routing_mode, {**base, **patch, "user_picked_model": user_picked_model}, selected_image, gallery
+    )
 
     if (
         mode == "upscale"

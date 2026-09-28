@@ -357,6 +357,7 @@ export type GenerationFinishedPayload = StructuredError & {
   asset_url?: string;
   result?: {
     images?: Array<{ path: string }>;
+    validation?: Array<{ ok?: boolean; warnings?: string[] }>;
   };
 };
 

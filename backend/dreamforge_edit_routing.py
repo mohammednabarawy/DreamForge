@@ -37,7 +37,7 @@ def model_supports_kontext_edit(model: dict | None, model_family: str = "") -> b
 
 def model_supports_qwen_edit(model: dict | None, model_family: str = "") -> bool:
     fam = (model_family or (model or {}).get("family") or "").lower()
-    if fam == "qwen_image_2.1":
+    if fam in {"qwen_image_2.1", "qwen_image_edit"}:
         return True
     blob = _blob(model)
     return "qwen" in blob and ("2.1" in blob or "2_1" in blob)
@@ -48,6 +48,10 @@ def model_supports_img2img_edit(model: dict | None, model_family: str = "") -> b
     if fam in {
         "sdxl",
         "sd15",
+        "sd3",
+        "chroma",
+        "kandinsky",
+        "kandinsky5",
         "flux",
         "flux2",
         "hidream",
@@ -55,6 +59,7 @@ def model_supports_img2img_edit(model: dict | None, model_family: str = "") -> b
         "ideogram4",
         "krea2",
         "z_image",
+        "z-image",
     }:
         return True
     caps = model_capabilities_for_model(model, model_family)
@@ -62,7 +67,9 @@ def model_supports_img2img_edit(model: dict | None, model_family: str = "") -> b
 
 
 def model_supports_edit(model: dict | None, model_family: str = "") -> bool:
-    return model_supports_qwen_edit(model, model_family)
+    return (model_supports_qwen_edit(model, model_family)
+            or model_supports_kontext_edit(model, model_family)
+            or model_supports_img2img_edit(model, model_family))
 
 
 _SDXL_TOOLBOX_NEEDLES = ("epicrealism", "juggernaut", "realvis", "dreamshaper", "sd_xl", "sdxl")
@@ -206,7 +213,6 @@ def edit_routing_for_model(model: dict | None, model_family: str = "") -> dict[s
             "edit_strength": 1.0,
             "cn_selection": "None",
             "cn_type": "None",
-            "steps": 20,
         }
     fam = (model_family or (model or {}).get("family") or "").lower()
     if fam == "krea2":
@@ -235,7 +241,6 @@ def edit_routing_for_model(model: dict | None, model_family: str = "") -> dict[s
         "edit_strength": 1.0,
         "cn_selection": "None",
         "cn_type": "None",
-        "steps": 24,
     }
 
 

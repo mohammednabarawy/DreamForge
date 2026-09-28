@@ -366,11 +366,11 @@ def family_performance_settings(
         }
     elif family == "krea2":
         if "turbo" in name:
-            # Distilled 8-step checkpoint: CFG disabled, er_sde / simple.
+            # Official Turbo workflow: distilled 8 steps, CFG 1, Euler / simple.
             table = {
-                "Lightning": (8, 1.0, "er_sde", "simple"),
-                "Speed": (8, 1.0, "er_sde", "simple"),
-                "Quality": (12, 1.0, "er_sde", "simple"),
+                "Lightning": (8, 1.0, "euler", "simple"),
+                "Speed": (8, 1.0, "euler", "simple"),
+                "Quality": (8, 1.0, "euler", "simple"),
             }
         else:
             # RAW (undistilled) base checkpoint: needs CFG and more steps.
@@ -414,6 +414,7 @@ def resolve_ui_profile(
     styles_clear = family in MODERN_FAMILIES
     negative_clear = (
         family in ("hidream", "hidream_o1", "ideogram4")
+        or (family == "krea2" and "turbo" in model_name.lower())
         or family.startswith(("flux", "qwen"))
     )
 
@@ -483,6 +484,8 @@ def resolve_ui_profile(
         hints.append(
             "Ideogram 4: use Enhance to build structured JSON from your idea; no negative prompt."
         )
+    elif family == "krea2" and "turbo" in model_name.lower():
+        hints.append("Krea 2 Turbo: 8 steps, CFG 1, Euler / simple; start at 1024px.")
 
     return {
         "family": family,
@@ -529,7 +532,7 @@ def _custom_sampling_for_family(family: str, model_name: str) -> dict:
         return {
             "custom_steps": 8 if turbo else 28,
             "cfg": 1.0 if turbo else 3.5,
-            "sampler_name": "er_sde" if turbo else "euler",
+            "sampler_name": "euler",
             "scheduler": "simple",
             "clip_skip": 1,
         }
@@ -624,7 +627,7 @@ def auto_generation_settings(
         turbo = "turbo" in model_name.lower()
         cfg = 1.0 if turbo else 3.5
         steps = 8 if turbo else 28
-        sampler_name = "er_sde" if turbo else "euler"
+        sampler_name = "euler"
         scheduler, clip_skip = "simple", 1
         styles = []
         negative = ""

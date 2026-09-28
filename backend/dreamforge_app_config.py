@@ -109,15 +109,15 @@ _EXPERIENCE_VALUES = {"simple", "pro"}
 _AGENT_FIELD_GUIDE = """
 DreamForge routing field guide:
 - generate: use for text-to-image when there is no source image to preserve. Let the user pick any library model in Generate mode.
-- edit: use for source-image edits and masked edits. Qwen Image 2.1 is the only supported edit/inpaint model (Speed 25 steps, Quality 40 steps, CFG 1, Euler/Simple, denoise 1), with up to 10 ordered reference images addressed as <image1> through <image10>. If Qwen Image 2.1 is unavailable, report that instead of switching to another model.
-- masked edit: when a local region/mask is required, use the same Edit mode and Qwen Image 2.1. Require input_image plus inpaint_mask_path.
+- edit: use for source-image edits and masked edits. Respect the user's selected edit-capable model; Qwen Image 2.1 is the default, not a mandatory override. Qwen Image 2.1 uses Speed 25 steps, Quality 40 steps, CFG 1, Euler/Simple, denoise 1, with up to 10 ordered references addressed as <image1> through <image10>. Other editors use their own native settings and reference limits.
+- masked edit: use the same Edit mode with an inpaint-capable selected model. Require input_image plus inpaint_mask_path. Report incompatible selections instead of silently switching models.
 - upscale: use only for enlargement/restoration/detail enhancement of an existing image. Prefer RealESRGAN_x2 for fast 2x, SUPIR when available for high-realism repair, and do not use text-to-image generation for pure upscale.
 - agent: use only when a required decision is impossible from the instruction, such as missing source image for an edit or missing mask for inpaint.
 
 Conditioning and quality rules:
 - For exact Arabic or brand typography, ask Qwen Image 2.1 to render the text directly and preserve reference layout where possible.
-- Qwen Image 2.1 is the only edit route. Use its 25-step, CFG 1, Euler/Simple defaults and explicit preservation wording. Never fall back to Kontext, Flux Fill, SDXL, or img2img for edits.
-- For masked edits, keep input_image, the mask and extra references in the ordered Qwen image slots; preserve unmasked pixels as requested.
+- Preserve an explicit model selection. Use the selected model's native edit route (Qwen semantic edit, Kontext, Krea 2 Identity Edit, or img2img). Apply Qwen Image 2.1 sampling defaults only to Qwen Image 2.1.
+- For Qwen Image 2.1 masked edits, keep input_image, the mask and extra references in its ordered image slots; other models use their native mask workflow. Preserve unmasked pixels.
 - Use ControlNet/structural guidance only when the user asks to preserve pose, edges, depth, layout, or a sketch. Do not add it to normal Kontext edits.
 - For structural preservation, keep the source image as input_image and prefer edit/inpaint over generate.
 - Keep patch minimal. Do not invent files. Do not include secrets. Return JSON only.
@@ -925,23 +925,32 @@ def _complete_patch_for_mode(
     if mode == "edit":
         from dreamforge_task_router import edit_routing_patch, pick_curated_edit_model
 
-        qwen_defaults = _qwen_edit_patch()
-        if next_patch.get("performance") in {"Speed", "Lightning"}:
-            qwen_defaults["steps"] = 25
-        for key, value in qwen_defaults.items():
-            next_patch.setdefault(key, value)
-        next_patch.setdefault("style", "image_edit")
-        masked = bool(next_patch.get("inpaint_mask_path")) or str(next_patch.get("edit_type") or "").lower() == "inpaint"
-        picked, _ = pick_curated_edit_model(model_gallery)
-        next_patch["model"] = picked
+        from dreamforge_edit_routing import model_supports_edit
+        from dreamforge_inpaint_routing import model_supports_inpaint
+        from dreamforge_task_router import find_gallery_item
+
         engine = str(next_patch.get("model") or "")
+        item = find_gallery_item(model_gallery, engine)
+        masked = bool(next_patch.get("inpaint_mask_path")) or str(next_patch.get("edit_type") or "").lower() == "inpaint"
+        supports_task = model_supports_inpaint if masked else model_supports_edit
+        if not engine or (not next_patch.get("user_picked_model") and not supports_task(item)):
+            engine, _ = pick_curated_edit_model(model_gallery)
+            next_patch["model"] = engine
+        if not engine or ("qwen" in engine.lower() and ("2.1" in engine.lower() or "2_1" in engine.lower())):
+            qwen_defaults = _qwen_edit_patch()
+            if next_patch.get("performance") in {"Speed", "Lightning"}:
+                qwen_defaults["steps"] = 25
+            for key, value in qwen_defaults.items():
+                next_patch.setdefault(key, value)
+        next_patch.setdefault("style", "image_edit")
         next_patch.update(
             edit_routing_patch(
                 model_gallery,
                 engine,
-                preferred_edit_type="qwen_edit",
             )
         )
+        if "qwen" not in engine.lower() and patch.get("edit_strength") is not None:
+            next_patch["edit_strength"] = patch["edit_strength"]
         if masked:
             next_patch["edit_type"] = "inpaint"
         if selected_image:

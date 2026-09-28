@@ -3,7 +3,10 @@ import { generationNeedsReferenceImage } from "./parseAgentPrompt";
 import type { ModelGalleryItem } from "./tauri-api";
 import type { EditFamilyPlanState } from "./workflowPlanActions";
 import { isEditFamilyMode, type StudioMode } from "./model-selection";
+import { sanitizeSettingsForStudioMode } from "./routeResolution";
 import { vramProfileFromHardware } from "./vramProfiles";
+import { isEditCapableModel } from "./editModel";
+import { isInpaintCapableModel } from "./inpaintModel";
 
 export { isEditFamilyMode, vramProfileFromHardware };
 export type { EditFamilyPlanState };
@@ -71,6 +74,18 @@ export function computeGenerateReadiness(args: {
   const hasEditImage = Boolean((args.settings.input_image ?? "").trim());
   const hasUpscaleImage = Boolean((args.settings.upscale_image ?? "").trim());
   const hasInpaintMask = Boolean((args.settings.inpaint_mask_path ?? "").trim());
+  const modelItem = args.modelGallery.find(item => item.engine_name === args.model);
+  if (studio === "edit" && modelItem &&
+      !(hasInpaintMask ? isInpaintCapableModel(modelItem) : isEditCapableModel(modelItem))) {
+    return {
+      ok: false,
+      reason: hasInpaintMask
+        ? "Selected model does not support masked editing — choose a compatible model"
+        : "Selected model does not support editing — choose an edit-capable model",
+      missingCompanions: false,
+      companionBlockedOnly: false,
+    };
+  }
   if (studio === "edit" && !hasEditImage) {
     return {
       ok: false,
@@ -124,7 +139,7 @@ export function computeGenerateReadiness(args: {
           : "Model dependencies not ready",
     };
   }
-  if (generationNeedsReferenceImage(args.settings, args.modelGallery)) {
+  if (generationNeedsReferenceImage(sanitizeSettingsForStudioMode(studio, args.settings), args.modelGallery)) {
     return {
       ok: false,
       reason: "Attach a reference image or pick a text-to-image model",

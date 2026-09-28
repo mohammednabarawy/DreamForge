@@ -7,6 +7,16 @@ from dreamforge_workflow_planner import (
 )
 
 
+def test_generate_arabic_labels_do_not_require_separate_composite_text():
+    ops = resolve_operations_from_intent("Use clear Arabic text for all labels")
+    assert filter_operations_for_plan_mode(
+        ops, mode="generate", has_image=False, workflow_mode="generate"
+    ) == ["generate_image"]
+    assert filter_operations_for_plan_mode(
+        ops, mode="generate", has_image=False, workflow_mode="arabic_text_composite"
+    ) == ["text_integrate"]
+
+
 def test_live_blueprint_for_common_editing_needs():
     blueprint = build_live_workflow_blueprint(
         "make her smile, remove background people, make it cinematic, upscale to 4K",
@@ -23,6 +33,19 @@ def test_live_blueprint_for_common_editing_needs():
     assert "upscale" in blueprint["operations"]
     assert "flux_kontext_edit" in blueprint["template_ids"]
     assert "upscale_basic" in blueprint["template_ids"]
+
+
+def test_installed_kontext_inventory_alias_is_not_reported_missing(monkeypatch):
+    import dreamforge_workflow_planner as planner
+
+    monkeypatch.setattr(planner, "_inventory_categories", lambda: {
+        "diffusion_models": [{"name": "flux1-dev-kontext_fp8_scaled.safetensors", "family": "kontext"}],
+    })
+    readiness = planner.assess_workflow_readiness(
+        ["flux_kontext_edit"], required_inputs=[], required_models=["flux_kontext_unet"],
+    )
+    assert readiness["missing_models"] == []
+    assert readiness["ready"]
 
 
 def test_qwen_edit_readiness_recommends_8step_lightning_lora(monkeypatch):

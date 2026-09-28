@@ -1,6 +1,7 @@
 """Tests for Qwen-Image-2.1 integration across DreamForge backend."""
 
 from types import SimpleNamespace
+from PIL import Image
 
 from dreamforge_comfy_workflows import (
     comfy_qwen_image_edit,
@@ -22,6 +23,7 @@ from dreamforge_references import MAX_REFERENCE_SLOTS
 from dreamforge_task_router import pick_curated_edit_model
 from dreamforge_workflow_routing import resolve_comfy_workflow_mode
 from dreamforge_generation import _build_comfy_prompt_graph
+from dreamforge_agent_tools import validate_image
 from modules.model_ui_defaults import auto_generation_settings
 
 
@@ -139,6 +141,40 @@ def test_qwen_21_edit_reference_wording_and_alpha_prompt():
     assert prompt.endswith("The image has alpha channel and the background is transparent.")
 
 
+def test_qwen_21_edit_size_and_transparency_contract(tmp_path):
+    common = {
+        "ckpt_name": "qwen_image_2.1_int8_convrot.safetensors",
+        "category": "diffusion_models", "family": "qwen_image_2.1",
+        "prompt": "Transparent PNG", "width": 2048, "height": 2048,
+    }
+    for graph in (
+        comfy_qwen_image_edit({**common, "image": "source.png"}),
+        comfy_qwen_image_edit_plus({**common, "images": ["source.png", "reference.png"]}),
+        comfy_qwen_image_background_removal({**common, "image": "source.png"}),
+    ):
+        encoder = next(node for node in graph.values() if node["class_type"] == "TextEncodeQwenImage21")
+        scaled_id = encoder["inputs"]["images.image_1"][0]
+        assert graph[scaled_id]["class_type"] == "ImageScale"
+        assert (graph[scaled_id]["inputs"]["width"], graph[scaled_id]["inputs"]["height"]) == (2048, 2048)
+        assert encoder["inputs"]["resolution"] == 0
+
+    odd_size = comfy_qwen_image_edit({**common, "image": "source.png", "width": 2000})
+    output = next(node for node in odd_size.values() if node["class_type"] == "SaveImage")
+    output_scale = odd_size[output["inputs"]["images"][0]]
+    assert output_scale["class_type"] == "ImageScale"
+    assert (output_scale["inputs"]["width"], output_scale["inputs"]["height"]) == (2000, 2048)
+
+    opaque = tmp_path / "opaque.png"
+    Image.new("RGB", (64, 64), "red").save(opaque)
+    result = validate_image(str(opaque), 64, 64, require_transparency=True)
+    assert result["ok"] is False
+    assert "transparent_background_missing" in result["warnings"]
+    assert validate_image(str(opaque), 128, 64, strict_dimensions=True)["ok"] is False
+    alpha = tmp_path / "alpha.png"
+    Image.new("RGBA", (64, 64), (255, 0, 0, 128)).save(alpha)
+    assert "transparent_background_missing" not in validate_image(str(alpha), require_transparency=True)["warnings"]
+
+
 def test_qwen_21_comfy_txt2img():
     graph = comfy_qwen_image_txt2img(
         {
@@ -156,6 +192,8 @@ def test_qwen_21_comfy_txt2img():
     assert len(text_nodes) == 1
     assert text_nodes[0]["inputs"]["prompt"] == "A cinematic shot of a futuristic cyberpunk city"
     assert text_nodes[0]["inputs"]["negative_prompt"] == "blurry"
+    assert text_nodes[0]["inputs"]["resolution"] == 1024
+    assert not any(key.startswith("images.") for key in text_nodes[0]["inputs"])
 
     latent_nodes = [n for n in graph.values() if n.get("class_type") == "EmptyLatentImage"]
     assert len(latent_nodes) == 1

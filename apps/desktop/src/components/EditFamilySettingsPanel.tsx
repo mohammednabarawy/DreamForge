@@ -10,7 +10,7 @@ type Props = {
   advancedMode?: boolean;
 };
 
-/** Focused Qwen Image 2.1 edit controls; a mask turns the same mode into a masked edit. */
+/** Native edit controls; a mask turns the same mode into a masked edit. */
 export function EditFamilySettingsPanel({
   settings,
   onChange,
@@ -26,7 +26,7 @@ export function EditFamilySettingsPanel({
     <section className="overflow-hidden rounded-lg border border-dfui-border/50 bg-dfui-bg/25">
       <div className="flex items-center justify-between border-b border-dfui-border/40 px-2.5 py-2">
         <div className="min-w-0">
-          <h3 className="text-xs font-semibold text-dfui-fg">Qwen Image 2.1 Edit</h3>
+          <h3 className="text-xs font-semibold text-dfui-fg">Image edit</h3>
           <p className="truncate font-mono text-[9px] text-dfui-tertiary">
             {editRouteSubtitle ?? routedModelLabel}
           </p>
@@ -39,7 +39,7 @@ export function EditFamilySettingsPanel({
       <div className="space-y-3 px-2.5 py-2.5">
         <p className="text-[10px] leading-snug text-dfui-tertiary">
           {isInpaint
-            ? "Only the painted mask is changed. The source image and added references stay available to Qwen."
+            ? "Only the painted mask is changed. The selected model uses the source image and any supported references."
             : "Describe the change in the prompt. Image 1 is the edit target; added images are ordered references."}
         </p>
 

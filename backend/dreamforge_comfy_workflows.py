@@ -256,25 +256,6 @@ def comfy_z_image_img2img(args: dict[str, Any]) -> dict[str, Any]:
     return g
 
 
-def _apply_krea2_model_sampling(
-    model_out: list[str | int],
-    g: dict[str, Any],
-    start_id: int,
-    args: dict[str, Any],
-) -> tuple[list[str | int], int]:
-    """Krea 2 flow-matching timestep shift (mu pinned to 1.15 for Turbo)."""
-    shift_value = args.get("krea2_shift")
-    if shift_value is None:
-        shift_value = args.get("shift")
-    if shift_value is None:
-        shift_value = 1.15
-    g[str(start_id)] = _node(
-        "ModelSamplingAuraFlow",
-        {"model": model_out, "shift": float(shift_value)},
-    )
-    return [str(start_id), 0], start_id + 1
-
-
 def comfy_krea2_txt2img(args: dict[str, Any]) -> dict[str, Any]:
     """Krea 2 OSS txt2img (UNETLoader + CLIPLoader krea2 + Qwen Image VAE)."""
     ckpt = str(args["ckpt_name"])
@@ -284,22 +265,23 @@ def comfy_krea2_txt2img(args: dict[str, Any]) -> dict[str, Any]:
     height = int(args.get("height", 1024))
     steps = int(args.get("steps", 8))
     cfg = float(args.get("cfg", 1.0))
-    sampler = str(args.get("sampler_name", "er_sde"))
+    sampler = str(args.get("sampler_name", "euler"))
     scheduler = str(args.get("scheduler", "simple"))
     seed = int(args.get("seed", 0))
 
     g: dict[str, Any] = {}
-    model_out, clip_out, vae_out, n = _add_model_loader(
+    model_out, clip_out, vae_out, _ = _add_model_loader(
         g, {**args, "ckpt_name": ckpt}
     )
-    model_sampled, n = _apply_krea2_model_sampling(model_out, g, n, args)
     g["2"] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
-    g["3"] = _node("CLIPTextEncode", {"clip": clip_out, "text": negative})
-    g["4"] = _node("EmptySD3LatentImage", {"width": width, "height": height, "batch_size": 1})
+    g["3"] = _node("ConditioningZeroOut", {"conditioning": ["2", 0]}) if cfg == 1 else _node(
+        "CLIPTextEncode", {"clip": clip_out, "text": negative}
+    )
+    g["4"] = _node("EmptyLatentImage", {"width": width, "height": height, "batch_size": 1})
     g["5"] = _node(
         "KSampler",
         {
-            "model": model_sampled,
+            "model": model_out,
             "positive": ["2", 0],
             "negative": ["3", 0],
             "latent_image": ["4", 0],
@@ -327,16 +309,15 @@ def comfy_krea2_img2img(args: dict[str, Any]) -> dict[str, Any]:
     image_filename = str(args["image"])
     steps = int(args.get("steps", 8))
     cfg = float(args.get("cfg", 1.0))
-    sampler = str(args.get("sampler_name", "er_sde"))
+    sampler = str(args.get("sampler_name", "euler"))
     scheduler = str(args.get("scheduler", "simple"))
     seed = int(args.get("seed", 0))
     denoise = float(args.get("denoise", args.get("edit_strength", 0.6)))
 
     g: dict[str, Any] = {}
-    model_out, clip_out, vae_out, n = _add_model_loader(
+    model_out, clip_out, vae_out, _ = _add_model_loader(
         g, {**args, "ckpt_name": ckpt}
     )
-    model_sampled, n = _apply_krea2_model_sampling(model_out, g, n, args)
     pixels = _img2img_source_pixels(g, args, image_filename, load_id="2", scale_id="20")
     g["3"] = _node("VAEEncode", {"pixels": pixels, "vae": vae_out})
     g["4"] = _node("CLIPTextEncode", {"clip": clip_out, "text": prompt})
@@ -344,7 +325,7 @@ def comfy_krea2_img2img(args: dict[str, Any]) -> dict[str, Any]:
     g["6"] = _node(
         "KSampler",
         {
-            "model": model_sampled,
+            "model": model_out,
             "positive": ["4", 0],
             "negative": ["5", 0],
             "latent_image": ["3", 0],
@@ -1371,14 +1352,17 @@ def normalize_qwen_image_references(prompt: str, image_count: int) -> str:
     return _QWEN_IMAGE_REFERENCE_RE.sub(replace, str(prompt or ""))
 
 
-def qwen_transparent_png_prompt(prompt: str, *, force: bool = False) -> str:
-    text = str(prompt or "").strip()
-    lower = text.lower()
-    wants_alpha = any(
+def qwen_transparency_requested(prompt: str) -> bool:
+    lower = str(prompt or "").lower()
+    return any(
         phrase in lower
         for phrase in ("transparent background", "transparent png", "rgba", "alpha channel")
     )
-    if (not wants_alpha and not force) or "this is an rgba image with transparency" in lower:
+
+
+def qwen_transparent_png_prompt(prompt: str, *, force: bool = False) -> str:
+    text = str(prompt or "").strip()
+    if (not qwen_transparency_requested(text) and not force) or "this is an rgba image with transparency" in text.lower():
         return text
     return (
         f"This is an RGBA image with transparency. {text}. "
@@ -1655,13 +1639,22 @@ def _qwen_edit_sampler_nodes(
     )
     samp = str(start_id)
     decode = str(start_id + 1)
-    save = str(start_id + 2)
     g[decode] = _vae_decode_node(args, [samp, 0], args["_vae_out"])
+    output: list[str | int] = [decode, 0]
+    save_number = start_id + 2
+    if qwen_21 and (int(args.get("width") or 0) % 32 or int(args.get("height") or 0) % 32):
+        g[str(save_number)] = _node("ImageScale", {
+            "image": output, "upscale_method": "lanczos",
+            "width": int(args["width"]), "height": int(args["height"]), "crop": "disabled",
+        })
+        output = [str(save_number), 0]
+        save_number += 1
+    save = str(save_number)
     g[save] = _node(
         "SaveImage",
-        {"images": [decode, 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+        {"images": output, "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
     )
-    return start_id + 3
+    return save_number + 1
 
 
 def compute_cutout_layout(
@@ -1871,7 +1864,9 @@ def comfy_qwen_image_edit(args: dict[str, Any]) -> dict[str, Any]:
     n += 2
     g["1"] = _node("LoadImage", {"image": image_filename, "upload": "image"})
     image_out = ["1", 0]
-    if not is_qwen_21:
+    if is_qwen_21:
+        image_out, n = _qwen_edit_source_size(g, image_out, n, args)
+    else:
         image_out, n = _maybe_scale_qwen_pixels(g, image_out, n, args)
 
     if is_qwen_21:
@@ -1930,6 +1925,19 @@ def comfy_qwen_image_edit(args: dict[str, Any]) -> dict[str, Any]:
     return g
 
 
+def _qwen_edit_source_size(g: dict[str, Any], image: list[str | int], n: int, args: dict[str, Any]) -> tuple[list[str | int], int]:
+    """The Qwen 2.1 edit latent follows image_1, so size that image before encoding."""
+    width, height = int(args.get("width") or 0), int(args.get("height") or 0)
+    if not width or not height:
+        return image, n
+    width, height = max(32, round(width / 32) * 32), max(32, round(height / 32) * 32)
+    g[str(n)] = _node("ImageScale", {
+        "image": image, "upscale_method": "lanczos",
+        "width": width, "height": height, "crop": "center",
+    })
+    return [str(n), 0], n + 1
+
+
 def comfy_qwen_image_edit_plus(args: dict[str, Any]) -> dict[str, Any]:
     """Qwen-Image-2.1 Edit via TextEncodeQwenImage21 (up to 10 images) or legacy Plus."""
     ckpt = str(args["ckpt_name"])
@@ -1971,8 +1979,11 @@ def comfy_qwen_image_edit_plus(args: dict[str, Any]) -> dict[str, Any]:
     for index, filename in enumerate(image_list[:max_slots], start=1):
         node_id = str(n)
         g[node_id] = _node("LoadImage", {"image": filename, "upload": "image"})
-        image_links[f"image{index}"] = [node_id, 0]
+        image_out: list[str | int] = [node_id, 0]
         n += 1
+        if is_qwen_21 and (index == 1 or index == args.get("mask_index")):
+            image_out, n = _qwen_edit_source_size(g, image_out, n, args)
+        image_links[f"image{index}"] = image_out
 
     if is_qwen_21:
         # Qwen 2.1: Native multimodal in-context conditioning with up to 10 images.
@@ -2121,10 +2132,10 @@ def comfy_qwen_image_txt2img(args: dict[str, Any]) -> dict[str, Any]:
             "clip": clip_out,
             "prompt": normalize_qwen_image_references(prompt, len(reference_images)),
             "negative_prompt": negative,
+            "resolution": int(args.get("reference_resolution") or 1024),
         }
         if reference_images:
             encode_inputs["vae"] = vae_out
-            encode_inputs["resolution"] = int(args.get("reference_resolution") or 1024)
         for index, filename in enumerate(reference_images, start=1):
             g[str(n)] = _node("LoadImage", {"image": filename, "upload": "image"})
             encode_inputs[f"images.image_{index}"] = [str(n), 0]
@@ -2213,7 +2224,7 @@ def comfy_qwen_image_background_removal(args: dict[str, Any]) -> dict[str, Any]:
     n += 2
 
     g["1"] = _node("LoadImage", {"image": image_filename, "upload": "image"})
-    image_out = ["1", 0]
+    image_out, n = _qwen_edit_source_size(g, ["1", 0], n, args)
 
     res = int(args.get("resolution") or 0)
     g[str(n)] = _node(
@@ -2250,11 +2261,18 @@ def comfy_qwen_image_background_removal(args: dict[str, Any]) -> dict[str, Any]:
     k_id = str(n)
     n += 1
     g[str(n)] = _vae_decode_node(args, [k_id, 0], vae_out)
-    dec_id = str(n)
+    output: list[str | int] = [str(n), 0]
     n += 1
+    if int(args.get("width") or 0) % 32 or int(args.get("height") or 0) % 32:
+        g[str(n)] = _node("ImageScale", {
+            "image": output, "upscale_method": "lanczos",
+            "width": int(args["width"]), "height": int(args["height"]), "crop": "disabled",
+        })
+        output = [str(n), 0]
+        n += 1
     g[str(n)] = _node(
         "SaveImage",
-        {"images": [dec_id, 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge_Cutout"))},
+        {"images": output, "filename_prefix": str(args.get("filename_prefix", "DreamForge_Cutout"))},
     )
     return g
 

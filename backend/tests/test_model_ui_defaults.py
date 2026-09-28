@@ -109,6 +109,18 @@ def test_qwen_image_21_uses_native_speed_and_quality_profiles():
         )
 
 
+def test_krea2_turbo_uses_official_eight_step_profile():
+    model = "krea2TurboFP8_krea2TURBO.safetensors"
+    for performance in ("Lightning", "Speed", "Quality"):
+        sampling = family_performance_settings("krea2", model, performance)
+        assert (sampling["custom_steps"], sampling["cfg"], sampling["sampler_name"], sampling["scheduler"]) == (
+            8, 1.0, "euler", "simple"
+        )
+    profile = resolve_ui_profile(model, category="diffusion_models")
+    assert profile["clear_negative"] is True
+    assert profile["custom_sampling"]["custom_steps"] == 8
+
+
 def test_hidream_fast_variant_steps():
     fast = family_performance_settings("hidream", "HiDream-I1-Fast.safetensors", "Lightning")
     assert fast["custom_steps"] == 16

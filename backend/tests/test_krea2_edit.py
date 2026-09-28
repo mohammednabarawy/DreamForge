@@ -25,8 +25,9 @@ def test_krea2_edit_route_and_graph():
         settings = {"model": MODEL["name"], "input_image": "source.png", "edit_type": stale_type,
                     "steps": 13, "cfg_scale": 2.5, "width": 768, "height": 1024}
         routed = apply_task_routing(settings, "edit", [MODEL], user_picked_model=True).patch
-        assert routed["model"] != MODEL["name"]
-        result = dict(settings)  # Legacy graph remains testable, but is not an app Edit route.
+        assert routed["model"] == MODEL["name"]
+        assert routed["edit_type"] == "auto"
+        result = dict(routed)
         assert (result["steps"], result["cfg_scale"], result["width"], result["height"]) == (13, 2.5, 768, 1024)
         job = SimpleNamespace(**result, workflow_mode="edit", studio_mode="edit", reference_role="source_edit", preserve_character=True)
         apply_identity_to_job(job, model_family="krea2")

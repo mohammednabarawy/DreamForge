@@ -43,7 +43,7 @@ export function referencePanelSubtitle(studioMode: StudioMode): string {
   }
   if (studioMode === "upscale") return "Image to upscale or restore";
   if (studioMode === "edit") {
-    return "Source and extra references use Qwen Image 2.1 Edit";
+    return "Source and supported references use the selected editor";
   }
   return "Attach references — routing follows model and role (image prompt, restyle, structure)";
 }
@@ -93,8 +93,14 @@ export function activeReferencePath(
 
 /** A source-image transformation belongs in Edit, not reference-guided Create. */
 export function isExplicitImageEditRequest(settings: GenerationSettings): boolean {
-  return Boolean(activeReferencePath(settings, "generate")) &&
-    /^\s*(?:(?:please|can you)\s+)?(?:edit|modify|retouch|replace|change|remove|recolor|fix|erase|swap)\b/i.test(settings.prompt ?? "");
+  if (!activeReferencePath(settings, "generate")) return false;
+  const prompt = settings.prompt ?? "";
+  if (/^\s*(?:(?:please|can you)\s+)?(?:edit|modify|retouch|replace|change|remove|recolor|fix|erase|swap)\b/i.test(prompt)) return true;
+  // ponytail: Heuristic covers common source-directed requests; add semantic routing only if real prompts outgrow it.
+  const sourceDirected = /(?:<image1>|\bimage\s*1\b|\b(?:the|this|that)\s+(?:person|subject|photo|image|picture|face|background)\b)/i.test(prompt);
+  const composition = /\b(?:together|side by side|alongside|one (?:photo|picture|image|scene)|combine|compose|merge)\b/i.test(prompt);
+  return sourceDirected && !composition &&
+    /^\s*(?:(?:please|can you)\s+)?(?:make|put|place|turn)\b/i.test(prompt);
 }
 
 /** One workspace; the prompt and source decide which native graph runs. */
@@ -103,7 +109,8 @@ export function imageTaskForRequest(settings: GenerationSettings): "generate" | 
   if (!activeReferencePath(settings, "generate")) return "generate";
   if (isExplicitImageEditRequest(settings)) return "edit";
   if (settings.reference_role === "source_edit" &&
-      !/^\s*(?:create|generate|compose|combine|put|place|make)\b/i.test(settings.prompt ?? "")) return "edit";
+      !/^\s*(?:create|generate|compose|combine)\b/i.test(settings.prompt ?? "") &&
+      !/\b(?:together|side by side|alongside|one (?:photo|picture|image|scene))\b/i.test(settings.prompt ?? "")) return "edit";
   return "generate";
 }
 

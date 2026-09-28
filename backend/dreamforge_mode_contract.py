@@ -123,7 +123,7 @@ def _model_basename(value: str) -> str:
 
 def _summary(mode: str, policy: str, model: str, changed_fields: list[str]) -> str:
     if policy == "preserve_user_model":
-        return "Generate mode will preserve the user-selected model."
+        return f"{mode.capitalize()} mode will preserve the user-selected model."
     if policy == "manual_selection":
         return "Generate mode expects the user to choose the model."
     if policy == "suggest_model":

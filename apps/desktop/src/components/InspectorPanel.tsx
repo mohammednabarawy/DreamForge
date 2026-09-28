@@ -183,10 +183,10 @@ export function InspectorPanel({
   const selectedQwen21 = selectedModel
     ? isQwenEditModel(selectedModel)
     : /qwen.*(?:2\.1|2_1)|(?:2\.1|2_1).*qwen/i.test(settings.model ?? "");
-  const qwen21Selected = studioMode === "edit" || selectedQwen21;
+  const qwen21Selected = selectedQwen21;
   const showEditStrength = !qwen21Selected &&
     (Boolean(settings.input_image) || ["kontext", "inpaint", "img2img", "qwen_edit"].includes(settings.edit_type ?? ""));
-  const isQwenModel = studioMode === "edit" || (settings.model ?? activeModelLabel ?? "").toLowerCase().includes("qwen");
+  const isQwenModel = selectedQwen21;
 
   const isEditFamily = isEditFamilyMode(studioMode as StudioMode);
   const powerUserInspector = advancedMode;
@@ -207,7 +207,6 @@ export function InspectorPanel({
   );
   const sortedModelGallery = useMemo(() => {
     let gallery = modelGallery.filter((item) =>
-      (studioMode !== "edit" || isQwenEditModel(item)) &&
       (modelFamily === "all" || item.family === modelFamily),
     );
     if (modelSort !== "recommended") {
@@ -258,11 +257,12 @@ export function InspectorPanel({
   );
 
   const editModelManual = useMemo(() => {
-    if (!isEdit || !selectedQwen21 || !settings.model?.trim()) return false;
+    if (!isEdit || !settings.model?.trim()) return false;
     return settings.model !== curatedEditModel;
   }, [curatedEditModel, isEdit, selectedQwen21, settings.model]);
 
   const routedModelLabel = useMemo(() => {
+    if (isEdit || isInpaint) return activeModelLabel;
     if (!isEditFamily) return activeModelLabel;
     if (isUpscale && upscaleModelManual) {
       return activeModelLabel;
@@ -293,6 +293,7 @@ export function InspectorPanel({
   ]);
 
   const editRouteSubtitle = useMemo(() => {
+    if (isEdit || isInpaint) return `Selected · ${activeModelLabel}`;
     if (!isEditFamily) return undefined;
     if (isUpscale) {
       return upscaleModelManual

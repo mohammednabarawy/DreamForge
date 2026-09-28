@@ -1007,6 +1007,9 @@ def _build_comfy_prompt_graph(
                     "scheduler": "simple",
                     "seed": seed,
                     "denoise": 1.0,
+                    "width": settings["width"],
+                    "height": settings["height"],
+                    "mask_index": mask_index,
                     "filename_prefix": "DreamForge",
                 }
             )
@@ -1112,6 +1115,8 @@ def _build_comfy_prompt_graph(
                 "scheduler": qwen_scheduler,
                 "seed": seed,
                 "denoise": edit_strength,
+                "width": settings["width"],
+                "height": settings["height"],
                 "filename_prefix": "DreamForge",
             }
             for key in (
@@ -1178,7 +1183,6 @@ def _build_comfy_prompt_graph(
                     "seed": seed,
                     "denoise": edit_strength,
                     "filename_prefix": "DreamForge",
-                    "krea2_shift": settings.get("krea2_shift"),
                 }
             )
         elif (model_family or "").lower() in ("z-image", "z_image"):
@@ -1341,7 +1345,6 @@ def _build_comfy_prompt_graph(
                 "scheduler": settings["scheduler"],
                 "seed": seed,
                 "filename_prefix": "DreamForge",
-                "krea2_shift": settings.get("krea2_shift"),
             }
         )
     elif model_family in ("z-image", "z_image"):
@@ -1776,7 +1779,7 @@ def run_generation(
         settings = finalize_hidream_generation_settings(settings, model, job)
         if (
             model_family == "qwen_image_2.1"
-            and str(getattr(job, "studio_mode", "") or "").lower() == "generate"
+            and str(getattr(job, "studio_mode", "") or "").lower() in {"generate", "edit", "inpaint"}
             and (settings["width"], settings["height"]) != (width, height)
         ):
             err = invalid_request(
@@ -1846,11 +1849,16 @@ def run_generation(
                             "message": (
                                 f"Your input image is {_ar_label(_inp_w, _inp_h)} ({_inp_w}×{_inp_h}) "
                                 f"but you requested {_ar_label(_req_w, _req_h)} ({_req_w}×{_req_h}). "
-                                f"The output will be auto-scaled to match the input, which may "
-                                f"differ from your requested dimensions."
+                                + (
+                                    "Qwen Image 2.1 will center-crop the source to the requested canvas."
+                                    if model_family == "qwen_image_2.1" else
+                                    "The output will be auto-scaled to match the input, which may differ from your requested dimensions."
+                                )
                             ),
                             "suggestions": [
                                 f"Match the aspect ratio to your input: try {_inp_w}×{_inp_h} or a similar ratio.",
+                                "Choose a matching aspect ratio to keep the full source image."
+                                if model_family == "qwen_image_2.1" else
                                 "Or remove the input image to generate at your exact requested resolution.",
                             ],
                             "details": {
@@ -2178,33 +2186,16 @@ def run_generation(
             from dreamforge_inpaint_intent import (
                 resolve_inpaint_intent_params,
             )
-            from dreamforge_model_library_cache import get_cached_model_gallery
-            from dreamforge_task_router import pick_curated_edit_model
+            from dreamforge_inpaint_routing import model_supports_inpaint
 
-            inpaint_gallery, _inpaint_gallery_hit = get_cached_model_gallery()
             inpaint_intent_params = resolve_inpaint_intent_params(job)
-            qwen_model, _ = pick_curated_edit_model(inpaint_gallery or [])
-            if qwen_model and model_family != "qwen_image_2.1":
-                try:
-                    from dreamforge_cli_inventory import resolve_generation_model
-
-                    model = resolve_generation_model(qwen_model)
-                    model_family = str(model.get("family") or "").lower()
-                except Exception:
-                    pass
-            model_blob = " ".join(
-                str(model.get(key) or "")
-                for key in ("engine_name", "name", "relative_path")
-            ).lower()
-            if model_family != "qwen_image_2.1" and not (
-                "qwen" in model_blob and ("2.1" in model_blob or "2_1" in model_blob)
-            ):
+            if not model_supports_inpaint(model, model_family):
                 from dreamforge_errors import invalid_request
 
                 model_label = model.get("name") or model.get("engine_name") or model_family
                 err = invalid_request(
-                    "Edit masks require Qwen Image 2.1; "
-                    f"got {model_label}. Install or select the Qwen Image 2.1 checkpoint.",
+                    f"{model_label} does not support masked editing. "
+                    "Select Qwen Image 2.1, Flux Fill, Kontext, or an SDXL/SD1.5 model.",
                     job_id=job_id,
                 )
                 emit_event(stream_sink, err)
@@ -2213,6 +2204,19 @@ def run_generation(
         is_upscale_job = route.is_upscale_job
         input_path = route.input_path
         style = str(getattr(job, "style", "none") or "none").lower()
+
+        if input_path and route.plan_mode == "edit" and not is_inpaint_job:
+            from dreamforge_edit_routing import model_supports_edit
+
+            if not model_supports_edit(model, model_family):
+                from dreamforge_errors import invalid_request
+
+                err = invalid_request(
+                    "The selected model does not support image editing. Select an edit-capable model.",
+                    job_id=job_id,
+                )
+                emit_event(stream_sink, err)
+                return {"status": "error", **err}
 
         if not input_path:
             needs_reference = model_family in ("flux_kontext", "qwen_image_edit") or (
@@ -3731,12 +3735,21 @@ def run_generation(
 
         validation = []
         if getattr(job, "validate_output", False):
+            from dreamforge_comfy_workflows import qwen_transparency_requested
+
+            qwen_21_output = model_family == "qwen_image_2.1"
+            requires_alpha = qwen_21_output and (
+                qwen_transparency_requested(user_instruction or prompt)
+                or str(getattr(job, "edit_task", "") or "").lower() == "remove_background"
+            )
             validation = [
                 validate_image(
                     path,
                     settings["width"],
                     settings["height"],
                     check_fake_text=getattr(job, "check_fake_text", False),
+                    strict_dimensions=qwen_21_output,
+                    require_transparency=requires_alpha,
                 )
                 for path in images
             ]

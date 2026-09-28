@@ -15,6 +15,10 @@ export const FLUX_KONTEXT_NEEDLES = [
 const IMG2IMG_EDIT_FAMILIES = new Set([
   "sdxl",
   "sd15",
+  "sd3",
+  "chroma",
+  "kandinsky",
+  "kandinsky5",
   "flux",
   "flux2",
   "hidream",
@@ -22,6 +26,7 @@ const IMG2IMG_EDIT_FAMILIES = new Set([
   "ideogram4",
   "krea2",
   "z_image",
+  "z-image",
 ]);
 
 export function modelHaystack(item: ModelGalleryItem): string {
@@ -54,7 +59,8 @@ export function isImg2ImgEditModel(item: ModelGalleryItem): boolean {
 }
 
 export function isEditCapableModel(item: ModelGalleryItem): boolean {
-  return isQwenEditModel(item);
+  return isQwenEditModel(item) || isFluxKontextEditModel(item) || isImg2ImgEditModel(item) ||
+    (item.family ?? "").toLowerCase() === "qwen_image_edit";
 }
 
 export function selectFluxKontextEditModel(gallery: ModelGalleryItem[]): string {
@@ -109,7 +115,7 @@ export function editModelWarning(
 ): string | null {
   if (mode !== "edit") return null;
   if (isEditCapableModel(item)) return null;
-  return `"${modelBasename(item.caption)}" cannot be used for editing. DreamForge edits only with Qwen Image 2.1.`;
+  return `"${modelBasename(item.caption)}" does not support image editing. Choose an edit-capable model or remove the source image to generate.`;
 }
 
 export function sortGalleryForEditMode(
@@ -117,11 +123,7 @@ export function sortGalleryForEditMode(
   mode: StudioMode,
 ): ModelGalleryItem[] {
   if (mode !== "edit") return gallery;
-  const qwen: ModelGalleryItem[] = [];
-  for (const item of gallery) {
-    if (isQwenEditModel(item)) qwen.push(item);
-  }
-  return qwen;
+  return gallery;
 }
 
 /** Map a user-selected edit model to the correct edit_type / control-net routing. */
@@ -137,7 +139,7 @@ export function buildEditRoutingPatch(
       steps: 20,
     };
   }
-  if (isQwenEditModel(item)) {
+  if (isQwenEditModel(item) || (item.family ?? "").toLowerCase() === "qwen_image_edit") {
     return {
       edit_type: "qwen_edit",
       edit_strength: 1.0,

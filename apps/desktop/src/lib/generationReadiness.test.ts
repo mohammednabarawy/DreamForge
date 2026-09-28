@@ -15,6 +15,39 @@ const base = {
 } as const;
 
 describe("merged Edit mode", () => {
+  it("allows compatible selected editors and blocks incompatible masked edits without replacing the model", () => {
+    for (const family of ["krea2", "flux_kontext", "sdxl"]) {
+      const model = `${family}.safetensors`;
+      const settings = { model, input_image: "source.png", prompt: "Change the shirt" };
+      const args = { ...base, model, studioMode: "edit" as const, settings,
+        modelGallery: [{ family, engine_name: model }] as Parameters<typeof computeGenerateReadiness>[0]["modelGallery"] };
+      expect(computeGenerateReadiness(args).ok).toBe(true);
+      const masked = computeGenerateReadiness({ ...args, settings: { ...settings, inpaint_mask_path: "mask.png" } });
+      expect(masked.ok).toBe(family !== "krea2");
+      if (family === "krea2") expect(masked.reason).toContain("does not support masked editing");
+      expect(settings.model).toBe(model);
+    }
+  });
+  it("routes a prompt without references to text-to-image despite stale Edit controls", () => {
+    const settings = {
+      model: base.model,
+      prompt: "Arabic infographic --ar 16:9",
+      style: "image_edit",
+      edit_type: "qwen_edit" as const,
+      cn_selection: "Custom...",
+      cn_type: "img2img",
+      workflow_mode: "edit",
+    };
+    expect(computeGenerateReadiness({ ...base, studioMode: "generate", settings }).ok).toBe(true);
+    expect(sanitizeSettingsForStudioMode("generate", settings)).toMatchObject({
+      style: "none",
+      edit_type: "auto",
+      cn_selection: "None",
+      cn_type: "None",
+      workflow_mode: "generate",
+    });
+  });
+
   it("requires a mask only when Edit is configured for inpainting", () => {
     const blocked = computeGenerateReadiness({
       ...base,

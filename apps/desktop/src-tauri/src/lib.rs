@@ -295,6 +295,28 @@ fn apply_packaged_backend_env(app: &tauri::App) {
     if cfg!(debug_assertions) {
         return;
     }
+    // Portable builds keep their mutable app data beside the bundled runtime.
+    // The launcher supplies the folder root; validate it before bypassing Tauri's
+    // normal resource layout so a stale environment variable cannot redirect the app.
+    if let Ok(portable_root) = std::env::var("DREAMFORGE_PORTABLE_ROOT") {
+        let root = PathBuf::from(portable_root);
+        let backend = root.join("backend");
+        if backend.join("dreamforge_desktop_bridge.py").is_file()
+            && root.join("python_embeded").join("python.exe").is_file()
+            && root
+                .join("engines")
+                .join("comfyui")
+                .join("main.py")
+                .is_file()
+        {
+            std::env::set_var("DREAMFORGE_ROOT", &backend);
+            std::env::set_var("DREAMFORGE_BACKEND_ROOT", &backend);
+            std::env::set_var("DREAMFORGE_INSTALL_ROOT", &root);
+            std::env::set_var("DREAMFORGE_DATA_ROOT", &root);
+            std::env::set_var("DREAMFORGE_PACKAGED", "1");
+            return;
+        }
+    }
     use tauri::path::BaseDirectory;
     let Ok(resource_backend) = app.path().resolve("backend", BaseDirectory::Resource) else {
         return;

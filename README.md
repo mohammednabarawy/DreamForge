@@ -13,6 +13,8 @@
 
 > **Beta (v0.2.0-beta)** — DreamForge is ready for **builders and contributors**: clone the repo, run `setup.bat` (Windows) or `./setup.sh` (macOS/Linux), add models under `models/`, then launch with `dreamforge.bat`. This is **not** yet a one-click public installer; release tags are source-based until automated desktop builds land ([#15](https://github.com/mohammednabarawy/DreamForge/issues/15)). See [Project status](#project-status) below.
 
+For a prepared Windows folder that should run without Node or Rust installed, build the desktop release with `cd apps\desktop && npm run tauri build -- --no-bundle`, then launch `dreamforge-portable.bat` from the repository root. The portable launcher keeps settings, outputs, and the ComfyUI runtime beside the app; set the model library in Settings to use a directory elsewhere.
+
 ## Why DreamForge?
 
 - **Private by default** — models, prompts, and images stay on your machine (local ComfyUI / DreamForge worker).

@@ -23,9 +23,11 @@ from dreamforge_runtime_paths import (  # noqa: E402
     default_managed_models_root,
     ensure_model_subdirs,
     load_runtime_config,
+    runtime_config_path,
     save_runtime_config,
     validate_models_folder,
 )
+from dreamforge_bootstrap import apply_runtime_preferences  # noqa: E402
 
 
 def test_default_models_root_falls_back_to_legacy_backend(tmp_path, monkeypatch):
@@ -67,6 +69,52 @@ def test_runtime_config_roundtrip(tmp_path, monkeypatch):
     loaded = load_runtime_config(tmp_path)
     assert loaded.models_source == "managed"
     assert loaded.setup_complete is False
+
+
+def test_invalid_external_models_path_is_not_saved(tmp_path, monkeypatch):
+    monkeypatch.setenv("DREAMFORGE_DATA_ROOT", str(tmp_path))
+    monkeypatch.delenv("DREAMFORGE_MODELS_ROOT", raising=False)
+
+    result = apply_runtime_preferences(
+        models_source="external",
+        models_root=str(tmp_path / "missing-model-library"),
+    )
+
+    assert result["ok"] is False
+    assert result["models_validation"]["errors"]
+    assert not runtime_config_path(tmp_path).exists()
+
+
+def test_external_models_path_change_preserves_custom_comfy_root(tmp_path, monkeypatch):
+    data_root = tmp_path / "portable-app"
+    models_root = tmp_path / "shared-models"
+    comfy_root = tmp_path / "shared-comfy"
+    data_root.mkdir()
+    models_root.mkdir()
+    comfy_root.mkdir()
+    monkeypatch.setenv("DREAMFORGE_DATA_ROOT", str(data_root))
+    monkeypatch.delenv("DREAMFORGE_MODELS_ROOT", raising=False)
+    save_runtime_config(
+        RuntimeConfig(
+            data_root=str(data_root),
+            models_root=str(data_root / "models"),
+            models_source="managed",
+            setup_complete=False,
+            comfy_root=str(comfy_root),
+        ),
+        data_root,
+    )
+
+    result = apply_runtime_preferences(
+        data_root=str(data_root),
+        models_source="external",
+        models_root=str(models_root),
+    )
+
+    saved = load_runtime_config(data_root)
+    assert result["ok"] is True
+    assert Path(saved.models_root) == models_root.resolve()
+    assert Path(saved.comfy_root) == comfy_root.resolve()
 
 
 def test_extract_github_zip_flattens_single_top_level(tmp_path):

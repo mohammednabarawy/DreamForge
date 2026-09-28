@@ -596,20 +596,56 @@ def apply_runtime_preferences(
     source = str(models_source or current.models_source).lower()
     if source not in {"managed", "external"}:
         source = "managed"
-    current.models_source = source  # type: ignore[assignment]
-
     if source == "managed":
-        current.models_root = str(root / "models")
+        candidate_models_root = root / "models"
     elif models_root:
-        current.models_root = str(Path(models_root).expanduser().resolve())
+        candidate_models_root = Path(models_root).expanduser().resolve()
+    elif current.models_source == "external" and current.models_root.strip():
+        candidate_models_root = Path(current.models_root).expanduser().resolve()
+    else:
+        validation = {
+            "ok": False,
+            "path": "",
+            "warnings": [],
+            "errors": ["Choose an existing ComfyUI models folder."],
+            "known_subdirs": [],
+        }
+        return {
+            "ok": False,
+            "config": current.to_dict(),
+            "models_validation": validation,
+            "paths": {
+                "data_root": str(root),
+                "models_root": current.models_root,
+                "comfy_root": current.comfy_root,
+            },
+        }
+
+    validation = validate_models_folder(
+        candidate_models_root, create=source == "managed"
+    )
+    if validation.get("errors"):
+        return {
+            "ok": False,
+            "config": current.to_dict(),
+            "models_validation": validation,
+            "paths": {
+                "data_root": str(root),
+                "models_root": current.models_root,
+                "comfy_root": current.comfy_root,
+            },
+        }
+
+    current.models_root = str(candidate_models_root.resolve())
+    current.models_source = source  # type: ignore[assignment]
 
     if setup_complete is not None:
         current.setup_complete = setup_complete
 
-    current.comfy_root = str((root / "engines" / "comfyui").resolve())
+    if not current.comfy_root.strip():
+        current.comfy_root = str((root / "engines" / "comfyui").resolve())
     save_runtime_config(current, root)
     layout = init_runtime_paths()
-    validation = validate_models_folder(layout.models_root, create=source == "managed")
     if source == "managed":
         ensure_model_subdirs(layout.models_root)
     return {

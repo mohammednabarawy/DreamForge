@@ -63,6 +63,8 @@ import {
 } from "../lib/sessions";
 import {
   loadActiveSessionId,
+  loadHistoryScope,
+  loadFavoriteManifests,
   loadLastSelectedManifest,
   loadSessionRegistry,
   purgeHistoryMetadataForManifest,
@@ -771,6 +773,7 @@ export function useDreamForge() {
   );
 
   const outputsLengthRef = useRef(0);
+  const outputRequestRef = useRef(0);
   outputsLengthRef.current = outputs.length;
 
   const refreshOutputs = useCallback(
@@ -780,22 +783,41 @@ export function useDreamForge() {
       offset?: number;
       append?: boolean;
     }) => {
+      const request = ++outputRequestRef.current;
       setOutputsLoading(true);
       try {
         const q = outputSearchRef.current.trim();
+        const scope = loadHistoryScope();
+        const filters = {
+          session: scope === "session" ? loadActiveSessionId() : undefined,
+          manifestPaths: scope === "favorites" ? [...loadFavoriteManifests()] : undefined,
+        };
         const offset = opts?.append
           ? outputsLengthRef.current
           : (opts?.offset ?? 0);
         const page = q
           ? await searchOutputsPage(q, {
+              ...filters,
               limit: HISTORY_PAGE_SIZE,
               offset,
             })
           : await listOutputsPage({
+              ...filters,
               limit: HISTORY_PAGE_SIZE,
               offset,
             });
 
+        if (request !== outputRequestRef.current) return;
+        setSessionRegistry((previous) => {
+          const known = new Set(previous.map((session) => session.id));
+          const discovered = groupOutputsBySession(page.items)
+            .filter((session) => !known.has(session.id))
+            .map(({ id, label }) => ({ id, label }));
+          if (discovered.length === 0) return previous;
+          const next = [...previous, ...discovered];
+          saveSessionRegistry(next);
+          return next;
+        });
         if (opts?.append) {
           setOutputs((prev) => {
             const seen = new Set(prev.map((i) => i.manifest_path));
@@ -836,9 +858,9 @@ export function useDreamForge() {
           });
         }
       } catch (e) {
-        setStatus(`Outputs error: ${String(e)}`);
+        if (request === outputRequestRef.current) setStatus(`Outputs error: ${String(e)}`);
       } finally {
-        setOutputsLoading(false);
+        if (request === outputRequestRef.current) setOutputsLoading(false);
       }
     },
     [],
@@ -848,6 +870,14 @@ export function useDreamForge() {
     if (!outputsHasMore || outputsLoading) return;
     void refreshOutputs({ append: true, keepSelection: true });
   }, [outputsHasMore, outputsLoading, refreshOutputs]);
+
+  useEffect(() => {
+    const refreshFavorites = () => {
+      if (loadHistoryScope() === "favorites") void refreshOutputs({ keepSelection: true });
+    };
+    window.addEventListener("dreamforge-favorites-changed", refreshFavorites);
+    return () => window.removeEventListener("dreamforge-favorites-changed", refreshFavorites);
+  }, [refreshOutputs]);
 
   const debouncedRefreshWhileGenerating = useCallback(() => {
     if (!generatingRef.current) {
@@ -1651,6 +1681,7 @@ export function useDreamForge() {
       const id = sessionId.trim() || DEFAULT_SESSION_ID;
       setActiveSessionId(id);
       saveActiveSessionId(id);
+      if (loadHistoryScope() === "session") void refreshOutputs({ keepSelection: true });
       const session = sessions.find((s) => s.id === id);
       if (opts?.previewFirst) {
         const first = session?.items[0]?.images?.[0];
@@ -1659,7 +1690,7 @@ export function useDreamForge() {
       syncOutputPathForSession(id);
       setStatus(`Saving new generations to ${session?.label ?? id}`);
     },
-    [sessions, syncOutputPathForSession, setCanvasPreviewFromPath],
+    [sessions, syncOutputPathForSession, setCanvasPreviewFromPath, refreshOutputs],
   );
 
   const createSession = useCallback(

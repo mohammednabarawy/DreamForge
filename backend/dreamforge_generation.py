@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import gc
 import importlib
+import io
 import json
 
 # Suppress duplicate-ObjC-class warnings from cv2/av FFmpeg conflict
@@ -96,6 +97,17 @@ def _pil_to_png_bytes(image: Image.Image) -> bytes:
     buf = BytesIO()
     image.save(buf, format="PNG")
     return buf.getvalue()
+
+
+def _save_comfy_result_png(image: Image.Image, path: Path, graph: dict, parameters: dict) -> None:
+    from PIL.PngImagePlugin import PngInfo
+
+    metadata = PngInfo()
+    metadata.add_text("prompt", json.dumps(graph, ensure_ascii=False))
+    metadata.add_text("parameters", json.dumps(
+        {**parameters, "width": image.width, "height": image.height}, ensure_ascii=False,
+    ))
+    image.save(path, format="PNG", pnginfo=metadata)
 
 
 def _pid_upscale_target_size(
@@ -1588,8 +1600,7 @@ def _run_comfy_workflow_with_retry(
                         timeout_s=120.0, reason="kitchen_attention_fallback",
                         extra_args=comfy_launch_extra_args(),
                     )
-                    from dreamforge_comfy_client import ComfyClient
-                    current_client = ComfyClient(server.base_url)
+                    current_client = current_client.reconnect(server.base_url)
                     continue
             dynamic_failure = "vbar allocation failed" in error_text or "vbar oom" in error_text
             if attempt == 0 and allow_attention_retry and (is_comfy_oom_error(exc) or dynamic_failure):
@@ -1623,8 +1634,7 @@ def _run_comfy_workflow_with_retry(
                     reason=f"oom_safe_retry:{model_family or 'unknown'}",
                     extra_args=comfy_launch_extra_args(),
                 )
-                from dreamforge_comfy_client import ComfyClient
-                current_client = ComfyClient(server.base_url)
+                current_client = current_client.reconnect(server.base_url)
                 continue
             raise
     if last_exc is not None:
@@ -2575,7 +2585,7 @@ def run_generation(
         input_filename = None
         if input_path:
             local_name = Path(str(input_path)).name
-            upload = client.upload_image(
+            upload = client.stage_image(
                 image_bytes=Path(str(input_path)).read_bytes(),
                 filename=local_name,
                 folder_type="input",
@@ -2633,7 +2643,7 @@ def run_generation(
                             f"{job_id}_krea2_ref_{ref_index}{Path(resolved).suffix}"
                             if krea2_instruction_edit else Path(resolved).name
                         )
-                        ref_upload = client.upload_image(
+                        ref_upload = client.stage_image(
                             image_bytes=Path(resolved).read_bytes(),
                             filename=ref_local_name,
                             folder_type="input",
@@ -2660,7 +2670,7 @@ def run_generation(
                     for ref_path in extra_reference_paths[:3]:
                         resolved = resolve_image_path_or_raise(str(ref_path))
                         ref_local_name = Path(resolved).name
-                        ref_upload = client.upload_image(
+                        ref_upload = client.stage_image(
                             image_bytes=Path(resolved).read_bytes(),
                             filename=ref_local_name,
                             folder_type="input",
@@ -2679,7 +2689,7 @@ def run_generation(
                     ]
                     stitched = stitch_kontext_reference_images([main_img, *extras])
                     stitch_name = f"{Path(str(input_path)).stem}_kontext_refs.png"
-                    stitch_upload = client.upload_image(
+                    stitch_upload = client.stage_image(
                         image_bytes=_pil_to_png_bytes(stitched),
                         filename=stitch_name,
                         folder_type="input",
@@ -2716,7 +2726,7 @@ def run_generation(
                             _selected_face_index(job),
                         )
                         ref_local_name = f"{Path(ref_local_name).stem}_selected_face.png"
-                    ref_upload = client.upload_image(
+                    ref_upload = client.stage_image(
                         image_bytes=reference_bytes,
                         filename=ref_local_name,
                         folder_type="input",
@@ -2741,7 +2751,7 @@ def run_generation(
             for slot in coerce_reference_slots(job):
                 resolved_path = resolve_image_path_or_raise(str(slot.get("path") or ""))
                 local_name = Path(resolved_path).name
-                slot_upload = client.upload_image(
+                slot_upload = client.stage_image(
                     image_bytes=Path(resolved_path).read_bytes(),
                     filename=local_name,
                     folder_type="input",
@@ -2812,7 +2822,7 @@ def run_generation(
                         hard=hard_mask,
                     )
                     crop_name = f"{Path(str(input_path)).stem}_df_crop.png"
-                    crop_upload = client.upload_image(
+                    crop_upload = client.stage_image(
                         image_bytes=pil_png_bytes(crop_plan["crop_image"]),
                         filename=crop_name,
                         folder_type="input",
@@ -2842,7 +2852,7 @@ def run_generation(
                         hard=hard_mask,
                     )
                 mask_name = f"{Path(str(mask_path)).stem}_df_inpaint.png"
-                mask_upload = client.upload_image(
+                mask_upload = client.stage_image(
                     image_bytes=mask_bytes,
                     filename=mask_name,
                     folder_type="input",
@@ -3081,7 +3091,7 @@ def run_generation(
                     )
                     ensure_dreamforge_comfy_backend(optional_nodes=True)
                     server = restart_managed_comfy_server(timeout_s=90.0, reason="upscale_nodes")
-                    client = ComfyClient(server.base_url)
+                    client = client.reconnect(server.base_url)
                     object_info = client.object_info(timeout_s=30.0)
                     missing_nodes = sorted(node for node in required_nodes if node not in object_info)
                 except Exception:
@@ -3296,7 +3306,7 @@ def run_generation(
                             timeout_s=90.0,
                             reason="outfit_segformer_nodes",
                         )
-                        client = ComfyClient(server.base_url)
+                        client = client.reconnect(server.base_url)
                         object_info = client.object_info(timeout_s=30.0)
                         missing_workflow_nodes = sorted(
                             node_type
@@ -3330,7 +3340,7 @@ def run_generation(
                             timeout_s=90.0,
                             reason="cutout_essentials_nodes",
                         )
-                        client = ComfyClient(server.base_url)
+                        client = client.reconnect(server.base_url)
                         object_info = client.object_info(timeout_s=30.0)
                         missing_workflow_nodes = sorted(
                             node_type
@@ -3413,7 +3423,7 @@ def run_generation(
                             timeout_s=90.0,
                             reason=f"{comfy_mode}_nodes",
                         )
-                        client = ComfyClient(server.base_url)
+                        client = client.reconnect(server.base_url)
                         object_info = client.object_info(timeout_s=30.0)
                         missing_workflow_nodes = sorted(
                             node_type
@@ -3492,20 +3502,23 @@ def run_generation(
             )
         outputs = node.get("outputs") or {}
         comfy_images: list[str] = []
-        comfy_image_specs: list[tuple[str, str, str]] = []
+        comfy_image_specs: list[dict] = []
         for _node_id, out in outputs.items():
             imgs = (out or {}).get("images") or []
             for img in imgs:
                 filename = img.get("filename")
                 subfolder = img.get("subfolder") or ""
-                folder_type = img.get("type") or "output"
-                if filename:
+                if img.get("type", "output") != "output":
+                    continue
+                if img.get("source") == "http" and img.get("id"):
+                    comfy_image_specs.append(img)
+                elif filename:
                     comfy_images.append(
                         str(Path(subfolder) / filename) if subfolder else str(filename)
                     )
-                    comfy_image_specs.append((str(filename), str(subfolder), str(folder_type)))
+                    comfy_image_specs.append(img)
 
-        if not comfy_images:
+        if not comfy_image_specs:
             err = out_of_memory(job_id=job_id)
             err["message"] = "ComfyUI returned no output images (likely OOM or workflow mismatch)."
             emit_event(stream_sink, err)
@@ -3514,13 +3527,23 @@ def run_generation(
         comfy_staging = COMFY_STAGING_DIR
         comfy_staging.mkdir(parents=True, exist_ok=True)
         saved_paths: list[str] = []
-        for filename, subfolder, folder_type in comfy_image_specs:
-            payload = client.view(filename=filename, subfolder=subfolder, folder_type=folder_type)
-            stem = Path(filename).stem
-            suffix = Path(filename).suffix or ".png"
-            target = comfy_staging / f"{stem}_{int(time.time() * 1000)}{suffix}"
-            target.write_bytes(payload)
+        from uuid import uuid4
+        png_parameters = {**settings, "Prompt": user_instruction or prompt, "Negative": negative,
+                          "seed": seed, "model": model.get("name"), "steps": sample_steps}
+
+        for spec in comfy_image_specs:
+            payload = client.result_image(spec)
+            target = comfy_staging / f"DreamForge_{uuid4().hex}.png"
+            if spec.get("source") == "http":
+                # Cache nodes omit PNG metadata; the app owns persistence.
+                with Image.open(io.BytesIO(payload)) as image:
+                    image.load()
+                    _save_comfy_result_png(image, target, client.last_prompt, png_parameters)
+            else:
+                target.write_bytes(payload)
             saved_paths.append(str(target))
+
+        raw_staged_paths = list(saved_paths)
 
         if (
             cn_type == "inpaint"
@@ -3546,7 +3569,10 @@ def run_generation(
                         inpaint_mask_img,
                     )
                     merged_path = Path(saved).with_name(f"{Path(saved).stem}_composite.png")
-                    merged.save(merged_path, format="PNG")
+                    if client.image_transport == "ram_cache":
+                        _save_comfy_result_png(merged, merged_path, client.last_prompt, png_parameters)
+                    else:
+                        merged.save(merged_path, format="PNG")
                     composited_paths.append(str(merged_path))
                 saved_paths = composited_paths
             except OSError as exc:
@@ -3580,7 +3606,10 @@ def run_generation(
                         original, generated, inpaint_mask_img
                     )
                     merged_path = Path(saved).with_name(f"{Path(saved).stem}_composite.png")
-                    merged.save(merged_path, format="PNG")
+                    if client.image_transport == "ram_cache":
+                        _save_comfy_result_png(merged, merged_path, client.last_prompt, png_parameters)
+                    else:
+                        merged.save(merged_path, format="PNG")
                     composited_paths.append(str(merged_path))
                 saved_paths = composited_paths
             except OSError as exc:
@@ -3597,14 +3626,14 @@ def run_generation(
                 )
 
         output_target = getattr(job, "output", None) or str(OUTPUTS_ROOT)
-        images = _resolve_output_paths(saved_paths, output_target)
-        for staged in saved_paths:
+        images = _resolve_output_paths(saved_paths, output_target, consume=True)
+        for staged in raw_staged_paths:
             try:
                 Path(staged).unlink(missing_ok=True)
             except OSError:
                 pass
 
-        raw_images = comfy_images
+        raw_images = comfy_images or list(images)
         identity_verification = None
         identity_retry = None
         if images and bool(getattr(job, "identity_verify", False)):
@@ -3722,17 +3751,6 @@ def run_generation(
                             ),
                         },
                     )
-        if streaming and images and not bool(getattr(job, "_identity_retry_internal", False)):
-            emit_event(
-                stream_sink,
-                {
-                    "type": "results",
-                    "job_id": job_id,
-                    "paths": images,
-                    "raw_paths": raw_images,
-                },
-            )
-
         validation = []
         if getattr(job, "validate_output", False):
             from dreamforge_comfy_workflows import qwen_transparency_requested
@@ -3771,7 +3789,8 @@ def run_generation(
             "comfy_workflow": {
                 "builder": comfy_workflow_builder,
                 "template": str(template_used) if template_used else None,
-                "class_types": comfy_workflow_class_types,
+                "class_types": sorted({n["class_type"] for n in client.last_prompt.values()}),
+                "image_transport": client.image_transport,
             },
         }
         if identity_verification:
@@ -3915,6 +3934,10 @@ def run_generation(
                     )
 
             manifest_path = write_manifest(manifest_path, manifest_payload)
+
+        if streaming and images and not bool(getattr(job, "_identity_retry_internal", False)):
+            emit_event(stream_sink, {"type": "results", "job_id": job_id,
+                                     "paths": images, "raw_paths": raw_images})
 
         from dreamforge_engine import _free_comfy_vram
 

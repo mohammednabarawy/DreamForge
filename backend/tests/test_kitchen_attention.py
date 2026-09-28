@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from dreamforge_comfy_client import ComfyExecutionError
+from dreamforge_comfy_client import ComfyClient, ComfyExecutionError
 import dreamforge_generation as generation
 
 
@@ -23,7 +23,7 @@ def test_kitchen_failure_retries_same_graph_once(monkeypatch):
     monkeypatch.setattr("dreamforge_comfy_launch.comfy_launch_extra_args", lambda: ("--use-pytorch-cross-attention",))
     monkeypatch.setenv("DREAMFORGE_COMFY_ATTENTION", "auto")
     kwargs = dict(streaming=True, job_id="test", sample_steps=8, stream_sink=None, on_event=None)
-    result = generation._run_comfy_workflow_with_retry(object(), graph, **kwargs)
+    result = generation._run_comfy_workflow_with_retry(ComfyClient("http://127.0.0.1:8188"), graph, **kwargs)
     assert result[1:] == ("prompt", "output")
     assert graph == original and run.call_count == 2
     assert restart.call_args.kwargs["extra_args"] == ("--use-pytorch-cross-attention",)
@@ -31,7 +31,7 @@ def test_kitchen_failure_retries_same_graph_once(monkeypatch):
     run.reset_mock(side_effect=True)
     run.side_effect = error
     with pytest.raises(ComfyExecutionError):
-        generation._run_comfy_workflow_with_retry(object(), graph, **kwargs)
+        generation._run_comfy_workflow_with_retry(ComfyClient("http://127.0.0.1:8188"), graph, **kwargs)
     assert run.call_count == 2
     run.reset_mock(side_effect=True)
     run.side_effect = ComfyExecutionError("int8_linear model load failed")
@@ -130,7 +130,7 @@ def test_dynamic_vram_failure_retries_legacy_once_without_changing_image_setting
     monkeypatch.setattr(launch, "comfy_memory_tier", lambda *a: "16gb")
     monkeypatch.setattr(launch, "platform", SimpleNamespace(system=lambda: "Windows"))
     kwargs = dict(streaming=True, job_id="test", sample_steps=8, stream_sink=None, on_event=None)
-    generation._run_comfy_workflow_with_retry(object(), graph, **kwargs)
+    generation._run_comfy_workflow_with_retry(ComfyClient("http://127.0.0.1:8188"), graph, **kwargs)
     assert graph == original and run.call_count == 2
     assert "--disable-dynamic-vram" in restart.call_args.kwargs["extra_args"]
     assert "--lowvram" in restart.call_args.kwargs["extra_args"]

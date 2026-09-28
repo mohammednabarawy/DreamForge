@@ -352,7 +352,7 @@ def _upload_local_image(client, path: str) -> str:
 
     resolved = resolve_image_path_or_raise(str(path))
     local_name = Path(resolved).name
-    upload = client.upload_image(
+    upload = client.stage_image(
         image_bytes=Path(resolved).read_bytes(),
         filename=local_name,
         folder_type="input",

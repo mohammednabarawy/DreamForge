@@ -430,6 +430,7 @@ def cmd_list_outputs(params: dict) -> dict:
         limit=limit,
         offset=offset,
         session=session,
+        manifest_paths=params.get("manifest_paths"),
     )
     return {
         "ok": True,
@@ -459,7 +460,8 @@ def cmd_search_outputs(params: dict) -> dict:
     query = params.get("query", "")
     limit = int(params.get("limit", 20))
     offset = int(params.get("offset", 0))
-    items, total = search_outputs(query, limit=limit, offset=offset)
+    items, total = search_outputs(query, limit=limit, offset=offset,
+                                  session=params.get("session"), manifest_paths=params.get("manifest_paths"))
     return {
         "ok": True,
         "items": items,

@@ -505,6 +505,7 @@ export async function listOutputsPage(opts?: {
   limit?: number;
   offset?: number;
   session?: string;
+  manifestPaths?: string[];
 }): Promise<OutputsPage> {
   const limit = opts?.limit ?? 50;
   const offset = opts?.offset ?? 0;
@@ -515,11 +516,10 @@ export async function listOutputsPage(opts?: {
     offset?: number;
     limit?: number;
     has_more?: boolean;
-  }>("list_outputs", {
-    since: null,
-    limit,
-    offset,
-    session: opts?.session ?? null,
+  }>("bridge_invoke", {
+    cmd: "list_outputs",
+    params: { since: null, limit, offset, session: opts?.session ?? null,
+      manifest_paths: opts?.manifestPaths ?? null },
   });
   const items = res.items ?? [];
   const total = res.total ?? items.length;
@@ -562,7 +562,7 @@ export async function getGenerationBundle(manifestPath: string) {
 
 export async function searchOutputsPage(
   query: string,
-  opts?: { limit?: number; offset?: number },
+  opts?: { limit?: number; offset?: number; session?: string; manifestPaths?: string[] },
 ): Promise<OutputsPage> {
   const q = query.trim();
   if (!q) {
@@ -577,7 +577,10 @@ export async function searchOutputsPage(
     offset?: number;
     limit?: number;
     has_more?: boolean;
-  }>("search_outputs", { query: q, limit, offset });
+  }>("bridge_invoke", { cmd: "search_outputs", params: {
+    query: q, limit, offset, session: opts?.session ?? null,
+    manifest_paths: opts?.manifestPaths ?? null,
+  } });
   const items = res.items ?? [];
   const total = res.total ?? items.length;
   return {
@@ -690,7 +693,7 @@ export type ImagePreviewResponse = {
 
 export async function readImagePreview(
   path: string,
-  opts?: { quality?: "live" | "final" },
+  opts?: { quality?: "live" | "final" | "thumbnail" },
 ) {
   return invoke<ImagePreviewResponse>("read_image_preview", {
     path,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -454,8 +455,10 @@ def write_manifest(path: str, payload: dict[str, Any]) -> str:
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     payload = dict(payload)
     payload.setdefault("created_at", time.strftime("%Y-%m-%dT%H:%M:%S%z"))
-    with manifest_path.open("w", encoding="utf-8") as handle:
+    temporary = manifest_path.with_suffix(f".{uuid.uuid4().hex}.tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, ensure_ascii=False, indent=2)
+    temporary.replace(manifest_path)
     return str(manifest_path)
 
 

@@ -1,12 +1,10 @@
 import json
 import os
-import shutil
 from pathlib import Path
 from datetime import datetime
 import glob
 
-from _paths import BACKEND_ROOT, PROJECT_ROOT
-OUTPUTS_ROOT = PROJECT_ROOT / "outputs"
+from _paths import BACKEND_ROOT, PROJECT_ROOT, OUTPUTS_ROOT
 
 def _load_manifest(path):
     try:
@@ -23,12 +21,9 @@ def _get_manifest_mtime(path):
 
 def get_generation_bundle(manifest_path):
     """Return the full generation bundle given a manifest path."""
-    path = Path(manifest_path)
-    if not path.is_absolute():
-        path = OUTPUTS_ROOT / path
-    
-    if not path.exists():
-        return {"status": "error", "message": f"Manifest not found: {path}"}
+    path = _resolve_manifest_path(str(manifest_path))
+    if path is None:
+        return {"status": "error", "message": "Saved generation not found in the image library."}
         
     data = _load_manifest(path)
     if not data:
@@ -70,7 +65,7 @@ def _image_paths_from_manifest(data: dict) -> list[str]:
             paths.append(_normalize_output_path(item))
         elif isinstance(item, dict) and item.get("path"):
             paths.append(_normalize_output_path(str(item["path"])))
-    return paths
+    return list(dict.fromkeys(paths))
 
 
 def _normalize_output_path(path: str) -> str:
@@ -120,12 +115,18 @@ def _collect_manifest_entries(since=None, session=None):
 def _summary_from_manifest_entry(item, data, *, max_prompt_chars=8000):
     model_info = data.get("model") or {}
     settings = data.get("settings") or {}
+    if isinstance(model_info, str):
+        model_info = {"name": model_info}
+    elif not isinstance(model_info, dict):
+        model_info = {}
+    if not isinstance(settings, dict):
+        settings = {}
     prompt = data.get("prompt", "") or ""
     if max_prompt_chars > 0 and len(prompt) > max_prompt_chars:
         prompt = prompt[:max_prompt_chars] + "…"
     return {
         "manifest_path": item["path"],
-        "timestamp": datetime.fromtimestamp(item["mtime"]).isoformat(),
+        "timestamp": datetime.fromtimestamp(item["mtime"]).astimezone().isoformat(),
         "created_at": data.get("created_at"),
         "session": _session_from_manifest_path(item["path"]),
         "title": _title_from_manifest(data, item["path"]),
@@ -134,7 +135,7 @@ def _summary_from_manifest_entry(item, data, *, max_prompt_chars=8000):
         "model_name": model_info.get("name", "unknown"),
         "model_stem": model_info.get("stem")
         or Path(model_info.get("name", "unknown")).stem,
-        "images": _image_paths_from_manifest(data),
+        "images": [p for p in _image_paths_from_manifest(data) if Path(p).is_file()],
         "styles": settings.get("styles") or [],
         "seed": data.get("seed"),
     }
@@ -147,6 +148,8 @@ def list_outputs(
     limit=20,
     offset=0,
     session=None,
+    query=None,
+    manifest_paths=None,
 ):
     """List recent outputs with pagination. Returns (items, total_matching)."""
     del style  # reserved for future filters
@@ -154,60 +157,37 @@ def list_outputs(
     limit = max(1, int(limit or 20))
     entries = _collect_manifest_entries(since=since, session=session)
 
-    if model:
-        results = []
-        matched = 0
-        for item in entries:
-            data = _load_manifest(item["path"])
-            if not data:
-                continue
-            if data.get("model", {}).get("name", "").lower() != model.lower():
-                continue
-            if matched >= offset and len(results) < limit:
-                results.append(_summary_from_manifest_entry(item, data))
-            matched += 1
-        return results, matched
-
-    total = len(entries)
-    results = []
-    for item in entries[offset : offset + limit]:
-        data = _load_manifest(item["path"])
-        if not data:
-            continue
-        results.append(_summary_from_manifest_entry(item, data))
-    return results, total
-
-def search_outputs(query, limit=20, offset=0):
-    """Search manifests by prompt, negative, title, or model name."""
-    if not query:
-        return [], 0
-
-    query_lower = query.lower().strip()
-    offset = max(0, int(offset or 0))
-    limit = max(1, int(limit or 20))
-    entries = _collect_manifest_entries()
-
-    results = []
+    allowed = None if manifest_paths is None else {str(Path(p).resolve()).lower() for p in manifest_paths}
+    query_lower = str(query or "").strip().lower()
     matched = 0
+    results = []
+    # ponytail: scan manifests for exact filtered totals; add an index if library scans become slow.
     for item in entries:
+        if allowed is not None and str(Path(item["path"]).resolve()).lower() not in allowed:
+            continue
         data = _load_manifest(item["path"])
-        if not data:
+        if not isinstance(data, dict):
             continue
-        prompt = data.get("prompt", "") or ""
-        negative = data.get("negative_prompt", "") or ""
-        title = _title_from_manifest(data, item["path"]) or ""
-        model_name = (data.get("model") or {}).get("name", "") or ""
-        model_stem = (data.get("model") or {}).get("stem") or Path(model_name).stem
-        haystack = " ".join(
-            [prompt, negative, title, model_name, model_stem]
-        ).lower()
-        if query_lower not in haystack:
+        summary = _summary_from_manifest_entry(item, data)
+        if not summary["images"]:
             continue
+        if model and summary["model_name"].lower() != model.lower():
+            continue
+        if query_lower:
+            haystack = " ".join([data.get("prompt") or "", data.get("negative_prompt") or "",
+                                 summary["title"], summary["model_name"], summary["model_stem"]]).lower()
+            if query_lower not in haystack:
+                continue
         if matched >= offset and len(results) < limit:
-            results.append(_summary_from_manifest_entry(item, data))
+            results.append(summary)
         matched += 1
-
     return results, matched
+
+def search_outputs(query, limit=20, offset=0, session=None, manifest_paths=None):
+    """Search manifests by prompt, negative, title, or model name."""
+    if not str(query or "").strip():
+        return [], 0
+    return list_outputs(query=query, limit=limit, offset=offset, session=session, manifest_paths=manifest_paths)
 
 
 def _output_path_key(path_str: str) -> str:
@@ -608,14 +588,17 @@ def delete_session(session_id: str) -> dict:
         if result.get("ok"):
             deleted += 1
 
+    # A project can also contain runtime logs or imported files. Delete only
+    # manifest-owned generations, never recursively erase unrelated contents.
     try:
-        shutil.rmtree(session_dir)
-    except OSError as exc:
-        return {"ok": False, "error": str(exc)}
+        session_dir.rmdir()
+    except OSError:
+        pass
 
     return {
         "ok": True,
         "session": session,
         "deleted_generations": deleted,
-        "deleted_directory": str(session_dir),
+        "deleted_directory": str(session_dir) if not session_dir.exists() else None,
+        "preserved_directory": str(session_dir) if session_dir.exists() else None,
     }

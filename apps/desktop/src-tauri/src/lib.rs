@@ -3312,7 +3312,10 @@ async fn read_image_preview(path: String, quality: Option<String>) -> Result<Val
     tokio::task::spawn_blocking(move || {
         let file = resolve_image_file(&path).ok_or_else(|| format!("File not found: {path}"))?;
         let live = quality.as_deref() == Some("live");
-        let max_edge = if live {
+        let thumbnail = quality.as_deref() == Some("thumbnail");
+        let max_edge = if thumbnail {
+            256
+        } else if live {
             PREVIEW_LIVE_MAX_EDGE
         } else {
             PREVIEW_FINAL_MAX_EDGE
@@ -3327,7 +3330,7 @@ async fn read_image_preview(path: String, quality: Option<String>) -> Result<Val
         Ok(json!({
             "path": file.to_string_lossy(),
             "mime": "image/png",
-            "quality": if live { "live" } else { "final" },
+            "quality": if thumbnail { "thumbnail" } else if live { "live" } else { "final" },
             "data_url": format!("data:image/png;base64,{}", STANDARD.encode(bytes))
         }))
     })

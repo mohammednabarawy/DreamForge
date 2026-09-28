@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ImageIcon } from "lucide-react";
 import { readImagePreviewQueued } from "../lib/preview-queue";
 
@@ -9,14 +9,25 @@ type Props = {
 
 export function Thumb({ path, className = "h-10 w-10" }: Props) {
   const [url, setUrl] = useState<string | null>(null);
+  const container = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    if (!path) {
-      setUrl(null);
-      return;
-    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setVisible(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: "200px" });
+    if (container.current) observer.observe(container.current);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    setUrl(null);
+    if (!path || !visible) return;
     let cancelled = false;
-    void readImagePreviewQueued(path)
+    void readImagePreviewQueued(path, { quality: "thumbnail" })
       .then((r) => {
         if (!cancelled) setUrl(r.data_url);
       })
@@ -26,24 +37,13 @@ export function Thumb({ path, className = "h-10 w-10" }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [path]);
-
-  if (!url) {
-    return (
-      <div
-        className={`flex shrink-0 items-center justify-center rounded-md border border-dfui-border/50 bg-dfui-bg/80 ${className}`}
-      >
-        <ImageIcon size={14} className="text-dfui-muted" />
-      </div>
-    );
-  }
+  }, [path, visible]);
 
   return (
-    <img
-      src={url}
-      alt=""
-      draggable={false}
-      className={`shrink-0 rounded-md border border-dfui-border/50 object-cover ${className}`}
-    />
+    <div ref={container}
+      className={`flex shrink-0 items-center justify-center overflow-hidden rounded-md border border-dfui-border/50 bg-dfui-bg/80 ${className}`}>
+      {url ? <img src={url} alt="" draggable={false} className="h-full w-full object-cover" />
+        : <ImageIcon size={14} className="text-dfui-muted" />}
+    </div>
   );
 }

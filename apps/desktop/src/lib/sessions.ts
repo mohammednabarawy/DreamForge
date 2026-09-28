@@ -46,13 +46,16 @@ function outputStamp() {
 }
 
 export function outputPathForSession(
-  _sessionId: string,
+  sessionId: string,
   kind: "gen" | "edit" | "inpaint" | "upscale" = "gen",
 ): string {
   const stamp = outputStamp();
   const name =
     kind === "gen" ? `gen_${stamp}.png` : `${kind}_${stamp}.png`;
-  return `outputs/${name}`;
+  const folder = /^[a-zA-Z0-9_-]{1,48}$/.test(sessionId)
+    ? sessionId
+    : DEFAULT_SESSION_ID;
+  return folder === "root" ? `outputs/${name}` : `outputs/${folder}/${name}`;
 }
 
 export function groupOutputsBySession(outputs: OutputItem[]): OutputSession[] {
@@ -78,7 +81,7 @@ export function groupOutputsBySession(outputs: OutputItem[]): OutputSession[] {
   return sessions.sort((a, b) => b.latest.localeCompare(a.latest));
 }
 
-/** Merge disk sessions, empty user-created sessions, and ensure the active id is listed. */
+/** Merge disk sessions, empty user-created sessions, and retain the default and active projects. */
 export function mergeSessionList(
   fromOutputs: OutputSession[],
   registry: SessionMeta[],
@@ -99,13 +102,15 @@ export function mergeSessionList(
     }
   }
   const active = activeId.trim() || DEFAULT_SESSION_ID;
-  if (!map.has(active)) {
-    map.set(active, {
-      id: active,
-      label: formatSessionLabel(active),
-      items: [],
-      latest: "",
-    });
+  for (const id of [DEFAULT_SESSION_ID, active]) {
+    if (!map.has(id)) {
+      map.set(id, {
+        id,
+        label: formatSessionLabel(id),
+        items: [],
+        latest: "",
+      });
+    }
   }
 
   const list = [...map.values()];

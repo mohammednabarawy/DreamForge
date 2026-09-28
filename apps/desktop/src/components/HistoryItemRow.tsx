@@ -56,7 +56,9 @@ function DraggableHistoryThumb({
   onSelect?: () => void;
 }) {
   return (
-    <div
+    <button
+      type="button"
+      aria-label={title ?? "Preview image; drag to attach"}
       draggable
       onMouseDown={() => primeImagePathDragSession(path)}
       onClick={(event) => {
@@ -76,7 +78,7 @@ function DraggableHistoryThumb({
       <span className="pointer-events-none absolute bottom-0.5 right-0.5 rounded bg-black/55 p-0.5 text-white opacity-0 transition group-hover/thumb:opacity-100">
         <GripVertical size={10} />
       </span>
-    </div>
+    </button>
   );
 }
 
@@ -118,7 +120,9 @@ export function HistoryItemRow({
   const openPath = thumb ?? item.manifest_path;
   const hasCreativeActions = Boolean(thumb && (onEditThis || onFixRegion || onEnhance));
   const canDeleteSingleImage = imageCount > 1 && Boolean(onDeleteImage);
-  const previewItem = () => onSelect(item);
+  const previewItem = (path = thumb) => onSelect({ ...item,
+    images: path ? [path, ...images.filter((image) => image !== path)] : images,
+  });
 
   const thumbGrid =
     imageCount > 1 && viewMode === "grid" ? (
@@ -129,7 +133,7 @@ export function HistoryItemRow({
             path={path}
             className="aspect-square w-full"
             title={`Click to preview · drag image ${index + 1} of ${imageCount}`}
-            onSelect={previewItem}
+            onSelect={() => previewItem(path)}
           />
         ))}
       </div>
@@ -146,7 +150,7 @@ export function HistoryItemRow({
             ? `Click to preview · drag image 1 of ${imageCount}`
             : "Click to preview · drag to attach"
         }
-        onSelect={previewItem}
+        onSelect={() => previewItem(thumb)}
       />
     ) : null;
 
@@ -195,7 +199,7 @@ export function HistoryItemRow({
                 </p>
               )}
               <div className="mt-1 flex flex-wrap items-center gap-1">
-                <span className="rounded bg-dfui-bg/60 px-1 font-mono text-[8px] text-dfui-data">
+                <span title={badge} className="max-w-full truncate rounded bg-dfui-bg/60 px-1 font-mono text-[8px] text-dfui-data">
                   {badge}
                 </span>
                 <span className="font-mono text-[8px] text-dfui-tertiary">
@@ -207,7 +211,7 @@ export function HistoryItemRow({
         </div>
 
         {hasCreativeActions && (
-          <div className="mt-1 flex flex-wrap gap-0.5 opacity-0 transition group-hover:opacity-100">
+          <div className="mt-1 flex flex-wrap gap-0.5 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
             {onEditThis && (
               <button
                 type="button"

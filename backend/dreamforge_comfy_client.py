@@ -7,6 +7,9 @@ WebSocket API (Krita AI Diffusion–style) via dreamforge_comfy_ws.
 from __future__ import annotations
 
 import json
+import hashlib
+import io
+from copy import deepcopy
 import logging
 import os
 import time
@@ -188,9 +191,76 @@ class ComfyPromptResult:
 class ComfyClient:
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip("/")
+        self._staged_images: dict[str, bytes] = {}
+        self._object_info: dict | None = None
+        self.image_transport = "disk"
+        self.last_prompt: dict = {}
+
+    def reconnect(self, base_url: str) -> ComfyClient:
+        # Keep input bytes across managed-server restarts; its RAM cache is lost.
+        self.base_url = base_url.rstrip("/")
+        self._object_info = None
+        return self
 
     def object_info(self, *, timeout_s: float = 60.0) -> dict[str, Any]:
-        return _http_json("GET", f"{self.base_url}/object_info", None, timeout_s=timeout_s)
+        self._object_info = _http_json("GET", f"{self.base_url}/object_info", None, timeout_s=timeout_s)
+        return self._object_info
+
+    def stage_image(self, *, image_bytes: bytes, filename: str, **_kwargs) -> dict:
+        """Keep job inputs in memory until submission, including retries."""
+        token = f"DreamForge_input_{hashlib.sha256(image_bytes).hexdigest()}.png"
+        self._staged_images[token] = image_bytes
+        return {"name": token, "subfolder": "", "type": "input"}
+
+    def _prepare_image_transport(self, prompt: dict) -> dict:
+        nodes = self._object_info if self._object_info is not None else self.object_info()
+        cached = {"ETN_LoadImageCache", "ETN_SaveImageCache"}.issubset(nodes)
+        self.image_transport = "ram_cache" if cached else "disk"
+        graph = deepcopy(prompt)
+        uploaded: dict[str, str] = {}
+        for node in graph.values():
+            inputs = node.get("inputs", {})
+            token = inputs.get("image")
+            if node.get("class_type") == "LoadImage" and isinstance(token, str) and token in self._staged_images:
+                if token not in uploaded:
+                    data = self._staged_images[token]
+                    if cached:
+                        from PIL import Image, ImageOps
+
+                        # Native LoadImage returns inverse alpha as MASK; ETN returns
+                        # alpha directly (or red for RGB). Preserve native semantics.
+                        with Image.open(io.BytesIO(data)) as source:
+                            image = ImageOps.exif_transpose(source).convert("RGBA")
+                            image.putalpha(ImageOps.invert(image.getchannel("A")))
+                            buffer = io.BytesIO()
+                            image.save(buffer, format="PNG")
+                        cache_id = token.removesuffix(".png")
+                        req = urllib.request.Request(
+                            f"{self.base_url}/api/etn/image/{cache_id}",
+                            data=buffer.getvalue(), headers={"Content-Type": "image/png"}, method="PUT",
+                        )
+                        with urllib.request.urlopen(req, timeout=120) as response:
+                            response.read()
+                        uploaded[token] = cache_id
+                    else:
+                        upload = self.upload_image(image_bytes=data, filename=token)
+                        name = str(upload["name"])
+                        subfolder = str(upload.get("subfolder") or "")
+                        uploaded[token] = f"{subfolder}/{name}" if subfolder else name
+                if cached:
+                    node["class_type"] = "ETN_LoadImageCache"
+                    node["inputs"] = {"id": uploaded[token]}
+                else:
+                    inputs["image"] = uploaded[token]
+            elif cached and node.get("class_type") == "SaveImage":
+                node["class_type"] = "ETN_SaveImageCache"
+                # Comfy ignores undeclared scalar inputs during execution but
+                # includes them in cache keys. Refresh only the transfer node:
+                # a repeated seed must not reference an evicted RAM-cache ID.
+                # ponytail: pinned Comfy cache-key behavior; use a nonce-aware node if this contract changes.
+                node["inputs"] = {"images": inputs["images"], "format": "PNG",
+                                  "_dreamforge_transfer_id": uuid.uuid4().hex}
+        return graph
 
     def interrupt(self, *, timeout_s: float = 10.0) -> None:
         _http_json("POST", f"{self.base_url}/interrupt", {}, timeout_s=timeout_s)
@@ -216,7 +286,8 @@ class ComfyClient:
         client_id: str | None = None,
         prompt_id: str | None = None,
     ) -> ComfyPromptResult:
-        payload: dict[str, Any] = {"prompt": prompt}
+        self.last_prompt = self._prepare_image_transport(prompt)
+        payload: dict[str, Any] = {"prompt": self.last_prompt}
         if client_id:
             payload["client_id"] = client_id
         if prompt_id:
@@ -492,6 +563,20 @@ class ComfyClient:
         req = urllib.request.Request(url, method="GET")
         with urllib.request.urlopen(req, timeout=timeout_s) as resp:
             return resp.read()
+
+    def result_image(self, image: dict, *, timeout_s: float = 300.0) -> bytes:
+        if image.get("source") == "http" and image.get("id"):
+            cache_id = urllib.parse.quote(str(image["id"]), safe="")
+            req = urllib.request.Request(f"{self.base_url}/api/etn/image/{cache_id}", method="GET")
+            try:
+                with urllib.request.urlopen(req, timeout=timeout_s) as response:
+                    return response.read()
+            except urllib.error.HTTPError as exc:
+                if exc.code == 404:
+                    raise ComfyExecutionError("The temporary ComfyUI image cache expired or the server restarted. Generate again.") from exc
+                raise
+        return self.view(filename=str(image["filename"]), subfolder=str(image.get("subfolder") or ""),
+                         folder_type=str(image.get("type") or "output"), timeout_s=timeout_s)
 
     def free_memory(
         self,

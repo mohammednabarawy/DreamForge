@@ -15,6 +15,12 @@
 
 For a prepared Windows folder that should run without Node or Rust installed, build the desktop release with `cd apps\desktop && npm run tauri build -- --no-bundle`, then launch `dreamforge-portable.bat` from the repository root. The portable launcher keeps settings, outputs, and the ComfyUI runtime beside the app; set the model library in Settings to use a directory elsewhere.
 
+## Image storage
+
+DreamForge uses [Krita AI Diffusion's image-cache protocol](https://github.com/Acly/comfyui-tooling-nodes#readme) when the installed ComfyUI server exposes `ETN_LoadImageCache` and `ETN_SaveImageCache`. References and masks transfer through RAM; final PNGs (including alpha and prompt metadata) are saved by DreamForge under `outputs/<project>/` with a generation manifest. ComfyUI does not create input/output image copies on this path. Temporary inpaint crops are removed after the finished image is safely moved into the library. Original reference files and existing saved images are not modified.
+
+The library's search, project and favorite filters apply before pagination. It requests 256px thumbnails only when near the visible area; opening an image still uses the full-quality preview. Saved library images are not automatically pruned. A server without the cache nodes falls back to ComfyUI's standard disk-upload and output APIs. Cache images are temporary, so a failed transfer after server restart/eviction requires generating again; completed library images survive restarts.
+
 ## Why DreamForge?
 
 - **Private by default** — models, prompts, and images stay on your machine (local ComfyUI / DreamForge worker).

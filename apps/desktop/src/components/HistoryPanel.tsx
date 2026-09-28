@@ -139,16 +139,15 @@ export function HistoryPanel({
   const setScopeFilter = (next: HistoryScope) => {
     setScope(next);
     saveHistoryScope(next);
+    onRefreshRef.current();
   };
 
   const toggleFavorite = (manifestPath: string) => {
-    setFavorites((prev) => {
-      const next = new Set(prev);
-      if (next.has(manifestPath)) next.delete(manifestPath);
-      else next.add(manifestPath);
-      saveFavoriteManifests(next);
-      return next;
-    });
+    const next = new Set(favorites);
+    if (next.has(manifestPath)) next.delete(manifestPath);
+    else next.add(manifestPath);
+    setFavorites(next);
+    saveFavoriteManifests(next);
   };
 
   const toggleDateGroup = (id: string) => {
@@ -303,6 +302,8 @@ export function HistoryPanel({
             <button
               type="button"
               title="List view"
+              aria-label="List view"
+              aria-pressed={viewMode === "list"}
               onClick={() => setView("list")}
               className={`rounded-md border p-1 ${
                 viewMode === "list"
@@ -315,6 +316,8 @@ export function HistoryPanel({
             <button
               type="button"
               title="Grid view"
+              aria-label="Grid view"
+              aria-pressed={viewMode === "grid"}
               onClick={() => setView("grid")}
               className={`rounded-md border p-1 ${
                 viewMode === "grid"
@@ -330,6 +333,7 @@ export function HistoryPanel({
               disabled={loadingOutputs}
               className="rounded-md border border-dfui-border/60 p-1 text-dfui-muted hover:border-dfui-accent/40 hover:text-dfui-fg disabled:opacity-50"
               title="Refresh"
+              aria-label="Refresh library"
             >
               <RefreshCw
                 size={14}
@@ -428,8 +432,6 @@ export function HistoryPanel({
         )}
 
         {onLoadMore &&
-          !outputSearch.trim() &&
-          scope !== "favorites" &&
           outputsLoaded < outputsTotal && (
             <button
               type="button"

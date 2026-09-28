@@ -42,7 +42,7 @@ function withDisplayUrl(r: ImagePreviewResponse): ImagePreviewResponse & { data_
 /** Limits concurrent image decode IPC so the UI stays responsive after boot. */
 export function readImagePreviewQueued(
   path: string,
-  opts?: { quality?: "live" | "final" },
+  opts?: { quality?: "live" | "final" | "thumbnail" },
 ): Promise<ImagePreviewResponse & { data_url: string }> {
   const quality = opts?.quality ?? "final";
   const priority = quality === "final" ? "final" : "normal";

@@ -192,10 +192,6 @@ def write_live_preview(
     path = live_preview_path(job_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     legacy_path = live_preview_path()
-    # Mirror for legacy desktop builds that still probe backend/outputs or backend/temp.
-    backend_mirror = PROJECT_ROOT / "backend" / "temp" / "previews" / path.name
-    backend_legacy = PROJECT_ROOT / "backend" / "outputs" / path.name
-    backend_legacy_root = PROJECT_ROOT / "backend" / "outputs" / legacy_path.name
     if image_format == 2 or image_bytes[:8] == b"\x89PNG\r\n\x1a\n":
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         buf = io.BytesIO()
@@ -219,14 +215,6 @@ def write_live_preview(
     if job_id:
         _atomic_write(legacy_path)
     resolved = path.resolve()
-    for mirror in (backend_mirror, backend_legacy, backend_legacy_root if job_id else None):
-        if mirror is None:
-            continue
-        try:
-            mirror.parent.mkdir(parents=True, exist_ok=True)
-            mirror.write_bytes(image_bytes)
-        except OSError:
-            pass
     return resolved
 
 

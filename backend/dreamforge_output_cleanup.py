@@ -20,7 +20,7 @@ COMFY_OUTPUT_DIR = resolve_comfy_root() / "output"
 COMFY_INPUT_DIR = resolve_comfy_root() / "input"
 _STALE_DELETED_INDEX = OUTPUTS_ROOT / ".deleted_generations.json"
 
-_DREAMFORGE_SEQ_RE = re.compile(r"^DreamForge_(\d+)", re.IGNORECASE)
+_DREAMFORGE_SEQ_RE = re.compile(r"^DreamForge_(\d+)(?:_|\.|$)", re.IGNORECASE)
 
 _ALLOWED_DELETE_ROOTS: list[Path] = []
 

@@ -424,7 +424,7 @@ def _parse_loras(items):
     return loras
 
 
-def _resolve_output_paths(images, output):
+def _resolve_output_paths(images, output, *, consume=False):
     if not output:
         return images
     output_path = Path(output)
@@ -436,7 +436,11 @@ def _resolve_output_paths(images, output):
         output_path.mkdir(parents=True, exist_ok=True)
         for image in images:
             target = output_path / Path(image).name
-            shutil.copy2(image, target)
+            if Path(image).resolve() != target.resolve():
+                if consume:
+                    shutil.move(image, target)
+                else:
+                    shutil.copy2(image, target)
             copied.append(str(target))
         return copied
 
@@ -445,7 +449,11 @@ def _resolve_output_paths(images, output):
         target = output_path
         if multiple and index:
             target = output_path.with_name(f"{output_path.stem}_{index + 1}{output_path.suffix}")
-        shutil.copy2(image, target)
+        if Path(image).resolve() != target.resolve():
+            if consume:
+                shutil.move(image, target)
+            else:
+                shutil.copy2(image, target)
         copied.append(str(target))
     return copied
 

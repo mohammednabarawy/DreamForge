@@ -117,6 +117,8 @@ type Props = {
   onSelectResultCandidate?: (path: string) => void;
   onRetryGeneration?: () => void;
   onUseCandidateAsSource?: (path: string) => void;
+  onInpaintCandidate?: (path: string) => void;
+  onUpscaleCandidate?: (path: string) => void;
   focusMode?: boolean;
   onToggleFocusMode?: () => void;
 };
@@ -185,6 +187,8 @@ export function CanvasPanel({
   onSelectResultCandidate,
   onRetryGeneration,
   onUseCandidateAsSource,
+  onInpaintCandidate,
+  onUpscaleCandidate,
   focusMode = false,
   onToggleFocusMode,
 }: Props) {
@@ -755,6 +759,8 @@ export function CanvasPanel({
             onSelect={onSelectResultCandidate}
             onRetry={onRetryGeneration}
             onUseAsSource={onUseCandidateAsSource}
+            onInpaintImage={onInpaintCandidate}
+            onUpscaleImage={onUpscaleCandidate}
             retryBusy={generating}
             onVaryImage={onVaryImage}
             onAutoEnhance={onAutoEnhance}

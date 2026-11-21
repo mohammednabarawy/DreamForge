@@ -6,8 +6,9 @@ from pathlib import Path
 from modules.prompt_expansion import PromptExpansion, Erniehancer
 from random_prompt import build_dynamic_prompt
 
-DEFAULT_STYLES_FILE = Path("settings/styles.default")
-STYLES_FILE = Path("settings/styles.csv")
+_BACKEND_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_STYLES_FILE = _BACKEND_DIR / "settings" / "styles.default"
+STYLES_FILE = _BACKEND_DIR / "settings" / "styles.csv"
 
 prompt_expansion = PromptExpansion()
 

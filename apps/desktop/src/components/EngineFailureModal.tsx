@@ -21,6 +21,8 @@ type Props = {
   onRestartEngine: () => void;
   onDownloadCompanions: () => void;
   onLowerVramProfile: () => void;
+  onRetryLowerResolution?: () => void;
+  onOpenComfyUpdater?: () => void;
   onOpenFullLog?: () => void;
   companionDownloadBusy?: boolean;
   restarting?: boolean;
@@ -155,16 +157,31 @@ function primaryAction(
     onRestartEngine: () => void;
     onDownloadCompanions: () => void;
     onLowerVramProfile: () => void;
+    onRetryLowerResolution?: () => void;
+    onOpenComfyUpdater?: () => void;
     restarting?: boolean;
     companionDownloadBusy?: boolean;
   },
 ): { label: string; onClick: () => void; disabled?: boolean; icon: ReactNode } | null {
   const code = error.code;
+  const msgLower = `${error.title} ${error.message}`.toLowerCase();
   const repairActions = error.failureReport?.repair_actions ?? [];
   const downloadable = repairActions.some((a) => a.action === "download_model_companions");
   const installableNodes = repairActions.some((a) => a.action === "install_custom_node_pack");
   const restartable = repairActions.some((a) => a.action === "restart_local_backend");
 
+  if (
+    handlers.onOpenComfyUpdater &&
+    (msgLower.includes("comfyui v0.") ||
+      msgLower.includes("minimaxh3imageconditioning") ||
+      msgLower.includes("comfyui is too old"))
+  ) {
+    return {
+      label: "Update ComfyUI in Settings",
+      onClick: handlers.onOpenComfyUpdater,
+      icon: <Download size={14} />,
+    };
+  }
   if (
     code === "missing_model_dependencies" ||
     code === "missing_custom_node_pack" ||
@@ -179,6 +196,13 @@ function primaryAction(
     };
   }
   if (code === "out_of_memory" || code === "virtual_memory_low") {
+    if (handlers.onRetryLowerResolution) {
+      return {
+        label: "Retry at lower resolution",
+        onClick: handlers.onRetryLowerResolution,
+        icon: <Zap size={14} />,
+      };
+    }
     return {
       label: "Lower VRAM profile",
       onClick: handlers.onLowerVramProfile,
@@ -219,6 +243,8 @@ export function EngineFailureModal({
   onRestartEngine,
   onDownloadCompanions,
   onLowerVramProfile,
+  onRetryLowerResolution,
+  onOpenComfyUpdater,
   onOpenFullLog,
   companionDownloadBusy,
   restarting,
@@ -241,6 +267,8 @@ export function EngineFailureModal({
     onRestartEngine,
     onDownloadCompanions,
     onLowerVramProfile,
+    onRetryLowerResolution,
+    onOpenComfyUpdater,
     restarting,
     companionDownloadBusy,
   });

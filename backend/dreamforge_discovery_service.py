@@ -84,6 +84,65 @@ def _asset_query_relevance(asset: dict[str, Any], query: str) -> int:
     return score
 
 
+def _companions_for_architecture(
+    architecture: str,
+    cache: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Return required companion files + on-disk status for a checkpoint architecture."""
+    arch = (architecture or "").strip().lower()
+    if not arch:
+        return {"items": [], "missing_count": 0, "missing_bytes": 0}
+    if arch in cache:
+        return cache[arch]
+    try:
+        from dreamforge_cli_inventory import MODEL_DEPENDENCIES, companion_file_present
+        from dreamforge_companion_download import (
+            COMPANION_SOURCES,
+            companion_category,
+            companion_filename,
+        )
+    except Exception:
+        result = {"items": [], "missing_count": 0, "missing_bytes": 0}
+        cache[arch] = result
+        return result
+
+    deps = MODEL_DEPENDENCIES.get(arch) or []
+    items: list[dict[str, Any]] = []
+    missing_count = 0
+    missing_bytes = 0
+    for req in deps:
+        if req.get("optional"):
+            continue
+        dep_id = str(req.get("id") or "")
+        relative = str(req.get("relative") or "")
+        source = COMPANION_SOURCES.get(dep_id) or {}
+        installed = bool(companion_file_present(req))
+        min_bytes = int(source.get("min_bytes") or 0)
+        if not installed:
+            missing_count += 1
+            missing_bytes += min_bytes
+        items.append(
+            {
+                "id": dep_id,
+                "relative": relative,
+                "category": companion_category(relative),
+                "filename": companion_filename(relative),
+                "url": str(source.get("url") or ""),
+                "min_bytes": min_bytes,
+                "installed": installed,
+                "requires_hf_token": bool(source.get("requires_hf_token")),
+                "note": str(req.get("note") or ""),
+            }
+        )
+    result = {
+        "items": items,
+        "missing_count": missing_count,
+        "missing_bytes": missing_bytes,
+    }
+    cache[arch] = result
+    return result
+
+
 class DiscoveryService:
     """Runs normalized searches across registered providers."""
 
@@ -222,6 +281,7 @@ class DiscoveryService:
 
         compute = detect_compute_profile("auto")
         query_text = (params.query or "").strip()
+        companion_cache: dict[str, dict[str, Any]] = {}
 
         try:
             for result in results:
@@ -244,6 +304,10 @@ class DiscoveryService:
                     asset_dict["compatibility"] = assess_asset_device_compatibility(
                         asset, compute, SUPPORTED_ARCHITECTURES
                     )
+                    if asset.kind.value == "checkpoint":
+                        asset_dict["required_companions"] = _companions_for_architecture(
+                            asset.architecture, companion_cache
+                        )
                     asset_dict["_relevance"] = _asset_query_relevance(asset_dict, query_text)
                     asset_dict["_provider_rank"] = idx
                     all_assets.append(asset_dict)

@@ -220,6 +220,7 @@ def test_selected_cuda_device_reaches_launch_args(monkeypatch):
     monkeypatch.setattr("dreamforge_comfy_launch.mps_available", lambda: False)
     monkeypatch.setattr("dreamforge_comfy_launch.cuda_total_vram_gb", lambda: 24.0)
     monkeypatch.setattr("dreamforge_comfy_launch.supports_dynamic_vram", lambda: False)
+    monkeypatch.setenv("DREAMFORGE_VRAM_PROFILE", "auto")
     monkeypatch.setenv("DREAMFORGE_COMFY_FAST", "off")
     monkeypatch.setenv("DREAMFORGE_COMFY_DEVICE_INDEX", "restore-after-test")
     apply_runtime_optimization_env()

@@ -372,7 +372,19 @@ export function SetupWizard({ onComplete }: Props) {
         {step === "done" && (
           <div className="space-y-4 text-center">
             <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-400" />
-            <p className="text-sm text-dfui-secondary">DreamForge is ready. The GPU engine is starting.</p>
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-dfui-primary">DreamForge is ready!</p>
+              <p className="text-xs text-dfui-secondary">
+                The GPU engine is starting. Open <strong>Discover</strong> in the sidebar to download a hardware-matched starter model bundle (with required companions included).
+              </p>
+            </div>
+            <button
+              type="button"
+              className="df-btn df-btn-primary w-full"
+              onClick={onComplete}
+            >
+              Start Creating
+            </button>
           </div>
         )}
 

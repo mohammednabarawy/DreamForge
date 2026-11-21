@@ -28,6 +28,7 @@ type Props = {
   onRemoveSlot: (index: number) => void;
   onMoveSlot?: (index: number, direction: -1 | 1) => void;
   onInsertTag?: (index: number) => void;
+  tagFormat?: "image" | "picture";
 };
 
 function SlotPreview({ path }: { path: string }) {
@@ -66,7 +67,10 @@ export function ReferenceSlotsEditor({
   onRemoveSlot,
   onMoveSlot,
   onInsertTag,
+  tagFormat = "image",
 }: Props) {
+  const formatTag = (idx: number) =>
+    tagFormat === "picture" ? `<Picture ${idx + 1}>` : `<image${idx + 1}>`;
   const slots = coerceReferenceSlots(settings, studioMode, maxSlots);
   const extraSlots = slots.slice(1);
   const canAdd = slots.length < maxSlots;
@@ -113,7 +117,8 @@ export function ReferenceSlotsEditor({
         {extraSlots.map((slot, offset) => {
           const index = offset + 1;
           const prompt = (settings.prompt ?? "").toLowerCase();
-          const isMentioned = new RegExp(`(?:<image${index + 1}>|image[_ #]${index + 1}|picture ${index + 1})`, "i").test(prompt);
+          const tagLabel = formatTag(index);
+          const isMentioned = new RegExp(`(?:<image${index + 1}>|<picture ${index + 1}>|image[_ #]${index + 1}|picture ${index + 1})`, "i").test(prompt);
           return (
             <div
               key={`${slot.path}-${index}`}
@@ -135,7 +140,7 @@ export function ReferenceSlotsEditor({
                     <div className="min-w-0">
                       <div className="flex items-center gap-1">
                         <p className="text-xs font-semibold text-df-blue/90">Image {index + 1}</p>
-                        {onInsertTag ? <button type="button" disabled={disabled} onClick={() => onInsertTag(index)} className="rounded border border-df-blue/30 px-1.5 py-0.5 font-mono text-[10px] text-df-blue hover:bg-df-blue/10 disabled:opacity-50" aria-label={`Insert <image${index + 1}> into prompt`}>{`<image${index + 1}>`}</button> : null}
+                        {onInsertTag ? <button type="button" disabled={disabled} onClick={() => onInsertTag(index)} className="rounded border border-df-blue/30 px-1.5 py-0.5 font-mono text-[10px] text-df-blue hover:bg-df-blue/10 disabled:opacity-50" aria-label={`Insert ${tagLabel} into prompt`}>{tagLabel}</button> : null}
                       </div>
                       <p className="truncate font-mono text-[9px] text-dfui-muted" title={slot.path}>
                         {basename(slot.path)}

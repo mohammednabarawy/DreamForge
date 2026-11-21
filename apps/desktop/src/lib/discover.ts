@@ -121,6 +121,24 @@ export type AssetDeviceCompatibility = {
   fits: boolean;
 };
 
+export type AssetCompanionItem = {
+  id: string;
+  relative: string;
+  category: string;
+  filename: string;
+  url: string;
+  min_bytes: number;
+  installed: boolean;
+  requires_hf_token?: boolean;
+  note: string;
+};
+
+export type AssetRequiredCompanions = {
+  items: AssetCompanionItem[];
+  missing_count: number;
+  missing_bytes: number;
+};
+
 export type DiscoverAsset = {
   id: string;
   name: string;
@@ -137,6 +155,7 @@ export type DiscoverAsset = {
   /** Set when this physical file (same SHA256) was already returned by another provider. */
   deduplicated_from?: string;
   compatibility?: AssetDeviceCompatibility;
+  required_companions?: AssetRequiredCompanions;
 };
 
 export type ProviderInfo = {

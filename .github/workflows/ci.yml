@@ -26,7 +26,8 @@ jobs:
       - name: Install test dependencies
         run: pip install -r backend/requirements-dev.txt
       - name: Pytest
-        run: python -m pytest backend/tests -q
+        working-directory: backend
+        run: python -m pytest tests -q
 
   desktop-build:
     runs-on: ubuntu-latest

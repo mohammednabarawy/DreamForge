@@ -19,7 +19,7 @@ import { useDreamForge } from "./hooks/useDreamForge";
 import { shouldHideGlobalStatusForProgress } from "./lib/studioProgress";
 import { engineBootFailureError } from "./lib/errors";
 import { getSetupGateStatus } from "./lib/runtimeSetup";
-import { runHardwareBenchmark } from "./lib/tauri-api";
+import { getReleaseStatus, runHardwareBenchmark, type ReleaseStatus } from "./lib/tauri-api";
 
 export default function App() {
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
@@ -50,7 +50,16 @@ function DreamForgeStudio() {
   const [fullLogOpen, setFullLogOpen] = useState(false);
   const [appSettingsOpen, setAppSettingsOpen] = useState(false);
   const [bootFailureDismissed, setBootFailureDismissed] = useState(false);
+  const [releaseStatus, setReleaseStatus] = useState<ReleaseStatus | null>(null);
   const [focusMode, setFocusMode] = useState(() => localStorage.getItem("dreamforge.studio.focus-mode.v1") === "true");
+
+  useEffect(() => {
+    void getReleaseStatus()
+      .then((res) => {
+        if (res?.update_available) setReleaseStatus(res);
+      })
+      .catch(() => undefined);
+  }, []);
   const toggleFocusMode = () => setFocusMode((value) => {
     localStorage.setItem("dreamforge.studio.focus-mode.v1", String(!value));
     return !value;
@@ -97,6 +106,24 @@ function DreamForgeStudio() {
     }
   };
 
+  const handleRetryLowerResolution = () => {
+    const curW = Number(mc.settings.width ?? 1024) || 1024;
+    const curH = Number(mc.settings.height ?? 1024) || 1024;
+    const scale = curW > 1536 || curH > 1536 ? 0.5 : 0.75;
+    const nextW = Math.max(512, Math.round((curW * scale) / 64) * 64);
+    const nextH = Math.max(512, Math.round((curH * scale) / 64) * 64);
+    mc.patchSettings({
+      width: nextW,
+      height: nextH,
+      aspect_ratio: `${nextW}x${nextH}`,
+      image_number: 1,
+    });
+    handleDismissFailure();
+    window.setTimeout(() => {
+      void mc.runGenerate();
+    }, 80);
+  };
+
   const profileLabel = "Local profile";
   const profileDetail = mc.userStyleProfile
     ? `${mc.userStyleProfile.generation_count ?? 0} remembered jobs${
@@ -120,6 +147,8 @@ function DreamForgeStudio() {
         mpsAvailable={mc.mpsAvailable}
         profileLabel={profileLabel}
         profileDetail={profileDetail}
+        updateAvailableVersion={releaseStatus?.update_available ? releaseStatus.latest : null}
+        updateReleaseUrl={releaseStatus?.release_url ?? null}
         onOpenAppSettings={() => setAppSettingsOpen(true)}
         onRestartEngine={() => void mc.runRestartEngine()}
       />
@@ -252,6 +281,8 @@ function DreamForgeStudio() {
             onSelectResultCandidate={(path) => void mc.selectResultCandidate(path)}
             onRetryGeneration={() => void mc.runGenerate()}
             onUseCandidateAsSource={(path) => void mc.useCandidateAsSource(path)}
+            onInpaintCandidate={(path) => void mc.inpaintCandidateImage(path)}
+            onUpscaleCandidate={(path) => void mc.upscaleCandidateImage(path)}
             focusMode={focusMode}
             onToggleFocusMode={toggleFocusMode}
           />
@@ -397,6 +428,11 @@ function DreamForgeStudio() {
         onRestartEngine={() => void mc.runRestartEngine()}
         onDownloadCompanions={() => void mc.downloadMissingCompanions()}
         onLowerVramProfile={mc.lowerVramProfile}
+        onRetryLowerResolution={handleRetryLowerResolution}
+        onOpenComfyUpdater={() => {
+          handleDismissFailure();
+          setAppSettingsOpen(true);
+        }}
         onOpenFullLog={() => setFullLogOpen(true)}
         companionDownloadBusy={mc.companionDownloadBusy}
         restarting={mc.restarting}

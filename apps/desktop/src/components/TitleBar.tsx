@@ -1,7 +1,8 @@
-import { Minus, RefreshCw, Settings, Square, User, X } from "lucide-react";
+import { ArrowUpCircle, Minus, RefreshCw, Settings, Square, User, X } from "lucide-react";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { BRAND } from "../lib/brand";
+import { openExternalUrl } from "../lib/externalLinks";
 import {
   engineRestartControlState,
   engineStatusDisplay,
@@ -33,6 +34,8 @@ type Props = {
   mpsAvailable?: boolean | null;
   profileLabel?: string;
   profileDetail?: string;
+  updateAvailableVersion?: string | null;
+  updateReleaseUrl?: string | null;
   onOpenAppSettings?: () => void;
   onRestartEngine?: () => void;
 };
@@ -47,6 +50,8 @@ export function TitleBar({
   mpsAvailable,
   profileLabel = "Local profile",
   profileDetail,
+  updateAvailableVersion,
+  updateReleaseUrl,
   onOpenAppSettings,
   onRestartEngine,
 }: Props) {
@@ -143,6 +148,18 @@ export function TitleBar({
             </button>
           ) : null}
           <div className="hidden items-center gap-1.5 border-l border-dfui-border/50 pl-2 sm:flex">
+            {updateAvailableVersion && updateReleaseUrl && (
+              <button
+                type="button"
+                data-tauri-drag-region={false}
+                onClick={() => void openExternalUrl(updateReleaseUrl)}
+                className="inline-flex items-center gap-1 rounded-md border border-emerald-400/40 bg-emerald-500/15 px-2 py-1 text-[10px] font-medium text-emerald-200 transition hover:bg-emerald-500/25"
+                title={`New DreamForge release available: v${updateAvailableVersion} — click to open GitHub Releases`}
+              >
+                <ArrowUpCircle size={12} />
+                <span>v{updateAvailableVersion}</span>
+              </button>
+            )}
             <span
               className="inline-flex max-w-[120px] items-center gap-1.5 truncate rounded-md border border-dfui-border/50 bg-dfui-bg/40 px-2 py-1 text-[10px] text-dfui-secondary"
               title={profileDetail ?? profileLabel}

@@ -275,7 +275,7 @@ export function MarketplaceTab({ kind, onRefreshInventory, workflow }: Props) {
     [recommendations, variantSel],
   );
 
-  const handleDownload = async (asset: DiscoverAsset) => {
+  const handleDownload = async (asset: DiscoverAsset, includeCompanions = true) => {
     const version = activeVersion(asset);
     if (!version) return;
     const file = selectedFile(asset);
@@ -293,6 +293,20 @@ export function MarketplaceTab({ kind, onRefreshInventory, workflow }: Props) {
       if (!res.ok) {
         setError(res.error ?? "Failed to queue download.");
         return;
+      }
+      if (includeCompanions && asset.required_companions?.missing_count) {
+        const missing = asset.required_companions.items.filter(
+          (item) => !item.installed && Boolean(item.url),
+        );
+        for (const comp of missing) {
+          await enqueueDownload({
+            url: comp.url,
+            category: comp.category || "text_encoders",
+            filename: comp.filename,
+            provider: "huggingface",
+            provider_asset_id: comp.id,
+          }).catch(() => undefined);
+        }
       }
       void downloadQueueStatus().then(setQueue).catch(() => undefined);
     } catch (e) {
@@ -534,6 +548,43 @@ export function MarketplaceTab({ kind, onRefreshInventory, workflow }: Props) {
             </button>
           </div>
         )}
+        {kind === "checkpoint" && (
+          <div className="flex flex-wrap items-center gap-1">
+            <span className="text-[9px] text-dfui-muted">Quick picks:</span>
+            {[
+              { label: "Krea 2", q: "krea2", minGb: 12 },
+              { label: "MiniMax H3", q: "minimax h3 image", minGb: 16 },
+              { label: "Qwen 2.1", q: "qwen image", minGb: 12 },
+              { label: "Flux", q: "flux", minGb: 8 },
+              { label: "Z-Image", q: "z-image", minGb: 8 },
+              { label: "SDXL", q: "sdxl", minGb: 6 },
+            ]
+              .filter((p) => !compute?.vram_gb || compute.vram_gb >= p.minGb || p.q === "sdxl")
+              .map((pick) => {
+                const active = query.trim().toLowerCase() === pick.q;
+                return (
+                  <button
+                    key={pick.q}
+                    type="button"
+                    onClick={() => {
+                      const next = active ? "" : pick.q;
+                      setQuery(next);
+                      queryRef.current = next;
+                      setHasMore(false);
+                      void runSearch(false, next);
+                    }}
+                    className={`rounded-full border px-2 py-0.5 text-[9px] transition ${
+                      active
+                        ? "border-dfui-accent/60 bg-dfui-accent/20 text-dfui-fg"
+                        : "border-dfui-border/50 bg-dfui-bg/30 text-dfui-secondary hover:border-dfui-accent/40 hover:text-dfui-fg"
+                    }`}
+                  >
+                    {pick.label}
+                  </button>
+                );
+              })}
+          </div>
+        )}
         {providers.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5">
             <select
@@ -755,6 +806,22 @@ export function MarketplaceTab({ kind, onRefreshInventory, workflow }: Props) {
                           : ""}
                       </span>
                     )}
+                    {asset.required_companions && asset.required_companions.items.length > 0 && (
+                      <span
+                        title={asset.required_companions.items
+                          .map((c) => `${c.installed ? "✓" : "•"} ${c.filename} (${c.installed ? "installed" : formatBytes(c.min_bytes) || "required"})`)
+                          .join("\n")}
+                        className={`truncate font-mono text-[8px] ${
+                          asset.required_companions.missing_count > 0
+                            ? "text-sky-300"
+                            : "text-emerald-300/80"
+                        }`}
+                      >
+                        {asset.required_companions.missing_count > 0
+                          ? `+${asset.required_companions.missing_count} companion${asset.required_companions.missing_count > 1 ? "s" : ""} (${formatBytes(asset.required_companions.missing_bytes) || "auto-queued"})`
+                          : "Companions ready ✓"}
+                      </span>
+                    )}
                   </div>
                   {multiFile && (
                     <select
@@ -781,9 +848,14 @@ export function MarketplaceTab({ kind, onRefreshInventory, workflow }: Props) {
                   )}
                   <button
                     type="button"
-                    onClick={() => void handleDownload(asset)}
+                    onClick={() => void handleDownload(asset, true)}
                     disabled={buttonState !== "download"}
                     className="flex h-7 w-full items-center justify-center gap-1 rounded bg-white/18 px-2 text-[10px] text-white backdrop-blur-sm transition hover:bg-white/28 disabled:opacity-100"
+                    title={
+                      asset.required_companions?.missing_count
+                        ? "Downloads this model plus its required text encoder / VAE companions"
+                        : "Download model"
+                    }
                   >
                     {buttonState === "downloading" ? (
                       <span className="relative h-1.5 w-full overflow-hidden rounded-full bg-white/15">
@@ -802,7 +874,9 @@ export function MarketplaceTab({ kind, onRefreshInventory, workflow }: Props) {
                     ) : (
                       <>
                         <Download size={12} />
-                        Download
+                        {asset.required_companions?.missing_count
+                          ? `Download Bundle (+${asset.required_companions.missing_count})`
+                          : "Download"}
                       </>
                     )}
                   </button>

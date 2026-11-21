@@ -7,7 +7,9 @@ class TranslationManager:
     translations = {}
 
     def __init__(self):
-        lang_folder = "language"
+        lang_folder = Path(__file__).resolve().parents[1] / "language"
+        if not lang_folder.is_dir():
+            return
         files = os.listdir(lang_folder)
         for file in files:
             if file.endswith('.json'):

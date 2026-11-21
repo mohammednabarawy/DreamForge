@@ -1,6 +1,8 @@
-import { Check, ImageIcon, RefreshCw, Upload } from "lucide-react";
+import { useState } from "react";
+import { Check, Download, ImageIcon, Paintbrush, RefreshCw, Sparkles, Upload } from "lucide-react";
 import { pathToAssetUrl } from "../lib/preview-display";
 import type { EnhanceTarget } from "../lib/autoEnhance";
+import { exportImageFile, revealPathInExplorer } from "../lib/tauri-api";
 
 type Props = {
   images: string[];
@@ -11,6 +13,8 @@ type Props = {
   onSelect: (path: string) => void;
   onRetry?: () => void;
   onUseAsSource?: (path: string) => void;
+  onInpaintImage?: (path: string) => void;
+  onUpscaleImage?: (path: string) => void;
   retryBusy?: boolean;
   onVaryImage?: (amount: "subtle" | "strong") => void;
   onAutoEnhance?: (target: EnhanceTarget) => void;
@@ -25,11 +29,40 @@ export function ResultTray({
   onSelect,
   onRetry,
   onUseAsSource,
+  onInpaintImage,
+  onUpscaleImage,
   retryBusy,
   onVaryImage,
   onAutoEnhance,
 }: Props) {
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportStatus, setExportStatus] = useState<string | null>(null);
   if (images.length === 0) return null;
+
+  const targetPath = activePath || images[0];
+  const handleExport = async (format: "png" | "jpeg" | "webp", stripMetadata: boolean) => {
+    if (!targetPath) return;
+    setExportOpen(false);
+    setExportStatus("Exporting…");
+    try {
+      const res = await exportImageFile({
+        source_path: targetPath,
+        format,
+        strip_metadata: stripMetadata,
+        quality: 92,
+      });
+      if (!res.ok || !res.path) {
+        setExportStatus(res.error ?? "Export failed");
+      } else {
+        setExportStatus(`Saved ${format.toUpperCase()}`);
+        void revealPathInExplorer(res.path).catch(() => undefined);
+      }
+    } catch (err) {
+      setExportStatus(String(err));
+    } finally {
+      window.setTimeout(() => setExportStatus(null), 2600);
+    }
+  };
 
   return (
     <div
@@ -115,8 +148,68 @@ export function ResultTray({
               aria-label="Use selected candidate as current source image"
             >
               <Upload size={11} />
-              Use as source
+              Edit
             </button>
+          ) : null}
+          {onInpaintImage && targetPath ? (
+            <button
+              type="button"
+              onClick={() => onInpaintImage(targetPath)}
+              className="inline-flex items-center gap-1 rounded-md border border-dfui-border/60 px-2 py-1 text-[10px] text-dfui-secondary hover:border-dfui-accent/40 hover:text-dfui-fg"
+              title="Paint a mask on this image to replace or fix a region"
+            >
+              <Paintbrush size={11} />
+              Inpaint
+            </button>
+          ) : null}
+          {onUpscaleImage && targetPath ? (
+            <button
+              type="button"
+              onClick={() => onUpscaleImage(targetPath)}
+              className="inline-flex items-center gap-1 rounded-md border border-dfui-border/60 px-2 py-1 text-[10px] text-dfui-secondary hover:border-dfui-accent/40 hover:text-dfui-fg"
+              title="Send this image to Enhance / Upscale"
+            >
+              <Sparkles size={11} />
+              Upscale
+            </button>
+          ) : null}
+          {targetPath ? (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setExportOpen((v) => !v)}
+                className="inline-flex items-center gap-1 rounded-md border border-dfui-border/60 px-2 py-1 text-[10px] text-dfui-secondary hover:border-dfui-accent/40 hover:text-dfui-fg"
+                title="Export clean PNG, JPEG, or WebP copy (strips AI metadata)"
+              >
+                <Download size={11} />
+                {exportStatus || "Export"}
+              </button>
+              {exportOpen && (
+                <div className="absolute bottom-full right-0 mb-1.5 w-44 rounded-lg border border-dfui-border/70 bg-dfui-panel/98 p-1 shadow-2xl backdrop-blur-md">
+                  <button
+                    type="button"
+                    onClick={() => void handleExport("png", true)}
+                    className="block w-full rounded px-2 py-1 text-left text-[10px] text-dfui-fg hover:bg-dfui-surface"
+                  >
+                    PNG (clean, no metadata)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleExport("jpeg", true)}
+                    className="block w-full rounded px-2 py-1 text-left text-[10px] text-dfui-fg hover:bg-dfui-surface"
+                  >
+                    JPEG (92% · share-ready)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleExport("webp", true)}
+                    className="block w-full rounded px-2 py-1 text-left text-[10px] text-dfui-fg hover:bg-dfui-surface"
+                  >
+                    WebP (92% · compact)
+                  </button>
+                </div>
+              )}
+            </div>
           ) : null}
         </div>
       </div>

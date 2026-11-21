@@ -71,8 +71,16 @@ export function ReferenceImageControl({
   const [showRoles, setShowRoles] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const prompt = (settings.prompt ?? "").toLowerCase();
-  const isImage1Mentioned = /(?:<image1>|image[_ #]1|picture 1)/i.test(prompt);
+  const isImage1Mentioned = /(?:<image1>|<picture 1>|image[_ #]1|picture 1)/i.test(prompt);
   const isQwen21 = modelFamily === "qwen_image_2.1" || /qwen.*2[._]1/i.test(settings.model ?? "");
+  const isMinimaxH3 =
+    modelFamily === "minimax_h3_image" ||
+    (/minimax/i.test(settings.model ?? "") && /h3/i.test(settings.model ?? ""));
+  const refTagFormat: "image" | "picture" = isMinimaxH3 ? "picture" : "image";
+  const formatRefTag = (idx: number) =>
+    refTagFormat === "picture" ? `<Picture ${idx + 1}>` : `<image${idx + 1}>`;
+  const strengthLabel = (value: number) =>
+    value <= 0.4 ? "Subtle" : value <= 0.65 ? "Balanced" : value <= 0.85 ? "Strong" : "Redraw";
   const fileInputRef = useRef<HTMLInputElement>(null);
   const extraInputRef = useRef<HTMLInputElement>(null);
 
@@ -83,6 +91,7 @@ export function ReferenceImageControl({
   );
   const showEditStrength =
     !isQwen21 &&
+    !isMinimaxH3 &&
     !(studioMode === "edit" && modelFamily === "krea2") &&
     Boolean(attachedPath) &&
     attachMode !== "upscale" &&
@@ -94,6 +103,7 @@ export function ReferenceImageControl({
   const proReferenceRoles = proReferenceRolesForStudio(studioMode);
   const canShowProReferenceRoles =
     !isQwen21 &&
+    !isMinimaxH3 &&
     !simpleExperience &&
     Boolean(attachedPath) &&
     Boolean(onPatchSettings) &&
@@ -111,10 +121,12 @@ export function ReferenceImageControl({
 
   const referenceSlots = coerceReferenceSlots(settings, studioMode, maxSlots);
   const visibleReferenceCount = Math.max(referenceSlots.length, extraReferences.length + (attachedPath ? 1 : 0));
-  const showTagActions = isQwen21 && visibleReferenceCount > 1 && Boolean(onPatchSettings);
+  const showTagActions =
+    ((isQwen21 && visibleReferenceCount > 1) || (isMinimaxH3 && visibleReferenceCount >= 1)) &&
+    Boolean(onPatchSettings);
   const insertImageTag = (index: number) => {
     if (!onPatchSettings) return;
-    const tag = `<image${index + 1}>`;
+    const tag = formatRefTag(index);
     if ((settings.prompt ?? "").includes(tag)) return;
     onPatchSettings({ prompt: `${(settings.prompt ?? "").trim()} ${tag}`.trim() });
   };
@@ -376,10 +388,10 @@ export function ReferenceImageControl({
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 items-start justify-between gap-2">
                 <div className="min-w-0">
-                  {visibleReferenceCount > 1 ? (
+                  {(visibleReferenceCount > 1 || showTagActions) ? (
                     <div className="flex items-center gap-1">
                       <p className="text-xs font-semibold text-df-blue/90">Image 1</p>
-                      {showTagActions ? <button type="button" disabled={disabled} onClick={() => insertImageTag(0)} className="rounded border border-df-blue/30 px-1.5 py-0.5 font-mono text-[10px] text-df-blue hover:bg-df-blue/10 disabled:opacity-50" aria-label="Insert <image1> into prompt">{"<image1>"}</button> : null}
+                      {showTagActions ? <button type="button" disabled={disabled} onClick={() => insertImageTag(0)} className="rounded border border-df-blue/30 px-1.5 py-0.5 font-mono text-[10px] text-df-blue hover:bg-df-blue/10 disabled:opacity-50" aria-label={`Insert ${formatRefTag(0)} into prompt`}>{formatRefTag(0)}</button> : null}
                     </div>
                   ) : null}
                   <p className="truncate font-mono text-[10px] text-dfui-fg" title={attachedPath}>
@@ -401,9 +413,9 @@ export function ReferenceImageControl({
                 </button>
               </div>
               <div className={`${compact ? "mt-1" : "mt-2"} flex flex-wrap items-center gap-1`}>
-                {attachMode !== "upscale" && !isQwen21 && (
+                {attachMode !== "upscale" && !isQwen21 && !isMinimaxH3 && (
                   <span className="inline-flex rounded border border-dfui-border/50 bg-dfui-bg/60 px-1.5 py-0.5 text-[9px] text-dfui-secondary">
-                    Strength {Math.round(editStrength * 100)}%
+                    {strengthLabel(editStrength)} · {Math.round(editStrength * 100)}%
                   </span>
                 )}
                 {(studioMode === "inpaint" || studioMode === "edit") && settings.inpaint_mask_path && (
@@ -478,8 +490,8 @@ export function ReferenceImageControl({
             onChange={(e) => onEditStrengthChange?.(Number(e.target.value))}
             className="h-1.5 min-w-0 flex-1 accent-dfui-accent"
           />
-          <span className="w-8 text-right font-mono text-[9px] text-dfui-secondary">
-            {Math.round(editStrength * 100)}%
+          <span className="w-16 text-right font-mono text-[9px] text-dfui-secondary">
+            {strengthLabel(editStrength)} ({Math.round(editStrength * 100)}%)
           </span>
         </label>
       )}
@@ -517,8 +529,9 @@ export function ReferenceImageControl({
           settings={settings}
           studioMode={studioMode}
           disabled={disabled}
-          showRoles={showRoles && !isQwen21}
+          showRoles={showRoles && !isQwen21 && !isMinimaxH3}
           onInsertTag={showTagActions ? insertImageTag : undefined}
+          tagFormat={refTagFormat}
           maxSlots={maxSlots}
           onAddSlot={(slot) => {
             const patch = appendReferenceSlot(settings, slot, studioMode, maxSlots);
@@ -545,9 +558,9 @@ export function ReferenceImageControl({
             >
               <span className="truncate">{basename(path)}</span>
               {showTagActions ? (
-                <button type="button" disabled={disabled} onClick={() => insertImageTag(index + 1)} className="shrink-0 font-mono text-df-blue hover:underline disabled:opacity-50" aria-label={`Insert <image${index + 2}> into prompt`}>{`<image${index + 2}>`}</button>
+                <button type="button" disabled={disabled} onClick={() => insertImageTag(index + 1)} className="shrink-0 font-mono text-df-blue hover:underline disabled:opacity-50" aria-label={`Insert ${formatRefTag(index + 1)} into prompt`}>{formatRefTag(index + 1)}</button>
               ) : null}
-              {showTagActions && !prompt.includes(`<image${index + 2}>`) ? <span className="shrink-0 text-amber-200">Not named</span> : null}
+              {showTagActions && !prompt.includes(formatRefTag(index + 1).toLowerCase()) ? <span className="shrink-0 text-amber-200">Not named</span> : null}
               {onRemoveExtra && (
                 <button
                   type="button"

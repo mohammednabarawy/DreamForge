@@ -1526,6 +1526,71 @@ def cmd_sync_comfy_dependencies(params: dict) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
+def cmd_export_image_file(params: dict) -> dict:
+    """Export an image to PNG, JPEG, or WebP with optional AI metadata stripping."""
+    from PIL import Image
+    from dreamforge_paths import resolve_image_path_or_raise
+
+    raw_source = str(params.get("source_path") or "").strip()
+    if not raw_source:
+        return {"ok": False, "error": "Missing source_path."}
+    fmt = str(params.get("format") or "png").strip().lower()
+    if fmt == "jpg":
+        fmt = "jpeg"
+    if fmt not in {"png", "jpeg", "webp"}:
+        return {"ok": False, "error": f"Unsupported export format: {fmt}"}
+    strip_metadata = bool(params.get("strip_metadata", True))
+    quality = max(50, min(100, int(params.get("quality") or 92)))
+
+    try:
+        src = resolve_image_path_or_raise(raw_source)
+        dest_raw = str(params.get("dest_path") or "").strip()
+        ext = "jpg" if fmt == "jpeg" else fmt
+        if dest_raw:
+            dest = Path(dest_raw).expanduser().resolve()
+        else:
+            exports_dir = src.parent / "exports"
+            exports_dir.mkdir(parents=True, exist_ok=True)
+            suffix_tag = "_clean" if strip_metadata else ""
+            dest = exports_dir / f"{src.stem}{suffix_tag}.{ext}"
+            counter = 1
+            while dest.exists():
+                dest = exports_dir / f"{src.stem}{suffix_tag}_{counter}.{ext}"
+                counter += 1
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        with Image.open(src) as img:
+            if fmt == "jpeg":
+                out_img = img.convert("RGB")
+                out_img.save(dest, format="JPEG", quality=quality, optimize=True)
+            elif fmt == "webp":
+                out_img = img.convert("RGBA" if "A" in img.getbands() else "RGB")
+                out_img.save(dest, format="WEBP", quality=quality, method=4)
+            else:
+                out_img = img.copy()
+                if strip_metadata:
+                    # Drop PNG text/prompt/workflow chunks for clean sharing.
+                    out_img.info.clear()
+                    out_img.save(dest, format="PNG", optimize=True)
+                else:
+                    from PIL.PngImagePlugin import PngInfo
+
+                    pnginfo = PngInfo()
+                    for k, v in (img.info or {}).items():
+                        if isinstance(v, str):
+                            pnginfo.add_text(str(k), v)
+                    out_img.save(dest, format="PNG", pnginfo=pnginfo, optimize=True)
+        return {
+            "ok": True,
+            "path": str(dest),
+            "format": fmt,
+            "strip_metadata": strip_metadata,
+            "size_bytes": dest.stat().st_size,
+        }
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 def cmd_rollback_comfy_backend(_params: dict) -> dict:
     from dreamforge_comfy_install import rollback_comfyui_update
 
@@ -2111,6 +2176,7 @@ HANDLERS = {
     "install_comfy_backend": cmd_install_comfy_backend,
     "sync_comfy_dependencies": cmd_sync_comfy_dependencies,
     "rollback_comfy_backend": cmd_rollback_comfy_backend,
+    "export_image_file": cmd_export_image_file,
     "check_model_health": cmd_check_model_health,
     "run_system_repair": cmd_run_system_repair,
     "get_starter_pack_items": cmd_get_starter_pack_items,

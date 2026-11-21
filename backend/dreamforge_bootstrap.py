@@ -763,7 +763,7 @@ def check_first_run_setup() -> dict[str, Any]:
     return setup_info
 
 
-def check_github_updates(current_version: str = "0.3.0-beta") -> dict[str, Any]:
+def check_github_updates(current_version: str = "0.4.0-beta") -> dict[str, Any]:
     """Check for latest release (including beta prereleases) on GitHub without blocking."""
     try:
         req = urllib.request.Request(

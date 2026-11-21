@@ -31,7 +31,7 @@ export function computeGenerateReadiness(args: {
   /** Upscalers, inpaint bundles, FLUX Kontext checkpoints (studio bridge). */
   studioMissingAssetCount?: number;
   settings: GenerationSettings;
-  modelGallery: ModelGalleryItem[];
+  modelGallery?: ModelGalleryItem[];
   studioMode?: StudioMode;
   editPlanState?: EditFamilyPlanState;
   /** True while debounced mask export is still writing to disk. */
@@ -74,7 +74,7 @@ export function computeGenerateReadiness(args: {
   const hasEditImage = Boolean((args.settings.input_image ?? "").trim());
   const hasUpscaleImage = Boolean((args.settings.upscale_image ?? "").trim());
   const hasInpaintMask = Boolean((args.settings.inpaint_mask_path ?? "").trim());
-  const modelItem = args.modelGallery.find(item => item.engine_name === args.model);
+  const modelItem = (args.modelGallery ?? []).find(item => item.engine_name === args.model);
   if (studio === "edit" && modelItem &&
       !(hasInpaintMask ? isInpaintCapableModel(modelItem) : isEditCapableModel(modelItem))) {
     return {

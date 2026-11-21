@@ -946,6 +946,28 @@ export async function rollbackComfyBackend(): Promise<ComfyBackendActionResult> 
   });
 }
 
+export type ExportImageResult = {
+  ok: boolean;
+  error?: string;
+  path?: string;
+  format?: string;
+  strip_metadata?: boolean;
+  size_bytes?: number;
+};
+
+export async function exportImageFile(params: {
+  source_path: string;
+  format: "png" | "jpeg" | "webp";
+  strip_metadata?: boolean;
+  quality?: number;
+  dest_path?: string;
+}): Promise<ExportImageResult> {
+  return invoke<ExportImageResult>("bridge_invoke", {
+    cmd: "export_image_file",
+    params,
+  });
+}
+
 export function onWorkerReady(
   cb: (payload: {
     ready?: boolean;

@@ -4712,6 +4712,8 @@ export function useDreamForge() {
     activeCandidatePath,
     selectResultCandidate,
     useCandidateAsSource,
+    inpaintCandidateImage: (path: string) => attachImageForCreativeMode("inpaint", path),
+    upscaleCandidateImage: (path: string) => attachImageForCreativeMode("upscale", path),
     runDryRun,
     runEnhancePrompt,
     enhancePromptBusy,

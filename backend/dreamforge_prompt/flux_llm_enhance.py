@@ -27,6 +27,7 @@ FAMILY_PROMPT_PURPOSES: dict[str, str] = {
     "hidream": "hidream_generate",
     "hidream_o1": "hidream_generate",
     "krea2": "krea2_generate",
+    "minimax_h3_image": "minimax_h3_image_generate",
     "z_image": "z_image_generate",
     "hunyuan": "hunyuan_generate",
 }
@@ -37,6 +38,7 @@ PURPOSE_FILES: dict[str, str] = {
     "qwen_generate": "qwen_generate_enhance.txt",
     "hidream_generate": "hidream_generate_enhance.txt",
     "krea2_generate": "krea2_generate_enhance.txt",
+    "minimax_h3_image_generate": "minimax_h3_image_generate_enhance.txt",
     "z_image_generate": "z_image_generate_enhance.txt",
     "hunyuan_generate": "hunyuan_generate_enhance.txt",
     "flux_kontext_edit": "flux_kontext_edit_enhance.txt",
@@ -52,6 +54,7 @@ PURPOSE_MAX_TOKENS: dict[str, int] = {
     "qwen_generate": 640,
     "hidream_generate": 384,
     "krea2_generate": 512,
+    "minimax_h3_image_generate": 768,
     "z_image_generate": 640,
     "hunyuan_generate": 640,
     "flux_kontext_edit": 256,
@@ -74,6 +77,7 @@ _FAMILY_PROFILE_LABELS: dict[str, str] = {
     "hidream": "HiDream",
     "hidream_o1": "HiDream",
     "krea2": "Krea 2",
+    "minimax_h3_image": "MiniMax H3 Image",
     "z_image": "Z-Image",
     "hunyuan": "HunyuanImage",
     "ideogram4": "Ideogram 4",
@@ -265,6 +269,7 @@ def should_skip_llm_enhance(
     if purpose_key in {
         "qwen_generate",
         "krea2_generate",
+        "minimax_h3_image_generate",
         "z_image_generate",
         "hunyuan_generate",
     }:

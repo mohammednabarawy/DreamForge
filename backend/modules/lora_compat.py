@@ -20,6 +20,7 @@ COMPAT_MATRIX: dict[str, set[str]] = {
     "flux":            {"flux", "flux_kontext", "flux_fill", "flux2", "flux2_klein", "chroma"},
     "flux_kontext":    {"flux", "flux_kontext", "flux_fill", "flux2", "chroma"},
     "krea2":           {"krea2"},
+    "minimax_h3_image": {"minimax_h3_image"},
     "qwen_image":      {"qwen_image", "qwen_image_edit"},
     "qwen_image_edit": {"qwen_image", "qwen_image_edit"},
     "hidream":         {"hidream", "hidream_o1"},

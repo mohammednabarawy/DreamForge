@@ -1,16 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertTriangle,
   CheckCircle2,
+  Cpu,
   Download,
   ExternalLink,
   KeyRound,
   Layers,
   Search,
+  ShieldAlert,
+  ShieldCheck,
   X,
+  Zap,
 } from "lucide-react";
 import { relocateDownloadedModel } from "../lib/studioBridge";
 import { openExternalUrl } from "../lib/externalLinks";
 import {
+  type AssetDeviceCompatibility,
   type ComputeProfileInfo,
   type DiscoverAsset,
   type DiscoverAssetFile,
@@ -97,10 +103,13 @@ export function MarketplaceTab({ kind, onRefreshInventory, workflow }: Props) {
   const [showKeyField, setShowKeyField] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
+  const [compatibleOnly, setCompatibleOnly] = useState(false);
   const seenInstalled = useRef(new Set<string>());
   const queryRef = useRef("");
   const pageRef = useRef(1);
   const cursorsRef = useRef<Record<string, string>>({});
+  const searchReqRef = useRef(0);
+  const didMountQueryRef = useRef(false);
   const recommendationWorkflow = useMemo(
     () => ({ width: workflow?.width, height: workflow?.height, batch: workflow?.batch ?? 1 }),
     [workflow?.width, workflow?.height, workflow?.batch],
@@ -154,20 +163,29 @@ export function MarketplaceTab({ kind, onRefreshInventory, workflow }: Props) {
     };
   }, [onRefreshInventory]);
 
-  const runSearch = useCallback(async (append = false) => {
+  const runSearch = useCallback(async (append = false, explicitQuery?: string) => {
+    const reqId = ++searchReqRef.current;
+    const activeQuery = (explicitQuery ?? queryRef.current).trim();
     setSearching(true);
     setError(null);
-    if (!append) setAssets([]);
+    if (!append) {
+      setAssets([]);
+      cursorsRef.current = {};
+    }
     const page = append ? pageRef.current + 1 : 1;
     try {
       const res = await discoverySearch({
-        query: queryRef.current.trim(),
+        query: activeQuery,
         kind,
         limit: 24,
         page,
         provider_ids: selectedProvider === "all" ? undefined : [selectedProvider],
         provider_cursors: append ? cursorsRef.current : undefined,
       });
+      if (reqId !== searchReqRef.current) return;
+      if (res.compute_profile) {
+        setCompute(res.compute_profile);
+      }
       setAssets((current) => {
         if (!append) return res.assets;
         const merged = new Map(current.map((asset) => [asset.id, asset]));
@@ -180,25 +198,48 @@ export function MarketplaceTab({ kind, onRefreshInventory, workflow }: Props) {
       );
       setHasMore(res.providers.some((entry) => Boolean(entry.next_cursor) || entry.assets.length >= 24));
       if (res.provider_errors > 0 && res.provider_ok === 0) {
-        setError("No search provider responded. Check your connection or API key.");
+        const details = res.providers
+          .filter((entry) => !entry.ok && entry.error)
+          .map((entry) => `${entry.provider}: ${entry.error}`);
+        setError(
+          details.length > 0
+            ? details.join(" · ")
+            : "No search provider responded. Check your connection or API key.",
+        );
       }
     } catch (e) {
+      if (reqId !== searchReqRef.current) return;
       setError(String(e));
       if (!append) setAssets([]);
     } finally {
-      setSearching(false);
+      if (reqId === searchReqRef.current) setSearching(false);
     }
   }, [kind, selectedProvider]);
 
   useEffect(() => {
-    void runSearch();
+    void runSearch(false);
   }, [runSearch]);
+
+  // Live debounced search as user types so marketplace filters reliably without requiring Enter.
+  useEffect(() => {
+    if (!didMountQueryRef.current) {
+      didMountQueryRef.current = true;
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void runSearch(false, query);
+    }, 320);
+    return () => window.clearTimeout(timer);
+  }, [query, runSearch]);
 
   useEffect(() => {
     if (!assets.length) return;
     let cancelled = false;
-    assets.forEach((asset) => {
-      if (cancelled || asset.id in recommendations) return;
+    // Only invoke per-asset recommendation RPC when inline compatibility wasn't already supplied by search.
+    const missingCompat = assets.filter(
+      (asset) => !asset.compatibility && !(asset.id in recommendations),
+    );
+    missingCompat.forEach((asset) => {
       void recommendFileVariants(asset, compute?.vram_profile ?? "auto", recommendationWorkflow)
         .then((res) => {
           if (cancelled || !res.ok) return;
@@ -220,6 +261,10 @@ export function MarketplaceTab({ kind, onRefreshInventory, workflow }: Props) {
       if (!version) return undefined;
       const manual = variantSel[asset.id];
       if (manual) return manual;
+      const inlineIdx = asset.compatibility?.recommended_file_index;
+      if (inlineIdx != null && version.files[inlineIdx]) {
+        return version.files[inlineIdx];
+      }
       const recommended = recommendations[asset.id];
       if (recommended) {
         const rec = version.files[recommended.index];
@@ -262,6 +307,7 @@ export function MarketplaceTab({ kind, onRefreshInventory, workflow }: Props) {
       setCredentialConfigured((current) => ({ ...current, [credentialProvider]: Boolean(res.status?.[credentialProvider]?.configured) }));
       setShowKeyField(false);
       setApiKeyInput("");
+      void runSearch(false, queryRef.current);
     } catch (e) {
       setSettingsError(String(e));
     }
@@ -293,28 +339,173 @@ export function MarketplaceTab({ kind, onRefreshInventory, workflow }: Props) {
   };
 
   const archUnsupported = (asset: DiscoverAsset) =>
-    Boolean(asset.architecture && !supportedArches.includes(asset.architecture));
+    Boolean(
+      asset.compatibility?.status === "unsupported_arch" ||
+        (asset.architecture && supportedArches.length > 0 && !supportedArches.includes(asset.architecture)),
+    );
+
+  const effectiveCompatibility = (asset: DiscoverAsset): AssetDeviceCompatibility | null => {
+    if (asset.compatibility) {
+      const base = asset.compatibility;
+      const manual = variantSel[asset.id];
+      const version = activeVersion(asset);
+      if (
+        manual &&
+        version &&
+        base.status !== "unsupported_arch" &&
+        base.status !== "cpu_only"
+      ) {
+        const idx = version.files.findIndex((f) => f.filename === manual.filename);
+        const estFromList = idx >= 0 ? base.file_estimates_mb?.[idx] : undefined;
+        const estMb =
+          estFromList && estFromList > 0
+            ? estFromList
+            : manual.size_bytes > 0
+              ? Math.round((manual.size_bytes * 1.25) / (1024 * 1024))
+              : base.estimated_mb;
+        if (estMb > 0 && base.usable_vram_mb > 0) {
+          const variantTag = manual.variant ? ` (${formatVariant(manual.variant)})` : "";
+          const estText = `~${(estMb / 1024).toFixed(1)} GB`;
+          if (estMb <= base.usable_vram_mb) {
+            return {
+              ...base,
+              status: "compatible",
+              label: "Compatible",
+              estimated_mb: estMb,
+              recommended_variant: manual.variant || base.recommended_variant,
+              reason: `Selected variant fits ${base.device_name} · ${estText}${variantTag}.`,
+              fits: true,
+            };
+          }
+          if (estMb <= base.tight_vram_mb) {
+            return {
+              ...base,
+              status: "tight",
+              label: "Tight fit",
+              estimated_mb: estMb,
+              recommended_variant: manual.variant || base.recommended_variant,
+              reason: `Selected variant is a tight fit on ${base.device_name} · ${estText}${variantTag} (memory offload recommended).`,
+              fits: true,
+            };
+          }
+          return {
+            ...base,
+            status: "too_large",
+            label: "Exceeds VRAM",
+            estimated_mb: estMb,
+            recommended_variant: manual.variant || base.recommended_variant,
+            reason: `Selected variant needs ${estText}${variantTag}, exceeding ${base.device_name}.`,
+            fits: false,
+          };
+        }
+      }
+      return base;
+    }
+    const rec = recommendations[asset.id];
+    if (!rec) return null;
+    const status =
+      archUnsupported(asset)
+        ? "unsupported_arch"
+        : rec.fits === true
+          ? "compatible"
+          : rec.fits === false
+            ? "too_large"
+            : "unknown";
+    return {
+      status,
+      label:
+        status === "compatible"
+          ? "Compatible"
+          : status === "too_large"
+            ? "Exceeds VRAM"
+            : status === "unsupported_arch"
+              ? "Unsupported arch"
+              : "Check VRAM",
+      reason:
+        status === "compatible"
+          ? `Fits your device (~${(rec.estimated_mb / 1024).toFixed(1)} GB).`
+          : status === "too_large"
+            ? `Estimated ~${(rec.estimated_mb / 1024).toFixed(1)} GB exceeds your VRAM.`
+            : "Compatibility could not be verified automatically.",
+      estimated_mb: rec.estimated_mb,
+      usable_vram_mb: compute?.vram_mb ?? 0,
+      tight_vram_mb: compute?.vram_mb ?? 0,
+      device_name: compute?.device_name ?? "Your device",
+      device_vram_gb: compute?.vram_gb ?? 0,
+      backend: compute?.backend ?? "cpu",
+      recommended_variant: rec.variant,
+      recommended_file_index: rec.index,
+      recommended: rec,
+      compatible_files_count: rec.fits ? 1 : 0,
+      fits: rec.fits === true,
+    };
+  };
+
+  const displayedAssets = useMemo(() => {
+    if (!compatibleOnly) return assets;
+    return assets.filter((asset) => {
+      const compat = asset.compatibility;
+      if (compat) return compat.status === "compatible" || compat.status === "tight";
+      const rec = recommendations[asset.id];
+      return rec?.fits === true;
+    });
+  }, [assets, compatibleOnly, recommendations]);
+
+  const deviceSummary = useMemo(() => {
+    if (!compute) return null;
+    const backendLabel = compute.backend ? compute.backend.toUpperCase() : "CPU";
+    const memText =
+      compute.vram_gb > 0
+        ? compute.backend === "mps"
+          ? `${compute.vram_gb.toFixed(0)} GB Unified`
+          : `${compute.vram_gb.toFixed(0)} GB VRAM`
+        : "CPU mode";
+    return `${compute.device_name} · ${memText} (${backendLabel})`;
+  }, [compute]);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <div className="space-y-2">
         <div className="flex gap-2">
-          <input
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              queryRef.current = e.target.value;
-              setHasMore(false);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void runSearch(false);
-            }}
-            placeholder={`Search ${prettyKind(kind)}...`}
-            className="df-input min-w-0 flex-1 px-2.5 py-1.5 text-xs"
-          />
+          <div className="relative min-w-0 flex-1">
+            <input
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                queryRef.current = e.target.value;
+                setHasMore(false);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void runSearch(false, query);
+                if (e.key === "Escape" && query) {
+                  e.preventDefault();
+                  setQuery("");
+                  queryRef.current = "";
+                  void runSearch(false, "");
+                }
+              }}
+              placeholder={`Search ${prettyKind(kind)} (e.g. minimax h3, krea2, flux, sdxl)…`}
+              className="df-input w-full py-1.5 pl-2.5 pr-7 text-xs"
+            />
+            {query && (
+              <button
+                type="button"
+                aria-label="Clear search"
+                title="Clear search"
+                onClick={() => {
+                  setQuery("");
+                  queryRef.current = "";
+                  void runSearch(false, "");
+                }}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-dfui-muted hover:text-dfui-fg"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
           <button
             type="button"
-            onClick={() => void runSearch(false)}
+            onClick={() => void runSearch(false, query)}
             disabled={searching}
             className="df-button-primary inline-flex items-center justify-center rounded-md px-3 py-1.5 text-xs disabled:opacity-50"
             title="Search"
@@ -322,6 +513,27 @@ export function MarketplaceTab({ kind, onRefreshInventory, workflow }: Props) {
             <Search size={14} />
           </button>
         </div>
+        {deviceSummary && (
+          <div className="flex items-center justify-between gap-2 rounded-md border border-dfui-border/50 bg-dfui-bg/35 px-2 py-1">
+            <span className="inline-flex min-w-0 items-center gap-1.5 truncate font-mono text-[9px] text-dfui-secondary" title={`Device compatibility evaluated for ${deviceSummary}`}>
+              <Cpu size={11} className="shrink-0 text-dfui-accent" />
+              <span className="truncate">{deviceSummary}</span>
+            </span>
+            <button
+              type="button"
+              aria-pressed={compatibleOnly}
+              onClick={() => setCompatibleOnly((v) => !v)}
+              className={`shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-medium transition ${
+                compatibleOnly
+                  ? "border-emerald-400/50 bg-emerald-500/20 text-emerald-200"
+                  : "border-dfui-border/60 text-dfui-muted hover:text-dfui-fg"
+              }`}
+              title="Show only models that fit your device"
+            >
+              {compatibleOnly ? "Compatible only ✓" : "Compatible only"}
+            </button>
+          </div>
+        )}
         {providers.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5">
             <select
@@ -423,17 +635,28 @@ export function MarketplaceTab({ kind, onRefreshInventory, workflow }: Props) {
 
       <div className="df-gallery-pane">
         <div className="df-gallery-grid">
-          {assets.map((asset) => {
+          {displayedAssets.map((asset) => {
             const version = activeVersion(asset);
             if (!version) return null;
             const image = version.thumbnail_url || asset.versions[0]?.thumbnail_url;
-            const recommended = recommendations[asset.id] ?? null;
+            const compat = effectiveCompatibility(asset);
             const file = selectedFile(asset);
             const queueKey = [asset.provenance.provider, asset.provenance.provider_asset_id, asset.provenance.provider_version_id || version.provider_version_id || "", file?.filename || ""].join(":");
             const queueItem = queueByAsset[queueKey];
             const buttonState = downloadButtonState(asset);
             const unsupported = archUnsupported(asset);
             const multiFile = version.files.length > 1;
+
+            const compatBadgeStyle =
+              compat?.status === "compatible"
+                ? "border-emerald-400/40 bg-emerald-950/80 text-emerald-200"
+                : compat?.status === "tight"
+                  ? "border-amber-400/45 bg-amber-950/80 text-amber-200"
+                  : compat?.status === "too_large" || compat?.status === "unsupported_arch"
+                    ? "border-red-400/45 bg-red-950/80 text-red-200"
+                    : compat?.status === "cpu_only"
+                      ? "border-orange-400/40 bg-orange-950/80 text-orange-200"
+                      : "border-white/15 bg-black/65 text-gray-300";
 
             return (
               <article
@@ -452,14 +675,33 @@ export function MarketplaceTab({ kind, onRefreshInventory, workflow }: Props) {
                 ) : (
                   <div className="absolute inset-0 bg-dfui-panel" />
                 )}
-                <div className="absolute inset-x-0 top-0 flex justify-between gap-2 p-1.5">
-                  <span className="rounded bg-black/55 px-1.5 py-0.5 font-mono text-[8px] text-white backdrop-blur">
-                    {asset.architecture || version.base_model || kind}
-                  </span>
+                <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-1.5 p-1.5">
+                  <div className="flex min-w-0 flex-wrap items-center gap-1">
+                    <span className="rounded bg-black/60 px-1.5 py-0.5 font-mono text-[8px] text-white backdrop-blur">
+                      {asset.architecture || version.base_model || kind}
+                    </span>
+                    {compat && (
+                      <span
+                        title={compat.reason}
+                        className={`inline-flex items-center gap-0.5 rounded border px-1.5 py-0.5 font-mono text-[8px] font-medium backdrop-blur ${compatBadgeStyle}`}
+                      >
+                        {compat.status === "compatible" ? (
+                          <ShieldCheck size={9} />
+                        ) : compat.status === "tight" ? (
+                          <Zap size={9} />
+                        ) : compat.status === "too_large" || compat.status === "unsupported_arch" ? (
+                          <ShieldAlert size={9} />
+                        ) : (
+                          <AlertTriangle size={9} />
+                        )}
+                        {compat.label}
+                      </span>
+                    )}
+                  </div>
                   <button
                     type="button"
                     onClick={() => void openExternalUrl(asset.provenance.source_url)}
-                    className="rounded bg-black/45 p-1 text-white backdrop-blur transition hover:bg-black/70"
+                    className="shrink-0 rounded bg-black/45 p-1 text-white backdrop-blur transition hover:bg-black/70"
                     title="Open in source"
                     aria-label={`Open ${asset.name} in source`}
                   >
@@ -467,7 +709,7 @@ export function MarketplaceTab({ kind, onRefreshInventory, workflow }: Props) {
                   </button>
                 </div>
                 {unsupported && (
-                  <div className="absolute inset-x-1 top-6 rounded border border-amber-500/40 bg-amber-950/70 px-1.5 py-0.5 text-[8px] leading-tight text-amber-200 backdrop-blur">
+                  <div className="absolute inset-x-1 top-7 rounded border border-amber-500/40 bg-amber-950/75 px-1.5 py-0.5 text-[8px] leading-tight text-amber-200 backdrop-blur">
                     Architecture "{asset.architecture}" is not supported by this
                     engine — it may not run after download.
                   </div>
@@ -489,24 +731,27 @@ export function MarketplaceTab({ kind, onRefreshInventory, workflow }: Props) {
                         {asset.versions.length} versions
                       </span>
                     )}
-                    {recommended && (
+                    {compat && (
                       <span
+                        title={compat.reason}
                         className={`truncate font-mono text-[8px] ${
-                          recommended.fits === false
-                            ? "text-amber-300"
-                            : recommended.fits === null
-                              ? "text-gray-400"
-                              : "text-emerald-300"
+                          compat.status === "compatible"
+                            ? "text-emerald-300"
+                            : compat.status === "tight"
+                              ? "text-amber-300"
+                              : compat.status === "too_large" || compat.status === "unsupported_arch"
+                                ? "text-red-300"
+                                : "text-gray-300"
                         }`}
                       >
-                        {recommended.fits === false
-                          ? "May exceed your VRAM · "
-                          : recommended.fits === null
-                            ? "Unverified fit · "
-                            : "Recommended fit · "}
-                        {formatVariant(recommended.variant)}
-                        {recommended.estimated_mb > 0
-                          ? ` · ~${(recommended.estimated_mb / 1024).toFixed(1)} GB`
+                        {compat.estimated_mb > 0
+                          ? `~${(compat.estimated_mb / 1024).toFixed(1)} GB`
+                          : compat.label}
+                        {compat.recommended_variant
+                          ? ` · ${formatVariant(compat.recommended_variant)}`
+                          : ""}
+                        {compat.device_vram_gb > 0
+                          ? ` · ${compat.device_name}`
                           : ""}
                       </span>
                     )}
@@ -565,9 +810,11 @@ export function MarketplaceTab({ kind, onRefreshInventory, workflow }: Props) {
               </article>
             );
           })}
-          {!searching && assets.length === 0 && (
+          {!searching && displayedAssets.length === 0 && (
             <div className="col-span-2 py-10 text-center text-xs text-dfui-muted">
-              No {prettyKind(kind)} found. Try a different search.
+              {compatibleOnly && assets.length > 0
+                ? `None of the ${assets.length} result(s) fit your current device. Turn off "Compatible only" to view all.`
+                : `No ${prettyKind(kind)} found. Try a different search.`}
             </div>
           )}
           {searching && (

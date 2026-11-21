@@ -216,12 +216,29 @@ def _normalize_one(raw: Mapping[str, Any]) -> DreamForgeAsset | None:
 
 
 def _arch_from_base_model(base_model: str) -> str:
+    detected = detect_architecture(base_model)
+    if detected:
+        return detected
     lower = base_model.lower()
     for hint, family in (
+        ("flux2", "flux2"),
+        ("flux.2", "flux2"),
         ("flux1", "flux"),
         ("flux.1", "flux"),
+        ("minimax h3", "minimax_h3_image"),
+        ("minimax-h3", "minimax_h3_image"),
+        ("minimax_h3", "minimax_h3_image"),
+        ("krea 2", "krea2"),
+        ("krea-2", "krea2"),
+        ("krea2", "krea2"),
+        ("qwen", "qwen_image"),
+        ("hidream", "hidream"),
+        ("z-image", "z_image"),
+        ("ideogram", "ideogram4"),
         ("sd3", "sd3"),
         ("sdxl", "sdxl"),
+        ("illustrious", "sdxl"),
+        ("noobai", "sdxl"),
         ("sd 1.5", "sd15"),
         ("sd1.5", "sd15"),
         ("sd2", "sd2"),
@@ -295,10 +312,11 @@ class CivitaiProvider(DiscoveryProvider):
         if not params.filters.nsfw:
             query_args.append(("nsfw", "false"))
         if params.filters.sort:
-            sort_key = {"relevance": "Most Downloaded", "downloads": "Most Downloaded"}.get(
-                params.filters.sort, params.filters.sort
-            )
-            query_args.append(("sort", sort_key))
+            if not params.query or params.filters.sort != "relevance":
+                sort_key = {"relevance": "Most Downloaded", "downloads": "Most Downloaded"}.get(
+                    params.filters.sort, params.filters.sort
+                )
+                query_args.append(("sort", sort_key))
         return f"{API_BASE}?{urllib.parse.urlencode(query_args)}"
 
     @staticmethod

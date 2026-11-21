@@ -209,6 +209,30 @@ def _family_from_keys(keys: Sequence[str], filename_tokens: set[str]) -> tuple[s
     reasons: list[str] = []
 
     krea_hint = any("krea" in token for token in filename_tokens)
+    minimax_h3_hint = (
+        any("minimax" in token for token in filename_tokens)
+        and any("h3" in token for token in filename_tokens)
+        and not any(
+            vid in token
+            for token in filename_tokens
+            for vid in ("fl2va", "ref2va", "fl2v", "ref2v", "music", "audio", "video")
+        )
+    )
+
+    if minimax_h3_hint and _has_key_contains(
+        keys,
+        "blocks.",
+        "transformer_blocks.",
+        "single_blocks.",
+        "double_blocks.",
+        "img_in.",
+        "txt_in.",
+        "time_in.",
+        "final_layer.",
+        "layers.",
+    ):
+        reasons.append("MiniMax H3 Image DiT (filename + transformer blocks)")
+        return "minimax_h3_image", reasons
 
     if _has_key_contains(keys, "double_stream_modulation_img.lin.weight"):
         reasons.append("tensor 'double_stream_modulation_img.lin.weight' is Flux 2")
@@ -324,6 +348,13 @@ def _family_from_filename(name: str) -> tuple[str, list[str]]:
     """Lowest-confidence fallback (used for GGUF / ckpt / pt files)."""
     lowered = (name or "").lower()
     reasons: list[str] = []
+    if (
+        "minimax" in lowered
+        and "h3" in lowered
+        and not any(vid in lowered for vid in ("fl2va", "ref2va", "fl2v", "ref2v", "music", "audio_vae", "video_vae"))
+    ):
+        reasons.append("filename hints 'minimax_h3_image'")
+        return "minimax_h3_image", reasons
     if "krea2" in lowered or "krea-2" in lowered or "krea_2" in lowered:
         reasons.append("filename hints 'krea2'")
         return "krea2", reasons
@@ -770,7 +801,7 @@ def classify_model_file(path: Path) -> ModelClassification:
         and role in ("checkpoint", "unknown")
         and family in {
             "flux", "flux_kontext", "flux2",
-            "qwen_image", "qwen_image_edit", "krea2",
+            "qwen_image", "qwen_image_edit", "krea2", "minimax_h3_image",
             "hidream", "wan", "z_image", "hunyuan", "sd3",
         }
     ):
@@ -792,11 +823,12 @@ def classify_model_file(path: Path) -> ModelClassification:
     # heuristic mistakes the ~12B fp8 file for a full checkpoint, which routes
     # it to checkpoints/ and crashes CheckpointLoaderSimple. Force it under
     # diffusion_models/ unless the file genuinely carries a text encoder.
-    if family == "krea2" and role in ("checkpoint", "unknown"):
+    if family in ("krea2", "minimax_h3_image") and role in ("checkpoint", "unknown"):
         if not keys or not _looks_like_text_encoder(keys):
             role = "diffusion_model"
+            label = "MiniMax H3 Image" if family == "minimax_h3_image" else "Krea 2"
             result.reasons.append(
-                "Krea 2 is diffusion-only (no bundled CLIP/VAE); routing to diffusion_models/"
+                f"{label} is diffusion-only (no bundled CLIP/VAE); routing to diffusion_models/"
             )
             # When the family came from the safetensors header, treat the role
             # as header-derived too so the organizer / post-download relocation

@@ -129,13 +129,16 @@ def download_model(
     if bearer_token:
         headers["Authorization"] = f"Bearer {bearer_token}"
 
+    from dreamforge_provider_base import default_ssl_context
+
+    ssl_ctx = default_ssl_context()
     req = urllib.request.Request(req_url, headers=headers)
 
     target_filename = filename
     total_bytes = 0
 
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=15, context=ssl_ctx) as resp:
             total_bytes = int(resp.headers.get("Content-Length", 0))
             if not target_filename:
                 resp_headers = dict(resp.headers)
@@ -164,7 +167,7 @@ def download_model(
     mode = "ab" if downloaded_bytes > 0 else "wb"
 
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=30, context=ssl_ctx) as resp:
             content_range = resp.headers.get("Content-Range", "")
             if downloaded_bytes and not content_range:
                 downloaded_bytes = 0

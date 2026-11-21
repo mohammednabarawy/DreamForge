@@ -48,6 +48,12 @@ def set_provider_credential(provider: str, secret: str) -> dict[str, Any]:
     key = {"civitai": "civitai_api_key", "huggingface": "huggingface_api_key"}[provider]
     ui[key] = secret
     _write_app_config(config)
+    try:
+        from dreamforge_discovery_cache import invalidate as invalidate_discovery_cache
+
+        invalidate_discovery_cache(provider)
+    except Exception:
+        pass
     return provider_credential_status(config)
 
 

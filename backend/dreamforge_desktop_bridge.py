@@ -415,7 +415,7 @@ def cmd_refresh_model_library_cache(_params: dict) -> dict:
 
 
 def cmd_list_outputs(params: dict) -> dict:
-    from dreamforge_output_index import list_outputs
+    from dreamforge_output_index import list_outputs_with_meta
 
     since = params.get("since")
     if since is not None:
@@ -424,13 +424,15 @@ def cmd_list_outputs(params: dict) -> dict:
     offset = int(params.get("offset", 0))
     model = params.get("model")
     session = params.get("session")
-    items, total = list_outputs(
+    sort = params.get("sort") or "newest"
+    items, total, sessions, models = list_outputs_with_meta(
         since=since,
         model=model,
         limit=limit,
         offset=offset,
         session=session,
         manifest_paths=params.get("manifest_paths"),
+        sort=sort,
     )
     return {
         "ok": True,
@@ -440,6 +442,8 @@ def cmd_list_outputs(params: dict) -> dict:
         "offset": offset,
         "limit": limit,
         "has_more": offset + len(items) < total,
+        "sessions": sessions,
+        "models": models,
     }
 
 
@@ -455,13 +459,32 @@ def cmd_get_generation_bundle(params: dict) -> dict:
 
 
 def cmd_search_outputs(params: dict) -> dict:
-    from dreamforge_output_index import search_outputs
+    from dreamforge_output_index import list_outputs_with_meta
 
-    query = params.get("query", "")
+    query = str(params.get("query", "") or "").strip()
     limit = int(params.get("limit", 20))
     offset = int(params.get("offset", 0))
-    items, total = search_outputs(query, limit=limit, offset=offset,
-                                  session=params.get("session"), manifest_paths=params.get("manifest_paths"))
+    if not query:
+        return {
+            "ok": True,
+            "items": [],
+            "count": 0,
+            "total": 0,
+            "offset": offset,
+            "limit": limit,
+            "has_more": False,
+            "sessions": [],
+            "models": [],
+        }
+    items, total, sessions, models = list_outputs_with_meta(
+        query=query,
+        limit=limit,
+        offset=offset,
+        session=params.get("session"),
+        manifest_paths=params.get("manifest_paths"),
+        model=params.get("model"),
+        sort=params.get("sort") or "newest",
+    )
     return {
         "ok": True,
         "items": items,
@@ -470,6 +493,8 @@ def cmd_search_outputs(params: dict) -> dict:
         "offset": offset,
         "limit": limit,
         "has_more": offset + len(items) < total,
+        "sessions": sessions,
+        "models": models,
     }
 
 
@@ -1457,39 +1482,58 @@ def cmd_check_custom_node_packs(params: dict) -> dict:
     }
 
 
-def cmd_check_comfy_backend(_params: dict) -> dict:
-    from dreamforge_comfy_ideogram4 import IDEOGRAM4_COMFY_VERSION
-    import _paths
+def cmd_check_comfy_backend(params: dict) -> dict:
+    from dreamforge_comfy_install import inspect_comfyui_installation
 
-    comfy_dir = Path(_paths.COMFY_ROOT)
-    pin_file = BACKEND_ROOT / ".dreamforge_comfy_pin"
-    target = IDEOGRAM4_COMFY_VERSION
-    current = pin_file.read_text(encoding="utf-8").strip() if pin_file.is_file() else ""
-    
-    installed = comfy_dir.is_dir() and any(comfy_dir.iterdir())
-    needs_update = not installed or current != target
-    
-    return {
-        "ok": True,
-        "installed": installed,
-        "needs_update": needs_update,
-        "current": current,
-        "target": target,
-    }
+    try:
+        return inspect_comfyui_installation(
+            check_upstream=bool(params.get("check_upstream")),
+        )
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "installed": False, "needs_update": True, "current": "", "target": ""}
 
 
 def cmd_install_comfy_backend(params: dict) -> dict:
-    from dreamforge_comfy_install import ensure_dreamforge_comfy_backend
-    
+    from dreamforge_comfy_install import update_comfyui_backend
+
     try:
-        ensure_dreamforge_comfy_backend(
-            progress=lambda msg: print(f"[Comfy Install] {msg}", file=sys.stderr),
-            optional_nodes=params.get("optional_nodes", False)
+        return update_comfyui_backend(
+            channel=str(params.get("channel") or "recommended"),
+            update_deps=bool(params.get("update_deps", True)),
+            update_custom_nodes=bool(params.get("update_custom_nodes", True)),
+            optional_nodes=bool(params.get("optional_nodes", False)),
+            force_reinstall_deps=bool(params.get("force_reinstall_deps", False)),
+            auto_stash_dirty=bool(params.get("auto_stash_dirty", False)),
+            progress=lambda msg: print(f"[Comfy Update] {msg}", file=sys.stderr),
         )
-        return {"ok": True}
     except Exception as exc:
         import traceback
+
         traceback.print_exc(file=sys.stderr)
+        return {"ok": False, "error": str(exc)}
+
+
+def cmd_sync_comfy_dependencies(params: dict) -> dict:
+    from dreamforge_comfy_install import sync_comfyui_dependencies
+
+    try:
+        return sync_comfyui_dependencies(
+            include_custom_nodes=bool(params.get("include_custom_nodes", True)),
+            force=bool(params.get("force", False)),
+            progress=lambda msg: print(f"[Comfy Deps] {msg}", file=sys.stderr),
+        )
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def cmd_rollback_comfy_backend(_params: dict) -> dict:
+    from dreamforge_comfy_install import rollback_comfyui_update
+
+    try:
+        return rollback_comfyui_update(
+            progress=lambda msg: print(f"[Comfy Rollback] {msg}", file=sys.stderr),
+        )
+    except Exception as exc:
         return {"ok": False, "error": str(exc)}
 
 
@@ -2065,6 +2109,8 @@ HANDLERS = {
     "get_manager_queue_status": cmd_get_manager_queue_status,
     "check_comfy_backend": cmd_check_comfy_backend,
     "install_comfy_backend": cmd_install_comfy_backend,
+    "sync_comfy_dependencies": cmd_sync_comfy_dependencies,
+    "rollback_comfy_backend": cmd_rollback_comfy_backend,
     "check_model_health": cmd_check_model_health,
     "run_system_repair": cmd_run_system_repair,
     "get_starter_pack_items": cmd_get_starter_pack_items,

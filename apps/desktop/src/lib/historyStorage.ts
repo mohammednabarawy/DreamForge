@@ -4,6 +4,7 @@ const FAVORITES_KEY = "dreamforge_favorite_manifests";
 const ACTIVE_SESSION_KEY = "dreamforge_active_session";
 const SESSION_REGISTRY_KEY = "dreamforge_session_registry";
 const SCOPE_KEY = "dreamforge_history_scope";
+const SORT_KEY = "dreamforge_history_sort";
 const LAST_SELECTED_KEY = "dreamforge_last_selected_manifest";
 const COLLAPSED_DATES_KEY = "dreamforge_history_collapsed_dates";
 
@@ -13,6 +14,63 @@ export type HistoryViewMode = "list" | "grid";
 
 /** Which generations appear in the history feed. */
 export type HistoryScope = "all" | "session" | "favorites";
+
+export type HistorySortOrder = "newest" | "oldest";
+
+/** Cross-platform canonical key for comparing manifest paths across Windows/macOS. */
+export function normalizeManifestKey(path: string | undefined | null): string {
+  if (typeof path !== "string") return "";
+  const cleaned = path.trim().replace(/\\/g, "/");
+  if (!cleaned) return "";
+  if (/^[A-Za-z]:\//.test(cleaned)) {
+    return cleaned.toLowerCase();
+  }
+  return cleaned;
+}
+
+export function hasFavoriteManifest(favs: Set<string>, manifestPath: string): boolean {
+  if (favs.has(manifestPath)) return true;
+  const target = normalizeManifestKey(manifestPath);
+  if (!target) return false;
+  for (const entry of favs) {
+    if (normalizeManifestKey(entry) === target) return true;
+  }
+  return false;
+}
+
+export function toggleFavoriteInSet(favs: Set<string>, manifestPath: string): Set<string> {
+  const target = normalizeManifestKey(manifestPath);
+  const next = new Set<string>();
+  let removed = false;
+  for (const entry of favs) {
+    if (entry === manifestPath || (target && normalizeManifestKey(entry) === target)) {
+      removed = true;
+      continue;
+    }
+    next.add(entry);
+  }
+  if (!removed && manifestPath.trim()) {
+    next.add(manifestPath);
+  }
+  return next;
+}
+
+export function loadHistorySortOrder(): HistorySortOrder {
+  try {
+    const v = localStorage.getItem(SORT_KEY);
+    return v === "oldest" ? "oldest" : "newest";
+  } catch {
+    return "newest";
+  }
+}
+
+export function saveHistorySortOrder(order: HistorySortOrder) {
+  try {
+    localStorage.setItem(SORT_KEY, order);
+  } catch {
+    /* ignore */
+  }
+}
 
 export function loadCollapsedSessions(): Record<string, boolean> {
   try {
@@ -157,8 +215,9 @@ export function clearLastSelectedManifestIf(manifestPath: string) {
 export function removeFavoriteManifest(manifestPath: string) {
   try {
     const favs = loadFavoriteManifests();
-    if (!favs.delete(manifestPath)) return false;
-    saveFavoriteManifests(favs);
+    if (!hasFavoriteManifest(favs, manifestPath)) return false;
+    const next = toggleFavoriteInSet(favs, manifestPath);
+    saveFavoriteManifests(next);
     return true;
   } catch {
     return false;

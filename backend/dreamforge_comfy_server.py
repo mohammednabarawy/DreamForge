@@ -592,8 +592,15 @@ class ManagedComfyServer:
             env.setdefault("PYTHONUTF8", "1")
             env.setdefault("PYTHONIOENCODING", "utf-8")
             # Prefer local-only server.
+            python_cmd: list[str] = [str(PYTHON_EXE or sys.executable)]
+            if (
+                sys.platform == "darwin"
+                and os.environ.get("DREAMFORGE_FORCE_ARM64", "").strip() == "1"
+                and os.path.isfile("/usr/bin/arch")
+            ):
+                python_cmd = ["/usr/bin/arch", "-arm64", *python_cmd]
             args = [
-                str(PYTHON_EXE or sys.executable),
+                *python_cmd,
                 str(comfy_main),
                 "--listen",
                 str(self.config.listen),

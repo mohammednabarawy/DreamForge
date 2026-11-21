@@ -44,6 +44,7 @@ SUPPORTED_ARCHITECTURES: frozenset[str] = frozenset(
         "ideogram4",
         "z_image",
         "krea2",
+        "minimax_h3_image",
     }
 )
 

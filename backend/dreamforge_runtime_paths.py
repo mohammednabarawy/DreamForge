@@ -140,13 +140,17 @@ def is_packaged_runtime() -> bool:
 def resolve_install_root() -> Path:
     """Best install root: repo checkout in dev, env override when packaged."""
     canonical = _canonical_install_root()
+    has_canonical_repo = (
+        (canonical / EMBED_DIR_NAME / "python.exe").is_file()
+        or (canonical / "backend" / "dreamforge_desktop_bridge.py").is_file()
+    )
     env = _env_path("DREAMFORGE_INSTALL_ROOT")
     if env is not None:
         candidate = env.resolve()
         if (
             not is_packaged_runtime()
             and _is_tauri_build_artifact(candidate)
-            and (canonical / EMBED_DIR_NAME / "python.exe").is_file()
+            and has_canonical_repo
         ):
             return canonical
         return candidate
@@ -156,7 +160,7 @@ def resolve_install_root() -> Path:
         if (
             not is_packaged_runtime()
             and _is_tauri_build_artifact(candidate)
-            and (canonical / EMBED_DIR_NAME / "python.exe").is_file()
+            and has_canonical_repo
         ):
             return canonical
         return candidate
@@ -174,6 +178,14 @@ def default_data_root() -> Path:
         local = os.environ.get("LOCALAPPDATA", "").strip()
         if local:
             return (Path(local) / "DreamForge").resolve()
+        if sys.platform == "darwin":
+            app_support = (Path.home() / "Library" / "Application Support" / "DreamForge").resolve()
+            dot_dir = (Path.home() / ".dreamforge").resolve()
+            if (dot_dir / RUNTIME_DIR_NAME / RUNTIME_CONFIG_NAME).is_file() and not (
+                app_support / RUNTIME_DIR_NAME / RUNTIME_CONFIG_NAME
+            ).is_file():
+                return dot_dir
+            return app_support
         return (Path.home() / ".dreamforge").resolve()
     return REPO_ROOT.resolve()
 
@@ -281,9 +293,12 @@ def is_provisioned_layout(data_root: Path, install_root: Path, comfy_root: Path)
             or repo_embed.is_file()
         )
     else:
-        python_ok = (install_root / "venv" / "bin" / "python").is_file() or (
-            install_root / "venv" / "Scripts" / "python.exe"
-        ).is_file()
+        python_ok = (
+            (install_root / "venv" / "bin" / "python").is_file()
+            or (data_root / "venv" / "bin" / "python").is_file()
+            or (REPO_ROOT / "venv" / "bin" / "python").is_file()
+            or (install_root / "venv" / "Scripts" / "python.exe").is_file()
+        )
     return bool(comfy_ok and models_ok and python_ok)
 
 
@@ -502,9 +517,33 @@ def build_runtime_layout(
     )
 
 
+def ensure_ssl_cert_file() -> str | None:
+    """Ensure urllib/ssl has a valid CA bundle (fixes macOS python.org installs)."""
+    import ssl
+
+    existing = os.environ.get("SSL_CERT_FILE", "").strip()
+    if existing and Path(existing).is_file():
+        return existing
+    verify_paths = ssl.get_default_verify_paths()
+    if verify_paths.cafile and Path(verify_paths.cafile).is_file():
+        return verify_paths.cafile
+    try:
+        import certifi
+
+        cafile = certifi.where()
+        if cafile and Path(cafile).is_file():
+            os.environ["SSL_CERT_FILE"] = cafile
+            os.environ.setdefault("REQUESTS_CA_BUNDLE", cafile)
+            return cafile
+    except Exception:
+        pass
+    return None
+
+
 def apply_runtime_env(layout: RuntimeLayout | None = None) -> RuntimeLayout:
     """Publish path env vars and refresh ``_paths`` module-level constants."""
     resolved = layout or build_runtime_layout()
+    ensure_ssl_cert_file()
     os.environ["DREAMFORGE_INSTALL_ROOT"] = str(resolved.install_root)
     os.environ["DREAMFORGE_BACKEND_ROOT"] = str(resolved.backend_root)
     os.environ["DREAMFORGE_DATA_ROOT"] = str(resolved.data_root)

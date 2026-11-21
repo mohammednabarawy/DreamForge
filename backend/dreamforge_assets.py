@@ -156,15 +156,27 @@ class Provenance:
 
 _VARIANT_HINTS: tuple[tuple[str, str], ...] = (
     ("fp8_scaled", "fp8_scaled"),
+    ("fp8_e4m3fn", "fp8"),
+    ("fp8_e5m2", "fp8"),
+    ("mxfp8", "mxfp8"),
+    ("nvfp4", "fp4"),
+    ("fp4", "fp4"),
+    ("int8", "int8"),
+    ("w6a8", "w6a8"),
+    ("w4a8", "w4a8"),
     ("fp8", "fp8"),
     ("fp16", "fp16"),
     ("bf16", "bf16"),
+    ("q8_0", "q8_0"),
+    ("q6_k", "q6_k"),
+    ("q5_k_m", "q5_k_m"),
+    ("q5_k_s", "q5_k_s"),
     ("q4_k_m", "q4_k_m"),
     ("q4_k_s", "q4_k_s"),
+    ("q4_0", "q4_k_s"),
     ("q3_k_m", "q3_k_m"),
     ("q2_k", "q2_k"),
     ("gguf", "gguf"),
-    ("mxfp8", "mxfp8"),
 )
 
 
@@ -191,33 +203,44 @@ def detect_architecture(filename: str, model_dict: Mapping[str, Any] | None = No
         if engine_name:
             filename = str(engine_name)
     lower = (filename or "").lower()
+    compact = re.sub(r"[\s._-]+", "", lower)
+    if "minimaxh3" in compact and not any(
+        vid in compact for vid in ("fl2va", "ref2va", "fl2v", "ref2v", "music", "audiovae", "videovae")
+    ):
+        return "minimax_h3_image"
     hints: tuple[tuple[str, str], ...] = (
-        ("flux1-fill", "flux_fill"),
-        ("flux-fill", "flux_fill"),
-        ("flux1-kontext", "flux_kontext"),
-        ("flux-kontext", "flux_kontext"),
-        ("flux1-dev", "flux"),
-        ("flux1-schnell", "flux"),
-        ("flux.1", "flux"),
-        ("qwen-image-edit", "qwen_image_edit"),
-        ("qwen-image", "qwen_image"),
-        ("hidream-o1", "hidream_o1"),
+        ("flux2", "flux2"),
+        ("flux1fill", "flux_fill"),
+        ("fluxfill", "flux_fill"),
+        ("flux1kontext", "flux_kontext"),
+        ("fluxkontext", "flux_kontext"),
+        ("flux1dev", "flux"),
+        ("flux1schnell", "flux"),
+        ("flux1", "flux"),
+        ("flux", "flux"),
+        ("qwenimageedit", "qwen_image_edit"),
+        ("qwenimage", "qwen_image"),
+        ("hidreamo1", "hidream_o1"),
         ("hidream", "hidream"),
         ("ideogram4", "ideogram4"),
-        ("z-image", "z_image"),
+        ("zimage", "z_image"),
         ("krea2", "krea2"),
+        ("sd35", "sd3"),
         ("sd3", "sd3"),
         ("sd2", "sd2"),
-        ("sd1.5", "sd15"),
         ("sd15", "sd15"),
         ("sdxl", "sdxl"),
-        ("xl", "sdxl"),
+        ("illustrious", "sdxl"),
+        ("noobai", "sdxl"),
+        ("pony", "sdxl"),
         ("juggernaut", "sdxl"),
         ("dreamshaper", "sd15"),
     )
     for hint, family in hints:
-        if hint in lower:
+        if hint in compact:
             return family
+    if re.search(r"(?:^|[^a-z0-9])xl(?:[^a-z0-9]|$)", lower):
+        return "sdxl"
     return ""
 
 

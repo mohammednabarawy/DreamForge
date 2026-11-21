@@ -886,6 +886,8 @@ def comfy_workflow_mode(
         if cn == "inpaint":
             return "inpaint"
         family = (model_family or "").lower()
+        if family == "minimax_h3_image":
+            return "minimax_h3_image_edit"
         if family == "krea2" and (
             mode_key in {"edit", "krea2_edit"}
             or (mode_key != "generate" and edit != "img2img")

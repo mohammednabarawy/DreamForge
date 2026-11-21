@@ -459,8 +459,9 @@ function normalizeImagePath(path: string): string | null {
   if (/^file:\/\//i.test(trimmed)) {
     try {
       trimmed = decodeURIComponent(new URL(trimmed).pathname);
-      if (/^\/[A-Za-z]:\//.test(trimmed)) trimmed = trimmed.slice(1);
-      trimmed = trimmed.replace(/\//g, "\\");
+      if (/^\/[A-Za-z]:\//.test(trimmed)) {
+        trimmed = trimmed.slice(1).replace(/\//g, "\\");
+      }
     } catch {
       trimmed = trimmed.replace(/^file:\/\/\/?/i, "");
     }
@@ -489,7 +490,9 @@ export function setImagePathDragData(dataTransfer: DataTransfer, path: string) {
     const uri =
       value && /^[A-Za-z]:[\\/]/.test(value)
         ? `file:///${value.replace(/\\/g, "/").replace(/ /g, "%20")}`
-        : value;
+        : value && value.startsWith("/")
+          ? `file://${value.replace(/ /g, "%20")}`
+          : value;
     dataTransfer.setData("text/uri-list", uri);
   } catch {
     // Some hosts reject uri-list for local paths.

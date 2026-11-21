@@ -351,6 +351,22 @@ def _krea2_companion_basenames_on_disk(family: str) -> dict[str, str]:
     return out
 
 
+def _minimax_h3_image_companion_basenames_on_disk(family: str) -> dict[str, str]:
+    """Map MiniMax H3 Image loader keys (Qwen3-VL-32B text encoder + MiniMax H3 Image VAE)."""
+    out: dict[str, str] = {}
+    for alt in (
+        "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+        "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+        "qwen3vl_32b_minimax_h3_bf16.safetensors",
+    ):
+        if companion_file_present({"relative": f"text_encoders/{alt}"}):
+            out["clip"] = alt
+            break
+    if companion_file_present({"relative": "vae/minimax_h3_image_vae_fp16.safetensors"}):
+        out["vae"] = "minimax_h3_image_vae_fp16.safetensors"
+    return out
+
+
 def _hidream_companion_basenames_on_disk(family: str) -> dict[str, str]:
     """Map HiDream split-loader keys to companion basenames on disk."""
     out: dict[str, str] = {}
@@ -651,6 +667,62 @@ def resolve_comfy_model_loader_args(
             for item in missing_deps[:4]:
                 problems.append(f"Missing companion: {item.get('relative')} — {item.get('note', '')}")
 
+    elif family == "minimax_h3_image":
+        # MiniMax H3 Image: native ComfyUI v0.45.0+ (MiniMaxH3ImageConditioning + CLIPLoader type 'minimax' + MiniMax H3 VAE).
+        clip_types = _object_info_options(object_info, "CLIPLoader", "type")
+        if clip_types and "minimax" not in clip_types:
+            problems.append(
+                "ComfyUI is too old for MiniMax H3 Image — CLIPLoader does not list type 'minimax'. "
+                "Update ComfyUI to v0.45.0+ in Settings → ComfyUI Backend, then restart the GPU engine."
+            )
+        if object_info and "MiniMaxH3ImageConditioning" not in object_info:
+            problems.append(
+                "ComfyUI is missing the native 'MiniMaxH3ImageConditioning' node (requires ComfyUI v0.45.0+). "
+                "Open Settings → ComfyUI Backend → Update ComfyUI."
+            )
+        on_disk = _minimax_h3_image_companion_basenames_on_disk(family)
+        clip_choices = _object_info_options(object_info, "CLIPLoader", "clip_name")
+        clip_choices += _object_info_options(object_info, "CLIPLoaderGGUF", "clip_name")
+        vae_choices = _object_info_options(object_info, "VAELoader", "vae_name")
+        clip = next(
+            (
+                match
+                for candidate in (
+                    on_disk.get("clip") or "",
+                    "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+                    "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+                    "qwen3vl_32b_minimax_h3_bf16.safetensors",
+                )
+                if candidate and (match := _basename_match(candidate, clip_choices))
+            ),
+            None,
+        )
+        vae = _basename_match(
+            on_disk.get("vae", "minimax_h3_image_vae_fp16.safetensors"), vae_choices
+        )
+        if clip:
+            args["clip"] = clip
+        elif on_disk.get("clip"):
+            problems.append(
+                f"MiniMax H3 text encoder '{on_disk['clip']}' exists under {Path(MODELS_ROOT).resolve()} "
+                "but ComfyUI does not list it for CLIPLoader."
+            )
+        else:
+            problems.append(
+                "MiniMax H3 Image requires a Qwen3-VL-32B MiniMax text encoder "
+                "(qwen3vl_32b_minimax_h3_int8_convrot.safetensors or qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors) under text_encoders/."
+            )
+        if vae:
+            args["vae"] = vae
+        elif on_disk.get("vae"):
+            problems.append(
+                f"MiniMax H3 Image VAE '{on_disk['vae']}' exists under {MODELS_ROOT} but ComfyUI vae list is: {vae_choices!r}."
+            )
+        else:
+            problems.append(
+                "MiniMax H3 Image requires minimax_h3_image_vae_fp16.safetensors under vae/."
+            )
+
     elif family.startswith("qwen"):
         on_disk = _qwen_companion_basenames_on_disk(family)
         clip_choices = _object_info_options(object_info, "CLIPLoader", "clip_name")
@@ -730,6 +802,12 @@ def resolve_comfy_model_loader_args(
                 "Krea 2 needs ComfyUI v0.26.0+ (Settings → Restart GPU engine to update). "
                 "Also install qwen3vl_4b_fp8_scaled.safetensors under text_encoders/ "
                 "and qwen_image_vae.safetensors under vae/."
+            )
+        elif family == "minimax_h3_image":
+            companion_hint = (
+                "MiniMax H3 Image needs ComfyUI v0.45.0+ (Settings → ComfyUI Backend → Update ComfyUI), "
+                "qwen3vl_32b_minimax_h3_int8_convrot.safetensors (or nvfp4_awq) under text_encoders/, "
+                "and minimax_h3_image_vae_fp16.safetensors under vae/."
             )
         elif family.startswith("qwen"):
             if _is_qwen_image_21(model, family):

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from _paths import BACKEND_ROOT, MODELS_ROOT, TEMP_ROOT
-from dreamforge_bootstrap_markers import write_node_deps_marker, write_python_stack_marker
+from dreamforge_bootstrap_markers import clear_install_markers
 from dreamforge_gpu_detect import detect_gpu
 
 
@@ -68,14 +68,25 @@ def run_system_repair(
             except Exception as e:
                 logs.append(f"Config reset failed: {e}")
 
-    # 3. Re-verify runtime markers
+    # 3. Clear stale setup/dependency markers so next verify/sync re-validates cleanly
     if reverify_nodes:
         try:
-            write_python_stack_marker()
-            write_node_deps_marker()
-            actions_taken.append("Refreshed Python runtime stack & node dependency markers")
+            cleared = clear_install_markers()
+            if cleared:
+                actions_taken.append(f"Reset install markers ({', '.join(cleared)}) for fresh verification")
+            from dreamforge_comfy_install import inspect_comfyui_installation
+
+            status = inspect_comfyui_installation(check_upstream=False)
+            missing = status.get("missing_deps") or []
+            if missing:
+                logs.append(f"Missing ComfyUI Python dependencies detected: {', '.join(missing[:8])}")
+                actions_taken.append(f"Detected {len(missing)} missing ComfyUI Python package(s) — run Sync Python Deps")
+            else:
+                actions_taken.append(
+                    f"Verified ComfyUI ({status.get('current_label') or status.get('current') or 'not installed'})"
+                )
         except Exception as e:
-            logs.append(f"Marker refresh failed: {e}")
+            logs.append(f"ComfyUI verification notice: {e}")
 
     gpu_info = detect_gpu()
 

@@ -21,6 +21,7 @@ const MODERN_LLM_GENERATE_FAMILIES = new Set([
   "hidream",
   "hidream_o1",
   "krea2",
+  "minimax_h3_image",
   "z_image",
   "hunyuan",
 ]);
@@ -35,6 +36,7 @@ export function isModernLlmGenerateFamily(family: string | undefined | null): bo
     fam.startsWith("hidream") ||
     fam === "sd3" ||
     fam === "krea2" ||
+    fam === "minimax_h3_image" ||
     fam === "z_image" ||
     fam === "hunyuan"
   );

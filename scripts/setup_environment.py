@@ -55,15 +55,33 @@ def _macos_host_arch() -> str | None:
     if platform.system() != "Darwin":
         return None
     try:
+        arm64_flag = subprocess.check_output(
+            ["/usr/sbin/sysctl", "-n", "hw.optional.arm64"], text=True
+        ).strip()
+        if arm64_flag == "1":
+            return "arm64"
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+    try:
         return subprocess.check_output(["uname", "-m"], text=True).strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
         return None
 
 
+def _python_cmd(python: Path, *args: str) -> list[str]:
+    if (
+        platform.system() == "Darwin"
+        and os.environ.get("DREAMFORGE_FORCE_ARM64", "").strip() == "1"
+        and Path("/usr/bin/arch").is_file()
+    ):
+        return ["/usr/bin/arch", "-arm64", str(python), *args]
+    return [str(python), *args]
+
+
 def _python_machine(python: Path) -> str:
     try:
         out = subprocess.check_output(
-            [str(python), "-c", "import platform; print(platform.machine())"],
+            _python_cmd(python, "-c", "import platform; print(platform.machine())"),
             text=True,
         )
         return out.strip()
@@ -74,7 +92,11 @@ def _python_machine(python: Path) -> str:
 def _python_version(python: Path) -> tuple[int, int] | None:
     try:
         out = subprocess.check_output(
-            [str(python), "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"],
+            _python_cmd(
+                python,
+                "-c",
+                "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')",
+            ),
             text=True,
         ).strip()
         major, minor = out.split(".", 1)

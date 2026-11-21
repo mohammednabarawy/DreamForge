@@ -12,7 +12,7 @@ from dreamforge_krita_recipes import COMFY_INSTALL_RECIPE
 BACKEND_ROOT = Path(__file__).resolve().parent
 
 # Bump when ComfyUI pin, custom nodes, or bootstrap steps change materially.
-SETUP_RECIPE_VERSION = 1
+SETUP_RECIPE_VERSION = 2
 
 PYTHON_STACK_MARKER = BACKEND_ROOT / ".dreamforge_python_stack_ok"
 COMFY_DEPS_MARKER = BACKEND_ROOT / ".dreamforge_comfy_deps_ok"

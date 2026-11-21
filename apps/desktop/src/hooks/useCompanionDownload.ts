@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { copyTextToClipboard } from "../lib/clipboard";
 import { isTauri } from "@tauri-apps/api/core";
 import { appDataDir, join } from "@tauri-apps/api/path";
 import { downloadCompanionEntries, installCustomNodePacks, installWorkflowModels, verifyCompanionEntries } from "../lib/studioBridge";
@@ -580,7 +581,7 @@ export function useCompanionDownload(options?: Options) {
       return;
     }
     try {
-      await navigator.clipboard.writeText([...new Set(links)].join("\n"));
+      await copyTextToClipboard([...new Set(links)].join("\n"));
       append("ok", `Copied ${new Set(links).size} download link(s) to clipboard.`);
     } catch (e) {
       append("error", `Could not copy links: ${String(e)}`);
@@ -589,7 +590,7 @@ export function useCompanionDownload(options?: Options) {
 
   const copyManualList = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(manualInstallText(modelName, pendingMissing));
+      await copyTextToClipboard(manualInstallText(modelName, pendingMissing));
       append("ok", "Copied manual download/install list to clipboard.");
     } catch (e) {
       append("error", `Could not copy manual list: ${String(e)}`);

@@ -136,7 +136,8 @@ GENERATION_RECIPES: dict[str, dict[str, Any]] = {
 # Pinned Comfy/custom-node SHAs aligned with Krita AI Diffusion 1.50.0 resources.py
 COMFY_INSTALL_RECIPE: dict[str, Any] = {
     "comfy_url": "https://github.com/Comfy-Org/ComfyUI.git",
-    "comfy_version": "12d5279438bfefc058a269eae805ceab6047777f",  # v0.34.0 (Krea 2 ConvRot + kitchen attention)
+    "comfy_version": "a277b5bf213e8a44fa34817b7770b54f86ef4cea",  # v0.46.0 (MiniMax H3 Image + Krea 2 + Qwen 2.1)
+    "comfy_version_label": "v0.46.0",
     "krita_resources_version": "1.50.0",
     "required_custom_nodes": [
         {

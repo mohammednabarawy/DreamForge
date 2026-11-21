@@ -48,10 +48,15 @@ def start_dreamforge():
     else:
         print("Starting DreamForge Web/Desktop UI...\n")
     
-    bat_path = DREAMFORGE_ROOT / "dreamforge.bat"
-    
+    if os.name == "nt":
+        launcher_cmd = [str(DREAMFORGE_ROOT / "dreamforge.bat")]
+    elif sys.platform == "darwin" and (DREAMFORGE_ROOT / "DreamForge.command").is_file():
+        launcher_cmd = ["/usr/bin/env", "bash", str(DREAMFORGE_ROOT / "DreamForge.command")]
+    else:
+        launcher_cmd = ["/usr/bin/env", "bash", str(DREAMFORGE_ROOT / "dreamforge.sh")]
+
     try:
-        subprocess.run([str(bat_path)])
+        subprocess.run(launcher_cmd)
     except KeyboardInterrupt:
         pass
     print()

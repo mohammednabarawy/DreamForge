@@ -29,6 +29,18 @@ export const MODEL_CAPABILITIES: Record<string, ModelCapability> = {
     speedTier: "fast",
     loraEcosystem: "limited",
   },
+  minimax_h3_image: {
+    family: "minimax_h3_image",
+    displayName: "MiniMax H3 Image",
+    strengths: ["high_resolution", "photorealism", "text_rendering", "multi_reference_edit", "speed"],
+    limitations: ["vram_usage", "lora_ecosystem"],
+    bestFor: "Native 4–16 MP generation, posters & typography, and multi-reference editing (up to 16 images)",
+    tips: "Distilled 6 steps, CFG 1.0, Euler + simple (no negative prompt). Reference attached images as <Picture 1>, <Picture 2>, ... in edit instructions. Requires ComfyUI v0.45.0+.",
+    nsfwLevel: "soft",
+    badges: ["🖼️ 16MP", "✏️ Multi-Ref", "⚡ 6-Step", "📝 Text"],
+    speedTier: "medium",
+    loraEcosystem: "limited",
+  },
   flux: {
     family: "flux",
     displayName: "Flux Dev",
@@ -154,6 +166,15 @@ export const MODEL_CAPABILITIES: Record<string, ModelCapability> = {
 export function inferModelFamily(nameOrPath?: string | null): string {
   if (!nameOrPath) return "unknown";
   const lower = nameOrPath.toLowerCase();
+  if (
+    lower.includes("minimax") &&
+    lower.includes("h3") &&
+    !lower.includes("fl2v") &&
+    !lower.includes("ref2v") &&
+    !lower.includes("music")
+  ) {
+    return "minimax_h3_image";
+  }
   if (lower.includes("krea2") || lower.includes("krea-2") || lower.includes("krea_2")) return "krea2";
   if (lower.includes("kontext")) return "flux_kontext";
   if (lower.includes("flux")) return "flux";
@@ -173,6 +194,7 @@ export function inferLoraFamily(nameOrPath?: string | null): string {
   const lower = nameOrPath.toLowerCase();
   if (lower.includes("-f1") || lower.includes("_f1") || lower.includes("flux") || lower.includes("klein")) return "flux";
   if (lower.includes("_xl") || lower.includes("-xl") || lower.includes("sdxl") || lower.includes("pony")) return "sdxl";
+  if (lower.includes("minimax") && lower.includes("h3")) return "minimax_h3_image";
   if (lower.includes("krea")) return "krea2";
   if (lower.includes("qwen")) return "qwen_image";
   if (lower.includes("sd15") || lower.includes("sd1.5") || lower.includes("v1-5")) return "sd15";
@@ -198,6 +220,7 @@ export function isLoraCompatibleWithModel(
     flux: ["flux", "flux_kontext", "flux_fill", "flux2", "chroma"],
     flux_kontext: ["flux", "flux_kontext", "flux_fill", "flux2", "chroma"],
     krea2: ["krea2"],
+    minimax_h3_image: ["minimax_h3_image"],
     qwen_image: ["qwen_image", "qwen_image_edit"],
     qwen_image_edit: ["qwen_image", "qwen_image_edit"],
     "qwen_image_2.1": ["qwen_image_2.1"],

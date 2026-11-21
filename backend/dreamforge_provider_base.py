@@ -14,9 +14,12 @@ Design (plan §11.7 / §12):
 from __future__ import annotations
 
 import json
+import os
+import ssl
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Mapping
 
 from dreamforge_assets import DreamForgeAsset
@@ -71,18 +74,37 @@ def classify_http_error(exc: Exception) -> ProviderError:
     return ProviderError(ERR_PROVIDER, str(exc))
 
 
+def default_ssl_context() -> ssl.SSLContext:
+    """Build an SSLContext that falls back to certifi when system/OpenSSL CA is missing."""
+    existing = os.environ.get("SSL_CERT_FILE", "").strip()
+    if existing and Path(existing).is_file():
+        return ssl.create_default_context(cafile=existing)
+    verify_paths = ssl.get_default_verify_paths()
+    if verify_paths.cafile and Path(verify_paths.cafile).is_file():
+        return ssl.create_default_context()
+    try:
+        import certifi
+
+        cafile = certifi.where()
+        if cafile and Path(cafile).is_file():
+            return ssl.create_default_context(cafile=cafile)
+    except Exception:
+        pass
+    return ssl.create_default_context()
+
+
 def http_get_json(
     url: str,
     headers: Mapping[str, str] | None = None,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> Any:
     """GET a URL and parse JSON, raising classified ProviderError on failure."""
-    req_headers = {"User-Agent": USER_AGENT}
+    req_headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
     if headers:
         req_headers.update({k: v for k, v in headers.items() if v})
     try:
         req = urllib.request.Request(url, headers=req_headers)
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=default_ssl_context()) as resp:
             body = resp.read()
             if not body:
                 raise ProviderError(ERR_PROVIDER, "Empty response from provider")

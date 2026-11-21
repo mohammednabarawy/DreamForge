@@ -1,10 +1,40 @@
 import json
 import os
+import re
 from pathlib import Path
 from datetime import datetime
 import glob
 
 from _paths import BACKEND_ROOT, PROJECT_ROOT, OUTPUTS_ROOT
+
+_ISO_COMPACT_TZ_RE = re.compile(r"([+-]\d{2})(\d{2})$")
+_MANIFEST_SUMMARY_CACHE: dict[str, tuple[int, int, dict, str, list[str]]] = {}
+
+
+def invalidate_output_index_cache(path: str | Path | None = None) -> None:
+    """Drop cached manifest summaries (all or for one path)."""
+    if path is None:
+        _MANIFEST_SUMMARY_CACHE.clear()
+        return
+    key = str(path)
+    _MANIFEST_SUMMARY_CACHE.pop(key, None)
+    try:
+        _MANIFEST_SUMMARY_CACHE.pop(str(Path(path).resolve()), None)
+    except OSError:
+        pass
+
+
+def _normalize_iso_timestamp(value: object) -> str | None:
+    """Normalize ISO timestamps so +0300 offsets become +03:00 (WebKit/Safari safe)."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if " " in text and "T" not in text:
+        text = text.replace(" ", "T", 1)
+    text = _ISO_COMPACT_TZ_RE.sub(r"\1:\2", text)
+    return text
 
 def _load_manifest(path):
     try:
@@ -68,26 +98,35 @@ def _image_paths_from_manifest(data: dict) -> list[str]:
     return list(dict.fromkeys(paths))
 
 
+def _split_cross_platform_parts(raw_path: str) -> list[str]:
+    return [part for part in re.split(r"[\\/]+", raw_path) if part]
+
+
 def _normalize_output_path(path: str) -> str:
-    image_path = Path(path)
+    raw = str(path or "").strip()
+    if not raw:
+        return ""
+    image_path = Path(raw)
     if image_path.exists():
         return str(image_path)
-    parts = image_path.parts
+    parts = _split_cross_platform_parts(raw)
     lowered = [p.lower() for p in parts]
     if "outputs" in lowered:
         idx = lowered.index("outputs")
-        candidate = OUTPUTS_ROOT.joinpath(*parts[idx + 1 :])
-        if candidate.exists():
-            return str(candidate)
-    if image_path.name:
-        candidate_root = OUTPUTS_ROOT / image_path.name
+        rel_parts = parts[idx + 1 :]
+        if rel_parts:
+            candidate = OUTPUTS_ROOT.joinpath(*rel_parts)
+            if candidate.exists():
+                return str(candidate)
+    if parts:
+        candidate_root = OUTPUTS_ROOT / parts[-1]
         if candidate_root.exists():
             return str(candidate_root)
     if not image_path.is_absolute():
         candidate = PROJECT_ROOT / image_path
         if candidate.exists():
             return str(candidate)
-    return path
+    return raw
 
 
 def _collect_manifest_entries(since=None, session=None):
@@ -112,6 +151,19 @@ def _collect_manifest_entries(since=None, session=None):
     return entries
 
 
+def _extract_dimensions(data: dict, settings: dict) -> tuple[int | None, int | None]:
+    width = settings.get("width")
+    height = settings.get("height")
+    if not (isinstance(width, (int, float)) and isinstance(height, (int, float))):
+        validation = data.get("validation")
+        if isinstance(validation, list) and validation and isinstance(validation[0], dict):
+            width = validation[0].get("width")
+            height = validation[0].get("height")
+    w = int(width) if isinstance(width, (int, float)) and width > 0 else None
+    h = int(height) if isinstance(height, (int, float)) and height > 0 else None
+    return w, h
+
+
 def _summary_from_manifest_entry(item, data, *, max_prompt_chars=8000):
     model_info = data.get("model") or {}
     settings = data.get("settings") or {}
@@ -124,10 +176,13 @@ def _summary_from_manifest_entry(item, data, *, max_prompt_chars=8000):
     prompt = data.get("prompt", "") or ""
     if max_prompt_chars > 0 and len(prompt) > max_prompt_chars:
         prompt = prompt[:max_prompt_chars] + "…"
+    width, height = _extract_dimensions(data, settings)
+    timestamp = datetime.fromtimestamp(item["mtime"]).astimezone().isoformat()
+    created_at = _normalize_iso_timestamp(data.get("created_at")) or timestamp
     return {
         "manifest_path": item["path"],
-        "timestamp": datetime.fromtimestamp(item["mtime"]).astimezone().isoformat(),
-        "created_at": data.get("created_at"),
+        "timestamp": timestamp,
+        "created_at": created_at,
         "session": _session_from_manifest_path(item["path"]),
         "title": _title_from_manifest(data, item["path"]),
         "prompt": prompt,
@@ -138,7 +193,157 @@ def _summary_from_manifest_entry(item, data, *, max_prompt_chars=8000):
         "images": [p for p in _image_paths_from_manifest(data) if Path(p).is_file()],
         "styles": settings.get("styles") or [],
         "seed": data.get("seed"),
+        "width": width,
+        "height": height,
     }
+
+
+def _cached_manifest_record(item: dict) -> tuple[dict, str] | None:
+    """Return cached (summary, search_haystack) for a manifest, validating mtime & image existence."""
+    path = item["path"]
+    try:
+        st = os.stat(path)
+    except OSError:
+        _MANIFEST_SUMMARY_CACHE.pop(path, None)
+        return None
+    cached = _MANIFEST_SUMMARY_CACHE.get(path)
+    if cached and cached[0] == st.st_mtime_ns and cached[1] == st.st_size:
+        _, _, summary_template, haystack, candidate_images = cached
+        live_images = [p for p in candidate_images if os.path.isfile(p)]
+        if not live_images:
+            return None
+        summary = (
+            summary_template
+            if len(live_images) == len(summary_template["images"])
+            else {**summary_template, "images": live_images}
+        )
+        return summary, haystack
+
+    data = _load_manifest(path)
+    if not isinstance(data, dict):
+        return None
+    candidate_images = _image_paths_from_manifest(data)
+    summary = _summary_from_manifest_entry(item, data)
+    haystack = " ".join(
+        [
+            str(data.get("prompt") or ""),
+            str(data.get("negative_prompt") or ""),
+            str(summary["title"]),
+            str(summary["model_name"]),
+            str(summary["model_stem"]),
+            str(summary["session"]),
+            " ".join(str(s) for s in (summary.get("styles") or [])),
+        ]
+    ).lower()
+    _MANIFEST_SUMMARY_CACHE[path] = (
+        st.st_mtime_ns,
+        st.st_size,
+        summary,
+        haystack,
+        candidate_images,
+    )
+    if not summary["images"]:
+        return None
+    return summary, haystack
+
+
+def _manifest_filter_key(path_str: str) -> str:
+    raw = str(path_str or "").strip()
+    if not raw:
+        return ""
+    try:
+        resolved = str(Path(raw).resolve())
+    except OSError:
+        resolved = raw
+    return resolved.replace("\\", "/").lower()
+
+
+def _collect_library_metadata(entries: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Aggregate all sessions and models across all valid manifests (unfiltered by pagination)."""
+    session_map: dict[str, dict] = {}
+    model_map: dict[str, dict] = {}
+    for item in entries:
+        record = _cached_manifest_record(item)
+        if record is None:
+            continue
+        summary, _ = record
+        sid = summary["session"]
+        ts = summary["created_at"] or summary["timestamp"]
+        s_entry = session_map.get(sid)
+        if s_entry is None:
+            session_map[sid] = {"id": sid, "count": 1, "latest": ts}
+        else:
+            s_entry["count"] += 1
+            if ts > s_entry["latest"]:
+                s_entry["latest"] = ts
+        m_name = str(summary.get("model_name") or "").strip()
+        m_stem = str(summary.get("model_stem") or "").strip()
+        if m_name and m_name.lower() != "unknown":
+            m_key = m_name.lower()
+            m_entry = model_map.get(m_key)
+            if m_entry is None:
+                model_map[m_key] = {"name": m_name, "stem": m_stem or Path(m_name).stem, "count": 1}
+            else:
+                m_entry["count"] += 1
+    sessions = sorted(session_map.values(), key=lambda x: x["latest"], reverse=True)
+    models = sorted(model_map.values(), key=lambda x: (-x["count"], x["stem"].lower()))
+    return sessions, models
+
+
+def list_outputs_with_meta(
+    since=None,
+    model=None,
+    style=None,
+    limit=20,
+    offset=0,
+    session=None,
+    query=None,
+    manifest_paths=None,
+    sort="newest",
+):
+    """List recent outputs with pagination + full session/model facet metadata."""
+    del style  # reserved for future filters
+    offset = max(0, int(offset or 0))
+    limit = max(1, int(limit or 20))
+    sort_dir = str(sort or "newest").strip().lower()
+    all_entries = _collect_manifest_entries(since=since, session=None)
+    sessions_meta, models_meta = _collect_library_metadata(all_entries)
+
+    if sort_dir == "oldest":
+        ordered_entries = list(reversed(all_entries))
+    else:
+        ordered_entries = all_entries
+
+    allowed = (
+        None
+        if manifest_paths is None
+        else {_manifest_filter_key(p) for p in manifest_paths if str(p or "").strip()}
+    )
+    query_tokens = [tok for tok in str(query or "").strip().lower().split() if tok]
+    model_filter = str(model or "").strip().lower()
+    session_filter = str(session or "").strip()
+    if session_filter == "all":
+        session_filter = ""
+
+    matched = 0
+    results = []
+    for item in ordered_entries:
+        if session_filter and _session_from_manifest_path(item["path"]) != session_filter:
+            continue
+        if allowed is not None and _manifest_filter_key(item["path"]) not in allowed:
+            continue
+        record = _cached_manifest_record(item)
+        if record is None:
+            continue
+        summary, haystack = record
+        if model_filter and summary["model_name"].lower() != model_filter and summary["model_stem"].lower() != model_filter:
+            continue
+        if query_tokens and not all(tok in haystack for tok in query_tokens):
+            continue
+        if matched >= offset and len(results) < limit:
+            results.append(summary)
+        matched += 1
+    return results, matched, sessions_meta, models_meta
 
 
 def list_outputs(
@@ -150,44 +355,44 @@ def list_outputs(
     session=None,
     query=None,
     manifest_paths=None,
+    sort="newest",
 ):
     """List recent outputs with pagination. Returns (items, total_matching)."""
-    del style  # reserved for future filters
-    offset = max(0, int(offset or 0))
-    limit = max(1, int(limit or 20))
-    entries = _collect_manifest_entries(since=since, session=session)
-
-    allowed = None if manifest_paths is None else {str(Path(p).resolve()).lower() for p in manifest_paths}
-    query_lower = str(query or "").strip().lower()
-    matched = 0
-    results = []
-    # ponytail: scan manifests for exact filtered totals; add an index if library scans become slow.
-    for item in entries:
-        if allowed is not None and str(Path(item["path"]).resolve()).lower() not in allowed:
-            continue
-        data = _load_manifest(item["path"])
-        if not isinstance(data, dict):
-            continue
-        summary = _summary_from_manifest_entry(item, data)
-        if not summary["images"]:
-            continue
-        if model and summary["model_name"].lower() != model.lower():
-            continue
-        if query_lower:
-            haystack = " ".join([data.get("prompt") or "", data.get("negative_prompt") or "",
-                                 summary["title"], summary["model_name"], summary["model_stem"]]).lower()
-            if query_lower not in haystack:
-                continue
-        if matched >= offset and len(results) < limit:
-            results.append(summary)
-        matched += 1
+    results, matched, _, _ = list_outputs_with_meta(
+        since=since,
+        model=model,
+        style=style,
+        limit=limit,
+        offset=offset,
+        session=session,
+        query=query,
+        manifest_paths=manifest_paths,
+        sort=sort,
+    )
     return results, matched
 
-def search_outputs(query, limit=20, offset=0, session=None, manifest_paths=None):
-    """Search manifests by prompt, negative, title, or model name."""
+
+def search_outputs(
+    query,
+    limit=20,
+    offset=0,
+    session=None,
+    manifest_paths=None,
+    model=None,
+    sort="newest",
+):
+    """Search manifests by prompt, negative, title, styles, session, or model name."""
     if not str(query or "").strip():
         return [], 0
-    return list_outputs(query=query, limit=limit, offset=offset, session=session, manifest_paths=manifest_paths)
+    return list_outputs(
+        query=query,
+        limit=limit,
+        offset=offset,
+        session=session,
+        manifest_paths=manifest_paths,
+        model=model,
+        sort=sort,
+    )
 
 
 def _output_path_key(path_str: str) -> str:
@@ -469,6 +674,7 @@ def delete_generation(manifest_path: str) -> dict:
         manifest.unlink()
     except OSError as exc:
         return {"ok": False, "error": str(exc)}
+    invalidate_output_index_cache(manifest)
 
     return {
         "ok": True,
@@ -529,6 +735,7 @@ def delete_output_image(manifest_path: str, image_path: str) -> dict:
             manifest.unlink()
         except OSError as exc:
             return {"ok": False, "error": str(exc)}
+        invalidate_output_index_cache(manifest)
         return {
             "ok": True,
             "deleted_image": str(image),
@@ -542,6 +749,7 @@ def delete_output_image(manifest_path: str, image_path: str) -> dict:
             json.dump(data, handle, ensure_ascii=False, indent=2)
     except OSError as exc:
         return {"ok": False, "error": str(exc)}
+    invalidate_output_index_cache(manifest)
 
     return {
         "ok": True,

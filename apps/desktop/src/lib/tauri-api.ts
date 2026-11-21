@@ -27,6 +27,20 @@ export type OutputItem = {
   images: string[];
   styles: string[];
   seed?: number;
+  width?: number | null;
+  height?: number | null;
+};
+
+export type OutputSessionSummary = {
+  id: string;
+  count: number;
+  latest: string;
+};
+
+export type OutputModelSummary = {
+  name: string;
+  stem: string;
+  count: number;
 };
 
 export type GenerationSettings = {
@@ -499,6 +513,8 @@ export type OutputsPage = {
   offset: number;
   limit: number;
   hasMore: boolean;
+  sessions?: OutputSessionSummary[];
+  models?: OutputModelSummary[];
 };
 
 export async function listOutputsPage(opts?: {
@@ -506,6 +522,8 @@ export async function listOutputsPage(opts?: {
   offset?: number;
   session?: string;
   manifestPaths?: string[];
+  model?: string;
+  sort?: "newest" | "oldest";
 }): Promise<OutputsPage> {
   const limit = opts?.limit ?? 50;
   const offset = opts?.offset ?? 0;
@@ -516,10 +534,19 @@ export async function listOutputsPage(opts?: {
     offset?: number;
     limit?: number;
     has_more?: boolean;
+    sessions?: OutputSessionSummary[];
+    models?: OutputModelSummary[];
   }>("bridge_invoke", {
     cmd: "list_outputs",
-    params: { since: null, limit, offset, session: opts?.session ?? null,
-      manifest_paths: opts?.manifestPaths ?? null },
+    params: {
+      since: null,
+      limit,
+      offset,
+      session: opts?.session ?? null,
+      manifest_paths: opts?.manifestPaths ?? null,
+      model: opts?.model || null,
+      sort: opts?.sort ?? "newest",
+    },
   });
   const items = res.items ?? [];
   const total = res.total ?? items.length;
@@ -529,6 +556,8 @@ export async function listOutputsPage(opts?: {
     offset: res.offset ?? offset,
     limit: res.limit ?? limit,
     hasMore: res.has_more ?? offset + items.length < total,
+    sessions: res.sessions,
+    models: res.models,
   };
 }
 
@@ -562,7 +591,14 @@ export async function getGenerationBundle(manifestPath: string) {
 
 export async function searchOutputsPage(
   query: string,
-  opts?: { limit?: number; offset?: number; session?: string; manifestPaths?: string[] },
+  opts?: {
+    limit?: number;
+    offset?: number;
+    session?: string;
+    manifestPaths?: string[];
+    model?: string;
+    sort?: "newest" | "oldest";
+  },
 ): Promise<OutputsPage> {
   const q = query.trim();
   if (!q) {
@@ -577,10 +613,20 @@ export async function searchOutputsPage(
     offset?: number;
     limit?: number;
     has_more?: boolean;
-  }>("bridge_invoke", { cmd: "search_outputs", params: {
-    query: q, limit, offset, session: opts?.session ?? null,
-    manifest_paths: opts?.manifestPaths ?? null,
-  } });
+    sessions?: OutputSessionSummary[];
+    models?: OutputModelSummary[];
+  }>("bridge_invoke", {
+    cmd: "search_outputs",
+    params: {
+      query: q,
+      limit,
+      offset,
+      session: opts?.session ?? null,
+      manifest_paths: opts?.manifestPaths ?? null,
+      model: opts?.model || null,
+      sort: opts?.sort ?? "newest",
+    },
+  });
   const items = res.items ?? [];
   const total = res.total ?? items.length;
   return {
@@ -589,6 +635,8 @@ export async function searchOutputsPage(
     offset: res.offset ?? offset,
     limit: res.limit ?? limit,
     hasMore: res.has_more ?? offset + items.length < total,
+    sessions: res.sessions,
+    models: res.models,
   };
 }
 
@@ -785,26 +833,116 @@ export function onGenerationWarning(
   );
 }
 
+export type ComfyCustomNodeStatus = {
+  id: string;
+  required: boolean;
+  installed: boolean;
+  current: string;
+  target: string;
+  needs_update: boolean;
+  has_requirements: boolean;
+  deps_ok: boolean;
+};
+
+export type ComfyUpstreamInfo = {
+  ok: boolean;
+  latest_tag: string;
+  latest_release_sha: string;
+  published_at: string;
+  latest_master_sha: string;
+  error?: string;
+};
+
 export type ComfyBackendStatus = {
   ok: boolean;
   error?: string;
   installed: boolean;
   needs_update: boolean;
+  needs_deps_sync?: boolean;
   current: string;
+  current_short?: string;
+  current_label?: string;
   target: string;
+  target_short?: string;
+  target_label?: string;
+  install_mode?: "git" | "archive" | "missing";
+  comfy_root?: string;
+  python_exe?: string;
+  dirty?: boolean;
+  dirty_count?: number;
+  deps_synced?: boolean;
+  missing_deps?: string[];
+  key_packages?: Record<string, string>;
+  requirements_count?: number;
+  custom_nodes?: ComfyCustomNodeStatus[];
+  required_nodes_ready?: number;
+  required_nodes_total?: number;
+  nodes_needing_action?: number;
+  can_rollback?: boolean;
+  rollback_target?: string;
+  upstream?: ComfyUpstreamInfo | null;
 };
 
-export async function checkComfyBackend(): Promise<ComfyBackendStatus> {
+export type ComfyUpdateChannel = "recommended" | "latest_release" | "latest_master";
+
+export type ComfyBackendActionResult = {
+  ok: boolean;
+  error?: string;
+  logs?: string[];
+  status?: ComfyBackendStatus;
+  needs_comfy_restart?: boolean;
+};
+
+export async function checkComfyBackend(checkUpstream = false): Promise<ComfyBackendStatus> {
   return invoke<ComfyBackendStatus>("bridge_invoke", {
     cmd: "check_comfy_backend",
-    params: {},
+    params: { check_upstream: checkUpstream },
   });
 }
 
-export async function installComfyBackend(optionalNodes = false): Promise<{ ok: boolean; error?: string }> {
-  return invoke<{ ok: boolean; error?: string }>("bridge_invoke", {
+export async function installComfyBackend(
+  options:
+    | boolean
+    | {
+        channel?: ComfyUpdateChannel;
+        update_deps?: boolean;
+        update_custom_nodes?: boolean;
+        optional_nodes?: boolean;
+        force_reinstall_deps?: boolean;
+        auto_stash_dirty?: boolean;
+      } = false,
+): Promise<ComfyBackendActionResult> {
+  const params =
+    typeof options === "boolean"
+      ? { optional_nodes: options }
+      : {
+          channel: options.channel ?? "recommended",
+          update_deps: options.update_deps ?? true,
+          update_custom_nodes: options.update_custom_nodes ?? true,
+          optional_nodes: options.optional_nodes ?? false,
+          force_reinstall_deps: options.force_reinstall_deps ?? false,
+          auto_stash_dirty: options.auto_stash_dirty ?? false,
+        };
+  return invoke<ComfyBackendActionResult>("bridge_invoke", {
     cmd: "install_comfy_backend",
-    params: { optional_nodes: optionalNodes },
+    params,
+  });
+}
+
+export async function syncComfyDependencies(
+  force = false,
+  includeCustomNodes = true,
+): Promise<ComfyBackendActionResult> {
+  return invoke<ComfyBackendActionResult>("bridge_invoke", {
+    cmd: "sync_comfy_dependencies",
+    params: { force, include_custom_nodes: includeCustomNodes },
+  });
+}
+
+export async function rollbackComfyBackend(): Promise<ComfyBackendActionResult> {
+  return invoke<ComfyBackendActionResult>("bridge_invoke", {
+    cmd: "rollback_comfy_backend",
+    params: {},
   });
 }
 

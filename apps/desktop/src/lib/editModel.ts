@@ -25,6 +25,7 @@ const IMG2IMG_EDIT_FAMILIES = new Set([
   "hidream_o1",
   "ideogram4",
   "krea2",
+  "minimax_h3_image",
   "z_image",
   "z-image",
 ]);
@@ -145,6 +146,15 @@ export function buildEditRoutingPatch(
       edit_strength: 1.0,
       cn_selection: "None",
       cn_type: "None",
+    };
+  }
+  if ((item.family ?? "").toLowerCase() === "minimax_h3_image") {
+    return {
+      edit_type: "auto",
+      edit_strength: 1.0,
+      cn_selection: "None",
+      cn_type: "None",
+      steps: 6,
     };
   }
   if ((item.family ?? "").toLowerCase() === "krea2") {

@@ -700,6 +700,14 @@ def _try_parse_comfy_http_validation(msg: str) -> dict[str, Any] | None:
                 "Krea 2 requires ComfyUI v0.26.0 or newer — the GPU engine is running an older "
                 "ComfyUI that does not support CLIPLoader type 'krea2'."
             )
+        elif (
+            first.get("node") == "MiniMaxH3ImageConditioning"
+            or (first.get("node") == "CLIPLoader" and "minimax" in str(first.get("input") or ""))
+        ):
+            summary = (
+                "MiniMax H3 Image requires ComfyUI v0.45.0 or newer — the GPU engine is running an older "
+                "ComfyUI that does not include MiniMaxH3ImageConditioning or CLIPLoader type 'minimax'."
+            )
         else:
             summary = (
                 "ComfyUI rejected the generation graph before sampling started: "
@@ -716,6 +724,15 @@ def _try_parse_comfy_http_validation(msg: str) -> dict[str, Any] | None:
             "Restart the GPU engine so DreamForge can update ComfyUI to v0.26.0.",
             "If the problem persists, use Settings to reinstall or update the Comfy backend.",
             "Confirm qwen3vl_4b_fp8_scaled.safetensors is in text_encoders/ before generating.",
+        ]
+    elif issues and (
+        issues[0].get("node") == "MiniMaxH3ImageConditioning"
+        or (issues[0].get("node") == "CLIPLoader" and "minimax" in str(issues[0].get("input") or ""))
+    ):
+        suggestions = [
+            "Open Settings → ComfyUI Backend and click Update ComfyUI (requires v0.45.0+).",
+            "Restart the GPU engine after updating ComfyUI.",
+            "Confirm qwen3vl_32b_minimax_h3_int8_convrot.safetensors (or nvfp4_awq) is in text_encoders/ and minimax_h3_image_vae_fp16.safetensors is in vae/.",
         ]
 
     return {

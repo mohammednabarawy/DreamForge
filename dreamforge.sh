@@ -4,7 +4,11 @@ set -e
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "${SCRIPT_DIR}"
 
-if [ "$(uname -m)" = "arm64" ] && [ -x "${HOME}/.cargo/bin/cargo" ]; then
+if [ "$(uname -s)" = "Darwin" ] && [ -f "${SCRIPT_DIR}/scripts/macos_arm_env.sh" ]; then
+    # shellcheck source=scripts/macos_arm_env.sh
+    source "${SCRIPT_DIR}/scripts/macos_arm_env.sh"
+    dreamforge_setup_macos_arm_env
+elif [ "$(uname -m)" = "arm64" ] && [ -x "${HOME}/.cargo/bin/cargo" ]; then
     export PATH="${HOME}/.cargo/bin:${PATH}"
 fi
 
@@ -13,6 +17,14 @@ export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
 if [ "$(uname -s)" = "Darwin" ]; then
     export PYTORCH_ENABLE_MPS_FALLBACK="${PYTORCH_ENABLE_MPS_FALLBACK:-1}"
 fi
+
+run_venv_python() {
+    if declare -F dreamforge_run_python >/dev/null 2>&1; then
+        dreamforge_run_python "$@"
+    else
+        "$@"
+    fi
+}
 
 if [ ! -f "${SCRIPT_DIR}/.dreamforge_setup_ok" ] && [ ! -d "${SCRIPT_DIR}/venv" ]; then
   if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
@@ -41,36 +53,33 @@ fi
 DESKTOP_DIR="${SCRIPT_DIR}/apps/desktop"
 
 if [ -x "${SCRIPT_DIR}/venv/bin/python" ]; then
-    if ! "${SCRIPT_DIR}/venv/bin/python" -c 'import platform,sys; ok=sys.version_info >= (3,10); ok=ok and not (platform.system()=="Darwin" and platform.machine()!=__import__("subprocess").check_output(["uname","-m"],text=True).strip()); raise SystemExit(0 if ok else 1)' 2>/dev/null; then
+    if ! run_venv_python "${SCRIPT_DIR}/venv/bin/python" -c 'import os,platform,sys; ok=sys.version_info >= (3,10); expect_arm64=(os.environ.get("DREAMFORGE_MAC_ARM64")=="1"); ok=ok and not (platform.system()=="Darwin" and expect_arm64 and platform.machine()!="arm64"); raise SystemExit(0 if ok else 1)' 2>/dev/null; then
         echo "Repairing incompatible Python environment..."
         "${SCRIPT_DIR}/setup.sh" --skip-npm
     fi
 fi
 
 # Apple Silicon: Tauri native bindings must match Node arch (arm64, not Rosetta x64).
-if [ "$(uname -m)" = "arm64" ] && [ "$(node -p 'process.arch')" = "x64" ]; then
-    for node_bin in "${HOME}/.nvm/versions/node"/*/bin/node /opt/homebrew/bin/node; do
-        [ -x "${node_bin}" ] || continue
-        if [ "$("${node_bin}" -p 'process.arch')" = "arm64" ]; then
-            export PATH="$(dirname "${node_bin}"):${PATH}"
-            break
-        fi
-    done
-fi
-
-if [ "$(uname -m)" = "arm64" ] && [ "$(node -p 'process.arch')" = "x64" ]; then
-    echo "ERROR: Node is x86_64 (Rosetta). DreamForge desktop needs native arm64 Node."
-    echo "  nvm install 24 && nvm use 24"
-    echo "  Or: export PATH=\"/opt/homebrew/bin:\$PATH\""
+if [ "${DREAMFORGE_MAC_ARM64:-0}" = "1" ] && [ "$(node -p 'process.arch')" = "x64" ]; then
+    echo "ERROR: Node is x86_64-only (Rosetta). DreamForge desktop needs native arm64 Node."
+    echo "  brew install node  (or: nvm install 24 && nvm use 24)"
     exit 1
 fi
 
 tauri_binding_dir() {
-    case "$(node -p 'process.arch')" in
-        arm64) echo "${DESKTOP_DIR}/node_modules/@tauri-apps/cli-darwin-arm64" ;;
-        x64)   echo "${DESKTOP_DIR}/node_modules/@tauri-apps/cli-darwin-x64" ;;
-        *)     echo "" ;;
-    esac
+    if [ "$(uname -s)" = "Darwin" ]; then
+        case "$(node -p 'process.arch')" in
+            arm64) echo "${DESKTOP_DIR}/node_modules/@tauri-apps/cli-darwin-arm64" ;;
+            x64)   echo "${DESKTOP_DIR}/node_modules/@tauri-apps/cli-darwin-x64" ;;
+            *)     echo "" ;;
+        esac
+    else
+        case "$(node -p 'process.arch')" in
+            arm64) echo "${DESKTOP_DIR}/node_modules/@tauri-apps/cli-linux-arm64-gnu" ;;
+            x64)   echo "${DESKTOP_DIR}/node_modules/@tauri-apps/cli-linux-x64-gnu" ;;
+            *)     echo "" ;;
+        esac
+    fi
 }
 
 ensure_rollup_native() {
@@ -111,7 +120,7 @@ if [ -d "${SCRIPT_DIR}/venv" ]; then
 fi
 
 # Free up the Tauri development port if occupied
-STALE_PORT_PID=$(lsof -t -i :5173 || true)
+STALE_PORT_PID=$(lsof -t -i :5173 2>/dev/null || true)
 if [ -n "${STALE_PORT_PID}" ]; then
     echo "Stopping stale process on port 5173 (PID ${STALE_PORT_PID})..."
     kill -9 ${STALE_PORT_PID} 2>/dev/null || true

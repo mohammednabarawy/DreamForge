@@ -11,7 +11,7 @@ from pathlib import Path
 MODERN_FAMILIES = frozenset({
     "flux", "flux2", "flux_kontext", "hidream", "hidream_o1",
     "qwen_image", "qwen_image_edit", "qwen_image_2.1", "sd3", "z_image", "ideogram4",
-    "krea2",
+    "krea2", "minimax_h3_image",
 })
 
 GALLERY_CATEGORIES = ("checkpoints", "diffusion_models", "unet")
@@ -56,6 +56,7 @@ MISALIGNED_PERFORMANCE = {
     "qwen_image_edit": {"Lcm", "Pony XL", "SD3", "HiDream", "HiDream Full", "Flux"},
     "qwen_image_2.1": {"Lcm", "Pony XL", "SD3", "HiDream", "HiDream Full", "Flux"},
     "krea2": {"Lcm", "Pony XL", "SD3", "HiDream", "HiDream Full", "Flux"},
+    "minimax_h3_image": {"Lcm", "Pony XL", "SD3", "HiDream", "HiDream Full", "Flux"},
     "sd3": {"Lcm", "Pony XL", "HiDream", "HiDream Full", "SD3", "Flux"},
     "ideogram4": {"Lcm", "Pony XL", "SD3", "HiDream", "HiDream Full", "Flux"},
 }
@@ -63,6 +64,12 @@ MISALIGNED_PERFORMANCE = {
 
 def infer_model_family(name: str) -> str:
     lowered = (name or "").lower()
+    if (
+        "minimax" in lowered
+        and "h3" in lowered
+        and not any(vid in lowered for vid in ("fl2va", "ref2va", "fl2v", "ref2v", "music", "audio_vae", "video_vae"))
+    ):
+        return "minimax_h3_image"
     if "ideogram" in lowered:
         return "ideogram4"
     if "krea2" in lowered or "krea-2" in lowered or "krea_2" in lowered:
@@ -263,6 +270,7 @@ def family_display_name(family: str) -> str:
         "wan": "Wan",
         "ideogram4": "Ideogram 4",
         "krea2": "Krea 2",
+        "minimax_h3_image": "MiniMax H3 Image",
     }
     return labels.get(family, family)
 
@@ -364,6 +372,13 @@ def family_performance_settings(
             "Speed": (20, 3.0, "euler", "simple"),
             "Quality": (32, 3.5, "euler", "simple"),
         }
+    elif family == "minimax_h3_image":
+        # Official MiniMax H3 Image workflow: CFG-distilled 6 steps, CFG 1.0, Euler / simple.
+        table = {
+            "Lightning": (6, 1.0, "euler", "simple"),
+            "Speed": (6, 1.0, "euler", "simple"),
+            "Quality": (6, 1.0, "euler", "simple"),
+        }
     elif family == "krea2":
         if "turbo" in name:
             # Official Turbo workflow: distilled 8 steps, CFG 1, Euler / simple.
@@ -413,7 +428,7 @@ def resolve_ui_profile(
 
     styles_clear = family in MODERN_FAMILIES
     negative_clear = (
-        family in ("hidream", "hidream_o1", "ideogram4")
+        family in ("hidream", "hidream_o1", "ideogram4", "minimax_h3_image")
         or (family == "krea2" and "turbo" in model_name.lower())
         or family.startswith(("flux", "qwen"))
     )
@@ -486,6 +501,11 @@ def resolve_ui_profile(
         )
     elif family == "krea2" and "turbo" in model_name.lower():
         hints.append("Krea 2 Turbo: 8 steps, CFG 1, Euler / simple; start at 1024px.")
+    elif family == "minimax_h3_image":
+        hints.append(
+            "MiniMax H3 Image: distilled 6 steps, CFG 1.0, Euler / simple, no negative prompt. "
+            "Supports 2048px–4096px (multiples of 32) and multi-reference edits (<Picture 1>, <Picture 2>, ...)."
+        )
 
     return {
         "family": family,
@@ -523,6 +543,14 @@ def _custom_sampling_for_family(family: str, model_name: str) -> dict:
         return {
             "custom_steps": 20,
             "cfg": 3.0,
+            "sampler_name": "euler",
+            "scheduler": "simple",
+            "clip_skip": 1,
+        }
+    if family == "minimax_h3_image":
+        return {
+            "custom_steps": 6,
+            "cfg": 1.0,
             "sampler_name": "euler",
             "scheduler": "simple",
             "clip_skip": 1,
@@ -621,6 +649,13 @@ def auto_generation_settings(
     elif family == "ideogram4":
         cfg, steps = 7.0, 20
         sampler_name, scheduler, clip_skip = "euler", "simple", 1
+        styles = []
+        negative = ""
+    elif family == "minimax_h3_image":
+        cfg = 1.0
+        steps = 6
+        sampler_name = "euler"
+        scheduler, clip_skip = "simple", 1
         styles = []
         negative = ""
     elif family == "krea2":

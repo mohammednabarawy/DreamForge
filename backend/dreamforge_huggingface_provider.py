@@ -120,9 +120,20 @@ def _normalize_one(raw: Mapping[str, Any]) -> DreamForgeAsset | None:
     if not files:
         return None
 
+    # Cap massive repos (e.g. 1,000+ LoRA collections) so UI variant selectors stay fast.
+    if len(files) > 40:
+        files = files[:40]
+
     kind_value = _kind_from_tags(tags)
+    if kind_value == "checkpoint" and ("lora" in name.lower() or "loras" in repo_id.lower()):
+        kind_value = "lora"
     kind = AssetKind.from_string(kind_value)
-    architecture = detect_architecture(name)
+    architecture = (
+        detect_architecture(name)
+        or detect_architecture(repo_id)
+        or detect_architecture(" ".join(tags))
+        or detect_architecture(files[0].filename)
+    )
 
     version = AssetVersion(
         id="v1",
@@ -180,7 +191,9 @@ class HuggingFaceProvider(DiscoveryProvider):
         result = ProviderSearchResult(provider=self.id, page=params.page)
         url = self._build_url(params)
         try:
-            data = http_get_json(url, timeout=self.timeout_seconds)
+            token = self._credential()
+            headers = {"Authorization": f"Bearer {token}"} if token else None
+            data = http_get_json(url, headers=headers, timeout=self.timeout_seconds)
         except Exception as exc:
             from dreamforge_provider_base import ProviderError, classify_http_error
 
@@ -195,17 +208,45 @@ class HuggingFaceProvider(DiscoveryProvider):
 
         items = data if isinstance(data, list) else data.get("models") or []
         result.total = len(items)
-        result.assets = normalize_hf_models(items)
+        normalized = normalize_hf_models(items)
+        if params.kind == "checkpoint":
+            normalized = [a for a in normalized if a.kind != AssetKind.LORA]
+        result.assets = normalized
         return result
 
     def _build_url(self, params: ProviderSearchParams) -> str:
         import urllib.parse
 
         query_args: list[tuple[str, str]] = []
-        if params.query:
-            query_args.append(("search", params.query))
-        if params.kind and params.kind != "unknown":
-            query_args.append(("filter", f"text-to-image:{params.kind}"))
+        search_text = (params.query or "").strip()
+        kind = (params.kind or "").strip().lower()
+        if kind == "checkpoint":
+            query_args.append(("pipeline_tag", "text-to-image"))
+        elif kind == "lora":
+            query_args.append(("pipeline_tag", "text-to-image"))
+            query_args.append(("filter", "lora"))
+        elif kind == "controlnet":
+            query_args.append(("filter", "controlnet"))
+        elif kind == "vae":
+            search_text = f"{search_text} vae".strip() if "vae" not in search_text.lower() else search_text
+        elif kind == "upscaler":
+            search_text = f"{search_text} upscaler".strip() if "upscal" not in search_text.lower() else search_text
+        elif kind == "text_encoder":
+            search_text = f"{search_text} text encoder".strip() if "encoder" not in search_text.lower() else search_text
+
+        if search_text:
+            query_args.append(("search", search_text))
+        query_args.append(("full", "true"))
+        sort_map = {
+            "relevance": "downloads",
+            "downloads": "downloads",
+            "Most Downloaded": "downloads",
+            "Newest": "lastModified",
+            "Highest Rated": "likes",
+        }
+        sort_key = sort_map.get(params.filters.sort or "downloads", "downloads")
+        query_args.append(("sort", sort_key))
+        query_args.append(("direction", "-1"))
         query_args.append(("limit", str(max(1, min(params.limit, 100)))))
         query_args.append(("page", str(max(1, params.page))))
         return f"{API_BASE}?{urllib.parse.urlencode(query_args)}"

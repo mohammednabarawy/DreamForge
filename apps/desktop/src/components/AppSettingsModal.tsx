@@ -1,6 +1,8 @@
-import { Bot, CheckCircle2, KeyRound, ShieldCheck, X, XCircle, DownloadCloud, Loader2, FolderOpen, ShieldAlert, Download } from "lucide-react";
+import { Bot, CheckCircle2, KeyRound, ShieldCheck, X, XCircle, DownloadCloud, Loader2, FolderOpen, ShieldAlert, Download, RefreshCw, RotateCcw, Package } from "lucide-react";
 import { useState, useEffect } from "react";
-import { checkComfyBackend, getReleaseStatus, installComfyBackend, pickFolder, revealPathInExplorer, type ComfyBackendStatus, type ReleaseStatus } from "../lib/tauri-api";
+import { copyTextToClipboard } from "../lib/clipboard";
+import { requestConfirm } from "../lib/confirmDialog";
+import { checkComfyBackend, getReleaseStatus, installComfyBackend, pickFolder, revealPathInExplorer, rollbackComfyBackend, syncComfyDependencies, type ComfyBackendStatus, type ComfyUpdateChannel, type ReleaseStatus } from "../lib/tauri-api";
 import {
   applyRuntimePreferences,
   getRuntimeStatus,
@@ -103,6 +105,11 @@ export function AppSettingsModal({
 
   const [backendStatus, setBackendStatus] = useState<ComfyBackendStatus | null>(null);
   const [installingBackend, setInstallingBackend] = useState(false);
+  const [comfyChannel, setComfyChannel] = useState<ComfyUpdateChannel>("recommended");
+  const [checkingUpstream, setCheckingUpstream] = useState(false);
+  const [syncingDeps, setSyncingDeps] = useState(false);
+  const [rollingBackComfy, setRollingBackComfy] = useState(false);
+  const [showCustomNodesDetail, setShowCustomNodesDetail] = useState(false);
   const [modelsSource, setModelsSource] = useState<ModelsSource>("managed");
   const [modelsRoot, setModelsRoot] = useState("");
   const [modelsPathBusy, setModelsPathBusy] = useState(false);
@@ -212,16 +219,93 @@ export function AppSettingsModal({
     }
   };
 
-  const handleInstallBackend = async () => {
-    setInstallingBackend(true);
+  const handleCheckUpstreamComfy = async () => {
+    setCheckingUpstream(true);
     try {
-      await installComfyBackend(true);
-      const updated = await checkComfyBackend();
+      const updated = await checkComfyBackend(true);
       setBackendStatus(updated);
     } catch (err) {
-      console.error(err);
+      setRepairMessage(`Upstream check failed: ${String(err)}`);
+    } finally {
+      setCheckingUpstream(false);
+    }
+  };
+
+  const handleInstallBackend = async () => {
+    setInstallingBackend(true);
+    setRepairMessage(null);
+    setRepairLog(null);
+    try {
+      const result = await installComfyBackend({
+        channel: comfyChannel,
+        update_deps: true,
+        update_custom_nodes: true,
+        optional_nodes: false,
+        auto_stash_dirty: Boolean(backendStatus?.dirty),
+      });
+      if (result.logs?.length) setRepairLog(result.logs.join("\n"));
+      if (!result.ok) {
+        setRepairMessage(result.error ?? "ComfyUI update failed.");
+      } else {
+        setRepairMessage(
+          `ComfyUI updated (${result.status?.current_label ?? comfyChannel}) and Python dependencies synced.`,
+        );
+      }
+      const updated = result.status ?? (await checkComfyBackend());
+      setBackendStatus(updated);
+    } catch (err) {
+      setRepairMessage(`ComfyUI update failed: ${String(err)}`);
     } finally {
       setInstallingBackend(false);
+    }
+  };
+
+  const handleSyncComfyDeps = async (force = false) => {
+    setSyncingDeps(true);
+    setRepairMessage(null);
+    setRepairLog(null);
+    try {
+      const result = await syncComfyDependencies(force, true);
+      if (result.logs?.length) setRepairLog(result.logs.join("\n"));
+      if (!result.ok) {
+        setRepairMessage(result.error ?? "Dependency sync failed.");
+      } else {
+        setRepairMessage("ComfyUI & custom-node Python dependencies synchronized (PyTorch stack preserved).");
+      }
+      const updated = result.status ?? (await checkComfyBackend());
+      setBackendStatus(updated);
+    } catch (err) {
+      setRepairMessage(`Dependency sync failed: ${String(err)}`);
+    } finally {
+      setSyncingDeps(false);
+    }
+  };
+
+  const handleRollbackComfy = async () => {
+    const ok = await requestConfirm({
+      title: "Roll back ComfyUI?",
+      message: `Restore ComfyUI to previous snapshot ${backendStatus?.rollback_target ?? ""} and re-sync its Python dependencies?`,
+      confirmLabel: "Roll back",
+      destructive: true,
+    });
+    if (!ok) return;
+    setRollingBackComfy(true);
+    setRepairMessage(null);
+    setRepairLog(null);
+    try {
+      const result = await rollbackComfyBackend();
+      if (result.logs?.length) setRepairLog(result.logs.join("\n"));
+      if (!result.ok) {
+        setRepairMessage(result.error ?? "Rollback failed.");
+      } else {
+        setRepairMessage(`Rolled back ComfyUI to ${result.status?.current_label ?? "previous snapshot"}.`);
+      }
+      const updated = result.status ?? (await checkComfyBackend());
+      setBackendStatus(updated);
+    } catch (err) {
+      setRepairMessage(`Rollback failed: ${String(err)}`);
+    } finally {
+      setRollingBackComfy(false);
     }
   };
 
@@ -264,9 +348,14 @@ export function AppSettingsModal({
   };
 
   const handleOrganizeModels = async (apply: boolean) => {
-    if (apply && !window.confirm(
-      `Move ${organizationPlan?.summary.to_move ?? 0} high-confidence model file(s) to their ComfyUI folders? Low-confidence files will not be moved.`,
-    )) return;
+    if (apply) {
+      const confirmed = await requestConfirm({
+        title: "Organize model files?",
+        message: `Move ${organizationPlan?.summary.to_move ?? 0} high-confidence model file(s) to their ComfyUI folders? Low-confidence files will not be moved.`,
+        confirmLabel: "Move files",
+      });
+      if (!confirmed) return;
+    }
     setOrganizationBusy(true);
     setDiagnosticsMessage(null);
     try {
@@ -295,7 +384,7 @@ export function AppSettingsModal({
       comfy_backend: backendStatus,
     };
     try {
-      await navigator.clipboard.writeText(JSON.stringify(snapshot, null, 2));
+      await copyTextToClipboard(JSON.stringify(snapshot, null, 2));
       setDiagnosticsMessage("Diagnostics copied (API keys and prompts are excluded). ");
     } catch (err) {
       setDiagnosticsMessage(`Could not copy diagnostics: ${String(err)}`);
@@ -769,63 +858,222 @@ export function AppSettingsModal({
                     <DownloadCloud size={15} className="text-dfui-muted" />
                     <div>
                       <p className="text-[10px] font-semibold uppercase tracking-wide text-dfui-fg">
-                        ComfyUI Backend
+                        ComfyUI Backend & Dependencies
                       </p>
                       <p className="text-[10px] text-dfui-tertiary">
-                        Managed ComfyUI used by workflows that need Comfy nodes
+                        Managed ComfyUI engine, GPU-protected Python deps, and custom nodes
                       </p>
                     </div>
                   </div>
-                  <span
-                    className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[9px] font-medium ${
-                      backendStatus.installed && !backendStatus.needs_update
-                        ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"
-                        : "border-amber-400/30 bg-amber-400/10 text-amber-200"
-                    }`}
-                  >
-                    {backendStatus.installed && !backendStatus.needs_update ? (
-                      <CheckCircle2 size={11} />
-                    ) : (
-                      <XCircle size={11} />
-                    )}
-                    {backendStatus.installed
-                      ? backendStatus.needs_update
-                        ? "Update Available"
-                        : "Installed"
-                      : "Not Installed"}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-2 border-t border-dfui-border/30 pt-2 text-[10px] text-dfui-tertiary">
-                  <span>Current: {backendStatus.current || "None"}</span>
-                  <span>Target: {backendStatus.target}</span>
-                </div>
-                <div className="flex flex-wrap justify-end gap-2 pt-1">
-                  {(!backendStatus.installed || backendStatus.needs_update) && (
+                  <div className="flex items-center gap-1.5">
                     <button
                       type="button"
-                      disabled={installingBackend || repairBusy}
-                      onClick={handleInstallBackend}
+                      disabled={checkingUpstream || installingBackend || syncingDeps || repairBusy}
+                      onClick={() => void handleCheckUpstreamComfy()}
+                      className="inline-flex items-center gap-1 rounded-md border border-dfui-border/60 bg-dfui-bg/40 px-2 py-0.5 text-[9px] text-dfui-secondary transition hover:border-dfui-accent/40 disabled:opacity-50"
+                      title="Check GitHub for the latest ComfyUI release"
+                    >
+                      <RefreshCw size={10} className={checkingUpstream ? "animate-spin" : ""} />
+                      {checkingUpstream ? "Checking…" : "Check GitHub"}
+                    </button>
+                    <span
+                      className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[9px] font-medium ${
+                        backendStatus.installed && !backendStatus.needs_update && backendStatus.deps_synced !== false
+                          ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"
+                          : "border-amber-400/30 bg-amber-400/10 text-amber-200"
+                      }`}
+                    >
+                      {backendStatus.installed && !backendStatus.needs_update && backendStatus.deps_synced !== false ? (
+                        <CheckCircle2 size={11} />
+                      ) : (
+                        <XCircle size={11} />
+                      )}
+                      {!backendStatus.installed
+                        ? "Not Installed"
+                        : backendStatus.needs_update
+                          ? "Update Available"
+                          : backendStatus.deps_synced === false
+                            ? "Deps Out of Sync"
+                            : "Up to Date"}
+                    </span>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2 border-t border-dfui-border/30 pt-2 text-[10px] text-dfui-tertiary">
+                  <div className="min-w-0">
+                    <span className="text-dfui-muted">Installed:</span>{" "}
+                    <span className="font-mono text-dfui-fg">
+                      {backendStatus.current_label || backendStatus.current_short || backendStatus.current || "None"}
+                    </span>
+                    {backendStatus.install_mode && backendStatus.install_mode !== "missing" && (
+                      <span className="ml-1 rounded bg-dfui-bg/60 px-1 py-0.5 font-mono text-[8px] uppercase text-dfui-muted">
+                        {backendStatus.install_mode}
+                      </span>
+                    )}
+                    {backendStatus.dirty && (
+                      <span className="ml-1 text-[9px] text-amber-300" title="Local edits will be stashed before update">
+                        ({backendStatus.dirty_count} modified)
+                      </span>
+                    )}
+                  </div>
+                  <div className="min-w-0 text-right">
+                    <span className="text-dfui-muted">Recommended:</span>{" "}
+                    <span className="font-mono text-dfui-fg">
+                      {backendStatus.target_label || backendStatus.target_short || backendStatus.target}
+                    </span>
+                    {backendStatus.upstream?.ok && backendStatus.upstream.latest_tag && (
+                      <span className="ml-1.5 rounded border border-sky-400/30 bg-sky-500/10 px-1.5 py-0.5 font-mono text-[8px] text-sky-200">
+                        GitHub: {backendStatus.upstream.latest_tag}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {backendStatus.installed && (
+                  <div className="space-y-1.5 rounded-md border border-dfui-border/30 bg-black/15 px-2.5 py-2 text-[9px]">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-1 text-dfui-secondary">
+                        <Package size={11} className="text-dfui-accent" />
+                        Python deps:{" "}
+                        {backendStatus.missing_deps?.length ? (
+                          <span className="font-semibold text-amber-300">
+                            {backendStatus.missing_deps.length} missing / outdated
+                          </span>
+                        ) : (
+                          <span className="font-semibold text-emerald-300">Synced</span>
+                        )}
+                      </span>
+                      {backendStatus.required_nodes_total != null && (
+                        <button
+                          type="button"
+                          onClick={() => setShowCustomNodesDetail((v) => !v)}
+                          className="font-mono text-[9px] text-dfui-muted underline decoration-dotted hover:text-dfui-fg"
+                        >
+                          Custom nodes: {backendStatus.required_nodes_ready ?? 0}/{backendStatus.required_nodes_total} core ready
+                          {backendStatus.custom_nodes?.length
+                            ? ` (${backendStatus.custom_nodes.length} total)`
+                            : ""}
+                        </button>
+                      )}
+                    </div>
+                    {backendStatus.key_packages && Object.values(backendStatus.key_packages).some(Boolean) && (
+                      <p className="truncate font-mono text-[8px] text-dfui-muted">
+                        {Object.entries(backendStatus.key_packages)
+                          .filter(([, ver]) => Boolean(ver))
+                          .slice(0, 6)
+                          .map(([pkg, ver]) => `${pkg} ${ver}`)
+                          .join(" · ")}
+                      </p>
+                    )}
+                    {backendStatus.missing_deps && backendStatus.missing_deps.length > 0 && (
+                      <p className="font-mono text-[8px] text-amber-200/90">
+                        Missing: {backendStatus.missing_deps.slice(0, 5).join(", ")}
+                        {backendStatus.missing_deps.length > 5 ? ` (+${backendStatus.missing_deps.length - 5} more)` : ""}
+                      </p>
+                    )}
+                    {showCustomNodesDetail && backendStatus.custom_nodes && backendStatus.custom_nodes.length > 0 && (
+                      <div className="mt-1 max-h-28 space-y-0.5 overflow-auto border-t border-dfui-border/25 pt-1 font-mono text-[8px]">
+                        {backendStatus.custom_nodes.map((node) => (
+                          <div key={node.id} className="flex items-center justify-between gap-2 text-dfui-tertiary">
+                            <span className="truncate">
+                              {node.id}
+                              {node.required ? " (core)" : ""}
+                            </span>
+                            <span
+                              className={
+                                !node.installed || node.needs_update || !node.deps_ok
+                                  ? "shrink-0 text-amber-300"
+                                  : "shrink-0 text-emerald-300"
+                              }
+                            >
+                              {!node.installed
+                                ? "missing"
+                                : node.needs_update
+                                  ? `${node.current || "?"} → ${node.target}`
+                                  : !node.deps_ok
+                                    ? "deps needed"
+                                    : node.current || "ok"}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                  <select
+                    value={comfyChannel}
+                    onChange={(e) => setComfyChannel(e.target.value as ComfyUpdateChannel)}
+                    disabled={installingBackend || syncingDeps || rollingBackComfy || repairBusy}
+                    className="df-select px-2 py-1 text-[10px]"
+                    title="ComfyUI update target channel"
+                  >
+                    <option value="recommended">
+                      Recommended ({backendStatus.target_label || "v0.46.0"})
+                    </option>
+                    <option value="latest_release">
+                      Latest Stable Release{backendStatus.upstream?.latest_tag ? ` (${backendStatus.upstream.latest_tag})` : ""}
+                    </option>
+                    <option value="latest_master">Latest Nightly (master)</option>
+                  </select>
+                  <div className="flex flex-wrap justify-end gap-1.5">
+                    <button
+                      type="button"
+                      disabled={installingBackend || syncingDeps || rollingBackComfy || repairBusy}
+                      onClick={() => void handleInstallBackend()}
                       className="inline-flex items-center gap-1.5 rounded-md bg-dfui-accent px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-dfui-accent/80 disabled:opacity-50 shadow"
                     >
                       {installingBackend ? (
                         <>
                           <Loader2 size={12} className="animate-spin" />
-                          Installing...
+                          Updating...
                         </>
+                      ) : backendStatus.installed ? (
+                        "Update ComfyUI & Deps"
                       ) : (
-                        "Install / Update Backend"
+                        "Install ComfyUI"
                       )}
                     </button>
-                  )}
+                    {backendStatus.installed && (
+                      <button
+                        type="button"
+                        disabled={syncingDeps || installingBackend || rollingBackComfy || repairBusy}
+                        onClick={() => void handleSyncComfyDeps(false)}
+                        className="inline-flex items-center gap-1 rounded-md border border-dfui-border/60 bg-dfui-bg/40 px-2.5 py-1.5 text-[11px] font-medium text-dfui-secondary transition hover:border-dfui-accent/40 disabled:opacity-50"
+                        title="Sync ComfyUI & custom-node Python dependencies while preserving your PyTorch GPU build"
+                      >
+                        {syncingDeps ? (
+                          <>
+                            <Loader2 size={12} className="animate-spin" />
+                            Syncing...
+                          </>
+                        ) : (
+                          "Sync Python Deps"
+                        )}
+                      </button>
+                    )}
+                    {backendStatus.can_rollback && (
+                      <button
+                        type="button"
+                        disabled={rollingBackComfy || installingBackend || syncingDeps || repairBusy}
+                        onClick={() => void handleRollbackComfy()}
+                        className="inline-flex items-center gap-1 rounded-md border border-amber-400/30 bg-amber-400/10 px-2.5 py-1.5 text-[11px] font-medium text-amber-100/90 transition hover:bg-amber-400/20 disabled:opacity-50"
+                        title={`Roll back ComfyUI to ${backendStatus.rollback_target || "previous commit"}`}
+                      >
+                        <RotateCcw size={11} />
+                        {rollingBackComfy ? "Rolling back..." : "Rollback"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="flex flex-wrap justify-end gap-2 border-t border-dfui-border/25 pt-2">
                   <button
                     type="button"
-                    disabled={repairBusy || installingBackend}
+                    disabled={repairBusy || installingBackend || syncingDeps || rollingBackComfy}
                     onClick={() => void handleRepairInstallation(false)}
-                    className="inline-flex items-center gap-1 rounded-md border border-dfui-border/60 bg-dfui-bg/40 px-3 py-1.5 text-[11px] font-medium text-dfui-secondary transition hover:border-dfui-accent/40 disabled:opacity-50"
+                    className="inline-flex items-center gap-1 rounded-md border border-dfui-border/60 bg-dfui-bg/40 px-2.5 py-1 text-[10px] font-medium text-dfui-secondary transition hover:border-dfui-accent/40 disabled:opacity-50"
                   >
                     {repairBusy ? (
                       <>
-                        <Loader2 size={12} className="animate-spin" />
+                        <Loader2 size={11} className="animate-spin" />
                         Repairing...
                       </>
                     ) : (
@@ -834,23 +1082,23 @@ export function AppSettingsModal({
                   </button>
                   <button
                     type="button"
-                    disabled={repairBusy || installingBackend}
+                    disabled={repairBusy || installingBackend || syncingDeps || rollingBackComfy}
                     onClick={() => void handleRepairInstallation(true)}
-                    className="inline-flex items-center gap-1 rounded-md border border-amber-400/30 bg-amber-400/10 px-3 py-1.5 text-[11px] font-medium text-amber-100/90 transition hover:bg-amber-400/20 disabled:opacity-50"
+                    className="inline-flex items-center gap-1 rounded-md border border-amber-400/30 bg-amber-400/10 px-2.5 py-1 text-[10px] font-medium text-amber-100/90 transition hover:bg-amber-400/20 disabled:opacity-50"
                     title="Clears pip skip markers and re-runs all setup steps"
                   >
                     Full repair
                   </button>
                   <button
                     type="button"
-                    disabled={repairBusy || installingBackend}
+                    disabled={repairBusy || installingBackend || syncingDeps || rollingBackComfy}
                     onClick={() => void handleRunSystemRepair()}
-                    className="inline-flex items-center gap-1 rounded-md border border-df-blue/40 bg-df-blue/10 px-3 py-1.5 text-[11px] font-medium text-df-blue transition hover:bg-df-blue/20 disabled:opacity-50"
+                    className="inline-flex items-center gap-1 rounded-md border border-df-blue/40 bg-df-blue/10 px-2.5 py-1 text-[10px] font-medium text-df-blue transition hover:bg-df-blue/20 disabled:opacity-50"
                     title="Purges temporary VRAM caches, removes interrupted .part files, and resets setup markers"
                   >
                     {repairBusy ? (
                       <>
-                        <Loader2 size={12} className="animate-spin" />
+                        <Loader2 size={11} className="animate-spin" />
                         Cleaning...
                       </>
                     ) : (
@@ -862,7 +1110,7 @@ export function AppSettingsModal({
                   <p className="text-[10px] text-dfui-secondary bg-dfui-surface/40 p-2 rounded border border-dfui-border/30">{repairMessage}</p>
                 )}
                 {repairLog && (
-                  <pre className="max-h-28 overflow-auto rounded-md border border-dfui-border/30 bg-black/20 p-2 font-mono text-[9px] text-dfui-muted whitespace-pre-wrap">
+                  <pre className="max-h-32 overflow-auto rounded-md border border-dfui-border/30 bg-black/20 p-2 font-mono text-[9px] text-dfui-muted whitespace-pre-wrap">
                     {repairLog}
                   </pre>
                 )}

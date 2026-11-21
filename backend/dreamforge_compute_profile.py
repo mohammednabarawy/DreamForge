@@ -57,6 +57,7 @@ ARCHITECTURE_VRAM_MB: dict[str, int] = {
     "ideogram4": 12288,
     "z_image": 8192,
     "krea2": 12288,
+    "minimax_h3_image": 24576,
 }
 
 # Variants that materially reduce VRAM (scale the estimate).
@@ -64,11 +65,19 @@ _VARIANT_REDUCTION: dict[str, float] = {
     "fp8": 0.75,
     "fp8_scaled": 0.75,
     "mxfp8": 0.75,
+    "int8": 0.72,
+    "w6a8": 0.68,
+    "q8_0": 0.75,
+    "q6_k": 0.65,
+    "q5_k_m": 0.60,
+    "q5_k_s": 0.58,
+    "w4a8": 0.55,
+    "fp4": 0.50,
     "q4_k_m": 0.55,
     "q4_k_s": 0.55,
     "q3_k_m": 0.5,
     "q2_k": 0.45,
-    "gguf": 0.75,  # GGUF loads in Q-preserved chunks; keep conservative default
+    "gguf": 0.70,  # GGUF loads in Q-preserved chunks; keep conservative default
 }
 
 # Precision/quality rank for variant recommendation: higher = higher quality.
@@ -80,9 +89,17 @@ VARIANT_QUALITY: dict[str, float] = {
     "fp8": 0.85,
     "fp8_scaled": 0.85,
     "mxfp8": 0.85,
+    "int8": 0.82,
+    "w6a8": 0.76,
+    "q8_0": 0.82,
+    "q6_k": 0.74,
     "gguf": 0.7,
+    "q5_k_m": 0.68,
+    "q5_k_s": 0.65,
+    "w4a8": 0.62,
     "q4_k_m": 0.6,
-    "q4_k_s": 0.6,
+    "q4_k_s": 0.58,
+    "fp4": 0.56,
     "q3_k_m": 0.5,
     "q2_k": 0.45,
 }
@@ -421,6 +438,147 @@ def recommend_file_for_asset(
         "recommended": recommended,
         "architecture": asset.architecture,
         "profile": profile.to_dict(),
+    }
+
+
+def assess_asset_device_compatibility(
+    asset: DreamForgeAsset,
+    profile: ComputeProfile,
+    supported_architectures: set[str] | frozenset[str] | None = None,
+    workflow: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return a clear, device-aware compatibility verdict for a Discover card."""
+    from dreamforge_capability_registry import SUPPORTED_ARCHITECTURES
+
+    supported_set = (
+        {a.lower() for a in supported_architectures}
+        if supported_architectures is not None
+        else set(SUPPORTED_ARCHITECTURES)
+    )
+    arch = (asset.architecture or "").strip().lower()
+    rec_bundle = recommend_file_for_asset(asset, profile, workflow=workflow)
+    rated_files = [dict(f) for f in (rec_bundle.get("files") or [])]
+
+    effective_budget_mb = profile.vram_mb
+    if profile.vram_profile not in ("auto", "mps"):
+        prof_mb = PROFILE_VRAM_MB.get(profile.vram_profile, 0)
+        if prof_mb > 0:
+            effective_budget_mb = prof_mb
+
+    is_mps = profile.backend == "mps"
+    # Apple Silicon shares unified memory with macOS (~75% comfortable, ~95% tight).
+    # Discrete GPUs can stream/offload slightly beyond dedicated VRAM via ComfyUI Dynamic VRAM / lowvram.
+    comfort_mb = int(effective_budget_mb * (0.75 if is_mps else 0.90))
+    tight_mb = int(effective_budget_mb * (0.95 if is_mps else 1.15))
+
+    # Ground each file's memory estimate with real file size when known:
+    # - Unknown architecture with known file size -> ~1.25x file size.
+    # - Known architecture with large real file -> never underestimate below ~1.15x file size.
+    for entry in rated_files:
+        est_mb = int(entry.get("estimated_mb") or 0)
+        size_bytes = int(entry.get("size_bytes") or 0)
+        if size_bytes > 0:
+            size_mb = size_bytes / (1024 * 1024)
+            if est_mb <= 0:
+                est_mb = max(512, int(size_mb * 1.25))
+            else:
+                est_mb = max(est_mb, int(size_mb * 1.15))
+        entry["estimated_mb"] = est_mb
+        if effective_budget_mb > 0 and est_mb > 0:
+            entry["fits"] = est_mb <= tight_mb
+
+    def _file_quality(entry: dict[str, Any]) -> float:
+        return VARIANT_QUALITY.get((entry.get("variant") or "").lower(), 1.0)
+
+    def _pick_best(candidates: list[dict[str, Any]]) -> dict[str, Any]:
+        for c in candidates:
+            if c.get("sha256"):
+                return c
+        return candidates[0]
+
+    recommended = rec_bundle.get("recommended")
+    if rated_files and effective_budget_mb > 0:
+        comfort_fits = [f for f in rated_files if 0 < int(f.get("estimated_mb") or 0) <= comfort_mb]
+        tight_fits = [f for f in rated_files if 0 < int(f.get("estimated_mb") or 0) <= tight_mb]
+        if comfort_fits:
+            comfort_fits.sort(key=lambda f: (-_file_quality(f), f["index"]))
+            recommended = _pick_best(comfort_fits)
+        elif tight_fits:
+            tight_fits.sort(key=lambda f: (-_file_quality(f), f["index"]))
+            recommended = _pick_best(tight_fits)
+        else:
+            known = [f for f in rated_files if int(f.get("estimated_mb") or 0) > 0]
+            if known:
+                known.sort(key=lambda f: (int(f.get("estimated_mb") or 0), f["index"]))
+                recommended = known[0]
+
+    estimated_mb = int((recommended or {}).get("estimated_mb") or 0)
+    rec_variant = str((recommended or {}).get("variant") or "")
+    rec_index = int((recommended or {}).get("index") or 0)
+
+    mem_label = (
+        f"{profile.vram_gb:.0f} GB unified"
+        if is_mps and profile.vram_gb > 0
+        else f"{profile.vram_gb:.0f} GB VRAM"
+        if profile.vram_gb > 0
+        else "CPU"
+    )
+    device_desc = f"{profile.device_name} ({mem_label})"
+    est_gb_text = f"~{estimated_mb / 1024:.1f} GB" if estimated_mb > 0 else ""
+    variant_text = f" ({rec_variant.upper()})" if rec_variant else ""
+
+    if arch and arch not in supported_set:
+        status = "unsupported_arch"
+        label = "Unsupported arch"
+        reason = f'Architecture "{arch}" is not supported by this DreamForge engine.'
+    elif not profile.has_gpu or effective_budget_mb <= 0:
+        status = "cpu_only"
+        label = "CPU only (slow)"
+        reason = f"No GPU detected ({profile.device_name}); generation will run slowly on CPU."
+    elif estimated_mb <= 0:
+        status = "unknown"
+        label = "Check VRAM"
+        reason = f"Size/architecture not specified by provider — verify against {device_desc}."
+    elif estimated_mb <= comfort_mb:
+        status = "compatible"
+        label = "Compatible"
+        reason = f"Fits {device_desc} · {est_gb_text}{variant_text}."
+    elif estimated_mb <= tight_mb:
+        status = "tight"
+        label = "Tight fit"
+        reason = (
+            f"Tight fit on {device_desc} · {est_gb_text}{variant_text} "
+            f"(will use memory offload; lower resolution/batch recommended)."
+        )
+    else:
+        status = "too_large"
+        label = "Exceeds VRAM"
+        reason = (
+            f"Needs {est_gb_text}{variant_text}, exceeding {device_desc} "
+            f"(try a quantized FP8/GGUF variant or lower-memory model)."
+        )
+
+    compatible_files = sum(
+        1
+        for f in rated_files
+        if int(f.get("estimated_mb") or 0) > 0 and int(f.get("estimated_mb") or 0) <= tight_mb
+    )
+    return {
+        "status": status,
+        "label": label,
+        "reason": reason,
+        "estimated_mb": estimated_mb,
+        "usable_vram_mb": comfort_mb,
+        "tight_vram_mb": tight_mb,
+        "device_name": profile.device_name,
+        "device_vram_gb": profile.vram_gb,
+        "backend": profile.backend,
+        "recommended_variant": rec_variant,
+        "recommended_file_index": rec_index,
+        "recommended": recommended,
+        "file_estimates_mb": [int(f.get("estimated_mb") or 0) for f in rated_files],
+        "compatible_files_count": compatible_files,
+        "fits": status in {"compatible", "tight"},
     }
 
 

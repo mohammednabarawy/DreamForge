@@ -71,9 +71,18 @@ def _github_archive_url(repo_url: str, commit: str) -> str:
     return f"https://github.com/{owner_repo}/archive/{commit}.zip"
 
 
+def _ssl_context():
+    try:
+        from dreamforge_provider_base import default_ssl_context
+
+        return default_ssl_context()
+    except Exception:
+        return None
+
+
 def _download_bytes(url: str, *, timeout: float = 120.0) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": "DreamForgeBootstrap/1.0"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with urllib.request.urlopen(request, timeout=timeout, context=_ssl_context()) as response:
         return response.read()
 
 
@@ -87,7 +96,7 @@ def _download_file(
     """Stream a URL to disk with timeout (avoids loading large archives into RAM)."""
     request = urllib.request.Request(url, headers={"User-Agent": "DreamForgeBootstrap/1.0"})
     dest.parent.mkdir(parents=True, exist_ok=True)
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with urllib.request.urlopen(request, timeout=timeout, context=_ssl_context()) as response:
         total = int(response.headers.get("Content-Length") or 0)
         read = 0
         chunk_size = 256 * 1024
@@ -350,7 +359,17 @@ def _verify_python_import(python: Path, module: str) -> None:
 def step_install_embedded_python(*, progress: ProgressCallback = None) -> None:
     layout = init_runtime_paths()
     if os.name != "nt":
-        _report(progress, "Skipping python_embeded on this platform (use venv from setup.sh).")
+        for candidate in (
+            layout.install_root / "venv" / "bin" / "python",
+            layout.data_root / "venv" / "bin" / "python",
+        ):
+            if candidate.is_file():
+                _report(progress, f"Using existing Python virtual environment at {candidate.parent.parent}")
+                return
+        target_venv = (layout.data_root if layout.packaged else layout.install_root) / "venv"
+        _report(progress, f"Creating Python virtual environment at {target_venv}…")
+        subprocess.check_call([sys.executable, "-m", "venv", str(target_venv)])
+        init_runtime_paths()
         return
     from dreamforge_embedded_python import ensure_embedded_python, embedded_python_status
 
@@ -744,21 +763,22 @@ def check_first_run_setup() -> dict[str, Any]:
     return setup_info
 
 
-def check_github_updates(current_version: str = "2.0.0") -> dict[str, Any]:
-    """Check for latest release on GitHub asynchronously / without blocking."""
+def check_github_updates(current_version: str = "0.3.0-beta") -> dict[str, Any]:
+    """Check for latest release (including beta prereleases) on GitHub without blocking."""
     try:
         req = urllib.request.Request(
-            "https://api.github.com/repos/mohammednabarawy/DreamForge/releases/latest",
+            "https://api.github.com/repos/mohammednabarawy/DreamForge/releases?per_page=1",
             headers={"User-Agent": "DreamForge-UpdateCheck/1.0"},
         )
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            tag_name = data.get("tag_name", "").lstrip("v")
+        with urllib.request.urlopen(req, timeout=4, context=_ssl_context()) as resp:
+            releases = json.loads(resp.read().decode("utf-8"))
+            data = releases[0] if isinstance(releases, list) and releases else {}
+            tag_name = str(data.get("tag_name") or "").lstrip("v")
             return {
                 "update_available": tag_name != "" and tag_name != current_version,
-                "latest_version": tag_name,
+                "latest_version": tag_name or current_version,
                 "current_version": current_version,
-                "release_url": data.get("html_url", ""),
+                "release_url": str(data.get("html_url") or ""),
             }
     except Exception:
         return {

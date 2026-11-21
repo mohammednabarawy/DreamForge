@@ -64,14 +64,20 @@ import {
 import {
   loadActiveSessionId,
   loadHistoryScope,
+  loadHistorySortOrder,
   loadFavoriteManifests,
   loadLastSelectedManifest,
   loadSessionRegistry,
   purgeHistoryMetadataForManifest,
   saveActiveSessionId,
+  saveHistorySortOrder,
   saveLastSelectedManifest,
   saveSessionRegistry,
+  type HistorySortOrder,
 } from "../lib/historyStorage";
+import { copyTextToClipboard } from "../lib/clipboard";
+import { requestConfirm } from "../lib/confirmDialog";
+import { invalidateThumbnailCache } from "../lib/preview-queue";
 import {
   cancelGeneration,
   checkModelDependencies,
@@ -109,6 +115,7 @@ import {
   onGenerationBusy,
   onGenerationWarning,
   OutputItem,
+  OutputModelSummary,
   readJobLog,
   readLivePreview,
   readWorkerLog,
@@ -408,10 +415,23 @@ export function useDreamForge() {
   const [outputsTotal, setOutputsTotal] = useState(0);
   const [outputsHasMore, setOutputsHasMore] = useState(false);
   const [outputsLoading, setOutputsLoading] = useState(false);
+  const [outputsError, setOutputsError] = useState<string | null>(null);
   const [outputSearch, setOutputSearch] = useState("");
+  const [historyModelFilter, setHistoryModelFilterState] = useState("");
+  const [historySortOrder, setHistorySortOrderState] = useState<HistorySortOrder>(() =>
+    loadHistorySortOrder(),
+  );
+  const [historySessionCounts, setHistorySessionCounts] = useState<Record<string, number>>({});
+  const [historyAvailableModels, setHistoryAvailableModels] = useState<OutputModelSummary[]>([]);
   const [historyScrollToken, setHistoryScrollToken] = useState(0);
   const outputSearchRef = useRef(outputSearch);
   outputSearchRef.current = outputSearch;
+  const historyModelFilterRef = useRef(historyModelFilter);
+  historyModelFilterRef.current = historyModelFilter;
+  const historySortOrderRef = useRef(historySortOrder);
+  historySortOrderRef.current = historySortOrder;
+  const canvasPreviewRequestRef = useRef(0);
+  const outputsBootRetryDoneRef = useRef(false);
   const [inventory, setInventory] = useState(() => {
     const hydrated = hydrateInventoryFromSnapshot(readModelLibrarySnapshot());
     return hydrated ?? parseInventoryResponse({ categories: {}, styles: [], style_groups: [] });
@@ -618,7 +638,9 @@ export function useDreamForge() {
       ) {
         return;
       }
+      const reqId = ++canvasPreviewRequestRef.current;
       const url = await finalPreviewUrlForPath(path);
+      if (reqId !== canvasPreviewRequestRef.current) return;
       if (url) setCanvasPreview(url, path, { force: opts?.force });
     },
     [setCanvasPreview],
@@ -782,15 +804,22 @@ export function useDreamForge() {
       selectNewest?: boolean;
       offset?: number;
       append?: boolean;
+      model?: string;
+      sort?: HistorySortOrder;
     }) => {
       const request = ++outputRequestRef.current;
       setOutputsLoading(true);
       try {
         const q = outputSearchRef.current.trim();
         const scope = loadHistoryScope();
+        const modelFilter =
+          opts?.model !== undefined ? opts.model : historyModelFilterRef.current;
+        const sortOrder = opts?.sort ?? historySortOrderRef.current;
         const filters = {
           session: scope === "session" ? loadActiveSessionId() : undefined,
           manifestPaths: scope === "favorites" ? [...loadFavoriteManifests()] : undefined,
+          model: modelFilter || undefined,
+          sort: sortOrder,
         };
         const offset = opts?.append
           ? outputsLengthRef.current
@@ -808,16 +837,51 @@ export function useDreamForge() {
             });
 
         if (request !== outputRequestRef.current) return;
-        setSessionRegistry((previous) => {
-          const known = new Set(previous.map((session) => session.id));
-          const discovered = groupOutputsBySession(page.items)
-            .filter((session) => !known.has(session.id))
-            .map(({ id, label }) => ({ id, label }));
-          if (discovered.length === 0) return previous;
-          const next = [...previous, ...discovered];
-          saveSessionRegistry(next);
-          return next;
-        });
+        setOutputsError(null);
+        outputsBootRetryDoneRef.current = true;
+
+        if (Array.isArray(page.sessions) && page.sessions.length > 0) {
+          const nextCounts: Record<string, number> = {};
+          for (const s of page.sessions) {
+            nextCounts[s.id] = s.count;
+          }
+          setHistorySessionCounts(nextCounts);
+          setSessionRegistry((previous) => {
+            const known = new Set(previous.map((session) => session.id));
+            const discovered = page.sessions!
+              .filter((s) => s.id && !known.has(s.id))
+              .map((s) => ({
+                id: s.id,
+                label:
+                  s.id === "root"
+                    ? "Outputs (root)"
+                    : s.id === "unsorted"
+                      ? "Unsorted"
+                      : s.id === "dreamforge" || s.id === "mission_control"
+                        ? "DreamForge"
+                        : s.id.replace(/_/g, " "),
+              }));
+            if (discovered.length === 0) return previous;
+            const next = [...previous, ...discovered];
+            saveSessionRegistry(next);
+            return next;
+          });
+        } else {
+          setSessionRegistry((previous) => {
+            const known = new Set(previous.map((session) => session.id));
+            const discovered = groupOutputsBySession(page.items)
+              .filter((session) => !known.has(session.id))
+              .map(({ id, label }) => ({ id, label }));
+            if (discovered.length === 0) return previous;
+            const next = [...previous, ...discovered];
+            saveSessionRegistry(next);
+            return next;
+          });
+        }
+        if (Array.isArray(page.models)) {
+          setHistoryAvailableModels(page.models);
+        }
+
         if (opts?.append) {
           setOutputs((prev) => {
             const seen = new Set(prev.map((i) => i.manifest_path));
@@ -858,12 +922,41 @@ export function useDreamForge() {
           });
         }
       } catch (e) {
-        if (request === outputRequestRef.current) setStatus(`Outputs error: ${String(e)}`);
+        if (request === outputRequestRef.current) {
+          const msg = e instanceof Error ? e.message : String(e);
+          setOutputsError(msg);
+          setStatus(`Outputs error: ${msg}`);
+          if (!outputsBootRetryDoneRef.current && outputsLengthRef.current === 0) {
+            outputsBootRetryDoneRef.current = true;
+            window.setTimeout(() => {
+              void refreshOutputs({ keepSelection: true });
+            }, 1500);
+          }
+        }
       } finally {
         if (request === outputRequestRef.current) setOutputsLoading(false);
       }
     },
     [],
+  );
+
+  const setHistoryModelFilter = useCallback(
+    (model: string) => {
+      historyModelFilterRef.current = model;
+      setHistoryModelFilterState(model);
+      void refreshOutputs({ keepSelection: true, model });
+    },
+    [refreshOutputs],
+  );
+
+  const setHistorySortOrder = useCallback(
+    (order: HistorySortOrder) => {
+      historySortOrderRef.current = order;
+      setHistorySortOrderState(order);
+      saveHistorySortOrder(order);
+      void refreshOutputs({ keepSelection: true, sort: order });
+    },
+    [refreshOutputs],
   );
 
   const loadMoreOutputs = useCallback(() => {
@@ -1781,7 +1874,7 @@ export function useDreamForge() {
 
   const copyOutputPath = useCallback(async (path: string) => {
     try {
-      await navigator.clipboard.writeText(path);
+      await copyTextToClipboard(path);
       setStatus("Copied path to clipboard");
     } catch (e) {
       setStatus(`Copy failed: ${String(e)}`);
@@ -1789,15 +1882,28 @@ export function useDreamForge() {
   }, []);
 
   const removeDeletedFromSelection = useCallback(
-    (manifestPath?: string, imagePath?: string) => {
+    (manifestPath?: string, imagePath?: string, deletedImagePaths: string[] = []) => {
+      const deletedNorms = new Set(
+        [imagePath, ...deletedImagePaths]
+          .filter((p): p is string => Boolean(p))
+          .map((p) => normalizePreviewPath(p)),
+      );
+      let replacementPreviewPath: string | null = null;
+      let clearedSelected = false;
+
       setSelected((prev) => {
         if (!prev) return null;
         if (manifestPath && prev.manifest_path === manifestPath) {
+          clearedSelected = true;
           return null;
         }
         if (imagePath && prev.images.includes(imagePath)) {
           const nextImages = prev.images.filter((p) => p !== imagePath);
-          if (nextImages.length === 0) return null;
+          if (nextImages.length === 0) {
+            clearedSelected = true;
+            return null;
+          }
+          replacementPreviewPath = nextImages[0];
           return { ...prev, images: nextImages };
         }
         return prev;
@@ -1813,29 +1919,45 @@ export function useDreamForge() {
           })
           .filter((item): item is OutputItem => item !== null),
       );
-      if (manifestPath) {
+      if (imagePath) {
+        setResultCandidates((prev) => prev.filter((p) => p !== imagePath));
+      } else if (manifestPath && clearedSelected) {
+        setResultCandidates([]);
+        setActiveCandidatePath(null);
+      }
+      const showingDeletedOnCanvas =
+        Boolean(canvasPreviewPathRef.current) &&
+        deletedNorms.has(canvasPreviewPathRef.current);
+      if (replacementPreviewPath && showingDeletedOnCanvas) {
+        void setCanvasPreviewFromPath(replacementPreviewPath, { force: true });
+      } else if (clearedSelected || showingDeletedOnCanvas) {
+        lastSelectedKeyRef.current = "";
         canvasPreviewPathRef.current = "";
         previewUrlRef.current = null;
         setPreviewUrl(null);
       }
     },
-    [],
+    [setCanvasPreviewFromPath],
   );
 
   const deleteOutputManifest = useCallback(
     async (item: OutputItem) => {
       const label = item.title || excerptPrompt(item.prompt, 40) || "this generation";
-      if (
-        !window.confirm(
-          `Delete "${label}" and all of its files and generation metadata? This cannot be undone.`,
-        )
-      ) {
+      const confirmed = await requestConfirm({
+        title: "Delete generation?",
+        message: `Delete "${label}" and all of its files and generation metadata? This cannot be undone.`,
+        confirmLabel: "Delete",
+        destructive: true,
+      });
+      if (!confirmed) {
         return;
       }
       try {
         await deleteOutput(item.manifest_path);
+        for (const img of item.images) invalidateThumbnailCache(img);
         purgeHistoryMetadataForManifest(item.manifest_path);
-        removeDeletedFromSelection(item.manifest_path);
+        removeDeletedFromSelection(item.manifest_path, undefined, item.images);
+        setOutputsTotal((n) => Math.max(0, n - 1));
         setStatus("Deleted generation");
         void refreshOutputs({ keepSelection: true });
       } catch (e) {
@@ -1848,21 +1970,26 @@ export function useDreamForge() {
   const deleteOutputImageFile = useCallback(
     async (item: OutputItem, imagePath: string) => {
       const name = imagePath.split(/[/\\]/).pop() ?? "image";
-      if (
-        !window.confirm(
-          `Delete image "${name}"? The manifest will be updated or removed if it was the last file.`,
-        )
-      ) {
+      const confirmed = await requestConfirm({
+        title: "Delete image?",
+        message: `Delete image "${name}"? The manifest will be updated or removed if it was the last file.`,
+        confirmLabel: "Delete image",
+        destructive: true,
+      });
+      if (!confirmed) {
         return;
       }
       try {
         const res = await deleteOutputImage(item.manifest_path, imagePath);
+        invalidateThumbnailCache(imagePath);
         if (res.manifest_removed) {
           purgeHistoryMetadataForManifest(item.manifest_path);
+          setOutputsTotal((n) => Math.max(0, n - 1));
         }
         removeDeletedFromSelection(
           res.manifest_removed ? item.manifest_path : undefined,
           imagePath,
+          [imagePath],
         );
         setStatus("Deleted image");
         void refreshOutputs({ keepSelection: true });
@@ -1875,20 +2002,24 @@ export function useDreamForge() {
 
   const deleteOutputSession = useCallback(
     async (session: OutputSession) => {
+      const count = historySessionCounts[session.id] ?? session.items.length;
       const noun =
         session.id === "root"
-          ? `${session.items.length} root-level generation(s)`
-          : `the entire "${session.label}" folder (${session.items.length} generation(s))`;
-      if (
-        !window.confirm(
-          `Delete ${noun}? All manifests and images will be removed. This cannot be undone.`,
-        )
-      ) {
+          ? `${count} root-level generation(s)`
+          : `the entire "${session.label}" project (${count} generation(s))`;
+      const confirmed = await requestConfirm({
+        title: "Delete project?",
+        message: `Delete ${noun}? All manifests and images will be removed. This cannot be undone.`,
+        confirmLabel: "Delete project",
+        destructive: true,
+      });
+      if (!confirmed) {
         return;
       }
       try {
         await deleteSession(session.id);
         for (const item of session.items) {
+          for (const img of item.images) invalidateThumbnailCache(img);
           purgeHistoryMetadataForManifest(item.manifest_path);
         }
         setSessionRegistry((prev) => {
@@ -1904,13 +2035,13 @@ export function useDreamForge() {
             ? null
             : prev,
         );
-        setStatus(`Deleted session ${session.label}`);
+        setStatus(`Deleted project ${session.label}`);
         void refreshOutputs();
       } catch (e) {
         setStatus(`Delete failed: ${String(e)}`);
       }
     },
-    [refreshOutputs, switchSession],
+    [historySessionCounts, refreshOutputs, switchSession],
   );
 
   const selectModelGallery = useCallback(
@@ -4603,8 +4734,15 @@ export function useDreamForge() {
     outputsLoaded: outputs.length,
     outputsHasMore,
     outputsLoading,
+    outputsError,
     outputSearch,
     setOutputSearch,
+    historyModelFilter,
+    setHistoryModelFilter,
+    historySortOrder,
+    setHistorySortOrder,
+    historySessionCounts,
+    historyAvailableModels,
     historyScrollToken,
     reuseOutputPrompt,
     historyEditThis,

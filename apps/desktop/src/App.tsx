@@ -7,6 +7,7 @@ import { HistoryPanel } from "./components/HistoryPanel";
 import { CanvasPanel } from "./components/CanvasPanel";
 import { InspectorPanel } from "./components/InspectorPanel";
 import { CompanionDownloadModal } from "./components/CompanionDownloadModal";
+import { ConfirmDialogModal } from "./components/ConfirmDialogModal";
 import { InpaintMaskModal } from "./components/InpaintMaskModal";
 import { FullLogModal } from "./components/FullLogModal";
 import { AppSettingsModal } from "./components/AppSettingsModal";
@@ -144,6 +145,12 @@ function DreamForgeStudio() {
           <div className="df-panel-shell">
           <HistoryPanel
             sessions={mc.sessions}
+            sessionCounts={mc.historySessionCounts}
+            availableModels={mc.historyAvailableModels}
+            modelFilter={mc.historyModelFilter}
+            onModelFilterChange={mc.setHistoryModelFilter}
+            sortOrder={mc.historySortOrder}
+            onSortOrderChange={mc.setHistorySortOrder}
             activeSessionId={mc.activeSessionId}
             onSaveSessionChange={(id) => mc.switchSession(id)}
             onCreateSession={(name) => mc.createSession(name)}
@@ -156,6 +163,7 @@ function DreamForgeStudio() {
             outputsTotal={mc.outputsTotal}
             outputsLoaded={mc.outputsLoaded}
             loadingOutputs={mc.outputsLoading}
+            outputsError={mc.outputsError}
             outputSearch={mc.outputSearch}
             onOutputSearchChange={mc.setOutputSearch}
             onReusePrompt={(item) => void mc.reuseOutputPrompt(item)}
@@ -398,6 +406,7 @@ function DreamForgeStudio() {
         onDismissWarning={mc.dismissWarning}
         onDismissAllWarnings={mc.dismissAllWarnings}
       />
+      <ConfirmDialogModal />
       </div>
     </>
   );

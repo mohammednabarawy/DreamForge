@@ -1,4 +1,7 @@
 import {
+  AlertCircle,
+  ArrowDownWideNarrow,
+  ArrowUpNarrowWide,
   ChevronDown,
   ChevronRight,
   LayoutGrid,
@@ -8,27 +11,38 @@ import {
   Search,
   Star,
   Trash2,
+  X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  hasFavoriteManifest,
   loadCollapsedDateGroups,
   loadFavoriteManifests,
   loadHistoryScope,
   loadHistoryViewMode,
+  normalizeManifestKey,
   saveCollapsedDateGroups,
   saveFavoriteManifests,
   saveHistoryScope,
   saveHistoryViewMode,
+  toggleFavoriteInSet,
   type HistoryScope,
+  type HistorySortOrder,
   type HistoryViewMode,
 } from "../lib/historyStorage";
-import { groupHistoryByDate } from "../lib/historyUtils";
+import { groupHistoryByDate, parseHistoryTimestamp } from "../lib/historyUtils";
 import type { OutputSession } from "../lib/sessions";
-import type { OutputItem } from "../lib/tauri-api";
+import type { OutputItem, OutputModelSummary } from "../lib/tauri-api";
 import { HistoryItemRow } from "./HistoryItemRow";
 
 type Props = {
   sessions: OutputSession[];
+  sessionCounts?: Record<string, number>;
+  availableModels?: OutputModelSummary[];
+  modelFilter?: string;
+  onModelFilterChange?: (model: string) => void;
+  sortOrder?: HistorySortOrder;
+  onSortOrderChange?: (order: HistorySortOrder) => void;
   activeSessionId: string;
   onSaveSessionChange: (sessionId: string) => void;
   onCreateSession: (name: string) => void;
@@ -39,6 +53,7 @@ type Props = {
   outputsTotal?: number;
   outputsLoaded?: number;
   loadingOutputs?: boolean;
+  outputsError?: string | null;
   outputSearch: string;
   onOutputSearchChange: (query: string) => void;
   onReusePrompt: (item: OutputItem) => void;
@@ -62,6 +77,12 @@ const SCOPE_OPTIONS: { id: HistoryScope; label: string }[] = [
 
 export function HistoryPanel({
   sessions,
+  sessionCounts = {},
+  availableModels = [],
+  modelFilter = "",
+  onModelFilterChange,
+  sortOrder = "newest",
+  onSortOrderChange,
   activeSessionId,
   onSaveSessionChange,
   onCreateSession,
@@ -72,6 +93,7 @@ export function HistoryPanel({
   outputsTotal = 0,
   outputsLoaded = 0,
   loadingOutputs = false,
+  outputsError = null,
   outputSearch,
   onOutputSearchChange,
   onReusePrompt,
@@ -96,6 +118,12 @@ export function HistoryPanel({
   const [favorites, setFavorites] = useState<Set<string>>(() =>
     loadFavoriteManifests(),
   );
+  const [newSessionOpen, setNewSessionOpen] = useState(false);
+  const [newSessionName, setNewSessionName] = useState("");
+  const onRefreshRef = useRef(onRefresh);
+  onRefreshRef.current = onRefresh;
+  const didMountSearchRef = useRef(false);
+  const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const syncFavorites = () => setFavorites(loadFavoriteManifests());
@@ -103,10 +131,6 @@ export function HistoryPanel({
     return () =>
       window.removeEventListener("dreamforge-favorites-changed", syncFavorites);
   }, []);
-  const [newSessionOpen, setNewSessionOpen] = useState(false);
-  const [newSessionName, setNewSessionName] = useState("");
-  const onRefreshRef = useRef(onRefresh);
-  onRefreshRef.current = onRefresh;
 
   const activeLabel = useMemo(() => {
     const s = sessions.find((x) => x.id === activeSessionId);
@@ -119,17 +143,34 @@ export function HistoryPanel({
       if (scope === "session" && session.id !== activeSessionId) continue;
       items.push(...session.items);
     }
-    items.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-    if (scope === "favorites") {
-      return items.filter((item) => favorites.has(item.manifest_path));
-    }
-    return items;
-  }, [sessions, scope, activeSessionId, favorites]);
+    const dir = sortOrder === "oldest" ? 1 : -1;
+    items.sort((a, b) => (parseHistoryTimestamp(a) - parseHistoryTimestamp(b)) * dir);
+    const filteredByScope =
+      scope === "favorites"
+        ? items.filter((item) => hasFavoriteManifest(favorites, item.manifest_path))
+        : items;
+    if (!modelFilter) return filteredByScope;
+    const targetModel = modelFilter.toLowerCase();
+    return filteredByScope.filter(
+      (item) =>
+        item.model_name.toLowerCase() === targetModel ||
+        item.model_stem.toLowerCase() === targetModel,
+    );
+  }, [sessions, scope, activeSessionId, favorites, sortOrder, modelFilter]);
 
   const dateGroups = useMemo(
-    () => groupHistoryByDate(flatItems),
-    [flatItems],
+    () => groupHistoryByDate(flatItems, sortOrder),
+    [flatItems, sortOrder],
   );
+
+  const visibleItems = useMemo(() => {
+    const list: OutputItem[] = [];
+    for (const group of dateGroups) {
+      if (collapsedDates[group.id]) continue;
+      list.push(...group.items);
+    }
+    return list;
+  }, [dateGroups, collapsedDates]);
 
   const setView = (mode: HistoryViewMode) => {
     setViewMode(mode);
@@ -143,9 +184,7 @@ export function HistoryPanel({
   };
 
   const toggleFavorite = (manifestPath: string) => {
-    const next = new Set(favorites);
-    if (next.has(manifestPath)) next.delete(manifestPath);
-    else next.add(manifestPath);
+    const next = toggleFavoriteInSet(favorites, manifestPath);
     setFavorites(next);
     saveFavoriteManifests(next);
   };
@@ -158,17 +197,82 @@ export function HistoryPanel({
     });
   };
 
+  // Debounced search refresh — skip initial mount to avoid racing with boot refreshOutputs().
   useEffect(() => {
-    const t = window.setTimeout(() => onRefreshRef.current(), 280);
+    if (!didMountSearchRef.current) {
+      didMountSearchRef.current = true;
+      return;
+    }
+    const t = window.setTimeout(() => onRefreshRef.current(), 250);
     return () => window.clearTimeout(t);
   }, [outputSearch]);
 
+  // Infinite-scroll auto-load when user nears bottom of history list.
+  useEffect(() => {
+    const sentinel = loadMoreSentinelRef.current;
+    if (!sentinel || !onLoadMore || loadingOutputs || outputsLoaded >= outputsTotal) {
+      return;
+    }
+    if (typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          onLoadMore();
+        }
+      },
+      { rootMargin: "160px" },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [onLoadMore, loadingOutputs, outputsLoaded, outputsTotal]);
+
+  const selectedKey = normalizeManifestKey(selected?.manifest_path);
+  const hasActiveFilters = Boolean(
+    outputSearch.trim() || scope !== "all" || modelFilter,
+  );
+  const remainingCount = Math.max(0, outputsTotal - outputsLoaded);
+
+  const handleListKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (visibleItems.length === 0) return;
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    const target = event.target as HTMLElement | null;
+    if (target && (target.tagName === "INPUT" || target.tagName === "SELECT" || target.tagName === "TEXTAREA")) {
+      return;
+    }
+    event.preventDefault();
+    const currentIndex = visibleItems.findIndex(
+      (item) => normalizeManifestKey(item.manifest_path) === selectedKey,
+    );
+    const delta = event.key === "ArrowDown" ? 1 : -1;
+    const nextIndex =
+      currentIndex < 0
+        ? delta > 0
+          ? 0
+          : visibleItems.length - 1
+        : Math.max(0, Math.min(visibleItems.length - 1, currentIndex + delta));
+    const nextItem = visibleItems[nextIndex];
+    if (nextItem) {
+      onSelect(nextItem);
+    }
+  };
+
+  const clearAllFilters = () => {
+    if (outputSearch) onOutputSearchChange("");
+    if (modelFilter && onModelFilterChange) onModelFilterChange("");
+    if (scope !== "all") setScopeFilter("all");
+  };
+
   return (
     <aside className="flex h-full min-h-0 min-w-0 flex-col glass-panel rounded-none border-y-0 border-l-0">
-      <div className="border-b border-dfui-border/60 px-2 py-2">
+      <div className="flex items-center justify-between border-b border-dfui-border/60 px-2 py-2">
         <p className="text-[10px] font-semibold uppercase tracking-wide text-dfui-tertiary">
           History
         </p>
+        {outputsTotal > 0 && (
+          <span className="rounded bg-dfui-bg/60 px-1.5 py-0.5 font-mono text-[9px] text-dfui-tertiary">
+            {outputsTotal}
+          </span>
+        )}
       </div>
 
       <div className="space-y-2 border-b border-dfui-border/60 px-2 py-2">
@@ -186,12 +290,15 @@ export function HistoryPanel({
             className="min-w-0 flex-1 rounded-lg border border-dfui-accent/30 bg-dfui-bg/50 py-1.5 pl-2 pr-6 font-mono text-[10px] text-dfui-fg focus:border-dfui-accent/50 focus:outline-none"
             title="New generations save under this project folder"
           >
-            {sessions.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.label}
-                {s.items.length > 0 ? ` (${s.items.length})` : ""}
-              </option>
-            ))}
+            {sessions.map((s) => {
+              const count = sessionCounts[s.id] ?? s.items.length;
+              return (
+                <option key={s.id} value={s.id}>
+                  {s.label}
+                  {count > 0 ? ` (${count})` : ""}
+                </option>
+              );
+            })}
           </select>
           <button
             type="button"
@@ -270,6 +377,11 @@ export function HistoryPanel({
                 <span className="inline-flex items-center gap-1">
                   <Star size={10} />
                   {opt.label}
+                  {favorites.size > 0 && (
+                    <span className="font-mono text-[9px] opacity-75">
+                      {favorites.size}
+                    </span>
+                  )}
                 </span>
               ) : (
                 opt.label
@@ -284,21 +396,76 @@ export function HistoryPanel({
             className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-dfui-tertiary"
           />
           <input
-            type="search"
+            type="text"
             value={outputSearch}
             onChange={(e) => onOutputSearchChange(e.target.value)}
-            placeholder="Search prompts, models…"
-            className="w-full rounded-lg border border-dfui-border/60 bg-dfui-bg/40 py-1.5 pl-7 pr-2 font-mono text-[10px] text-dfui-fg placeholder:text-dfui-tertiary focus:border-dfui-accent/40 focus:outline-none"
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && outputSearch) {
+                e.preventDefault();
+                onOutputSearchChange("");
+              }
+            }}
+            placeholder="Search prompts, models, styles…"
+            className="w-full rounded-lg border border-dfui-border/60 bg-dfui-bg/40 py-1.5 pl-7 pr-6 font-mono text-[10px] text-dfui-fg placeholder:text-dfui-tertiary focus:border-dfui-accent/40 focus:outline-none"
           />
+          {outputSearch && (
+            <button
+              type="button"
+              aria-label="Clear search"
+              title="Clear search"
+              onClick={() => onOutputSearchChange("")}
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-dfui-tertiary hover:text-dfui-fg"
+            >
+              <X size={11} />
+            </button>
+          )}
         </div>
+
+        {onModelFilterChange && (availableModels.length > 1 || modelFilter) && (
+          <select
+            aria-label="Filter history by model"
+            value={modelFilter}
+            onChange={(e) => onModelFilterChange(e.target.value)}
+            className="w-full rounded-lg border border-dfui-border/60 bg-dfui-bg/40 py-1 pl-2 pr-6 font-mono text-[10px] text-dfui-fg focus:border-dfui-accent/40 focus:outline-none"
+            title="Filter history by model"
+          >
+            <option value="">All models</option>
+            {availableModels.map((m) => (
+              <option key={m.name} value={m.name}>
+                {m.stem} ({m.count})
+              </option>
+            ))}
+          </select>
+        )}
 
         <div className="flex items-center justify-between gap-1">
           <p className="min-w-0 truncate text-[10px] text-dfui-tertiary">
-            {outputSearch.trim()
+            {outputSearch.trim() || modelFilter
               ? `${flatItems.length} match${flatItems.length === 1 ? "" : "es"}`
               : `${flatItems.length} shown · ${outputsLoaded} of ${outputsTotal || outputsLoaded} loaded`}
           </p>
           <div className="flex shrink-0 items-center gap-0.5">
+            {onSortOrderChange && (
+              <button
+                type="button"
+                title={
+                  sortOrder === "newest"
+                    ? "Sorted newest first — click for oldest first"
+                    : "Sorted oldest first — click for newest first"
+                }
+                aria-label="Toggle sort order"
+                onClick={() =>
+                  onSortOrderChange(sortOrder === "newest" ? "oldest" : "newest")
+                }
+                className="rounded-md border border-dfui-border/60 p-1 text-dfui-muted hover:border-dfui-accent/40 hover:text-dfui-fg"
+              >
+                {sortOrder === "newest" ? (
+                  <ArrowDownWideNarrow size={12} />
+                ) : (
+                  <ArrowUpNarrowWide size={12} />
+                )}
+              </button>
+            )}
             <button
               type="button"
               title="List view"
@@ -332,11 +499,11 @@ export function HistoryPanel({
               onClick={onRefresh}
               disabled={loadingOutputs}
               className="rounded-md border border-dfui-border/60 p-1 text-dfui-muted hover:border-dfui-accent/40 hover:text-dfui-fg disabled:opacity-50"
-              title="Refresh"
+              title="Refresh library"
               aria-label="Refresh library"
             >
               <RefreshCw
-                size={14}
+                size={12}
                 className={loadingOutputs ? "animate-spin" : undefined}
               />
             </button>
@@ -344,50 +511,108 @@ export function HistoryPanel({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-2">
+      {outputsError && (
+        <div className="mx-2 mt-2 flex items-start gap-1.5 rounded-lg border border-red-400/35 bg-red-500/10 px-2 py-1.5 text-[10px] text-red-200">
+          <AlertCircle size={13} className="mt-0.5 shrink-0 text-red-300" />
+          <div className="min-w-0 flex-1">
+            <p className="font-medium">Couldn&apos;t refresh history</p>
+            <p className="truncate text-[9px] text-red-200/80" title={outputsError}>
+              {outputsError}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onRefresh}
+            className="shrink-0 rounded border border-red-300/40 px-1.5 py-0.5 text-[9px] font-medium hover:bg-red-500/20"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      <div
+        className="flex-1 overflow-y-auto p-2 focus:outline-none"
+        tabIndex={0}
+        onKeyDown={handleListKeyDown}
+        aria-label="Generation history"
+      >
         {loadingOutputs && dateGroups.length === 0 ? (
-          <p className="px-2 py-8 text-center text-xs text-dfui-muted">
-            Loading history…
-          </p>
+          <div className={viewMode === "grid" ? "grid grid-cols-2 gap-1.5" : "space-y-1.5"}>
+            {Array.from({ length: 6 }).map((_, idx) => (
+              <div
+                key={idx}
+                className="animate-pulse rounded-lg border border-dfui-border/30 bg-dfui-bg/40 p-1.5"
+              >
+                <div
+                  className={
+                    viewMode === "grid"
+                      ? "aspect-square w-full rounded bg-dfui-panel/70"
+                      : "flex gap-2"
+                  }
+                >
+                  {viewMode === "list" && (
+                    <>
+                      <div className="h-11 w-11 shrink-0 rounded bg-dfui-panel/70" />
+                      <div className="flex-1 space-y-1.5 py-1">
+                        <div className="h-2.5 w-3/4 rounded bg-dfui-panel/70" />
+                        <div className="h-2 w-1/2 rounded bg-dfui-panel/50" />
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
         ) : dateGroups.length === 0 ? (
-          <p className="px-2 py-8 text-center text-xs leading-relaxed text-dfui-muted">
-            {outputSearch.trim() || scope === "favorites"
-              ? "No generations match your filters."
-              : scope === "session"
-                ? `No generations in ${activeLabel} yet.`
+          <div className="space-y-2 px-2 py-8 text-center text-xs leading-relaxed text-dfui-muted">
+            <p>
+              {hasActiveFilters
+                ? scope === "session" && !outputSearch.trim() && !modelFilter
+                  ? `No generations in ${activeLabel} yet.`
+                  : "No generations match your filters."
                 : (
                   <>
                     No generations yet. Outputs save under{" "}
                     <span className="font-mono text-dfui-data">outputs/</span>.
                   </>
                 )}
-          </p>
+            </p>
+            {hasActiveFilters && (
+              <button
+                type="button"
+                onClick={clearAllFilters}
+                className="rounded-md border border-dfui-border/70 px-2.5 py-1 text-[10px] text-dfui-secondary hover:border-dfui-accent/40 hover:text-dfui-fg"
+              >
+                Clear filters
+              </button>
+            )}
+          </div>
         ) : (
           <div className="space-y-3">
             {dateGroups.map((group) => {
               const collapsed = collapsedDates[group.id] ?? false;
               return (
                 <section key={group.id}>
-                  <div className="mb-1 flex items-center gap-0.5 px-0.5">
-                    <button
-                      type="button"
-                      onClick={() => toggleDateGroup(group.id)}
-                      className="shrink-0 rounded p-0.5 text-dfui-tertiary hover:text-dfui-fg"
-                      title={collapsed ? "Expand" : "Collapse"}
-                    >
+                  <button
+                    type="button"
+                    onClick={() => toggleDateGroup(group.id)}
+                    className="mb-1 flex w-full items-center gap-0.5 rounded px-0.5 py-0.5 text-left hover:bg-dfui-bg/40"
+                    title={collapsed ? "Expand group" : "Collapse group"}
+                  >
+                    <span className="shrink-0 text-dfui-tertiary">
                       {collapsed ? (
                         <ChevronRight size={14} />
                       ) : (
                         <ChevronDown size={14} />
                       )}
-                    </button>
-                    <p className="min-w-0 flex-1 truncate text-[10px] font-semibold uppercase tracking-wide text-dfui-tertiary">
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[10px] font-semibold uppercase tracking-wide text-dfui-tertiary">
                       {group.label}
-                    </p>
+                    </span>
                     <span className="font-mono text-[9px] text-dfui-tertiary">
                       {group.items.length}
                     </span>
-                  </div>
+                  </button>
                   {!collapsed && (
                     <ul
                       className={
@@ -396,33 +621,32 @@ export function HistoryPanel({
                           : "space-y-1"
                       }
                     >
-                      {group.items.map((item) => (
-                        <HistoryItemRow
-                          key={item.manifest_path}
-                          item={item}
-                          active={
-                            selected?.manifest_path === item.manifest_path
-                          }
-                          viewMode={viewMode}
-                          favorite={favorites.has(item.manifest_path)}
-                          scrollToken={
-                            selected?.manifest_path === item.manifest_path
-                              ? historyScrollToken
-                              : undefined
-                          }
-                          onSelect={onSelect}
-                          onToggleFavorite={toggleFavorite}
-                          onReusePrompt={onReusePrompt}
-                          onEditThis={onEditThis}
-                          onFixRegion={onFixRegion}
-                          onEnhance={onEnhance}
-                          simpleLabels={simpleHistoryLabels}
-                          onOpenFolder={onOpenFolder}
-                          onCopyPath={onCopyPath}
-                          onDeleteGeneration={onDeleteGeneration}
-                          onDeleteImage={onDeleteImage}
-                        />
-                      ))}
+                      {group.items.map((item) => {
+                        const isItemActive =
+                          normalizeManifestKey(item.manifest_path) === selectedKey &&
+                          selectedKey !== "";
+                        return (
+                          <HistoryItemRow
+                            key={item.manifest_path}
+                            item={item}
+                            active={isItemActive}
+                            viewMode={viewMode}
+                            favorite={hasFavoriteManifest(favorites, item.manifest_path)}
+                            scrollToken={isItemActive ? historyScrollToken : undefined}
+                            onSelect={onSelect}
+                            onToggleFavorite={toggleFavorite}
+                            onReusePrompt={onReusePrompt}
+                            onEditThis={onEditThis}
+                            onFixRegion={onFixRegion}
+                            onEnhance={onEnhance}
+                            simpleLabels={simpleHistoryLabels}
+                            onOpenFolder={onOpenFolder}
+                            onCopyPath={onCopyPath}
+                            onDeleteGeneration={onDeleteGeneration}
+                            onDeleteImage={onDeleteImage}
+                          />
+                        );
+                      })}
                     </ul>
                   )}
                 </section>
@@ -431,17 +655,20 @@ export function HistoryPanel({
           </div>
         )}
 
-        {onLoadMore &&
-          outputsLoaded < outputsTotal && (
+        {onLoadMore && outputsLoaded < outputsTotal && (
+          <div ref={loadMoreSentinelRef} className="mt-3">
             <button
               type="button"
               disabled={loadingOutputs}
               onClick={onLoadMore}
-              className="mt-3 w-full rounded-lg border border-dfui-border/60 py-2 text-[10px] text-dfui-secondary hover:border-dfui-accent/40 hover:text-dfui-fg disabled:opacity-50"
+              className="w-full rounded-lg border border-dfui-border/60 py-2 text-[10px] text-dfui-secondary hover:border-dfui-accent/40 hover:text-dfui-fg disabled:opacity-50"
             >
-              {loadingOutputs ? "Loading…" : "Load more"}
+              {loadingOutputs
+                ? "Loading…"
+                : `Load more (${remainingCount} remaining)`}
             </button>
-          )}
+          </div>
+        )}
       </div>
     </aside>
   );

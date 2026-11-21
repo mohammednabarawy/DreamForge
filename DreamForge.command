@@ -4,7 +4,11 @@ set -e
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "${SCRIPT_DIR}"
 
-if [ "$(uname -m)" = "arm64" ] && [ -x "${HOME}/.cargo/bin/cargo" ]; then
+if [ -f "${SCRIPT_DIR}/scripts/macos_arm_env.sh" ]; then
+    # shellcheck source=scripts/macos_arm_env.sh
+    source "${SCRIPT_DIR}/scripts/macos_arm_env.sh"
+    dreamforge_setup_macos_arm_env
+elif [ "$(uname -m)" = "arm64" ] && [ -x "${HOME}/.cargo/bin/cargo" ]; then
     export PATH="${HOME}/.cargo/bin:${PATH}"
 fi
 
@@ -26,10 +30,15 @@ fi
 DESKTOP_DIR="${SCRIPT_DIR}/apps/desktop"
 
 if [ -x "${SCRIPT_DIR}/venv/bin/python" ]; then
-    if ! "${SCRIPT_DIR}/venv/bin/python" -c 'import platform,sys; ok=sys.version_info >= (3,10); ok=ok and not (platform.system()=="Darwin" and platform.machine()!=__import__("subprocess").check_output(["uname","-m"],text=True).strip()); raise SystemExit(0 if ok else 1)' 2>/dev/null; then
+    if ! dreamforge_run_python "${SCRIPT_DIR}/venv/bin/python" -c 'import os,platform,sys; ok=sys.version_info >= (3,10); expect_arm64=(os.environ.get("DREAMFORGE_MAC_ARM64")=="1"); ok=ok and not (platform.system()=="Darwin" and expect_arm64 and platform.machine()!="arm64"); raise SystemExit(0 if ok else 1)' 2>/dev/null; then
         echo "  Repairing incompatible Python environment…"
         "${SCRIPT_DIR}/setup.sh" --skip-npm
     fi
+fi
+
+if ! command -v cargo &>/dev/null; then
+    echo "  ERROR: cargo not found. Install Rust from https://rustup.rs/"
+    exit 1
 fi
 
 if ! command -v npm &>/dev/null; then
@@ -37,18 +46,8 @@ if ! command -v npm &>/dev/null; then
     exit 1
 fi
 
-if [ "$(uname -m)" = "arm64" ] && [ "$(node -p 'process.arch')" = "x64" ]; then
-    for node_bin in "${HOME}/.nvm/versions/node"/*/bin/node /opt/homebrew/bin/node; do
-        [ -x "${node_bin}" ] || continue
-        if [ "$("${node_bin}" -p 'process.arch')" = "arm64" ]; then
-            export PATH="$(dirname "${node_bin}"):${PATH}"
-            break
-        fi
-    done
-fi
-
-if [ "$(uname -m)" = "arm64" ] && [ "$(node -p 'process.arch')" = "x64" ]; then
-    echo "  ERROR: Node is x86_64 (Rosetta). Use native arm64 Node (nvm install 24 && nvm use 24)."
+if [ "${DREAMFORGE_MAC_ARM64:-0}" = "1" ] && [ "$(node -p 'process.arch')" = "x64" ]; then
+    echo "  ERROR: Node is x86_64-only (Rosetta). Install native arm64 Node (brew install node or nvm install 24)."
     exit 1
 fi
 

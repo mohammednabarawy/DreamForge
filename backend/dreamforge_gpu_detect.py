@@ -72,6 +72,36 @@ def _classify_device(name: str, hip: bool) -> tuple[str, str, str]:
     return "CUDA Device", "cuda", "experimental"
 
 
+def _apple_silicon_chip_name() -> str:
+    if platform.system() != "Darwin":
+        return "M-Series"
+    try:
+        brand = subprocess.check_output(
+            ["sysctl", "-n", "machdep.cpu.brand_string"],
+            encoding="utf-8", errors="ignore", timeout=2,
+        ).strip()
+        if brand:
+            return brand
+    except Exception:
+        pass
+    return platform.processor() or "M-Series"
+
+
+def _is_apple_silicon_host() -> bool:
+    if platform.system() != "Darwin":
+        return False
+    if platform.machine().lower() in {"arm64", "aarch64"}:
+        return True
+    try:
+        flag = subprocess.check_output(
+            ["sysctl", "-n", "hw.optional.arm64"],
+            encoding="utf-8", errors="ignore", timeout=2,
+        ).strip()
+        return flag == "1"
+    except Exception:
+        return False
+
+
 def _torch_detect(info: dict[str, Any]) -> bool:
     try:
         import torch
@@ -146,8 +176,10 @@ def _torch_detect(info: dict[str, Any]) -> bool:
             return True
         if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
             ram_gb = (info["total_ram_mb"] or 0) / 1024
+            chip = _apple_silicon_chip_name()
+            device_label = chip if chip.lower().startswith("apple") else f"Apple Silicon ({chip})"
             info.update({
-                "vendor": "Apple", "device_name": f"Apple Silicon ({platform.processor() or 'M-Series'})",
+                "vendor": "Apple", "device_name": device_label,
                 "device_count": 1, "backend": "mps", "vram_mb": info["total_ram_mb"],
                 "vram_gb": round(ram_gb, 2), "support_level": "supported",
                 "detection_sources": ["torch.backends.mps", "system_memory"], "confidence": "high",
@@ -247,6 +279,38 @@ def _non_torch_graphics(info: dict[str, Any]) -> bool:
                 return True
         except Exception:
             pass
+    if _is_apple_silicon_host():
+        total_mb = info.get("total_ram_mb") or 0
+        if not total_mb:
+            try:
+                raw_mem = subprocess.check_output(
+                    ["sysctl", "-n", "hw.memsize"],
+                    encoding="utf-8", errors="ignore", timeout=2,
+                ).strip()
+                total_mb = int(raw_mem) // (1024 * 1024)
+            except Exception:
+                total_mb = 0
+        ram_gb = total_mb / 1024 if total_mb else 0.0
+        chip = _apple_silicon_chip_name()
+        device_label = chip if chip.lower().startswith("apple") else f"Apple Silicon ({chip})"
+        info.update({
+            "vendor": "Apple",
+            "device_name": device_label,
+            "device_count": 1,
+            "backend": "mps",
+            "vram_mb": total_mb,
+            "vram_gb": round(ram_gb, 2),
+            "support_level": "supported",
+            "confidence": "medium",
+            "detection_sources": ["sysctl.arm64", "system_memory"],
+            "warnings": ["Apple Silicon detected, but PyTorch MPS is not active in this Python runtime"],
+            "fallback_reason": "Install native arm64 PyTorch to enable Apple Metal (MPS) acceleration",
+            "recommended_profile": normalize_vram_profile(
+                "mps_32gb" if ram_gb >= 30 else "mps_24gb" if ram_gb >= 22 else
+                "mps_16gb" if ram_gb >= 14 else "mps_8gb"
+            ) if ram_gb else "mps_8gb",
+        })
+        return True
     for tool, args in (("rocminfo", ["rocminfo"]), ("lspci", ["lspci", "-nn"])):
         if not shutil.which(tool):
             continue

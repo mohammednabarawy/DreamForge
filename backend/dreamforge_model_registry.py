@@ -85,6 +85,12 @@ FAMILY_CAPABILITIES: Dict[str, Set[str]] = {
         ModelCapabilities.TEXT_TO_IMAGE,
         # IMAGE_TO_IMAGE / INPAINT: planned via dreamforge_prompt.ideogram4_workflows
     },
+    "minimax_h3_image": {
+        ModelCapabilities.TEXT_TO_IMAGE,
+        ModelCapabilities.IMAGE_TO_IMAGE,
+        ModelCapabilities.KONTEXT_EDIT,
+        ModelCapabilities.QWEN_SEMANTIC_EDIT,
+    },
 }
 
 def get_family_capabilities(family: str) -> Set[str]:

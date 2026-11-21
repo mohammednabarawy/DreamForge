@@ -550,6 +550,7 @@ def _build_comfy_prompt_graph(
     qwen_reference_filenames: list[str] | None = None,
     kontext_reference_filenames: list[str] | None = None,
     krea2_reference_filenames: list[str] | None = None,
+    minimax_reference_filenames: list[str] | None = None,
     client=None,
     input_path: str | None = None,
     extra_reference_paths: list[str] | None = None,
@@ -594,6 +595,8 @@ def _build_comfy_prompt_graph(
         comfy_krea2_txt2img,
         comfy_krea2_img2img,
         comfy_krea2_edit,
+        comfy_minimax_h3_image_txt2img,
+        comfy_minimax_h3_image_edit,
         comfy_flux_img2img,
         comfy_pid_flux_upscale,
         comfy_hidream_o1_dev_txt2img,
@@ -1052,6 +1055,13 @@ def _build_comfy_prompt_graph(
                 "denoise": edit_strength,
                 "edit_strength": edit_strength,
             })
+        elif mode == "minimax_h3_image_edit":
+            graph = comfy_minimax_h3_image_edit({
+                **common,
+                "images": [input_filename, *(minimax_reference_filenames or [])],
+                "denoise": edit_strength,
+                "edit_strength": edit_strength,
+            })
         elif mode == "kontext":
             kontext_args = {
                 **loader_args,
@@ -1178,6 +1188,25 @@ def _build_comfy_prompt_graph(
                 # are only valid through the Plus node; do not stitch uploaded Comfy
                 # filenames into a fake local path.
                 graph = comfy_qwen_image_edit({**qwen_common, "image": input_filename})
+        elif (model_family or "").lower() == "minimax_h3_image":
+            graph = comfy_minimax_h3_image_edit(
+                {
+                    "ckpt_name": ckpt_name,
+                    **loader_args,
+                    "images": [input_filename, *(minimax_reference_filenames or [])],
+                    "prompt": prompt,
+                    "negative": negative,
+                    "width": settings["width"],
+                    "height": settings["height"],
+                    "steps": settings["steps"],
+                    "cfg": settings["cfg"],
+                    "sampler_name": settings["sampler_name"],
+                    "scheduler": settings["scheduler"],
+                    "seed": seed,
+                    "denoise": edit_strength,
+                    "filename_prefix": "DreamForge",
+                }
+            )
         elif (model_family or "").lower() == "krea2":
             graph = comfy_krea2_img2img(
                 {
@@ -1329,6 +1358,22 @@ def _build_comfy_prompt_graph(
         )
     elif model_family in ("kandinsky", "kandinsky5"):
         graph = comfy_kandinsky5_txt2img(
+            {
+                **loader_args,
+                "prompt": prompt,
+                "negative": negative,
+                "width": settings["width"],
+                "height": settings["height"],
+                "steps": settings["steps"],
+                "cfg": settings["cfg"],
+                "sampler_name": settings["sampler_name"],
+                "scheduler": settings["scheduler"],
+                "seed": seed,
+                "filename_prefix": "DreamForge",
+            }
+        )
+    elif model_family == "minimax_h3_image":
+        graph = comfy_minimax_h3_image_txt2img(
             {
                 **loader_args,
                 "prompt": prompt,
@@ -2597,6 +2642,7 @@ def run_generation(
         qwen_reference_filenames: list[str] = []
         kontext_reference_filenames: list[str] = []
         krea2_reference_filenames: list[str] = []
+        minimax_reference_filenames: list[str] = []
         extra_reference_paths = _coerce_reference_image_paths(job)
         if (
             str(getattr(job, "edit_task", "") or "").strip().lower() == "cutout_compose"
@@ -2632,16 +2678,22 @@ def run_generation(
             emit_event(stream_sink, err)
             return {"status": "error", **err}
         if extra_reference_paths and input_path:
-            if model_family in {"qwen_image_edit", "qwen_image_2.1"} or krea2_instruction_edit:
+            is_minimax_edit = model_family == "minimax_h3_image"
+            if model_family in {"qwen_image_edit", "qwen_image_2.1"} or krea2_instruction_edit or is_minimax_edit:
                 try:
                     from dreamforge_paths import resolve_image_path_or_raise
 
-                    ref_limit = 9 if model_family == "qwen_image_2.1" else 2
+                    ref_limit = 15 if is_minimax_edit else (9 if model_family == "qwen_image_2.1" else 2)
                     for ref_index, ref_path in enumerate(extra_reference_paths[:ref_limit]):
                         resolved = resolve_image_path_or_raise(str(ref_path))
                         ref_local_name = (
                             f"{job_id}_krea2_ref_{ref_index}{Path(resolved).suffix}"
-                            if krea2_instruction_edit else Path(resolved).name
+                            if krea2_instruction_edit
+                            else (
+                                f"{job_id}_minimax_ref_{ref_index}{Path(resolved).suffix}"
+                                if is_minimax_edit
+                                else Path(resolved).name
+                            )
                         )
                         ref_upload = client.stage_image(
                             image_bytes=Path(resolved).read_bytes(),
@@ -2649,7 +2701,11 @@ def run_generation(
                             folder_type="input",
                             overwrite=True,
                         )
-                        target_filenames = krea2_reference_filenames if krea2_instruction_edit else qwen_reference_filenames
+                        target_filenames = (
+                            minimax_reference_filenames
+                            if is_minimax_edit
+                            else (krea2_reference_filenames if krea2_instruction_edit else qwen_reference_filenames)
+                        )
                         target_filenames.append(str(ref_upload.get("name") or ref_local_name))
                 except OSError as exc:
                     err = invalid_input_image(
@@ -3213,6 +3269,7 @@ def run_generation(
                 qwen_reference_filenames=qwen_reference_filenames or None,
                 kontext_reference_filenames=kontext_reference_filenames or None,
                 krea2_reference_filenames=krea2_reference_filenames or None,
+                minimax_reference_filenames=minimax_reference_filenames or None,
                 client=client,
                 input_path=input_path,
                 extra_reference_paths=_coerce_reference_image_paths(job),

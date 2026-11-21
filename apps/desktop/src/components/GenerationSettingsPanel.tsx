@@ -1,5 +1,6 @@
 import { ChevronDown, ChevronRight, ClipboardPaste, Copy, Dices, RotateCcw, Shuffle } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
+import { copyTextToClipboard } from "../lib/clipboard";
 import {
   ASPECT_GROUP_ACCENT,
   ASPECT_GROUP_LABELS,
@@ -555,14 +556,14 @@ export function GenerationSettingsPanel({
             void onSaveStudioSettings?.({ seed_random: false });
             onChange({ seed });
           }} className="inline-flex items-center gap-1 rounded border border-dfui-border/50 px-2 py-1 text-[9px] text-dfui-muted hover:text-dfui-fg"><Dices size={11} /> Randomize</button>
-          <button type="button" disabled={seedRandom} onClick={() => void navigator.clipboard.writeText(String(settings.seed ?? -1))} className="inline-flex items-center gap-1 rounded border border-dfui-border/50 px-2 py-1 text-[9px] text-dfui-muted hover:text-dfui-fg disabled:opacity-40"><Copy size={11} /> Copy</button>
-          <button type="button" onClick={() => void navigator.clipboard.readText().then((value) => {
+          <button type="button" disabled={seedRandom} onClick={() => void copyTextToClipboard(String(settings.seed ?? -1)).catch(() => {})} className="inline-flex items-center gap-1 rounded border border-dfui-border/50 px-2 py-1 text-[9px] text-dfui-muted hover:text-dfui-fg disabled:opacity-40"><Copy size={11} /> Copy</button>
+          <button type="button" onClick={() => void navigator.clipboard?.readText?.().then((value) => {
             const seed = boundedNumber(value, 0, 2_147_483_647, -1);
             if (seed >= 0) {
               void onSaveStudioSettings?.({ seed_random: false });
               onChange({ seed });
             }
-          })} className="inline-flex items-center gap-1 rounded border border-dfui-border/50 px-2 py-1 text-[9px] text-dfui-muted hover:text-dfui-fg"><ClipboardPaste size={11} /> Paste</button>
+          }).catch(() => {})} className="inline-flex items-center gap-1 rounded border border-dfui-border/50 px-2 py-1 text-[9px] text-dfui-muted hover:text-dfui-fg"><ClipboardPaste size={11} /> Paste</button>
         </div>
       </SettingsSection>
       )}

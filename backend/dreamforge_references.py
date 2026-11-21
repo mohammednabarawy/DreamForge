@@ -245,6 +245,8 @@ def family_reference_mechanism(
     m = str(mode or "").strip().lower()
     if is_kontext or m == "kontext" or "kontext" in family:
         return "kontext"
+    if family == "minimax_h3_image" or m == "minimax_h3_image_edit":
+        return "minimax_h3_image"
     if m == "qwen_edit" or family.startswith("qwen"):
         return "qwen_plus"
     if family == "hidream_o1":

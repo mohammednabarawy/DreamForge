@@ -10,6 +10,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
+import { copyTextToClipboard } from "../lib/clipboard";
 import type { FriendlyError } from "../lib/errors";
 import type { RepairAction } from "../lib/tauri-api";
 
@@ -142,7 +143,7 @@ function diagnosticPayload(error: FriendlyError) {
 
 async function copyDiagnostics(error: FriendlyError) {
   try {
-    await navigator.clipboard.writeText(diagnosticPayload(error));
+    await copyTextToClipboard(diagnosticPayload(error));
   } catch {
     // Clipboard can be unavailable in hardened WebViews.
   }

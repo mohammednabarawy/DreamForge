@@ -42,6 +42,22 @@ CAPABILITIES: dict[str, ModelCapability] = {
         speed_tier="fast",
         lora_ecosystem="limited",
     ),
+    "minimax_h3_image": ModelCapability(
+        family="minimax_h3_image",
+        display_name="MiniMax H3 Image",
+        strengths=("high_resolution", "photorealism", "text_rendering", "multi_reference_edit", "speed"),
+        limitations=("vram_usage", "lora_ecosystem"),
+        best_for="Native ultra-high-res (4–16 MP) generation, typography/posters, and multi-reference image editing (up to 16 images)",
+        tips=(
+            "CFG-distilled: fixed 6 steps, CFG 1.0, Euler + simple (no negative prompt). "
+            "Refer to attached images as <Picture 1>, <Picture 2>, ... in edit instructions. "
+            "Requires ComfyUI v0.45.0+, Qwen3-VL-32B text encoder, and MiniMax H3 Image VAE."
+        ),
+        nsfw_level="soft",
+        badges=("🖼️ 16MP", "✏️ Multi-Ref", "⚡ 6-Step", "📝 Text"),
+        speed_tier="medium",
+        lora_ecosystem="limited",
+    ),
     "flux": ModelCapability(
         family="flux",
         display_name="Flux Dev",

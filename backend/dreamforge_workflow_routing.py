@@ -24,6 +24,9 @@ _FAMILY_ROUTE_LABELS: dict[str, dict[str, str]] = {
     "krea2": {
         "source_edit": "Editing with Krea 2 Identity Edit",
     },
+    "minimax_h3_image": {
+        "source_edit": "Editing with MiniMax H3 Image",
+    },
     "flux_kontext": {
         "source_edit": "Editing with Flux Kontext",
     },
@@ -266,7 +269,7 @@ def resolve_input_routing(
             cn_type = "None"
         elif reference_role == "source_edit" and (
             checkpoint_is_flux_kontext(model, model_family)
-            or (model_family or "").lower() in {"qwen_image_edit", "qwen_image_2.1", "krea2"}
+            or (model_family or "").lower() in {"qwen_image_edit", "qwen_image_2.1", "krea2", "minimax_h3_image"}
         ):
             cn_selection = "None"
             cn_type = "None"

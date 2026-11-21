@@ -153,6 +153,9 @@ export function SetupWizard({ onComplete }: Props) {
 
   const diskOk = status?.system.disk_ok ?? true;
   const diskFree = status?.system.disk_free_gb ?? 0;
+  const isWindowsHost = status?.system.platform
+    ? /windows/i.test(status.system.platform)
+    : typeof navigator !== "undefined" && /win/i.test(navigator.platform ?? "");
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 p-6 backdrop-blur-sm">
@@ -175,7 +178,11 @@ export function SetupWizard({ onComplete }: Props) {
               or let DreamForge manage a new folder.
             </p>
             <ul className="space-y-2 text-xs text-dfui-muted">
-              <li>· Portable Python at <code className="text-dfui-data">python_embeded</code> (same as setup.bat)</li>
+              {isWindowsHost ? (
+                <li>· Portable Python at <code className="text-dfui-data">python_embeded</code> (same as setup.bat)</li>
+              ) : (
+                <li>· Native Python virtual environment at <code className="text-dfui-data">venv</code> (same as setup.sh)</li>
+              )}
               <li>· ComfyUI engine + pinned custom nodes (downloaded on first run)</li>
               <li>· Your choice of models folder (managed or existing ComfyUI layout)</li>
               <li>· GPU engine starts after setup completes</li>

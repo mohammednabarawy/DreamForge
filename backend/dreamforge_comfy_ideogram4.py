@@ -5,10 +5,21 @@ from __future__ import annotations
 import os
 from typing import Any
 
-# Pinned ComfyUI release (Ideogram 4 nodes + Krea 2 CLIPLoader type).
-DREAMFORGE_COMFY_VERSION = "12d5279438bfefc058a269eae805ceab6047777f"  # v0.34.0
+# Pinned ComfyUI release (MiniMax H3 Image + Ideogram 4 + Krea 2 + Qwen 2.1).
+try:
+    from dreamforge_krita_recipes import COMFY_INSTALL_RECIPE as _COMFY_RECIPE
+
+    DREAMFORGE_COMFY_VERSION = str(
+        _COMFY_RECIPE.get("comfy_version") or "a277b5bf213e8a44fa34817b7770b54f86ef4cea"
+    )
+    DREAMFORGE_COMFY_VERSION_LABEL = str(_COMFY_RECIPE.get("comfy_version_label") or "v0.46.0")
+except Exception:
+    DREAMFORGE_COMFY_VERSION = "a277b5bf213e8a44fa34817b7770b54f86ef4cea"  # v0.46.0
+    DREAMFORGE_COMFY_VERSION_LABEL = "v0.46.0"
+
 IDEOGRAM4_COMFY_VERSION = DREAMFORGE_COMFY_VERSION
 KREA2_MIN_COMFY_VERSION = DREAMFORGE_COMFY_VERSION
+MINIMAX_H3_MIN_COMFY_VERSION = DREAMFORGE_COMFY_VERSION
 
 IDEOGRAM4_CORE_NODES = frozenset(
     {

@@ -24,9 +24,11 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-const PREVIEW_MAX_BYTES: u64 = 12 * 1024 * 1024;
+const PREVIEW_MAX_BYTES: u64 = 64 * 1024 * 1024;
 /// Live step previews (frequent updates) — keep IPC + decode small.
 const PREVIEW_LIVE_MAX_EDGE: u32 = 512;
+/// History / gallery thumbnails (fast JPEG decode & small IPC payload).
+const PREVIEW_THUMB_MAX_EDGE: u32 = 320;
 /// Final canvas / gallery quality.
 const PREVIEW_FINAL_MAX_EDGE: u32 = 2048;
 const LOG_TAIL_CHARS: usize = 4000;
@@ -143,6 +145,40 @@ fn default_data_root(backend: &Path) -> PathBuf {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    {
+        let packaged_runtime = !cfg!(debug_assertions)
+            || matches!(
+                std::env::var("DREAMFORGE_PACKAGED")
+                    .ok()
+                    .as_deref()
+                    .map(|v| v.trim().to_ascii_lowercase())
+                    .as_deref(),
+                Some("1" | "true" | "yes")
+            )
+            || install.to_string_lossy().contains(".app/Contents");
+        if packaged_runtime {
+            if let Ok(home) = std::env::var("HOME") {
+                let home_dir = PathBuf::from(home);
+                let app_support = home_dir
+                    .join("Library")
+                    .join("Application Support")
+                    .join("DreamForge");
+                let dot_dir = home_dir.join(".dreamforge");
+                for candidate in [&app_support, &dot_dir] {
+                    let cfg = candidate.join("dreamforge").join("runtime.json");
+                    if let Some(root) = read_data_root_from_config(&cfg) {
+                        return root;
+                    }
+                    if cfg.is_file() {
+                        return candidate.clone();
+                    }
+                }
+                return app_support;
+            }
+        }
+    }
+
     install
 }
 
@@ -233,6 +269,7 @@ fn setup_complete_from_config(data_root: &Path, backend_root: &Path) -> bool {
             .join("python.exe")
             .is_file()
         || install.join("venv").join("bin").join("python").is_file()
+        || data_root.join("venv").join("bin").join("python").is_file()
         || repo_root.join("venv").join("bin").join("python").is_file();
     comfy_ok && models_ok && python_ok
 }
@@ -301,8 +338,10 @@ fn apply_packaged_backend_env(app: &tauri::App) {
     if let Ok(portable_root) = std::env::var("DREAMFORGE_PORTABLE_ROOT") {
         let root = PathBuf::from(portable_root);
         let backend = root.join("backend");
+        let has_portable_python = root.join("python_embeded").join("python.exe").is_file()
+            || root.join("venv").join("bin").join("python").is_file();
         if backend.join("dreamforge_desktop_bridge.py").is_file()
-            && root.join("python_embeded").join("python.exe").is_file()
+            && has_portable_python
             && root
                 .join("engines")
                 .join("comfyui")
@@ -369,7 +408,7 @@ impl PythonSidecar {
             .open(log_dir.join("bridge_stderr.log"))
             .ok();
 
-        let mut cmd = Command::new(&python);
+        let mut cmd = python_command(&python);
         cmd.current_dir(root)
             .arg("-u")
             .arg("-s")
@@ -881,19 +920,49 @@ fn python_exe(root: &Path) -> PathBuf {
     }
     #[cfg(not(windows))]
     {
+        if let Ok(explicit) = std::env::var("DREAMFORGE_PYTHON") {
+            let candidate = PathBuf::from(explicit.trim());
+            if candidate.is_file() {
+                return candidate;
+            }
+        }
         // The setup-managed venv is architecture-checked and owns app dependencies.
         let venv_python = parent.join("venv").join("bin").join("python");
         if venv_python.is_file() {
-            venv_python
+            return venv_python;
+        }
+        let data_venv_python = resolve_runtime_roots()
+            .data_root
+            .join("venv")
+            .join("bin")
+            .join("python");
+        if data_venv_python.is_file() {
+            return data_venv_python;
+        }
+        let core_venv_python = root.join("venv").join("bin").join("python");
+        if core_venv_python.is_file() {
+            core_venv_python
         } else {
-            let core_venv_python = root.join("venv").join("bin").join("python");
-            if core_venv_python.is_file() {
-                core_venv_python
-            } else {
-                PathBuf::from("python3")
-            }
+            PathBuf::from("python3")
         }
     }
+}
+
+fn python_command(python: &Path) -> Command {
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        if std::env::var("DREAMFORGE_FORCE_ARM64")
+            .ok()
+            .as_deref()
+            .map(|v| v.trim())
+            == Some("1")
+        {
+            let mut cmd = Command::new("/usr/bin/arch");
+            cmd.arg("-arm64").arg(python);
+            return cmd;
+        }
+    }
+    Command::new(python)
 }
 
 fn probe_python_launcher(launcher: &str, version_args: &[&str]) -> Option<PathBuf> {
@@ -1397,6 +1466,44 @@ fn preview_bytes_from_path(path: &Path, max_edge: u32) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
+fn thumbnail_jpeg_bytes_from_path(path: &Path, max_edge: u32) -> Option<Vec<u8>> {
+    let meta = fs::metadata(path).ok()?;
+    if meta.len() == 0 || meta.len() > PREVIEW_MAX_BYTES {
+        return None;
+    }
+    let img = image::open(path).ok()?;
+    let (w, h) = img.dimensions();
+    let resized = if w <= max_edge && h <= max_edge {
+        img
+    } else {
+        img.thumbnail(max_edge, max_edge)
+    };
+    let rgb = resized.to_rgb8();
+    let mut buf = Vec::new();
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 82);
+    encoder.encode_image(&rgb).ok()?;
+    Some(buf)
+}
+
+fn thumbnail_bytes_with_retry(path: &Path, max_edge: u32) -> Option<Vec<u8>> {
+    let settled = fs::metadata(path)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.elapsed().ok())
+        .map(|age| age >= Duration::from_millis(1500))
+        .unwrap_or(false);
+    let attempts = if settled { 2 } else { 12 };
+    for attempt in 0..attempts {
+        if let Some(bytes) = thumbnail_jpeg_bytes_from_path(path, max_edge) {
+            return Some(bytes);
+        }
+        if attempt + 1 < attempts {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+    None
+}
+
 fn worker_script(root: &Path) -> PathBuf {
     root.join("dreamforge_desktop_worker.py")
 }
@@ -1598,7 +1705,6 @@ fn bridge_cmd_requires_comfy(cmd: &str) -> bool {
             | "download_companion_entries"
             | "download_studio_resources"
             | "install_custom_node_packs"
-            | "install_comfy_backend"
     )
 }
 
@@ -2727,17 +2833,8 @@ fn start_gpu_worker_inner(
         *phase = "starting".to_string();
     }
 
-    let python = python_exe(root);
+    let python = resolve_python_executable(root)?;
     let script = worker_script(root);
-    #[cfg(windows)]
-    let exists = python.is_file();
-    #[cfg(not(windows))]
-    let exists = python.is_file()
-        || python.to_string_lossy() == "python3"
-        || python.to_string_lossy() == "python";
-    if !exists {
-        return Err(format!("Python runtime not found: {}", python.display()));
-    }
     if !script.is_file() {
         return Err(format!("Worker script not found: {}", script.display()));
     }
@@ -2765,7 +2862,7 @@ fn start_gpu_worker_inner(
         .truncate(true)
         .open(&worker_log);
 
-    let mut cmd = Command::new(&python);
+    let mut cmd = python_command(&python);
     cmd.current_dir(root)
         .arg("-u")
         .arg("-s")
@@ -3014,19 +3111,14 @@ fn reveal_path_in_explorer(path: String) -> Result<(), String> {
     #[cfg(windows)]
     {
         use std::process::Command;
-        let status = if p.is_file() {
+        let result = if p.is_file() {
             Command::new("explorer")
                 .arg(format!("/select,{}", p.display()))
-                .status()
+                .spawn()
         } else {
-            Command::new("explorer").arg(&p).status()
-        }
-        .map_err(|e| e.to_string())?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err("explorer failed to open path".into())
-        }
+            Command::new("explorer").arg(&p).spawn()
+        };
+        result.map(|_| ()).map_err(|e| format!("explorer failed to open path: {e}"))
     }
 
     #[cfg(target_os = "macos")]
@@ -3313,8 +3405,18 @@ async fn read_image_preview(path: String, quality: Option<String>) -> Result<Val
         let file = resolve_image_file(&path).ok_or_else(|| format!("File not found: {path}"))?;
         let live = quality.as_deref() == Some("live");
         let thumbnail = quality.as_deref() == Some("thumbnail");
+        if thumbnail {
+            if let Some(bytes) = thumbnail_bytes_with_retry(&file, PREVIEW_THUMB_MAX_EDGE) {
+                return Ok(json!({
+                    "path": file.to_string_lossy(),
+                    "mime": "image/jpeg",
+                    "quality": "thumbnail",
+                    "data_url": format!("data:image/jpeg;base64,{}", STANDARD.encode(bytes))
+                }));
+            }
+        }
         let max_edge = if thumbnail {
-            256
+            PREVIEW_THUMB_MAX_EDGE
         } else if live {
             PREVIEW_LIVE_MAX_EDGE
         } else {

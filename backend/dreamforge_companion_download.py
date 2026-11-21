@@ -72,6 +72,18 @@ COMPANION_SOURCES: dict[str, dict[str, Any]] = {
         "url": "https://huggingface.co/Comfy-Org/Qwen3-VL/resolve/main/text_encoders/qwen3vl_4b_fp8_scaled.safetensors",
         "min_bytes": 5 * 1024 * 1024 * 1024,
     },
+    "clip_minimax_h3_qwen3vl_32b_int8": {
+        "url": "https://huggingface.co/Comfy-Org/MiniMax-H3-Image/resolve/main/text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+        "min_bytes": 24 * 1024 * 1024 * 1024,
+    },
+    "clip_minimax_h3_qwen3vl_32b_nvfp4": {
+        "url": "https://huggingface.co/Comfy-Org/MiniMax-H3-Image/resolve/main/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+        "min_bytes": 14 * 1024 * 1024 * 1024,
+    },
+    "vae_minimax_h3_image": {
+        "url": "https://huggingface.co/Comfy-Org/MiniMax-H3-Image/resolve/main/vae/minimax_h3_image_vae_fp16.safetensors",
+        "min_bytes": 1024 * 1024 * 1024,
+    },
     "clip_z_image_qwen3_4b_fp8": {
         "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b_fp8_mixed.safetensors",
         "min_bytes": 5200 * 1024 * 1024,

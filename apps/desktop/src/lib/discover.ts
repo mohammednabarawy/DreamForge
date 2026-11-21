@@ -95,6 +95,32 @@ export type DiscoverProvenance = {
   sha256: string;
 };
 
+export type AssetCompatibilityStatus =
+  | "compatible"
+  | "tight"
+  | "too_large"
+  | "unsupported_arch"
+  | "cpu_only"
+  | "unknown";
+
+export type AssetDeviceCompatibility = {
+  status: AssetCompatibilityStatus;
+  label: string;
+  reason: string;
+  estimated_mb: number;
+  usable_vram_mb: number;
+  tight_vram_mb: number;
+  device_name: string;
+  device_vram_gb: number;
+  backend: string;
+  recommended_variant: string;
+  recommended_file_index: number;
+  recommended?: RatedFileVariant | null;
+  file_estimates_mb?: number[];
+  compatible_files_count: number;
+  fits: boolean;
+};
+
 export type DiscoverAsset = {
   id: string;
   name: string;
@@ -110,6 +136,7 @@ export type DiscoverAsset = {
   license_label: string;
   /** Set when this physical file (same SHA256) was already returned by another provider. */
   deduplicated_from?: string;
+  compatibility?: AssetDeviceCompatibility;
 };
 
 export type ProviderInfo = {
@@ -149,6 +176,7 @@ export type DiscoverySearchResult = {
   providers: ProviderSearchResultEnvelope[];
   provider_ok: number;
   provider_errors: number;
+  compute_profile?: ComputeProfileInfo;
 };
 
 export type CredentialStatusEntry = {

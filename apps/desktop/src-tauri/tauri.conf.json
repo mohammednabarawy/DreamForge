@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "DreamForge",
-  "version": "0.2.0-beta",
+  "version": "0.3.0-beta",
   "identifier": "com.dreamforge.studio",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -43,8 +43,30 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../../../backend": "backend/",
-      "../../../scripts": "scripts/"
+      "../../../backend/*.py": "backend/",
+      "../../../backend/*.txt": "backend/",
+      "../../../backend/*.yaml": "backend/",
+      "../../../backend/.dreamforge_comfy_pin": "backend/.dreamforge_comfy_pin",
+      "../../../backend/assets": "backend/assets/",
+      "../../../backend/chatbots": "backend/chatbots/",
+      "../../../backend/dreamforge_prompt": "backend/dreamforge_prompt/",
+      "../../../backend/help": "backend/help/",
+      "../../../backend/hints": "backend/hints/",
+      "../../../backend/html": "backend/html/",
+      "../../../backend/language": "backend/language/",
+      "../../../backend/modules": "backend/modules/",
+      "../../../backend/pip": "backend/pip/",
+      "../../../backend/prompt_expansion": "backend/prompt_expansion/",
+      "../../../backend/random_prompt": "backend/random_prompt/",
+      "../../../backend/settings": "backend/settings/",
+      "../../../backend/superprompter": "backend/superprompter/",
+      "../../../backend/tools": "backend/tools/",
+      "../../../backend/wildcards": "backend/wildcards/",
+      "../../../backend/wildcards_official": "backend/wildcards_official/",
+      "../../../scripts/*.py": "scripts/",
+      "../../../scripts/*.bat": "scripts/",
+      "../../../scripts/*.sh": "scripts/",
+      "../../../scripts/python310._pth.template": "scripts/python310._pth.template"
     }
   },
   "plugins": {}

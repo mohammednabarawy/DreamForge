@@ -587,6 +587,18 @@ MODEL_DEPENDENCIES = {
             "note": "Qwen Image VAE used by Krea 2 decode.",
         },
     ],
+    "minimax_h3_image": [
+        {
+            "id": "clip_minimax_h3_qwen3vl_32b_int8",
+            "relative": "text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+            "note": "Required Qwen3-VL-32B text encoder for MiniMax H3 Image (CLIP type minimax; NVFP4 AWQ also supported).",
+        },
+        {
+            "id": "vae_minimax_h3_image",
+            "relative": "vae/minimax_h3_image_vae_fp16.safetensors",
+            "note": "MiniMax H3 Image VAE (16 MP native decode).",
+        },
+    ],
 }
 
 

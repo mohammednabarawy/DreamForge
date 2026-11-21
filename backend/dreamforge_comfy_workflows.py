@@ -398,6 +398,135 @@ def comfy_krea2_edit(args: dict[str, Any]) -> dict[str, Any]:
     return g
 
 
+def _snap_minimax_dim(value: int, default: int = 2048) -> int:
+    """MiniMax H3 Image requires canvas dimensions aligned to multiples of 32."""
+    raw = int(value or 0)
+    if raw <= 0:
+        return default
+    snapped = max(512, min(4096, ((raw + 16) // 32) * 32))
+    return snapped
+
+
+def comfy_minimax_h3_image_txt2img(args: dict[str, Any]) -> dict[str, Any]:
+    """MiniMax H3 Image native ComfyUI txt2img (v0.45.0+: MiniMaxH3ImageConditioning)."""
+    ckpt = str(args["ckpt_name"])
+    prompt = str(args.get("prompt", ""))
+    width = _snap_minimax_dim(int(args.get("width", 2048)), default=2048)
+    height = _snap_minimax_dim(int(args.get("height", 2048)), default=2048)
+    steps = int(args.get("steps", 6))
+    cfg = float(args.get("cfg", 1.0))
+    sampler = str(args.get("sampler_name", "euler"))
+    scheduler = str(args.get("scheduler", "simple"))
+    seed = int(args.get("seed", 0))
+
+    g: dict[str, Any] = {}
+    model_out, clip_out, vae_out, _ = _add_model_loader(
+        g, {**args, "ckpt_name": ckpt, "family": "minimax_h3_image"}
+    )
+    g["2"] = _node(
+        "MiniMaxH3ImageConditioning",
+        {
+            "clip": clip_out,
+            "vae": vae_out,
+            "prompt": prompt,
+            "width": width,
+            "height": height,
+        },
+    )
+    g["3"] = _node("ConditioningZeroOut", {"conditioning": ["2", 0]})
+    g["4"] = _node(
+        "KSampler",
+        {
+            "model": model_out,
+            "positive": ["2", 0],
+            "negative": ["3", 0],
+            "latent_image": ["2", 1],
+            "seed": seed,
+            "steps": steps,
+            "cfg": cfg,
+            "sampler_name": sampler,
+            "scheduler": scheduler,
+            "denoise": 1.0,
+        },
+    )
+    g["5"] = _vae_decode_node(args, ["4", 0], vae_out)
+    g["6"] = _node(
+        "SaveImage",
+        {"images": ["5", 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+    )
+    return g
+
+
+def comfy_minimax_h3_image_edit(args: dict[str, Any]) -> dict[str, Any]:
+    """MiniMax H3 Image native ComfyUI multi-reference editing (1 to 16 images)."""
+    images = [
+        str(img)
+        for img in (args.get("images") or ([args["image"]] if args.get("image") else []))
+        if img
+    ][:16]
+    if not images:
+        raise ValueError("MiniMax H3 Image Edit requires at least one reference image.")
+
+    ckpt = str(args["ckpt_name"])
+    prompt = str(args.get("prompt", ""))
+    raw_w = int(args.get("width", 0) or 0)
+    raw_h = int(args.get("height", 0) or 0)
+    width = _snap_minimax_dim(raw_w, default=0) if raw_w > 0 else 0
+    height = _snap_minimax_dim(raw_h, default=0) if raw_h > 0 else 0
+    steps = int(args.get("steps", 6))
+    cfg = float(args.get("cfg", 1.0))
+    sampler = str(args.get("sampler_name", "euler"))
+    scheduler = str(args.get("scheduler", "simple"))
+    seed = int(args.get("seed", 0))
+    denoise = float(args.get("denoise", 1.0))
+
+    g: dict[str, Any] = {}
+    model_out, clip_out, vae_out, next_id = _add_model_loader(
+        g, {**args, "ckpt_name": ckpt, "family": "minimax_h3_image"}
+    )
+    cond_inputs: dict[str, Any] = {
+        "clip": clip_out,
+        "vae": vae_out,
+        "prompt": prompt,
+        "width": width,
+        "height": height,
+    }
+    node_id = max(next_id, 10)
+    for idx, img_name in enumerate(images, start=1):
+        g[str(node_id)] = _node("LoadImage", {"image": img_name})
+        cond_inputs[f"images.image_{idx}"] = [str(node_id), 0]
+        node_id += 1
+
+    cond_id = str(node_id)
+    g[cond_id] = _node("MiniMaxH3ImageConditioning", cond_inputs)
+    zero_id = str(node_id + 1)
+    g[zero_id] = _node("ConditioningZeroOut", {"conditioning": [cond_id, 0]})
+    sampler_id = str(node_id + 2)
+    g[sampler_id] = _node(
+        "KSampler",
+        {
+            "model": model_out,
+            "positive": [cond_id, 0],
+            "negative": [zero_id, 0],
+            "latent_image": [cond_id, 1],
+            "seed": seed,
+            "steps": steps,
+            "cfg": cfg,
+            "sampler_name": sampler,
+            "scheduler": scheduler,
+            "denoise": denoise,
+        },
+    )
+    decode_id = str(node_id + 3)
+    g[decode_id] = _vae_decode_node(args, [sampler_id, 0], vae_out)
+    save_id = str(node_id + 4)
+    g[save_id] = _node(
+        "SaveImage",
+        {"images": [decode_id, 0], "filename_prefix": str(args.get("filename_prefix", "DreamForge"))},
+    )
+    return g
+
+
 def comfy_kandinsky5_txt2img(args: dict[str, Any]) -> dict[str, Any]:
     """Kandinsky 5 txt2img."""
     ckpt = str(args["ckpt_name"])
@@ -693,6 +822,28 @@ def _add_model_loader(g: dict[str, Any], args: dict[str, Any], *, start_id: int 
             clip_out = [str(i), 0]
             i += 1
             g[str(i)] = _node("VAELoader", {"vae_name": str(args.get("vae") or "ae.safetensors")})
+            vae_out = [str(i), 0]
+            i += 1
+            model_out, clip_out, i = _apply_user_lora_stack(
+                g, model_out, clip_out, args.get("loras"), i, clip_lora=False
+            )
+            model_out, i = _apply_easy_cache(g, model_out, args, i)
+            return model_out, clip_out, vae_out, i
+        if family == "minimax_h3_image":
+            clip_name = str(
+                args.get("clip")
+                or "qwen3vl_32b_minimax_h3_int8_convrot.safetensors"
+            )
+            if clip_name.endswith(".gguf"):
+                g[str(i)] = _node("CLIPLoaderGGUF", {"clip_name": clip_name, "type": "minimax"})
+            else:
+                g[str(i)] = _node("CLIPLoader", {"clip_name": clip_name, "type": "minimax"})
+            clip_out = [str(i), 0]
+            i += 1
+            g[str(i)] = _node(
+                "VAELoader",
+                {"vae_name": str(args.get("vae") or "minimax_h3_image_vae_fp16.safetensors")},
+            )
             vae_out = [str(i), 0]
             i += 1
             model_out, clip_out, i = _apply_user_lora_stack(
